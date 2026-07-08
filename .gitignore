@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-ssr
+coverage
+*.local
+*.log
+.codex
+exports
+
+src-tauri/target
+src-tauri/gen/schemas
+
+.DS_Store
+Thumbs.db
