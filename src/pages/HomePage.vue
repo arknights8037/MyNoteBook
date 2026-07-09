@@ -2,7 +2,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import {
   Archive,
-  Check,
   ChevronDown,
   ChevronRight,
   Ellipsis,
@@ -11,9 +10,7 @@ import {
   FolderOpen,
   Info,
   ImagePlus,
-  Maximize2,
   MessageSquare,
-  Minimize2,
   Pencil,
   Plus,
   RotateCcw,
@@ -23,7 +20,6 @@ import {
   Sparkles,
   Trash2,
   Upload,
-  X,
 } from '@lucide/vue'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import {
@@ -74,7 +70,10 @@ import {
   type TiptapDocumentJson,
 } from '@/models/document'
 import {
+  AI_PROVIDER_CONFIGS,
   DEFAULT_AI_SETTINGS,
+  applyAiProviderDefaults,
+  getAiProviderConfig,
   loadAiSettings,
   saveAiSettings,
   type AiProvider,
@@ -161,45 +160,6 @@ const AI_MODE_OPTIONS: Array<AiSelectorOption<AiChatMode>> = [
   { value: 'ask', label: 'Ask', description: '在聊天里回答' },
   { value: 'edit', label: 'Edit', description: '把 Markdown 写入文档' },
 ]
-const AI_PROVIDER_OPTIONS: Array<
-  AiSelectorOption<AiProvider> & { endpoint: string; models: string[] }
-> = [
-  {
-    value: 'openai',
-    label: 'OpenAI',
-    description: 'Chat Completions',
-    endpoint: 'https://api.openai.com/v1',
-    models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-5-mini', 'gpt-5'],
-  },
-  {
-    value: 'anthropic',
-    label: 'Anthropic',
-    description: 'Claude Messages',
-    endpoint: 'https://api.anthropic.com/v1',
-    models: ['claude-sonnet-4-5', 'claude-opus-4-1', 'claude-3-5-haiku-latest'],
-  },
-  {
-    value: 'deepseek',
-    label: 'DeepSeek',
-    description: 'OpenAI-compatible',
-    endpoint: 'https://api.deepseek.com',
-    models: ['deepseek-chat', 'deepseek-reasoner'],
-  },
-  {
-    value: 'qwen',
-    label: '通义千问',
-    description: 'DashScope 兼容模式',
-    endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    models: ['qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen3-plus', 'qwen3-max'],
-  },
-  {
-    value: 'openai-compatible',
-    label: '兼容接口',
-    description: '自定义 OpenAI-compatible',
-    endpoint: DEFAULT_AI_SETTINGS.endpoint,
-    models: [DEFAULT_AI_SETTINGS.model],
-  },
-]
 const AI_REASONING_OPTIONS: Array<AiSelectorOption<AiReasoningEffort>> = [
   { value: 'auto', label: '自动', description: '按模型默认策略' },
   { value: 'low', label: '轻量思考', description: '更快响应' },
@@ -233,11 +193,17 @@ const showRenameModal = ref(false)
 const showPropertiesModal = ref(false)
 const showSearchModal = ref(false)
 const showShareModal = ref(false)
+const showSensitiveAuthModal = ref(false)
 const showAiChat = ref(false)
 const aiChatFullscreen = ref(false)
 const showSettings = ref(false)
 const appSettings = ref<AppSettings>(loadAppSettings())
 const defaultDataDirectory = ref('')
+const sensitiveAuthTitle = ref('敏感操作授权')
+const sensitiveAuthDescription = ref('')
+const sensitiveAuthPassword = ref('')
+const sensitiveAuthError = ref('')
+let sensitiveAuthResolver: ((authorized: boolean) => void) | null = null
 const isChangingDataDirectory = ref(false)
 const propertiesDocumentId = ref<DocumentId | null>(null)
 const searchQuery = ref('')
@@ -346,7 +312,7 @@ const revisionText = computed(() => autosave.revision.value?.toString() ?? '-')
 const saveStatusClass = computed(() => `save-status--${autosave.status.value}`)
 const aiModeLabel = computed(() => getOptionLabel(AI_MODE_OPTIONS, aiChatMode.value))
 const aiProviderLabel = computed(() =>
-  getOptionLabel(AI_PROVIDER_OPTIONS, aiSettings.value.provider),
+  getOptionLabel(AI_PROVIDER_CONFIGS, aiSettings.value.provider),
 )
 const aiReasoningLabel = computed(() =>
   getOptionLabel(AI_REASONING_OPTIONS, aiSettings.value.reasoningEffort),
@@ -402,6 +368,12 @@ watch(
   { deep: true },
 )
 
+watch(showSensitiveAuthModal, (show) => {
+  if (!show && sensitiveAuthResolver) {
+    cancelSensitiveAuthorization()
+  }
+})
+
 function updateSettings(settings: AppSettings): void {
   appSettings.value = settings
 }
@@ -419,19 +391,7 @@ function selectAiMode(mode: AiChatMode): void {
 }
 
 function selectAiProvider(provider: AiProvider): void {
-  const config = getAiProviderConfig(provider)
-  aiSettings.value = {
-    ...aiSettings.value,
-    provider,
-    endpoint:
-      aiSettings.value.provider === provider || provider === 'openai-compatible'
-        ? aiSettings.value.endpoint
-        : config.endpoint,
-    model:
-      aiSettings.value.provider === provider || provider === 'openai-compatible'
-        ? aiSettings.value.model
-        : config.models[0],
-  }
+  aiSettings.value = applyAiProviderDefaults(aiSettings.value, provider)
 }
 
 function selectAiModel(model: string): void {
@@ -440,10 +400,6 @@ function selectAiModel(model: string): void {
 
 function selectAiReasoning(reasoningEffort: AiReasoningEffort): void {
   aiSettings.value = { ...aiSettings.value, reasoningEffort }
-}
-
-function getAiProviderConfig(provider: AiProvider) {
-  return AI_PROVIDER_OPTIONS.find((option) => option.value === provider) ?? AI_PROVIDER_OPTIONS[0]
 }
 
 function resetSettings(): void {
@@ -807,6 +763,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function chooseDataDirectory(): Promise<void> {
+  const authorized = await requestSensitiveAuthorization(
+    '更改数据位置',
+    '此操作会迁移本机知识库数据库和附件目录。',
+  )
+  if (!authorized) return
+
   const selected = await open({
     title: '选择知识库数据目录',
     directory: true,
@@ -820,6 +782,12 @@ async function chooseDataDirectory(): Promise<void> {
 
 async function restoreDefaultDataDirectory(): Promise<void> {
   if (!appSettings.value.dataDirectory) return
+  const authorized = await requestSensitiveAuthorization(
+    '恢复默认数据位置',
+    '此操作会把当前知识库迁回应用默认数据目录。',
+  )
+  if (!authorized) return
+
   await changeDataDirectory(null)
 }
 
@@ -1363,6 +1331,11 @@ async function commitCurrentTitle(): Promise<void> {
 async function deleteDocument(document: DocumentSummary): Promise<void> {
   const confirmed = await confirmDeleteDocument(document)
   if (!confirmed) return
+  const authorized = await requestSensitiveAuthorization(
+    '删除页面',
+    `即将把「${displayTitle(document)}」移入回收站。`,
+  )
+  if (!authorized) return
 
   await runDocumentAction(async () => {
     const descendants = collectArticleDescendants(documents.value, document.id)
@@ -1417,6 +1390,12 @@ async function deleteDocument(document: DocumentSummary): Promise<void> {
 }
 
 async function restoreDocument(document: DocumentSummary): Promise<void> {
+  const authorized = await requestSensitiveAuthorization(
+    '恢复页面',
+    `即将从回收站恢复「${displayTitle(document)}」。`,
+  )
+  if (!authorized) return
+
   await runDocumentAction(async () => {
     const service = requireDocumentService()
     const descendants = collectArticleDescendants(deletedDocuments.value, document.id)
@@ -1440,6 +1419,11 @@ async function restoreDocument(document: DocumentSummary): Promise<void> {
 async function permanentlyDeleteDocument(document: DocumentSummary): Promise<void> {
   const confirmed = await confirmPermanentDeleteDocument(document)
   if (!confirmed) return
+  const authorized = await requestSensitiveAuthorization(
+    '彻底删除页面',
+    `即将彻底删除「${displayTitle(document)}」，此操作无法恢复。`,
+  )
+  if (!authorized) return
 
   await runDocumentAction(async () => {
     const service = requireDocumentService()
@@ -1464,6 +1448,9 @@ function importDocumentFile(): void {
 }
 
 async function chooseImportFormat(format: ImportFormat): Promise<void> {
+  const authorized = await requestSensitiveAuthorization('导入文档', '导入会在知识库中创建新页面。')
+  if (!authorized) return
+
   selectedImportFormat.value = format
   showImportModal.value = false
   await nextTick()
@@ -1532,6 +1519,12 @@ function inferImportFormat(fileName: string): ImportFormat | null {
 
 async function openShareView(): Promise<void> {
   if (isPreparingShare.value) return
+  const authorized = await requestSensitiveAuthorization(
+    '分享预览',
+    '分享预览会生成当前页面的可导出 Markdown 和 HTML。',
+  )
+  if (!authorized) return
+
   isPreparingShare.value = true
   try {
     const prepared = await prepareCurrentDocumentExport()
@@ -1545,6 +1538,12 @@ async function openShareView(): Promise<void> {
 }
 
 async function exportCurrentDocument(format: 'markdown' | 'html'): Promise<void> {
+  const authorized = await requestSensitiveAuthorization(
+    format === 'markdown' ? '导出 Markdown' : '导出 HTML',
+    '导出会把当前页面内容写入你选择的位置。',
+  )
+  if (!authorized) return
+
   const prepared = await prepareCurrentDocumentExport()
   if (!prepared) return
   const extension = format === 'markdown' ? 'md' : 'html'
@@ -1752,6 +1751,63 @@ function requireDocumentService(): DocumentService {
   }
 
   return documentService.value
+}
+
+function requestSensitiveAuthorization(title: string, description: string): Promise<boolean> {
+  if (
+    !appSettings.value.sensitiveActionPasswordEnabled ||
+    !appSettings.value.sensitiveActionPasswordHash
+  ) {
+    return Promise.resolve(true)
+  }
+
+  sensitiveAuthTitle.value = title
+  sensitiveAuthDescription.value = description
+  sensitiveAuthPassword.value = ''
+  sensitiveAuthError.value = ''
+  showSensitiveAuthModal.value = true
+
+  return new Promise((resolve) => {
+    sensitiveAuthResolver = resolve
+  })
+}
+
+async function confirmSensitiveAuthorization(): Promise<void> {
+  const password = sensitiveAuthPassword.value.trim()
+  if (!password) {
+    sensitiveAuthError.value = '请输入授权密码。'
+    return
+  }
+
+  const hash = await sha256Hex(password)
+  if (hash !== appSettings.value.sensitiveActionPasswordHash) {
+    sensitiveAuthError.value = '授权密码不正确。'
+    sensitiveAuthPassword.value = ''
+    return
+  }
+
+  resolveSensitiveAuthorization(true)
+}
+
+function cancelSensitiveAuthorization(): void {
+  resolveSensitiveAuthorization(false)
+}
+
+function resolveSensitiveAuthorization(authorized: boolean): void {
+  const resolver = sensitiveAuthResolver
+  sensitiveAuthResolver = null
+  showSensitiveAuthModal.value = false
+  sensitiveAuthPassword.value = ''
+  sensitiveAuthError.value = ''
+  resolver?.(authorized)
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const bytes = new globalThis.TextEncoder().encode(value)
+  const hashBuffer = await globalThis.crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
 }
 
 function confirmDeleteDocument(document: DocumentSummary): Promise<boolean> {
@@ -2237,7 +2293,7 @@ function documentCharacterCount(document: DocumentSummary): number {
             :mode-label="aiModeLabel"
             :mode-options="AI_MODE_OPTIONS"
             :provider-label="aiProviderLabel"
-            :provider-options="AI_PROVIDER_OPTIONS"
+            :provider-options="AI_PROVIDER_CONFIGS"
             :reasoning-label="aiReasoningLabel"
             :reasoning-options="AI_REASONING_OPTIONS"
             :model-options="aiModelOptions"
@@ -2264,151 +2320,151 @@ function documentCharacterCount(document: DocumentSummary): number {
             :class="{ 'editor-panel--behind-ai': showAiChat && aiChatFullscreen }"
             :aria-hidden="showAiChat && aiChatFullscreen"
           >
-          <header class="topbar">
-            <div class="topbar__title">
-              <NInput
-                v-model:value="documentTitle"
-                class="topbar-title-input"
-                :bordered="false"
-                :disabled="isLoadingDocument || Boolean(loadError)"
-                aria-label="文档标题"
-                @update:value="handleTitleInput"
-                @blur="commitCurrentTitle"
-                @keydown.enter.prevent="commitCurrentTitle"
-              />
-            </div>
-
-            <div class="topbar__actions">
-              <div class="save-status" :class="saveStatusClass">
-                <span class="save-status__dot" aria-hidden="true"></span>
-                <span>{{ saveStatusText }}</span>
+            <header class="topbar">
+              <div class="topbar__title">
+                <NInput
+                  v-model:value="documentTitle"
+                  class="topbar-title-input"
+                  :bordered="false"
+                  :disabled="isLoadingDocument || Boolean(loadError)"
+                  aria-label="文档标题"
+                  @update:value="handleTitleInput"
+                  @blur="commitCurrentTitle"
+                  @keydown.enter.prevent="commitCurrentTitle"
+                />
               </div>
-              <NTooltip trigger="hover">
-                <template #trigger>
-                  <NButton
-                    class="topbar__icon-button"
-                    quaternary
-                    circle
-                    aria-label="新建子页面"
-                    :disabled="isBusy || isLoadingDocument || !currentDocument"
-                    @click="createAndOpenDocument(currentDocumentId)"
-                  >
-                    <template #icon>
-                      <NIcon :size="20"><Plus /></NIcon>
-                    </template>
-                  </NButton>
-                </template>
-                新建子页面
-              </NTooltip>
-              <NButton
-                class="topbar__text-button"
-                text
-                :loading="isPreparingShare"
-                @click="openShareView"
-              >
-                分享
-              </NButton>
-              <NTooltip trigger="hover">
-                <template #trigger>
-                  <NButton
-                    class="topbar__icon-button"
-                    quaternary
-                    circle
-                    aria-label="插入图片"
-                    :disabled="isLoadingDocument || Boolean(loadError)"
-                    @click="editorShell?.insertImage()"
-                  >
-                    <template #icon>
-                      <NIcon :size="20"><ImagePlus /></NIcon>
-                    </template>
-                  </NButton>
-                </template>
-                插入图片
-              </NTooltip>
-              <NTooltip trigger="hover">
-                <template #trigger>
-                  <NButton
-                    class="topbar__icon-button"
-                    quaternary
-                    circle
-                    aria-label="插入附件"
-                    :disabled="isLoadingDocument || Boolean(loadError)"
-                    @click="editorShell?.insertAttachment()"
-                  >
-                    <template #icon>
-                      <NIcon :size="20"><Archive /></NIcon>
-                    </template>
-                  </NButton>
-                </template>
-                插入附件
-              </NTooltip>
-              <NTooltip trigger="hover">
-                <template #trigger>
-                  <NButton class="topbar__icon-button" quaternary circle aria-label="评论">
-                    <template #icon>
-                      <NIcon :size="20"><MessageSquare /></NIcon>
-                    </template>
-                  </NButton>
-                </template>
-                评论
-              </NTooltip>
-              <NTooltip trigger="hover">
-                <template #trigger>
-                  <NButton class="topbar__icon-button" quaternary circle aria-label="更多">
-                    <template #icon>
-                      <NIcon :size="20"><Ellipsis /></NIcon>
-                    </template>
-                  </NButton>
-                </template>
-                更多
-              </NTooltip>
-              <NTooltip trigger="hover">
-                <template #trigger>
-                  <NButton
-                    class="topbar__icon-button"
-                    quaternary
-                    circle
-                    aria-label="开发面板"
-                    @click="showInspector = true"
-                  >
-                    <template #icon>
-                      <NIcon :size="19"><Share2 /></NIcon>
-                    </template>
-                  </NButton>
-                </template>
-                开发面板
-              </NTooltip>
-              <NTooltip trigger="hover">
-                <template #trigger>
-                  <NButton
-                    class="topbar__icon-button"
-                    quaternary
-                    circle
-                    aria-label="搜索"
-                    @click="openSearch"
-                  >
-                    <template #icon>
-                      <NIcon :size="21"><Search /></NIcon>
-                    </template>
-                  </NButton>
-                </template>
-                搜索
-              </NTooltip>
-            </div>
-          </header>
 
-          <EditorShell
-            ref="editorShell"
-            :model-value="editorContent"
-            :readonly="isLoadingDocument || Boolean(loadError)"
-            :settings="appSettings"
-            :internal-documents="internalDocuments"
-            :document-id="currentDocumentId"
-            @update:model-value="handleEditorContentUpdate"
-            @text-update="handleTextUpdate"
-            @image-error="message.error"
-            @open-document="loadDocument"
-          />
+              <div class="topbar__actions">
+                <div class="save-status" :class="saveStatusClass">
+                  <span class="save-status__dot" aria-hidden="true"></span>
+                  <span>{{ saveStatusText }}</span>
+                </div>
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NButton
+                      class="topbar__icon-button"
+                      quaternary
+                      circle
+                      aria-label="新建子页面"
+                      :disabled="isBusy || isLoadingDocument || !currentDocument"
+                      @click="createAndOpenDocument(currentDocumentId)"
+                    >
+                      <template #icon>
+                        <NIcon :size="20"><Plus /></NIcon>
+                      </template>
+                    </NButton>
+                  </template>
+                  新建子页面
+                </NTooltip>
+                <NButton
+                  class="topbar__text-button"
+                  text
+                  :loading="isPreparingShare"
+                  @click="openShareView"
+                >
+                  分享
+                </NButton>
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NButton
+                      class="topbar__icon-button"
+                      quaternary
+                      circle
+                      aria-label="插入图片"
+                      :disabled="isLoadingDocument || Boolean(loadError)"
+                      @click="editorShell?.insertImage()"
+                    >
+                      <template #icon>
+                        <NIcon :size="20"><ImagePlus /></NIcon>
+                      </template>
+                    </NButton>
+                  </template>
+                  插入图片
+                </NTooltip>
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NButton
+                      class="topbar__icon-button"
+                      quaternary
+                      circle
+                      aria-label="插入附件"
+                      :disabled="isLoadingDocument || Boolean(loadError)"
+                      @click="editorShell?.insertAttachment()"
+                    >
+                      <template #icon>
+                        <NIcon :size="20"><Archive /></NIcon>
+                      </template>
+                    </NButton>
+                  </template>
+                  插入附件
+                </NTooltip>
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NButton class="topbar__icon-button" quaternary circle aria-label="评论">
+                      <template #icon>
+                        <NIcon :size="20"><MessageSquare /></NIcon>
+                      </template>
+                    </NButton>
+                  </template>
+                  评论
+                </NTooltip>
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NButton class="topbar__icon-button" quaternary circle aria-label="更多">
+                      <template #icon>
+                        <NIcon :size="20"><Ellipsis /></NIcon>
+                      </template>
+                    </NButton>
+                  </template>
+                  更多
+                </NTooltip>
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NButton
+                      class="topbar__icon-button"
+                      quaternary
+                      circle
+                      aria-label="开发面板"
+                      @click="showInspector = true"
+                    >
+                      <template #icon>
+                        <NIcon :size="19"><Share2 /></NIcon>
+                      </template>
+                    </NButton>
+                  </template>
+                  开发面板
+                </NTooltip>
+                <NTooltip trigger="hover">
+                  <template #trigger>
+                    <NButton
+                      class="topbar__icon-button"
+                      quaternary
+                      circle
+                      aria-label="搜索"
+                      @click="openSearch"
+                    >
+                      <template #icon>
+                        <NIcon :size="21"><Search /></NIcon>
+                      </template>
+                    </NButton>
+                  </template>
+                  搜索
+                </NTooltip>
+              </div>
+            </header>
+
+            <EditorShell
+              ref="editorShell"
+              :model-value="editorContent"
+              :readonly="isLoadingDocument || Boolean(loadError)"
+              :settings="appSettings"
+              :internal-documents="internalDocuments"
+              :document-id="currentDocumentId"
+              @update:model-value="handleEditorContentUpdate"
+              @text-update="handleTextUpdate"
+              @image-error="message.error"
+              @open-document="loadDocument"
+            />
           </section>
         </div>
       </Transition>
@@ -2434,7 +2490,7 @@ function documentCharacterCount(document: DocumentSummary): number {
         :mode-label="aiModeLabel"
         :mode-options="AI_MODE_OPTIONS"
         :provider-label="aiProviderLabel"
-        :provider-options="AI_PROVIDER_OPTIONS"
+        :provider-options="AI_PROVIDER_CONFIGS"
         :reasoning-label="aiReasoningLabel"
         :reasoning-options="AI_REASONING_OPTIONS"
         :model-options="aiModelOptions"
@@ -2455,211 +2511,6 @@ function documentCharacterCount(document: DocumentSummary): number {
         @clear="clearAiChat"
         @insert="insertAiMessage"
       />
-
-      <section
-        v-if="false"
-        class="ai-chat-popover"
-        aria-label="AI 聊天"
-      >
-        <header class="ai-chat-popover__header">
-          <div class="ai-chat-popover__heading">
-            <strong>AI Markdown 助手</strong>
-            <span>{{ aiProviderLabel }} · {{ aiSettings.model }}</span>
-          </div>
-          <div class="ai-chat-popover__window-actions">
-            <button
-              type="button"
-              class="ai-chat-popover__icon-button"
-              :aria-label="aiChatFullscreen ? '还原悬浮 AI 聊天' : '在文档区打开 AI 聊天'"
-              @click="setAiChatWorkspace(!aiChatFullscreen)"
-            >
-              <Minimize2 v-if="aiChatFullscreen" :size="15" />
-              <Maximize2 v-else :size="15" />
-            </button>
-            <button
-              type="button"
-              class="ai-chat-popover__icon-button"
-              aria-label="关闭 AI 聊天"
-              @click="closeAiChat"
-            >
-              <X :size="16" />
-            </button>
-          </div>
-        </header>
-
-        <div class="ai-chat-popover__messages" aria-live="polite">
-          <p v-if="aiMessages.length === 0" class="ai-chat-popover__empty">
-            Ask 会在这里流式回答；Edit 会把完整 Markdown 块同步写入当前文档。
-          </p>
-          <article
-            v-for="chatMessage in aiMessages"
-            :key="chatMessage.id"
-            class="ai-chat-message"
-            :class="[
-              `ai-chat-message--${chatMessage.role}`,
-              { 'ai-chat-message--streaming': chatMessage.status === 'streaming' },
-              { 'ai-chat-message--error': chatMessage.status === 'error' },
-            ]"
-          >
-            <header>
-              <span>{{ chatMessage.role === 'user' ? '你' : 'AI' }}</span>
-              <em>{{ chatMessage.mode === 'ask' ? 'ask' : 'edit' }}</em>
-            </header>
-            <div class="markdown-preview" v-html="renderMarkdownMessage(chatMessage.content)"></div>
-            <footer v-if="chatMessage.role === 'assistant' && chatMessage.content.trim()">
-              <button
-                v-if="chatMessage.mode === 'ask'"
-                type="button"
-                @click="insertAiMessage(chatMessage.content)"
-              >
-                插入
-              </button>
-              <span v-else>已同步到文档</span>
-              <span v-if="chatMessage.status === 'streaming'">输出中</span>
-            </footer>
-          </article>
-        </div>
-
-        <p v-if="aiError" class="ai-chat-popover__error">{{ aiError }}</p>
-
-        <form class="ai-chat-composer" @submit.prevent="runAiAssistant">
-          <div class="ai-chat-composer__toolbar" aria-label="AI 输入选项">
-            <DropdownMenuRoot>
-              <DropdownMenuTrigger as-child>
-                <button type="button" class="ai-chat-selector ai-chat-selector--primary">
-                  <span>{{ aiModeLabel }}</span>
-                  <ChevronDown :size="13" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuPortal>
-                <DropdownMenuContent class="ai-chat-menu" align="start" :side-offset="6">
-                  <DropdownMenuItem
-                    v-for="option in AI_MODE_OPTIONS"
-                    :key="option.value"
-                    class="ai-chat-menu__item"
-                    :class="{ 'ai-chat-menu__item--active': aiChatMode === option.value }"
-                    @select="selectAiMode(option.value)"
-                  >
-                    <span class="ai-chat-menu__item-copy">
-                      <strong>{{ option.label }}</strong>
-                      <small>{{ option.description }}</small>
-                    </span>
-                    <Check v-if="aiChatMode === option.value" :size="15" />
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenuPortal>
-            </DropdownMenuRoot>
-
-            <DropdownMenuRoot>
-              <DropdownMenuTrigger as-child>
-                <button type="button" class="ai-chat-selector">
-                  <span>{{ aiProviderLabel }}</span>
-                  <ChevronDown :size="13" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuPortal>
-                <DropdownMenuContent class="ai-chat-menu" align="start" :side-offset="6">
-                  <DropdownMenuItem
-                    v-for="option in AI_PROVIDER_OPTIONS"
-                    :key="option.value"
-                    class="ai-chat-menu__item"
-                    :class="{ 'ai-chat-menu__item--active': aiSettings.provider === option.value }"
-                    @select="selectAiProvider(option.value)"
-                  >
-                    <span class="ai-chat-menu__item-copy">
-                      <strong>{{ option.label }}</strong>
-                      <small>{{ option.description }}</small>
-                    </span>
-                    <Check v-if="aiSettings.provider === option.value" :size="15" />
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenuPortal>
-            </DropdownMenuRoot>
-
-            <DropdownMenuRoot>
-              <DropdownMenuTrigger as-child>
-                <button type="button" class="ai-chat-selector ai-chat-selector--model">
-                  <span>{{ aiSettings.model }}</span>
-                  <ChevronDown :size="13" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuPortal>
-                <DropdownMenuContent
-                  class="ai-chat-menu ai-chat-menu--model"
-                  align="start"
-                  :side-offset="6"
-                >
-                  <DropdownMenuItem
-                    v-for="model in aiModelOptions"
-                    :key="model"
-                    class="ai-chat-menu__item"
-                    :class="{ 'ai-chat-menu__item--active': aiSettings.model === model }"
-                    @select="selectAiModel(model)"
-                  >
-                    <span class="ai-chat-menu__item-copy">
-                      <strong>{{ model }}</strong>
-                      <small
-                        v-if="!getAiProviderConfig(aiSettings.provider).models.includes(model)"
-                      >
-                        当前自定义模型
-                      </small>
-                    </span>
-                    <Check v-if="aiSettings.model === model" :size="15" />
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenuPortal>
-            </DropdownMenuRoot>
-
-            <DropdownMenuRoot>
-              <DropdownMenuTrigger as-child>
-                <button type="button" class="ai-chat-selector">
-                  <span>{{ aiReasoningLabel }}</span>
-                  <ChevronDown :size="13" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuPortal>
-                <DropdownMenuContent class="ai-chat-menu" align="start" :side-offset="6">
-                  <DropdownMenuItem
-                    v-for="option in AI_REASONING_OPTIONS"
-                    :key="option.value"
-                    class="ai-chat-menu__item"
-                    :class="{
-                      'ai-chat-menu__item--active': aiSettings.reasoningEffort === option.value,
-                    }"
-                    @select="selectAiReasoning(option.value)"
-                  >
-                    <span class="ai-chat-menu__item-copy">
-                      <strong>{{ option.label }}</strong>
-                      <small>{{ option.description }}</small>
-                    </span>
-                    <Check v-if="aiSettings.reasoningEffort === option.value" :size="15" />
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenuPortal>
-            </DropdownMenuRoot>
-          </div>
-          <textarea
-            v-model="aiPrompt"
-            rows="3"
-            :placeholder="aiPromptPlaceholder"
-            aria-label="AI 输入"
-            @keydown.enter.exact.prevent="runAiAssistant"
-          ></textarea>
-          <div class="ai-chat-composer__actions">
-            <button
-              type="button"
-              :disabled="aiMessages.length === 0 && !aiError"
-              @click="clearAiChat"
-            >
-              清空
-            </button>
-            <button v-if="aiIsRunning" type="button" @click="stopAiAssistant">停止</button>
-            <button type="submit" :disabled="aiIsRunning || !aiPrompt.trim()">
-              {{ aiChatMode === 'edit' ? '编辑' : '发送' }}
-            </button>
-          </div>
-        </form>
-      </section>
 
       <NDrawer v-model:show="showInspector" :width="380" placement="right">
         <NDrawerContent class="editor-inspector-content" title="开发面板" closable>
@@ -2685,6 +2536,36 @@ function documentCharacterCount(document: DocumentSummary): number {
           </section>
         </NDrawerContent>
       </NDrawer>
+
+      <NModal
+        v-model:show="showSensitiveAuthModal"
+        preset="card"
+        :title="sensitiveAuthTitle"
+        class="sensitive-auth-modal"
+        :bordered="false"
+        @after-leave="sensitiveAuthPassword = ''"
+      >
+        <div class="sensitive-auth">
+          <p>{{ sensitiveAuthDescription }}</p>
+          <NInput
+            v-model:value="sensitiveAuthPassword"
+            autofocus
+            type="password"
+            placeholder="输入授权密码"
+            autocomplete="current-password"
+            aria-label="授权密码"
+            @keydown.enter.prevent="confirmSensitiveAuthorization"
+            @keydown.esc.prevent="cancelSensitiveAuthorization"
+          />
+          <small v-if="sensitiveAuthError">{{ sensitiveAuthError }}</small>
+        </div>
+        <template #footer>
+          <div class="modal-actions">
+            <NButton @click="cancelSensitiveAuthorization">取消</NButton>
+            <NButton type="primary" @click="confirmSensitiveAuthorization">授权</NButton>
+          </div>
+        </template>
+      </NModal>
 
       <NModal
         v-model:show="showImportModal"

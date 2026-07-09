@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { DEFAULT_AI_SETTINGS, loadAiSettings, normalizeAiSettings, saveAiSettings } from './ai'
+import {
+  DEFAULT_AI_SETTINGS,
+  applyAiProviderDefaults,
+  loadAiSettings,
+  normalizeAiSettings,
+  saveAiSettings,
+} from './ai'
 
 describe('AI settings', () => {
   beforeEach(() => globalThis.localStorage.clear())
@@ -21,5 +27,27 @@ describe('AI settings', () => {
     expect(normalizeAiSettings({ reasoningEffort: 'maximum' as never }).reasoningEffort).toBe(
       DEFAULT_AI_SETTINGS.reasoningEffort,
     )
+  })
+
+  it('applies provider endpoint and model defaults from the shared provider registry', () => {
+    expect(applyAiProviderDefaults(DEFAULT_AI_SETTINGS, 'anthropic')).toMatchObject({
+      provider: 'anthropic',
+      endpoint: 'https://api.anthropic.com/v1',
+      model: 'claude-sonnet-4-5',
+    })
+  })
+
+  it('keeps custom endpoint and model values for OpenAI-compatible providers', () => {
+    const settings = {
+      ...DEFAULT_AI_SETTINGS,
+      endpoint: 'http://localhost:11434/v1',
+      model: 'local-model',
+    }
+
+    expect(applyAiProviderDefaults(settings, 'openai-compatible')).toMatchObject({
+      provider: 'openai-compatible',
+      endpoint: settings.endpoint,
+      model: settings.model,
+    })
   })
 })

@@ -135,6 +135,7 @@ async function runAnthropicMessagesCompletion(input: AiRunInput): Promise<string
 
 function getAnthropicThinking(input: AiRunInput): Record<string, unknown> | null {
   if (input.settings.reasoningEffort === 'auto') return null
+  if (input.settings.maxTokens <= 1) return null
   const budgetTokens = {
     low: 1024,
     medium: 4096,
@@ -162,7 +163,7 @@ async function readStreamingResponse(
   const reader = response.body?.getReader()
   if (!reader) return ''
 
-  const decoder = new TextDecoder()
+  const decoder = new globalThis.TextDecoder()
   let buffer = ''
   let fullText = ''
 
@@ -175,16 +176,18 @@ async function readStreamingResponse(
     buffer = lines.pop() ?? ''
 
     for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed.startsWith('data:')) continue
-      const payload = trimmed.slice(5).trim()
-      if (!payload || payload === '[DONE]') continue
-
-      const delta = parseDelta(payload)
-      if (!delta) continue
-      fullText += delta
-      onDelta(delta)
+      const delta = parseStreamingDataLine(line, parseDelta)
+      if (delta) {
+        fullText += delta
+        onDelta(delta)
+      }
     }
+  }
+
+  const finalDelta = parseStreamingDataLine(buffer, parseDelta)
+  if (finalDelta) {
+    fullText += finalDelta
+    onDelta(finalDelta)
   }
 
   return fullText
@@ -206,7 +209,7 @@ async function readAnthropicStreamingResponse(
   const reader = response.body?.getReader()
   if (!reader) return ''
 
-  const decoder = new TextDecoder()
+  const decoder = new globalThis.TextDecoder()
   let buffer = ''
   let fullText = ''
 
@@ -219,19 +222,29 @@ async function readAnthropicStreamingResponse(
     buffer = lines.pop() ?? ''
 
     for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed.startsWith('data:')) continue
-      const payload = trimmed.slice(5).trim()
-      if (!payload || payload === '[DONE]') continue
-
-      const delta = parseAnthropicDelta(payload)
-      if (!delta) continue
-      fullText += delta
-      onDelta(delta)
+      const delta = parseStreamingDataLine(line, parseAnthropicDelta)
+      if (delta) {
+        fullText += delta
+        onDelta(delta)
+      }
     }
   }
 
+  const finalDelta = parseStreamingDataLine(buffer, parseAnthropicDelta)
+  if (finalDelta) {
+    fullText += finalDelta
+    onDelta(finalDelta)
+  }
+
   return fullText
+}
+
+function parseStreamingDataLine(line: string, parsePayload: (payload: string) => string): string {
+  const trimmed = line.trim()
+  if (!trimmed.startsWith('data:')) return ''
+  const payload = trimmed.slice(5).trim()
+  if (!payload || payload === '[DONE]') return ''
+  return parsePayload(payload)
 }
 
 function parseAnthropicDelta(payload: string): string {

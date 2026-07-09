@@ -67,6 +67,74 @@ describe('AiMarkdownService', () => {
     })
     expect(body.thinking).toMatchObject({ type: 'enabled' })
   })
+
+  it('reads the final OpenAI-compatible streaming frame when it has no trailing newline', async () => {
+    mockStreamingFetch([
+      'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"lo"}}]}',
+    ])
+    const onDelta = vi.fn()
+
+    await expect(
+      runAiMarkdownCompletion({
+        prompt: '整理',
+        context: '',
+        settings: { ...DEFAULT_AI_SETTINGS, provider: 'openai-compatible' },
+        onDelta,
+      }),
+    ).resolves.toBe('hello')
+
+    expect(onDelta).toHaveBeenNthCalledWith(1, 'hel')
+    expect(onDelta).toHaveBeenNthCalledWith(2, 'lo')
+  })
+
+  it('reads the final Anthropic streaming frame when it has no trailing newline', async () => {
+    mockStreamingFetch([
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"he"}}\n\n',
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"llo"}}',
+    ])
+    const onDelta = vi.fn()
+
+    await expect(
+      runAiMarkdownCompletion({
+        prompt: '整理',
+        context: '',
+        settings: {
+          ...DEFAULT_AI_SETTINGS,
+          provider: 'anthropic',
+          endpoint: 'https://api.anthropic.com/v1',
+          model: 'claude-sonnet-4-5',
+        },
+        onDelta,
+      }),
+    ).resolves.toBe('hello')
+
+    expect(onDelta).toHaveBeenNthCalledWith(1, 'he')
+    expect(onDelta).toHaveBeenNthCalledWith(2, 'llo')
+  })
+
+  it('does not send Anthropic thinking when max tokens cannot leave a thinking budget', async () => {
+    const fetchMock = mockSuccessfulFetch({
+      content: [{ type: 'text', text: 'ok' }],
+    })
+
+    await runAiMarkdownCompletion({
+      prompt: '整理',
+      context: '',
+      settings: {
+        ...DEFAULT_AI_SETTINGS,
+        provider: 'anthropic',
+        endpoint: 'https://api.anthropic.com/v1',
+        model: 'claude-sonnet-4-5',
+        maxTokens: 1,
+        reasoningEffort: 'medium',
+      },
+      onDelta: vi.fn(),
+    })
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>
+    expect(body).not.toHaveProperty('thinking')
+  })
 })
 
 function mockSuccessfulFetch(payload: unknown = { choices: [{ message: { content: 'ok' } }] }) {
@@ -74,6 +142,24 @@ function mockSuccessfulFetch(payload: unknown = { choices: [{ message: { content
     ok: true,
     body: null,
     json: async () => payload,
+  })) as unknown as typeof fetch
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock as unknown as ReturnType<typeof vi.fn>
+}
+
+function mockStreamingFetch(chunks: string[]) {
+  const encoder = new globalThis.TextEncoder()
+  const body = new globalThis.ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk))
+      }
+      controller.close()
+    },
+  })
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    body,
   })) as unknown as typeof fetch
   vi.stubGlobal('fetch', fetchMock)
   return fetchMock as unknown as ReturnType<typeof vi.fn>

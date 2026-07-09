@@ -36,6 +36,41 @@ describe('app settings', () => {
     expect(normalizeAppSettings({ theme: 'dark' as never }).theme).toBe('graphite-dark')
   })
 
+  it('normalizes custom font families and sensitive authorization settings', () => {
+    const validHash = 'a'.repeat(64)
+    expect(
+      normalizeAppSettings({
+        jumpAid: 'outline',
+        jumpAidPosition: 'left',
+        jumpAidMaxLevel: 2,
+        chineseFontFamily: ' Microsoft YaHei , SimSun ',
+        westernFontFamily: ' Inter , Arial ',
+        sensitiveActionPasswordEnabled: true,
+        sensitiveActionPasswordHash: validHash.toUpperCase(),
+      }),
+    ).toMatchObject({
+      jumpAid: 'outline',
+      jumpAidPosition: 'left',
+      jumpAidMaxLevel: 2,
+      chineseFontFamily: 'Microsoft YaHei, SimSun',
+      westernFontFamily: 'Inter, Arial',
+      sensitiveActionPasswordEnabled: true,
+      sensitiveActionPasswordHash: validHash,
+    })
+
+    expect(
+      normalizeAppSettings({
+        sensitiveActionPasswordEnabled: true,
+        sensitiveActionPasswordHash: 'not-a-hash',
+      }).sensitiveActionPasswordEnabled,
+    ).toBe(false)
+    expect(normalizeAppSettings({ jumpAid: 'floating' as never }).jumpAid).toBe('off')
+    expect(normalizeAppSettings({ jumpAidPosition: 'center' as never }).jumpAidPosition).toBe(
+      'right',
+    )
+    expect(normalizeAppSettings({ jumpAidMaxLevel: 8 as never }).jumpAidMaxLevel).toBe(4)
+  })
+
   it('normalizes and matches configurable shortcuts', () => {
     const event = { key: 'k', ctrlKey: true, metaKey: false, altKey: false, shiftKey: true }
     expect(shortcutFromKeyboardEvent(event)).toBe('Ctrl+Shift+K')

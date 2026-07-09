@@ -33,7 +33,7 @@ const mermaidRendering = ref(false)
 const mermaidRenderBaseId = `code-block-mermaid-${Math.random().toString(36).slice(2)}`
 let mermaidRenderRequest = 0
 let mermaidRenderTimer: ReturnType<typeof globalThis.setTimeout> | undefined
-let isMermaidInitialized = false
+let initializedMermaidTheme: 'default' | 'dark' | undefined
 let mermaidApiPromise: Promise<MermaidApi> | undefined
 
 const languageOptions = [
@@ -197,19 +197,20 @@ async function renderMermaid(): Promise<void> {
 
 async function initializeMermaid(): Promise<MermaidApi> {
   const mermaidApi = await loadMermaid()
+  const theme = getMermaidTheme()
 
-  if (isMermaidInitialized) {
+  if (initializedMermaidTheme === theme) {
     return mermaidApi
   }
 
   mermaidApi.initialize({
     startOnLoad: false,
     securityLevel: 'strict',
-    theme: 'default',
+    theme,
     fontFamily:
       'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',
   })
-  isMermaidInitialized = true
+  initializedMermaidTheme = theme
 
   return mermaidApi
 }
@@ -223,6 +224,10 @@ function clearMermaidPreview(): void {
   if (mermaidPreview.value) {
     mermaidPreview.value.innerHTML = ''
   }
+}
+
+function getMermaidTheme(): 'default' | 'dark' {
+  return globalThis.document?.documentElement.dataset.themeMode === 'dark' ? 'dark' : 'default'
 }
 
 function getMermaidErrorMessage(error: unknown): string {

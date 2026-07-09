@@ -11,7 +11,7 @@ import {
   SelectValue,
   SelectViewport,
 } from 'reka-ui'
-import { useAttrs } from 'vue'
+import { computed, useAttrs } from 'vue'
 
 defineOptions({ inheritAttrs: false })
 
@@ -20,7 +20,7 @@ interface SelectOption {
   value: string
 }
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     value?: string
     options?: SelectOption[]
@@ -38,6 +38,9 @@ const emit = defineEmits<{
 }>()
 
 const attrs = useAttrs()
+const selectedLabel = computed(
+  () => props.options.find((option) => option.value === props.value)?.label ?? props.value,
+)
 
 function handleValue(value: unknown): void {
   if (typeof value === 'string') emit('update:value', value)
@@ -51,7 +54,9 @@ function handleValue(value: unknown): void {
       :class="[attrs.class, `ui-select--${size}`]"
       :style="attrs.style"
     >
-      <SelectValue />
+      <span class="ui-select__value"
+        ><SelectValue>{{ selectedLabel }}</SelectValue></span
+      >
       <ChevronDown :size="14" />
     </SelectTrigger>
     <SelectPortal>

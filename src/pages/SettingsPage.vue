@@ -10,27 +10,38 @@ import {
   MousePointer2,
   Palette,
   RotateCcw,
+  ShieldCheck,
   Settings,
   SlidersHorizontal,
   Type,
 } from '@lucide/vue'
 import { SwitchRoot, SwitchThumb } from 'reka-ui'
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 
 import { NButton, NIcon, NInput, NSelect } from '@/ui'
 import {
   DEFAULT_SHORTCUTS,
+  DEFAULT_CHINESE_FONT_FAMILY,
+  DEFAULT_WESTERN_FONT_FAMILY,
   shortcutFromKeyboardEvent,
   type AppSettings,
   type ShortcutAction,
 } from '@/models/settings'
-import { DEFAULT_AI_SETTINGS, type AiProvider, type AiSettings } from '@/models/ai'
 import {
+  AI_PROVIDER_CONFIGS,
+  DEFAULT_AI_SETTINGS,
+  applyAiProviderDefaults,
+  type AiProvider,
+  type AiSettings,
+} from '@/models/ai'
+import {
+  getThemeDisplayName,
   getResolvedTheme,
   THEME_DEFINITIONS,
   THEME_OPTIONS,
   type ThemePreference,
 } from '@/services/theme'
+import { loadSystemFonts } from '@/services/systemFonts'
 
 type BrowserMouseEvent = InstanceType<typeof globalThis.MouseEvent>
 type BrowserKeyboardEvent = InstanceType<typeof globalThis.KeyboardEvent>
@@ -61,9 +72,13 @@ const emit = defineEmits<{
 
 const activeSection = ref('general')
 const recordingShortcut = ref<ShortcutAction | null>(null)
+const systemFonts = ref<string[]>([])
+const sensitivePasswordDraft = ref('')
+let sensitivePasswordRequestId = 0
 
 const navigation = [
   { id: 'general', label: '通用', icon: SlidersHorizontal },
+  { id: 'security', label: '安全', icon: ShieldCheck },
   { id: 'appearance', label: '外观', icon: Palette },
   { id: 'editor', label: '编辑器', icon: Type },
   { id: 'ai', label: 'AI', icon: Bot },
@@ -85,6 +100,21 @@ const lineHeightOptions = [
   { label: '舒适', value: 'comfortable' },
   { label: '宽松', value: 'relaxed' },
 ]
+const jumpAidOptions = [
+  { label: '关', value: 'off' },
+  { label: '文档锚点', value: 'anchors' },
+  { label: '文档大纲', value: 'outline' },
+]
+const jumpAidPositionOptions = [
+  { label: '右侧', value: 'right' },
+  { label: '左侧', value: 'left' },
+]
+const jumpAidMaxLevelOptions = [
+  { label: '只显示一级标题', value: '1' },
+  { label: '显示到二级标题', value: '2' },
+  { label: '显示到三级标题', value: '3' },
+  { label: '显示到四级标题', value: '4' },
+]
 const autosaveOptions = [
   { label: '快速（0.4 秒）', value: '400' },
   { label: '标准（0.8 秒）', value: '800' },
@@ -102,13 +132,6 @@ const newDocumentOptions = [
   { label: '当前页面下方', value: 'current' },
   { label: '知识库根目录', value: 'root' },
 ]
-const aiProviderOptions: Array<{ label: string; value: AiProvider }> = [
-  { label: 'OpenAI', value: 'openai' },
-  { label: 'Anthropic', value: 'anthropic' },
-  { label: 'DeepSeek', value: 'deepseek' },
-  { label: '通义千问', value: 'qwen' },
-  { label: 'OpenAI 兼容接口', value: 'openai-compatible' },
-]
 const shortcutRows: Array<{ action: ShortcutAction; label: string; description: string }> = [
   { action: 'search', label: '搜索笔记', description: '打开全局搜索' },
   { action: 'newDocument', label: '新建页面', description: '按通用偏好选择创建位置' },
@@ -120,6 +143,45 @@ const currentDataDirectory = computed(
   () => props.settings.dataDirectory || props.defaultDataDirectory || '系统应用数据目录',
 )
 const selectedResolvedTheme = computed(() => getResolvedTheme(props.settings.theme))
+const chineseFontOptions = computed(() =>
+  prioritizeFonts(systemFonts.value, [
+    'Microsoft YaHei',
+    'PingFang SC',
+    'Noto Sans CJK SC',
+    'Source Han Sans SC',
+    'SimSun',
+    'SimHei',
+    'KaiTi',
+    'FangSong',
+  ]),
+)
+const chineseFontSelectOptions = computed(() =>
+  createFontSelectOptions(
+    chineseFontOptions.value,
+    props.settings.chineseFontFamily,
+    DEFAULT_CHINESE_FONT_FAMILY,
+    '系统默认中文字体',
+  ),
+)
+const westernFontOptions = computed(() =>
+  prioritizeFonts(systemFonts.value, [
+    'Segoe UI',
+    'Inter',
+    'Arial',
+    'Helvetica Neue',
+    'Calibri',
+    'Georgia',
+    'Times New Roman',
+  ]),
+)
+const westernFontSelectOptions = computed(() =>
+  createFontSelectOptions(
+    westernFontOptions.value,
+    props.settings.westernFontFamily,
+    DEFAULT_WESTERN_FONT_FAMILY,
+    '系统默认西文字体',
+  ),
+)
 const themeCards = computed(() =>
   THEME_OPTIONS.map((option) => {
     const theme =
@@ -128,7 +190,9 @@ const themeCards = computed(() =>
       ...option,
       theme,
       resolvedLabel:
-        option.value === 'system' ? `当前：${theme.name}` : theme.mode === 'dark' ? '深色' : '浅色',
+        option.value === 'system'
+          ? `当前：${getThemeDisplayName(theme.id)}`
+          : `${theme.name} · ${theme.mode === 'dark' ? '深色' : '浅色'}`,
     }
   }),
 )
@@ -152,8 +216,53 @@ function updateTheme(theme: ThemePreference): void {
   update('theme', theme)
 }
 
+function updateFontFamily(key: 'chineseFontFamily' | 'westernFontFamily', value: string): void {
+  update(key, value.trim() || defaultFontFamilyForKey(key))
+}
+
+function resetFontFamily(key: 'chineseFontFamily' | 'westernFontFamily'): void {
+  update(key, defaultFontFamilyForKey(key))
+}
+
+function defaultFontFamilyForKey(key: 'chineseFontFamily' | 'westernFontFamily'): string {
+  return key === 'chineseFontFamily' ? DEFAULT_CHINESE_FONT_FAMILY : DEFAULT_WESTERN_FONT_FAMILY
+}
+
+async function updateSensitivePassword(value: string): Promise<void> {
+  const requestId = ++sensitivePasswordRequestId
+  sensitivePasswordDraft.value = value
+  const trimmed = value.trim()
+  if (!trimmed) {
+    emit('change', {
+      ...props.settings,
+      sensitiveActionPasswordHash: '',
+      sensitiveActionPasswordEnabled: false,
+    })
+    return
+  }
+
+  const hash = await sha256Hex(trimmed)
+  if (requestId !== sensitivePasswordRequestId) return
+
+  emit('change', {
+    ...props.settings,
+    sensitiveActionPasswordHash: hash,
+  })
+}
+
+function updateSensitiveAuthorizationEnabled(enabled: boolean): void {
+  update(
+    'sensitiveActionPasswordEnabled',
+    enabled && Boolean(props.settings.sensitiveActionPasswordHash),
+  )
+}
+
 function updateAi<K extends keyof AiSettings>(key: K, value: AiSettings[K]): void {
   emit('aiChange', { ...props.aiSettings, [key]: value })
+}
+
+function updateAiProvider(provider: AiProvider): void {
+  emit('aiChange', applyAiProviderDefaults(props.aiSettings, provider))
 }
 
 function updateAiTemperature(value: string): void {
@@ -206,6 +315,59 @@ function scrollToSection(sectionId: string): void {
     block: 'start',
   })
 }
+
+function prioritizeFonts(fonts: string[], preferredFonts: string[]): string[] {
+  const fontSet = new Set(fonts)
+  return [
+    ...preferredFonts.filter((font) => fontSet.has(font)),
+    ...fonts.filter((font) => !preferredFonts.includes(font)),
+  ].slice(0, 80)
+}
+
+function createFontSelectOptions(
+  fonts: string[],
+  currentFontFamily: string,
+  defaultFontFamily: string,
+  defaultLabel: string,
+) {
+  const current = currentFontFamily.trim()
+  const options = [
+    {
+      label: `${defaultLabel}（${getPrimaryFontName(defaultFontFamily)}）`,
+      value: defaultFontFamily,
+    },
+    ...fonts.map((font) => ({ label: font, value: font })),
+  ]
+  if (current && !options.some((option) => option.value === current)) {
+    options.unshift({ label: `当前自定义：${formatFontFamilyLabel(current)}`, value: current })
+  }
+  return options
+}
+
+function getPrimaryFontName(fontFamily: string): string {
+  return fontFamily.split(',')[0]?.trim() || fontFamily
+}
+
+function formatFontFamilyLabel(fontFamily: string): string {
+  const fonts = fontFamily
+    .split(',')
+    .map((font) => font.trim())
+    .filter(Boolean)
+  if (fonts.length <= 1) return fonts[0] ?? fontFamily
+  return `${fonts[0]} 等 ${fonts.length} 项`
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const bytes = new globalThis.TextEncoder().encode(value)
+  const hashBuffer = await globalThis.crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+onMounted(async () => {
+  systemFonts.value = await loadSystemFonts()
+})
 </script>
 
 <template>
@@ -284,6 +446,45 @@ function scrollToSection(sectionId: string): void {
               >
                 <SwitchThumb class="settings-switch__thumb" />
               </SwitchRoot>
+            </div>
+          </div>
+        </section>
+
+        <section id="settings-security" class="settings-section">
+          <header class="settings-section__header">
+            <span><ShieldCheck :size="18" /></span>
+            <div>
+              <h2>敏感操作授权</h2>
+              <p>删除、恢复、导入导出和数据迁移前可要求输入授权密码。</p>
+            </div>
+          </header>
+          <div class="settings-card">
+            <div class="settings-row settings-row--switch">
+              <span
+                ><strong>启用密码授权</strong
+                ><small>设置密码后，敏感动作会先要求输入授权密码。</small></span
+              >
+              <SwitchRoot
+                class="settings-switch"
+                :model-value="settings.sensitiveActionPasswordEnabled"
+                :disabled="!settings.sensitiveActionPasswordHash"
+                @update:model-value="updateSensitiveAuthorizationEnabled($event)"
+              >
+                <SwitchThumb class="settings-switch__thumb" />
+              </SwitchRoot>
+            </div>
+            <div class="settings-row">
+              <span
+                ><strong>授权密码</strong
+                ><small>可随时输入新密码覆盖；留空会关闭密码授权。</small></span
+              >
+              <NInput
+                :value="sensitivePasswordDraft"
+                type="password"
+                placeholder="输入自定义授权密码"
+                autocomplete="new-password"
+                @update:value="updateSensitivePassword"
+              />
             </div>
           </div>
         </section>
@@ -402,6 +603,81 @@ function scrollToSection(sectionId: string): void {
                 @update:value="update('lineHeight', $event as AppSettings['lineHeight'])"
               />
             </div>
+            <div class="settings-row settings-row--font">
+              <span
+                ><strong>中文字体</strong><small>从系统字体中选择，不影响公式字段。</small></span
+              >
+              <div class="settings-font-control">
+                <NSelect
+                  class="settings-font-select"
+                  :value="settings.chineseFontFamily"
+                  :options="chineseFontSelectOptions"
+                  @update:value="updateFontFamily('chineseFontFamily', $event)"
+                />
+                <NButton
+                  quaternary
+                  circle
+                  aria-label="恢复默认中文字体"
+                  @click="resetFontFamily('chineseFontFamily')"
+                  ><template #icon
+                    ><NIcon :size="14"><RotateCcw /></NIcon></template
+                ></NButton>
+              </div>
+            </div>
+            <div class="settings-row settings-row--font">
+              <span
+                ><strong>西文字体</strong
+                ><small>拉丁字符优先使用该字体，中文仍回落到中文字体。</small></span
+              >
+              <div class="settings-font-control">
+                <NSelect
+                  class="settings-font-select"
+                  :value="settings.westernFontFamily"
+                  :options="westernFontSelectOptions"
+                  @update:value="updateFontFamily('westernFontFamily', $event)"
+                />
+                <NButton
+                  quaternary
+                  circle
+                  aria-label="恢复默认西文字体"
+                  @click="resetFontFamily('westernFontFamily')"
+                  ><template #icon
+                    ><NIcon :size="14"><RotateCcw /></NIcon></template
+                ></NButton>
+              </div>
+            </div>
+            <div class="settings-row">
+              <span
+                ><strong>跳转辅助工具</strong
+                ><small>在文档右侧显示锚点或大纲，快速跳到标题。</small></span
+              ><NSelect
+                :value="settings.jumpAid"
+                :options="jumpAidOptions"
+                @update:value="update('jumpAid', $event as AppSettings['jumpAid'])"
+              />
+            </div>
+            <div class="settings-row">
+              <span
+                ><strong>辅助显示位置</strong
+                ><small>文档锚点和文档大纲都可显示在文章左侧或右侧。</small></span
+              ><NSelect
+                :value="settings.jumpAidPosition"
+                :options="jumpAidPositionOptions"
+                @update:value="update('jumpAidPosition', $event as AppSettings['jumpAidPosition'])"
+              />
+            </div>
+            <div class="settings-row">
+              <span
+                ><strong>目录显示级别</strong
+                ><small>只影响文档大纲；锚点会自动只显示当前文档的主标题层级。</small></span
+              ><NSelect
+                :value="String(settings.jumpAidMaxLevel)"
+                :options="jumpAidMaxLevelOptions"
+                @update:value="
+                  update('jumpAidMaxLevel', Number($event) as AppSettings['jumpAidMaxLevel'])
+                "
+              />
+            </div>
             <div class="settings-row">
               <span><strong>自动保存</strong><small>停止输入多久后写入知识库。</small></span
               ><NSelect
@@ -489,8 +765,8 @@ function scrollToSection(sectionId: string): void {
               <span><strong>服务商</strong><small>决定请求路由和参数兼容方式。</small></span>
               <NSelect
                 :value="aiSettings.provider"
-                :options="aiProviderOptions"
-                @update:value="updateAi('provider', $event as AiProvider)"
+                :options="AI_PROVIDER_CONFIGS"
+                @update:value="updateAiProvider($event as AiProvider)"
               />
             </div>
             <div class="settings-row">

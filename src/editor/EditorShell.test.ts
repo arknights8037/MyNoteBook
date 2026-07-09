@@ -5,6 +5,7 @@ import { nextTick } from 'vue'
 
 import EditorShell from './EditorShell.vue'
 import type { TiptapDocumentJson } from '@/models/document'
+import { DEFAULT_APP_SETTINGS } from '@/models/settings'
 
 interface EditorShellExpose {
   editor?: Editor
@@ -659,6 +660,90 @@ describe('EditorShell', () => {
     expect(wrapper.find('.math-block--selected').exists()).toBe(false)
     expect(wrapper.find('.editor-block--selected').exists()).toBe(false)
     expect(shell.editor?.state.selection.empty).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('renders document outline jump aid for headings and collapsible headings', async () => {
+    const wrapper = mount(EditorShell, {
+      attachTo: document.body,
+      props: {
+        settings: { ...DEFAULT_APP_SETTINGS, jumpAid: 'outline', jumpAidMaxLevel: 2 },
+        modelValue: {
+          type: 'doc',
+          content: [
+            {
+              type: 'heading',
+              attrs: { id: '11111111-1111-4111-8111-111111111111', level: 1 },
+              content: [{ type: 'text', text: '一级标题' }],
+            },
+            {
+              type: 'collapsibleBlock',
+              attrs: {
+                id: '22222222-2222-4222-8222-222222222222',
+                variant: 'heading',
+                headingLevel: 2,
+                title: '折叠标题',
+              },
+              content: [{ type: 'paragraph', content: [{ type: 'text', text: '内容' }] }],
+            },
+            {
+              type: 'heading',
+              attrs: { id: '44444444-4444-4444-8444-444444444444', level: 3 },
+              content: [{ type: 'text', text: '三级标题' }],
+            },
+            {
+              type: 'paragraph',
+              attrs: { id: '33333333-3333-4333-8333-333333333333' },
+              content: [{ type: 'text', text: '正文' }],
+            },
+          ],
+        },
+      },
+    })
+
+    await nextTick()
+    await flushPromises()
+
+    expect(wrapper.find('.editor-jump-aid--outline').exists()).toBe(true)
+    expect(wrapper.findAll('.editor-jump-aid__item')).toHaveLength(2)
+    expect(wrapper.find('.editor-jump-aid').text()).toContain('一级标题')
+    expect(wrapper.find('.editor-jump-aid').text()).toContain('折叠标题')
+    expect(wrapper.find('.editor-jump-aid').text()).not.toContain('三级标题')
+    wrapper.unmount()
+  })
+
+  it('renders anchor jump aid only for the primary heading level', async () => {
+    const wrapper = mount(EditorShell, {
+      attachTo: document.body,
+      props: {
+        settings: { ...DEFAULT_APP_SETTINGS, jumpAid: 'anchors', jumpAidPosition: 'left' },
+        modelValue: {
+          type: 'doc',
+          content: [
+            {
+              type: 'heading',
+              attrs: { id: '11111111-1111-4111-8111-111111111111', level: 1 },
+              content: [{ type: 'text', text: '一级标题' }],
+            },
+            {
+              type: 'heading',
+              attrs: { id: '22222222-2222-4222-8222-222222222222', level: 2 },
+              content: [{ type: 'text', text: '二级标题' }],
+            },
+          ],
+        },
+      },
+    })
+
+    await nextTick()
+    await flushPromises()
+
+    expect(wrapper.find('.editor-jump-aid--anchors').exists()).toBe(true)
+    expect(wrapper.find('.editor-jump-aid--left').exists()).toBe(true)
+    expect(wrapper.findAll('.editor-jump-aid__item')).toHaveLength(1)
+    expect(wrapper.find('.editor-jump-aid__item').classes()).toContain(
+      'editor-jump-aid__item--level-1',
+    )
     wrapper.unmount()
   })
 })

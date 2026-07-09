@@ -21,6 +21,14 @@ export interface AiRunInput {
   signal?: AbortSignal
 }
 
+export interface AiProviderConfig {
+  value: AiProvider
+  label: string
+  description: string
+  endpoint: string
+  models: string[]
+}
+
 const AI_SETTINGS_STORAGE_KEY = 'my-notebook:ai-settings'
 
 export const DEFAULT_AI_SETTINGS: AiSettings = {
@@ -34,6 +42,60 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   temperature: 0.4,
   topP: 1,
   maxTokens: 2048,
+}
+
+export const AI_PROVIDER_CONFIGS: AiProviderConfig[] = [
+  {
+    value: 'openai',
+    label: 'OpenAI',
+    description: 'Chat Completions',
+    endpoint: DEFAULT_AI_SETTINGS.endpoint,
+    models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-5-mini', 'gpt-5'],
+  },
+  {
+    value: 'anthropic',
+    label: 'Anthropic',
+    description: 'Claude Messages',
+    endpoint: 'https://api.anthropic.com/v1',
+    models: ['claude-sonnet-4-5', 'claude-opus-4-1', 'claude-3-5-haiku-latest'],
+  },
+  {
+    value: 'deepseek',
+    label: 'DeepSeek',
+    description: 'OpenAI-compatible',
+    endpoint: 'https://api.deepseek.com',
+    models: ['deepseek-chat', 'deepseek-reasoner'],
+  },
+  {
+    value: 'qwen',
+    label: '通义千问',
+    description: 'DashScope 兼容模式',
+    endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    models: ['qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen3-plus', 'qwen3-max'],
+  },
+  {
+    value: 'openai-compatible',
+    label: '兼容接口',
+    description: '自定义 OpenAI-compatible',
+    endpoint: DEFAULT_AI_SETTINGS.endpoint,
+    models: [DEFAULT_AI_SETTINGS.model],
+  },
+]
+
+export function getAiProviderConfig(provider: AiProvider): AiProviderConfig {
+  return AI_PROVIDER_CONFIGS.find((option) => option.value === provider) ?? AI_PROVIDER_CONFIGS[0]
+}
+
+export function applyAiProviderDefaults(settings: AiSettings, provider: AiProvider): AiSettings {
+  const config = getAiProviderConfig(provider)
+  const shouldKeepCustomValues = settings.provider === provider || provider === 'openai-compatible'
+
+  return {
+    ...settings,
+    provider,
+    endpoint: shouldKeepCustomValues ? settings.endpoint : config.endpoint,
+    model: shouldKeepCustomValues ? settings.model : config.models[0],
+  }
 }
 
 export function loadAiSettings(): AiSettings {

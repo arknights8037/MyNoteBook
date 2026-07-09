@@ -5,6 +5,28 @@ import { nextTick } from 'vue'
 import MathBlockNodeView from './MathBlockNodeView.vue'
 
 describe('MathBlockNodeView', () => {
+  it('renders the existing formula preview after the node view mounts', async () => {
+    const wrapper = mount(MathBlockNodeView, {
+      attachTo: document.body,
+      props: {
+        node: { attrs: { latex: '\\sqrt{x}\\times2\\times\\frac{a}{b}', mathml: '' } },
+        selected: false,
+        updateAttributes: vi.fn(),
+      },
+      global: {
+        stubs: {
+          NodeViewWrapper: { template: '<div><slot /></div>' },
+        },
+      },
+    })
+
+    await nextTick()
+    await nextTick()
+
+    expect(wrapper.find('.math-block__rendered .katex').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('opens the formula type panel when the math block is selected', async () => {
     const wrapper = mount(MathBlockNodeView, {
       attachTo: document.body,

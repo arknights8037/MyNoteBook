@@ -32,6 +32,11 @@ struct StoredAsset {
 }
 
 #[tauri::command]
+fn get_system_fonts() -> Vec<String> {
+    system_fonts()
+}
+
+#[tauri::command]
 fn get_default_data_directory(app: AppHandle) -> Result<String, String> {
     default_data_directory(&app)
         .map(|path| path.to_string_lossy().into_owned())
@@ -129,7 +134,8 @@ fn store_asset_data_url(
     data_url: String,
     original_name: String,
 ) -> Result<StoredAsset, String> {
-    let data_directory = configured_data_directory(&app, data_directory).map_err(|error| error.to_string())?;
+    let data_directory =
+        configured_data_directory(&app, data_directory).map_err(|error| error.to_string())?;
     let assets_directory = data_directory.join("assets");
     fs::create_dir_all(&assets_directory).map_err(|error| format!("无法创建附件目录：{error}"))?;
 
@@ -190,6 +196,80 @@ fn write_text_file(path: String, content: String) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|error| format!("无法创建导出目录：{error}"))?;
     }
     fs::write(&path, content).map_err(|error| format!("导出文件失败：{error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn system_fonts() -> Vec<String> {
+    use std::collections::BTreeSet;
+    use winreg::{enums::HKEY_LOCAL_MACHINE, RegKey};
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let Ok(fonts_key) = hklm.open_subkey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts")
+    else {
+        return fallback_fonts();
+    };
+
+    let mut fonts = BTreeSet::new();
+    for item in fonts_key.enum_values().flatten() {
+        if let Some(font_name) = normalize_windows_font_name(&item.0) {
+            fonts.insert(font_name);
+        }
+    }
+
+    let fonts: Vec<String> = fonts.into_iter().collect();
+    if fonts.is_empty() {
+        fallback_fonts()
+    } else {
+        fonts
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn system_fonts() -> Vec<String> {
+    fallback_fonts()
+}
+
+fn fallback_fonts() -> Vec<String> {
+    [
+        "Arial",
+        "Helvetica Neue",
+        "Inter",
+        "Microsoft YaHei",
+        "Noto Sans CJK SC",
+        "PingFang SC",
+        "Segoe UI",
+        "SimHei",
+        "SimSun",
+        "Source Han Sans SC",
+    ]
+    .iter()
+    .map(|font| font.to_string())
+    .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn normalize_windows_font_name(value: &str) -> Option<String> {
+    let without_suffix = value
+        .replace("(TrueType)", "")
+        .replace("(OpenType)", "")
+        .replace("&", ",");
+    let primary = without_suffix.split(',').next()?.trim();
+    let normalized = primary
+        .split_whitespace()
+        .filter(|part| {
+            !matches!(
+                part.to_ascii_lowercase().as_str(),
+                "regular" | "bold" | "italic" | "light" | "medium" | "semibold" | "black"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
 }
 
 fn default_data_directory(app: &AppHandle) -> Result<PathBuf, tauri::Error> {
@@ -332,6 +412,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            get_system_fonts,
             get_default_data_directory,
             migrate_data_directory,
             store_asset_data_url,

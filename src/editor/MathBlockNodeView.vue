@@ -164,6 +164,7 @@ watch(
 
 onMounted(() => {
   globalThis.document.addEventListener('pointerdown', closePanelOnOutsidePointerDown, true)
+  void nextTick(renderFormulaPreview)
 })
 
 onBeforeUnmount(() => {

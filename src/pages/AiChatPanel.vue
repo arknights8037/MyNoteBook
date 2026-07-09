@@ -123,6 +123,7 @@ function updatePrompt(event: InstanceType<typeof globalThis.Event>): void {
           <span>{{ chatMessage.role === 'user' ? '你' : 'AI' }}</span>
           <em>{{ chatMessage.mode === 'ask' ? 'ask' : 'edit' }}</em>
         </header>
+        <!-- eslint-disable-next-line vue/no-v-html -- renderer escapes text and filters unsafe links -->
         <div class="markdown-preview" v-html="renderMarkdownMessage(chatMessage.content)"></div>
         <footer v-if="chatMessage.role === 'assistant' && chatMessage.content.trim()">
           <button

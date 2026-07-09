@@ -137,6 +137,7 @@ const pendingImagePosition = ref<number | null>(null)
 const pendingAttachmentPosition = ref<number | null>(null)
 const contextBlockPosition = ref<number | null>(null)
 const retainedBlockAvailable = ref(hasRetainedBlock())
+const editorRevision = ref(0)
 const INTERNAL_DOCUMENT_LINK_PREFIX = '#document='
 const editorAppearanceStyle = computed(() => ({
   '--editor-content-width': { compact: '720px', standard: '850px', wide: '1000px' }[
@@ -146,6 +147,8 @@ const editorAppearanceStyle = computed(() => ({
   '--editor-line-height': { compact: '1.5', comfortable: '1.72', relaxed: '2' }[
     props.settings.lineHeight
   ],
+  '--editor-western-font-family': toCssFontFamily(props.settings.westernFontFamily),
+  '--editor-chinese-font-family': toCssFontFamily(props.settings.chineseFontFamily),
 }))
 const bubbleMenuOptions = {
   strategy: 'fixed' as const,
@@ -170,6 +173,20 @@ const MENU_ICON_COMPONENTS = {
   table: Table2,
 }
 
+interface JumpAidItem {
+  id: string
+  title: string
+  level: number
+  index: number
+}
+
+interface EditorJsonNode {
+  type?: string
+  text?: string
+  attrs?: Record<string, unknown>
+  content?: EditorJsonNode[]
+}
+
 const editor = useEditor({
   content: initialContent.value,
   editable: !props.readonly,
@@ -190,6 +207,7 @@ const editor = useEditor({
     },
   },
   onCreate: ({ editor: activeEditor }) => {
+    editorRevision.value += 1
     syncTextColor(activeEditor)
     syncHighlightColor(activeEditor)
     emit('ready')
@@ -199,12 +217,25 @@ const editor = useEditor({
     syncHighlightColor(activeEditor)
   },
   onUpdate: ({ editor: activeEditor }) => {
+    editorRevision.value += 1
     syncTextColor(activeEditor)
     syncHighlightColor(activeEditor)
     emit('update:modelValue', activeEditor.getJSON() as TiptapDocumentJson)
     emit('textUpdate', activeEditor.getText())
   },
 })
+
+const allJumpAidItems = computed(() => {
+  const revision = editorRevision.value
+  void revision
+  return collectJumpAidItems((props.modelValue ?? editor.value?.getJSON()) as TiptapDocumentJson)
+})
+const jumpAidPosition = computed(() => props.settings.jumpAidPosition ?? 'right')
+const jumpAidMaxLevel = computed(() => props.settings.jumpAidMaxLevel ?? 4)
+const jumpAidItems = computed(() => filterJumpAidItems(allJumpAidItems.value))
+const showJumpAid = computed(
+  () => props.settings.jumpAid !== 'off' && jumpAidItems.value.length > 0,
+)
 
 function shouldShowBubbleMenu({
   editor: activeEditor,
@@ -770,8 +801,101 @@ function getCurrentLinkHref(activeEditor: Editor): string {
   return ''
 }
 
+function collectJumpAidItems(document: TiptapDocumentJson | undefined): JumpAidItem[] {
+  const content = Array.isArray(document?.content) ? (document.content as EditorJsonNode[]) : []
+  const items: JumpAidItem[] = []
+
+  content.forEach((node, index) => {
+    const id = typeof node.attrs?.id === 'string' ? node.attrs.id : ''
+    if (!id) return
+
+    if (node.type === 'heading') {
+      items.push({
+        id,
+        index,
+        level: clampHeadingLevel(node.attrs?.level),
+        title: getNodePlainText(node) || '未命名标题',
+      })
+      return
+    }
+
+    if (node.type === 'collapsibleBlock' && node.attrs?.variant !== 'list') {
+      items.push({
+        id,
+        index,
+        level: clampHeadingLevel(node.attrs?.headingLevel),
+        title:
+          typeof node.attrs.title === 'string' && node.attrs.title.trim()
+            ? node.attrs.title
+            : '可折叠标题',
+      })
+    }
+  })
+
+  return items
+}
+
+function filterJumpAidItems(items: JumpAidItem[]): JumpAidItem[] {
+  if (props.settings.jumpAid === 'anchors') {
+    const primaryLevel = getPrimaryHeadingLevel(items)
+    return primaryLevel === null ? [] : items.filter((item) => item.level === primaryLevel)
+  }
+
+  if (props.settings.jumpAid === 'outline') {
+    return items.filter((item) => item.level <= jumpAidMaxLevel.value)
+  }
+
+  return []
+}
+
+function getPrimaryHeadingLevel(items: JumpAidItem[]): number | null {
+  if (items.length === 0) return null
+  return Math.min(...items.map((item) => item.level))
+}
+
+function getNodePlainText(node: EditorJsonNode): string {
+  if (typeof node.text === 'string') return node.text
+  if (!Array.isArray(node.content)) return ''
+  return node.content.map(getNodePlainText).join('').trim()
+}
+
+function clampHeadingLevel(value: unknown): number {
+  const level = Number(value)
+  return Number.isFinite(level) ? Math.max(1, Math.min(4, Math.round(level))) : 2
+}
+
+function jumpToBlock(item: JumpAidItem): void {
+  const selector = `[data-editor-block-id="${escapeAttributeSelectorValue(item.id)}"]`
+  const block =
+    editor.value?.view.dom.querySelector<InstanceType<typeof globalThis.HTMLElement>>(selector)
+
+  block?.scrollIntoView({
+    behavior: props.settings.reduceMotion ? 'auto' : 'smooth',
+    block: 'start',
+  })
+}
+
+function escapeAttributeSelectorValue(value: string): string {
+  return value.replace(/["\\]/g, '\\$&')
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function toCssFontFamily(value: string): string {
+  return value
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) =>
+      /^(?:serif|sans-serif|monospace|cursive|fantasy|system-ui|ui-serif|ui-sans-serif|ui-monospace)$/i.test(
+        part,
+      )
+        ? part
+        : `"${part.replace(/["\\]/g, '')}"`,
+    )
+    .join(', ')
 }
 
 watch(
@@ -1291,6 +1415,27 @@ defineExpose({
             </NTooltip>
           </NButtonGroup>
         </BubbleMenu>
+        <nav
+          v-if="showJumpAid"
+          class="editor-jump-aid"
+          :class="[`editor-jump-aid--${settings.jumpAid}`, `editor-jump-aid--${jumpAidPosition}`]"
+          aria-label="文档跳转辅助"
+        >
+          <button
+            v-for="item in jumpAidItems"
+            :key="item.id"
+            type="button"
+            class="editor-jump-aid__item"
+            :class="`editor-jump-aid__item--level-${item.level}`"
+            :title="item.title"
+            @click="jumpToBlock(item)"
+          >
+            <span class="editor-jump-aid__dot" aria-hidden="true"></span>
+            <span v-if="settings.jumpAid === 'outline'" class="editor-jump-aid__label">{{
+              item.title
+            }}</span>
+          </button>
+        </nav>
         <EditorContent :editor="editor" />
       </div>
     </ContextMenuTrigger>

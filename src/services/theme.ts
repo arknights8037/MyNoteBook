@@ -401,13 +401,24 @@ export const THEME_DEFINITIONS: Record<ThemeId, ThemeDefinition> = {
   },
 }
 
+export const THEME_DISPLAY_NAMES: Record<ThemeId, string> = {
+  'paper-light': '纸张浅色',
+  'clay-light': '陶土浅色',
+  'nord-dark': '北境深色',
+  'graphite-dark': '石墨深色',
+}
+
 export const THEME_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
   { value: 'system', label: '跟随系统' },
-  { value: 'paper-light', label: THEME_DEFINITIONS['paper-light'].name },
-  { value: 'clay-light', label: THEME_DEFINITIONS['clay-light'].name },
-  { value: 'nord-dark', label: THEME_DEFINITIONS['nord-dark'].name },
-  { value: 'graphite-dark', label: THEME_DEFINITIONS['graphite-dark'].name },
+  { value: 'paper-light', label: THEME_DISPLAY_NAMES['paper-light'] },
+  { value: 'clay-light', label: THEME_DISPLAY_NAMES['clay-light'] },
+  { value: 'nord-dark', label: THEME_DISPLAY_NAMES['nord-dark'] },
+  { value: 'graphite-dark', label: THEME_DISPLAY_NAMES['graphite-dark'] },
 ]
+
+export function getThemeDisplayName(themeId: ThemeId): string {
+  return THEME_DISPLAY_NAMES[themeId]
+}
 
 export function isThemeId(value: unknown): value is ThemeId {
   return typeof value === 'string' && value in THEME_DEFINITIONS
