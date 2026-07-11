@@ -15,6 +15,7 @@ describe('SettingsPage', () => {
     expect(wrapper.text()).toContain('数据存储')
     expect(wrapper.text()).toContain('快捷键')
     expect(wrapper.text()).toContain('复制当前块')
+    expect(wrapper.text()).toContain('允许开发模式')
 
     await wrapper.get('button[aria-label="返回文章"]').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)

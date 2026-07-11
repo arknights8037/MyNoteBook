@@ -1,0 +1,277 @@
+.editor-shell__content {
+  color: var(--color-text-primary);
+}
+
+.editor-shell__content .editor-block {
+  color: var(--color-text-primary);
+  background: transparent;
+}
+
+.editor-shell__content .editor-block:hover::after {
+  background: color-mix(in srgb, var(--color-editor-block-hover) 82%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-border-default) 28%, transparent);
+}
+
+.editor-shell__content .editor-block--selected::after {
+  background: color-mix(in srgb, var(--color-editor-block-selected) 62%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-accent-primary) 18%, transparent),
+    inset 3px 0 0 color-mix(in srgb, var(--color-accent-primary) 66%, transparent);
+}
+
+.editor-shell__content .editor-block--pressed::after,
+.editor-shell__content .editor-block--dragging::after {
+  background: color-mix(in srgb, var(--color-accent-primary) 9%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-accent-primary) 36%, transparent),
+    inset 3px 0 0 color-mix(in srgb, var(--color-accent-primary) 72%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--color-focus-ring) 13%, transparent),
+    0 12px 28px color-mix(in srgb, var(--color-accent-primary) 9%, transparent);
+}
+
+.block-control-handle,
+.editor-shell__content .editor-block-container__content::before {
+  color: var(--color-editor-block-handle);
+}
+
+.editor-shell__content > [data-indent-level]::before {
+  background: var(--color-editor-indent-guide);
+}
+
+.editor-shell__content .is-empty[data-placeholder]::before,
+.math-block__placeholder,
+.collapsible-block__title::placeholder,
+.code-block-node__title .n-input__input-el::placeholder,
+.vtable-block__search input::placeholder,
+.ai-chat-composer textarea::placeholder,
+.settings-textarea::placeholder {
+  color: var(--color-text-placeholder);
+}
+
+.editor-shell__content a,
+.markdown-preview a {
+  color: var(--color-text-link);
+}
+
+.editor-shell__content blockquote,
+.markdown-preview blockquote {
+  border-left-color: var(--color-editor-quote-border);
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-editor-quote-border) 10%, transparent);
+}
+
+.editor-shell__content code,
+.markdown-preview code {
+  color: var(--color-text-primary);
+  background: var(--color-editor-inline-code-bg);
+}
+
+.editor-shell__content pre,
+.markdown-preview pre,
+.ai-panel__output {
+  color: var(--color-text-primary);
+  background: var(--color-editor-code-bg);
+}
+
+.editor-shell__content .code-block-node,
+.editor-shell__content .code-block-node:hover,
+.editor-shell__content .editor-block--selected .code-block-node {
+  border-color: var(--color-editor-table-border);
+  color: var(--color-text-primary);
+  background: var(--color-editor-code-bg);
+}
+
+.editor-shell__content .editor-block--pressed .code-block-node,
+.editor-shell__content .editor-block--dragging .code-block-node {
+  border-color: color-mix(
+    in srgb,
+    var(--color-accent-primary) 42%,
+    var(--color-editor-table-border)
+  );
+  background: color-mix(in srgb, var(--color-accent-primary) 8%, var(--color-editor-code-bg));
+}
+
+.code-block-node__toolbar,
+.code-block-node__gutter {
+  border-color: var(--color-border-subtle);
+  color: var(--color-text-tertiary);
+  background: color-mix(in srgb, var(--color-editor-code-bg) 78%, var(--color-bg-surface));
+}
+
+.code-block-node__actions,
+.code-block-node__chevron,
+.code-block-node__wrap {
+  color: var(--color-text-tertiary);
+}
+
+.code-block-node__wrap:hover {
+  color: var(--color-accent-primary);
+}
+
+.code-block-node__title .n-input__input-el {
+  color: var(--color-text-secondary);
+}
+
+.code-block-node__title:focus-within .n-input__input-el {
+  color: var(--color-text-primary);
+}
+
+.code-block-node__divider,
+.document-card-menu__separator,
+.editor-context-menu__separator,
+.bubble-toolbar__separator,
+.vtable-block__menu-separator {
+  background: var(--color-border-subtle);
+}
+
+.code-block-node__mermaid-preview,
+.code-block-node__mermaid-status,
+.code-block-node__mermaid-empty,
+.table-block,
+.vtable-block {
+  border-color: var(--color-editor-table-border);
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+}
+
+.code-block-node__mermaid-preview {
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-border-subtle) 42%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      color-mix(in srgb, var(--color-border-subtle) 42%, transparent) 1px,
+      transparent 1px
+    ),
+    color-mix(in srgb, var(--color-bg-elevated) 86%, var(--color-editor-code-bg));
+}
+
+.code-block-node__mermaid-status,
+.code-block-node__mermaid-empty {
+  border-color: var(--color-border-default);
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-bg-elevated) 82%, transparent);
+}
+
+.editor-shell__content .code-block-node code {
+  color: var(--color-text-primary);
+}
+
+.editor-shell__content .hljs-keyword,
+.editor-shell__content .hljs-selector-tag,
+.editor-shell__content .hljs-built_in {
+  color: color-mix(in srgb, var(--color-accent-primary) 78%, var(--color-text-primary));
+}
+
+.editor-shell__content .hljs-string,
+.editor-shell__content .hljs-attr,
+.editor-shell__content .hljs-symbol {
+  color: var(--color-status-success);
+}
+
+.editor-shell__content .hljs-number,
+.editor-shell__content .hljs-literal {
+  color: var(--color-status-warning);
+}
+
+.editor-shell__content .hljs-comment,
+.editor-shell__content .hljs-quote {
+  color: var(--color-text-tertiary);
+}
+
+.editor-shell__content .hljs-title,
+.editor-shell__content .hljs-name,
+.editor-shell__content .hljs-section {
+  color: var(--color-text-link);
+}
+
+.editor-shell__content .hljs-meta,
+.editor-shell__content .hljs-template-variable,
+.editor-shell__content .hljs-variable {
+  color: var(--color-status-error);
+}
+
+.math-block {
+  border-color: transparent;
+  color: var(--color-text-primary);
+  background: transparent;
+}
+
+.code-block-node__mermaid-error,
+.math-block__error,
+.ai-chat-message--error .markdown-preview,
+.ai-chat-popover__error,
+.ai-panel__error,
+.document-card-menu__item--danger,
+.editor-context-menu__item--danger {
+  color: var(--color-status-error);
+}
+
+.code-block-node__mermaid-error,
+.math-block__error,
+.ai-chat-message--error .markdown-preview,
+.document-card-menu__item--danger[data-highlighted],
+.editor-context-menu__item--danger[data-highlighted] {
+  border-color: color-mix(in srgb, var(--color-status-error) 44%, var(--color-border-default));
+  background: color-mix(in srgb, var(--color-status-error) 12%, var(--color-bg-elevated));
+}
+
+.table-block--selected,
+.attachment-block--selected {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 52%, var(--color-border-default));
+  outline-color: color-mix(in srgb, var(--color-accent-primary) 46%, transparent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--color-focus-ring) 18%, transparent),
+    0 12px 28px color-mix(in srgb, var(--color-accent-primary) 8%, transparent);
+}
+
+.math-block--selected {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.math-block--selected .math-block__field {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 48%, var(--color-border-default));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-focus-ring) 16%, transparent);
+}
+
+.vtable-block__header,
+.vtable-block__footer,
+.vtable-block__toolbar,
+.math-block__header {
+  border-color: var(--color-editor-table-border);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-surface);
+}
+
+.vtable-block__mark,
+.math-block__field-icon {
+  color: var(--color-accent-primary);
+  background: var(--color-accent-soft);
+}
+
+.vtable-block__search,
+.vtable-block__selection b,
+.vtable-block__actions > button:not(.vtable-block__primary-action),
+.vtable-block__more summary,
+.vtable-block__menu,
+.vtable-field-menu,
+.vtable-field-menu__enum,
+.vtable-field-menu input[type='text'],
+.vtable-field-menu select,
+.vtable-field-menu textarea,
+.vtable-field-menu__chips span,
+.math-block__field,
+.math-block__result-row,
+.math-block__latex-row,
+.math-block__latex-row > span,
+.math-block__popover,
+.math-block__type-list,
+.math-block__template-button,
+.math-block__symbol-grid button {
+  border-color: var(--color-border-default);
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+}

@@ -47,6 +47,7 @@ describe('app settings', () => {
         westernFontFamily: ' Inter , Arial ',
         sensitiveActionPasswordEnabled: true,
         sensitiveActionPasswordHash: validHash.toUpperCase(),
+        allowDeveloperMode: true,
       }),
     ).toMatchObject({
       jumpAid: 'outline',
@@ -56,6 +57,7 @@ describe('app settings', () => {
       westernFontFamily: 'Inter, Arial',
       sensitiveActionPasswordEnabled: true,
       sensitiveActionPasswordHash: validHash,
+      allowDeveloperMode: true,
     })
 
     expect(
@@ -69,6 +71,9 @@ describe('app settings', () => {
       'right',
     )
     expect(normalizeAppSettings({ jumpAidMaxLevel: 8 as never }).jumpAidMaxLevel).toBe(4)
+    expect(normalizeAppSettings({ allowDeveloperMode: 'yes' as never }).allowDeveloperMode).toBe(
+      false,
+    )
   })
 
   it('normalizes and matches configurable shortcuts', () => {

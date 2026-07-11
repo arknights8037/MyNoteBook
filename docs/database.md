@@ -1,0 +1,61 @@
+# 数据库持久化与运维
+
+## 唯一 Schema 所有者
+
+SQLite schema 只由 `src-tauri/migrations/` 中的 SQLx 迁移管理。应用启动时 Rust 端按版本执行迁移，并把 checksum 写入 `_sqlx_migrations`。
+
+前端不再执行 `CREATE TABLE`、`ALTER TABLE` 或补列逻辑。这样避免了两个运行时同时管理 schema，防止“每次打开都提示迁移”或已应用迁移 checksum 不匹配。
+
+**规则：已发布迁移不可修改、不可删除、不可重排。** Schema 变更必须新建下一个编号迁移。例如 `0006_add_x.sql`。历史迁移是已有用户数据的版本链，不是运行时兼容代码。
+
+## 当前持久化内容
+
+| 域         | 表/文件                                                                           |
+| ---------- | --------------------------------------------------------------------------------- |
+| 文档与层级 | `documents`；只读块投影 `blocks`                                                  |
+| 标签       | `tags`、`document_tags`                                                           |
+| 附件元数据 | `assets`；二进制文件位于数据库同级 `assets/`                                      |
+| 全文检索   | FTS5 `document_search` 与同步触发器                                               |
+| Agent 审计 | `agent_*` 表                                                                      |
+| API Key    | AES-256-GCM 密文文件；随机数据密钥由系统凭据库保护，不进入 SQLite 或 localStorage |
+
+API Key 首次使用时从系统凭据库取得数据密钥并完成一次 AES-GCM 解密，随后缓存在应用进程内存中。Agent 请求不会重复执行 KDF、系统凭据读取或 AES 解密。写入时使用新的随机 nonce，GCM 认证标签同时校验密文完整性。
+
+文档以 `content_json`、`plain_text`、`revision` 保存。`revision` 是写入与 Agent 撤销的乐观并发保护；任何保存都会递增 revision。
+
+`blocks` 保存顶层块的稳定 ID、类型、顺序、块 JSON、纯文本和所属文档 revision。它是 `content_json` 的只读规范化投影，不是第二写入入口。SQLite trigger 会在普通保存、Agent 写入、撤销、软删除和永久删除所在的同一事务中重建对应文档的块投影，避免双写漂移。业务代码通过 `DocumentRepository.listBlocks` 读取，不直接修改该表。
+
+## 可靠性设置
+
+连接打开后启用：
+
+- `PRAGMA foreign_keys = ON`
+- `PRAGMA journal_mode = WAL`
+- `PRAGMA busy_timeout = 5000`
+- `PRAGMA synchronous = NORMAL`
+- `PRAGMA temp_store = MEMORY`
+
+前端 SQL 连接按数据库 URL 复用；Rust Agent 使用每个数据目录最多 4 个连接的小型池，避免每次工具调用重新建立 SQLite 连接。WAL 模式提高并发读写的可靠性。移动数据目录前会关闭对应连接池，并同时移动 `editor.db`、`editor.db-wal`、`editor.db-shm` 和 `assets/`，避免文件锁与未 checkpoint 提交。
+
+## 旧版数据库加载
+
+打开数据库前，Rust `prepare_database` 会按实际数据目录执行迁移，因此默认目录和自定义目录使用同一条版本链。对于已有 `documents` 等旧表、但没有 `_sqlx_migrations` 的早期数据库，应用会检查真实表与列，写入已存在版本的 SQLx 基线，再继续执行剩余迁移，避免重复 `ALTER TABLE`。
+
+只要检测到已有数据库仍需升级，应用会先执行 WAL checkpoint，并在同目录创建 `editor-pre-migration-<timestamp>.db`。迁移失败时应保留该文件用于恢复，不要手工删除迁移记录。
+
+## 迁移问题排查
+
+如果出现“migration N was previously applied but has been modified”，不要删除 `_sqlx_migrations`、不要手动改 checksum、不要修改现有迁移。恢复该迁移文件到已发布版本，并将新增 SQL 放在一个新的编号迁移中。
+
+开发验证：
+
+```bash
+cd src-tauri
+cargo check
+```
+
+首次打开新数据目录时会创建当前完整 schema；已有数据库只会执行尚未记录的新迁移。迁移执行成功后，再次启动不应有 schema 写操作。
+
+## 备份
+
+关闭应用后备份整个数据目录：`editor.db`、可选的 `editor.db-wal` 与 `editor.db-shm`、以及 `assets/`。不要仅复制单个数据库文件后忽略同目录的 WAL 文件。

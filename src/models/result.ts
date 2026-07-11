@@ -30,10 +30,18 @@ export function normalizeError(error: unknown, fallbackMessage: string): AppErro
     }
   }
 
+  if (typeof error === 'string' && error.trim()) {
+    return { code: 'unknown', message: error.trim(), cause: error }
+  }
+
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = String((error as { message?: unknown }).message ?? '').trim()
+    if (message) return { code: 'unknown', message, cause: error }
+  }
+
   return {
     code: 'unknown',
     message: fallbackMessage,
     cause: error,
   }
 }
-

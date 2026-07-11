@@ -1,0 +1,54 @@
+.attachment-block,
+.plugin-card {
+  border-color: var(--color-content-yellow-border);
+  color: var(--color-content-yellow-text);
+  background: var(--color-content-yellow-bg);
+}
+
+.attachment-block__icon {
+  color: var(--color-content-brown-text);
+  background: var(--color-content-brown-bg);
+}
+
+.attachment-block__body span,
+.attachment-block__body p,
+.plugin-card p,
+.ai-panel__section h2 {
+  color: var(--color-text-secondary);
+}
+
+.share-preview {
+  background: var(--color-bg-editor);
+}
+
+.document-sidebar .sidebar-quickbar__button,
+.document-list .document-list__more,
+.document-list .document-list__toggle {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.document-sidebar .sidebar-quickbar__button:hover,
+.document-list .document-list__more:hover:not(:disabled),
+.document-list .document-list__more[data-state='open'],
+.document-list .document-list__toggle:hover {
+  color: var(--color-text-primary);
+  background: transparent;
+  box-shadow: none;
+}
+
+.vtable-block__body,
+.vtable-block__snapshot,
+.vtable-block__snapshot td {
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+}
+
+.vtable-block__snapshot tr:first-child td {
+  background: var(--color-editor-table-header);
+}
+
+.vtable-block__snapshot td {
+  border-color: var(--color-editor-table-border);
+}

@@ -84,8 +84,28 @@ describe('AiMarkdownService', () => {
       }),
     ).resolves.toBe('hello')
 
-    expect(onDelta).toHaveBeenNthCalledWith(1, 'hel')
-    expect(onDelta).toHaveBeenNthCalledWith(2, 'lo')
+    expect(onDelta).toHaveBeenNthCalledWith(1, 'hel', 'content')
+    expect(onDelta).toHaveBeenNthCalledWith(2, 'lo', 'content')
+  })
+
+  it('streams OpenAI-compatible reasoning content separately from final content', async () => {
+    mockStreamingFetch([
+      'data: {"choices":[{"delta":{"reasoning_content":"先分析"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"结论"}}]}',
+    ])
+    const onDelta = vi.fn()
+
+    await expect(
+      runAiMarkdownCompletion({
+        prompt: '整理',
+        context: '',
+        settings: { ...DEFAULT_AI_SETTINGS, provider: 'deepseek' },
+        onDelta,
+      }),
+    ).resolves.toBe('结论')
+
+    expect(onDelta).toHaveBeenNthCalledWith(1, '先分析', 'reasoning')
+    expect(onDelta).toHaveBeenNthCalledWith(2, '结论', 'content')
   })
 
   it('reads the final Anthropic streaming frame when it has no trailing newline', async () => {
@@ -109,8 +129,33 @@ describe('AiMarkdownService', () => {
       }),
     ).resolves.toBe('hello')
 
-    expect(onDelta).toHaveBeenNthCalledWith(1, 'he')
-    expect(onDelta).toHaveBeenNthCalledWith(2, 'llo')
+    expect(onDelta).toHaveBeenNthCalledWith(1, 'he', 'content')
+    expect(onDelta).toHaveBeenNthCalledWith(2, 'llo', 'content')
+  })
+
+  it('streams Anthropic thinking separately from text output', async () => {
+    mockStreamingFetch([
+      'data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"思考"}}\n\n',
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"正文"}}',
+    ])
+    const onDelta = vi.fn()
+
+    await expect(
+      runAiMarkdownCompletion({
+        prompt: '整理',
+        context: '',
+        settings: {
+          ...DEFAULT_AI_SETTINGS,
+          provider: 'anthropic',
+          endpoint: 'https://api.anthropic.com/v1',
+          model: 'claude-sonnet-4-5',
+        },
+        onDelta,
+      }),
+    ).resolves.toBe('正文')
+
+    expect(onDelta).toHaveBeenNthCalledWith(1, '思考', 'reasoning')
+    expect(onDelta).toHaveBeenNthCalledWith(2, '正文', 'content')
   })
 
   it('does not send Anthropic thinking when max tokens cannot leave a thinking budget', async () => {

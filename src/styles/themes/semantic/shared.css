@@ -1,0 +1,232 @@
+/* Semantic theme token overrides. Keep component rules above as layout; colors flow from tokens. */
+html,
+body,
+#app,
+.app-shell,
+.editor-workspace {
+  color: var(--color-text-primary);
+  background: var(--color-bg-app);
+}
+
+::selection {
+  color: var(--color-text-primary);
+  background: var(--color-selection);
+}
+
+* {
+  scrollbar-color: color-mix(in srgb, var(--color-text-tertiary) 46%, transparent) transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-text-tertiary) 38%, transparent);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-text-secondary) 58%, transparent);
+  background-clip: padding-box;
+}
+
+.editor-panel,
+.document-workspace,
+.editor-shell,
+.topbar,
+.editor-workspace__header {
+  color: var(--color-text-primary);
+  background: var(--color-bg-editor);
+}
+
+.document-sidebar,
+.settings-nav {
+  color: var(--color-text-secondary);
+  background: var(--color-bg-sidebar);
+  border-color: var(--color-border-subtle);
+}
+
+.topbar,
+.editor-workspace__header,
+.ai-chat-popover__header,
+.ai-chat-composer,
+.ui-dialog-card__header,
+.ui-dialog-card__footer,
+.ui-drawer-content__header,
+.settings-row + .settings-row {
+  border-color: var(--color-border-subtle);
+}
+
+.ui-button,
+.ui-input,
+.ui-select,
+.ui-popover,
+.ai-chat-menu,
+.ui-dialog-card,
+.ui-drawer,
+.ui-select-content,
+.ui-toast,
+.ui-alert-dialog,
+.document-card-menu,
+.editor-context-menu,
+.bubble-toolbar,
+.slash-command,
+.settings-card,
+.floating-help__button,
+.import-option-card,
+.document-properties__textarea,
+.settings-textarea,
+.ai-chat-message footer button {
+  border-color: var(--color-border-default);
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+}
+
+.ui-button:hover:not(:disabled),
+.ui-dialog-card__close:hover,
+.document-card-menu__item[data-highlighted],
+.editor-context-menu__item[data-highlighted],
+.sidebar-quickbar__button:hover,
+.icon-button:hover:not(:disabled),
+.document-list__toggle:hover,
+.document-list__more:hover:not(:disabled),
+.document-list__more[data-state='open'],
+.market-link:hover,
+.market-link--active,
+.topbar__text-button:hover,
+.topbar__icon-button:hover,
+.import-option-card:hover,
+.import-option-card:focus-visible,
+.search-results__item:hover,
+.search-results__item:focus-visible,
+.bubble-toolbar__button:hover,
+.bubble-toolbar__button--active,
+.slash-command__item:hover,
+.slash-command__item--selected {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.ui-button:focus-visible,
+.ui-select:focus-visible,
+.ui-input:focus-within,
+.topbar-title-input:focus,
+.search-results__item:focus-visible,
+.import-option-card:focus-visible {
+  border-color: var(--color-accent-primary);
+  outline-color: color-mix(in srgb, var(--color-focus-ring) 42%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-focus-ring) 22%, transparent);
+}
+
+.ui-button--primary,
+.ai-chat-composer__actions button[type='submit'],
+.vtable-block__toolbar .vtable-block__primary-action,
+.vtable-field-menu__apply,
+.attachment-block__action {
+  border-color: var(--color-accent-primary);
+  color: var(--color-text-on-accent);
+  background: var(--color-accent-primary);
+}
+
+.ui-button--primary:hover:not(:disabled),
+.ai-chat-composer__actions button[type='submit']:hover:not(:disabled),
+.vtable-block__toolbar .vtable-block__primary-action:hover:not(:disabled),
+.attachment-block__action:hover {
+  border-color: var(--color-accent-hover);
+  color: var(--color-text-on-accent);
+  background: var(--color-accent-hover);
+}
+
+.ui-button--secondary,
+.ui-input__clear,
+.ui-color-picker input,
+.shortcut-recorder,
+.theme-option,
+.ai-chat-selector--primary,
+.vtable-block__selection b {
+  border-color: var(--color-border-default);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-surface);
+}
+
+.ui-select-content .ui-select-item {
+  color: var(--color-text-primary);
+  background: transparent;
+}
+
+.ui-select-content .ui-select-item[data-highlighted] {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.ui-select-content .ui-select-item[data-state='checked'] {
+  color: var(--color-accent-primary);
+  background: var(--color-accent-soft);
+}
+
+.ui-select-item__indicator {
+  color: var(--color-accent-primary);
+}
+
+.ui-button--quaternary,
+.ui-button--text,
+.icon-button,
+.sidebar-quickbar__button,
+.document-list__toggle,
+.document-list__more,
+.market-link,
+.topbar__text-button,
+.topbar__icon-button,
+.block-control-handle {
+  color: var(--color-text-tertiary);
+  background: transparent;
+}
+
+.ui-input__prefix,
+.ui-input__clear,
+.ui-input__count,
+.editor-workspace__eyebrow,
+.save-status,
+.document-list__meta,
+.document-list__empty,
+.document-list__subheading,
+.sidebar-section-heading,
+.settings-page__header p,
+.settings-section__header p,
+.settings-row small,
+.settings-note,
+.search-results__snippet,
+.search-results__empty,
+.search-results__hint,
+.markdown-preview__empty,
+.ai-chat-message footer,
+.ai-chat-message > header {
+  color: var(--color-text-tertiary);
+}
+
+.ui-button:disabled,
+.ui-input--disabled,
+.ui-select[data-disabled],
+.document-list__select:disabled {
+  color: var(--color-text-disabled);
+}
+
+:root[data-theme-mode='dark'] .settings-nav__item,
+:root[data-theme-mode='dark'] .settings-section__header p,
+:root[data-theme-mode='dark'] .settings-row small,
+:root[data-theme-mode='dark'] .settings-nav__hint,
+:root[data-theme-mode='dark'] .theme-option__body small {
+  color: color-mix(in srgb, var(--color-text-secondary) 82%, var(--color-text-primary));
+}
+
+:root[data-theme-mode='dark'] .settings-row strong,
+:root[data-theme-mode='dark'] .settings-section__header h2 {
+  color: var(--color-text-primary);
+}
+
+.ui-tooltip {
+  color: var(--color-bg-elevated);
+  background: var(--color-text-primary);
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 18%, transparent);
+}
+
+.ui-dialog-overlay {
+  background: color-mix(in srgb, #000 36%, transparent);
+}

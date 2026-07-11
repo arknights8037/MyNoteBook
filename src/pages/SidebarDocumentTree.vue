@@ -10,6 +10,12 @@ import {
   Trash2,
 } from '@lucide/vue'
 import {
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuPortal,
+  ContextMenuRoot,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuPortal,
@@ -18,7 +24,7 @@ import {
   DropdownMenuTrigger,
 } from 'reka-ui'
 
-import type { SidebarDocumentNode } from './documentTree'
+import type { SidebarDocumentNode } from '@/features/documents/documentTree'
 import type { DocumentId, DocumentSummary } from '@/models/document'
 import { NButton, NIcon, NTooltip } from '@/ui'
 
@@ -59,112 +65,147 @@ function displayTitle(document: DocumentSummary): string {
 
 <template>
   <template v-for="node in nodes" :key="node.document.id">
-    <div
-      class="document-list__item document-list__item--article document-list__item--tree"
-      :class="{
-        'document-list__item--active': node.document.id === currentDocumentId,
-        'document-list__item--dragging': node.document.id === draggedArticleId,
-      }"
-      :style="{ '--document-tree-depth': depth }"
-      draggable="true"
-      @dragstart="emit('dragStart', { event: $event, document: node.document })"
-      @dragend="emit('dragEnd')"
-    >
-      <button
-        v-if="node.children.length > 0"
-        type="button"
-        class="document-list__toggle"
-        :aria-label="collapsedDocumentIds.has(node.document.id) ? '展开子页面' : '收起子页面'"
-        @click.stop="emit('toggle', node.document.id)"
-      >
-        <ChevronRight v-if="collapsedDocumentIds.has(node.document.id)" :size="14" />
-        <ChevronDown v-else :size="14" />
-      </button>
-      <span v-else class="document-list__toggle-spacer" aria-hidden="true"></span>
+    <ContextMenuRoot>
+      <ContextMenuTrigger as-child>
+        <div
+          class="document-list__item document-list__item--article document-list__item--tree"
+          :class="{
+            'document-list__item--active': node.document.id === currentDocumentId,
+            'document-list__item--dragging': node.document.id === draggedArticleId,
+          }"
+          :style="{ '--document-tree-depth': depth }"
+          draggable="true"
+          @dragstart="emit('dragStart', { event: $event, document: node.document })"
+          @dragend="emit('dragEnd')"
+        >
+          <button
+            v-if="node.children.length > 0"
+            type="button"
+            class="document-list__toggle"
+            :aria-label="collapsedDocumentIds.has(node.document.id) ? '展开子页面' : '收起子页面'"
+            @click.stop="emit('toggle', node.document.id)"
+          >
+            <ChevronRight v-if="collapsedDocumentIds.has(node.document.id)" :size="14" />
+            <ChevronDown v-else :size="14" />
+          </button>
+          <span v-else class="document-list__toggle-spacer" aria-hidden="true"></span>
 
-      <button
-        type="button"
-        class="document-list__select"
-        :disabled="busy"
-        @click="emit('select', node.document.id)"
-      >
-        <FileText :size="16" />
-        <span class="document-list__main">
-          <span class="document-list__title">{{ displayTitle(node.document) }}</span>
-          <span v-if="node.children.length > 0" class="document-list__meta">
-            {{ node.children.length }} 个子页面
+          <button
+            type="button"
+            class="document-list__select"
+            :disabled="busy"
+            @click="emit('select', node.document.id)"
+          >
+            <FileText :size="16" />
+            <span class="document-list__main">
+              <NTooltip trigger="hover">
+                <template #trigger>
+                  <span class="document-list__title">{{ displayTitle(node.document) }}</span>
+                </template>
+                {{ displayTitle(node.document) }}
+              </NTooltip>
+              <span v-if="node.children.length > 0" class="document-list__meta">
+                {{ node.children.length }} 个子页面
+              </span>
+            </span>
+          </button>
+
+          <span class="document-list__actions document-list__actions--menu">
+            <NTooltip trigger="hover">
+              <template #trigger>
+                <NButton
+                  class="document-list__more"
+                  size="tiny"
+                  quaternary
+                  :aria-label="`${displayTitle(node.document)}中新建子页面`"
+                  :disabled="busy"
+                  @click.stop="emit('createChild', node.document.id)"
+                  @dragstart.stop.prevent
+                >
+                  <template #icon
+                    ><NIcon :size="14"><Plus /></NIcon
+                  ></template>
+                </NButton>
+              </template>
+              新建子页面
+            </NTooltip>
+
+            <DropdownMenuRoot>
+              <DropdownMenuTrigger as-child>
+                <NButton
+                  class="document-list__more"
+                  size="tiny"
+                  quaternary
+                  :aria-label="`${displayTitle(node.document)}更多操作`"
+                  :disabled="busy"
+                  @click.stop
+                  @dragstart.stop.prevent
+                >
+                  <template #icon
+                    ><NIcon :size="15"><Ellipsis /></NIcon
+                  ></template>
+                </NButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuPortal>
+                <DropdownMenuContent class="document-card-menu" align="end" :side-offset="5">
+                  <DropdownMenuItem
+                    class="document-card-menu__item"
+                    @select="emit('createChild', node.document.id)"
+                  >
+                    <Plus :size="14" />新建子页面
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    class="document-card-menu__item"
+                    @select="emit('properties', node.document)"
+                  >
+                    <Info :size="14" />属性
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    class="document-card-menu__item"
+                    @select="emit('rename', node.document)"
+                  >
+                    <Pencil :size="14" />重命名
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator class="document-card-menu__separator" />
+                  <DropdownMenuItem
+                    class="document-card-menu__item document-card-menu__item--danger"
+                    @select="emit('delete', node.document)"
+                  >
+                    <Trash2 :size="14" />删除
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenuPortal>
+            </DropdownMenuRoot>
           </span>
-        </span>
-      </button>
-
-      <span class="document-list__actions document-list__actions--menu">
-        <NTooltip trigger="hover">
-          <template #trigger>
-            <NButton
-              class="document-list__more"
-              size="tiny"
-              quaternary
-              :aria-label="`${displayTitle(node.document)}中新建子页面`"
-              :disabled="busy"
-              @click.stop="emit('createChild', node.document.id)"
-              @dragstart.stop.prevent
-            >
-              <template #icon
-                ><NIcon :size="14"><Plus /></NIcon
-              ></template>
-            </NButton>
-          </template>
-          新建子页面
-        </NTooltip>
-
-        <DropdownMenuRoot>
-          <DropdownMenuTrigger as-child>
-            <NButton
-              class="document-list__more"
-              size="tiny"
-              quaternary
-              :aria-label="`${displayTitle(node.document)}更多操作`"
-              :disabled="busy"
-              @click.stop
-              @dragstart.stop.prevent
-            >
-              <template #icon
-                ><NIcon :size="15"><Ellipsis /></NIcon
-              ></template>
-            </NButton>
-          </DropdownMenuTrigger>
-          <DropdownMenuPortal>
-            <DropdownMenuContent class="document-card-menu" align="end" :side-offset="5">
-              <DropdownMenuItem
-                class="document-card-menu__item"
-                @select="emit('createChild', node.document.id)"
-              >
-                <Plus :size="14" />新建子页面
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                class="document-card-menu__item"
-                @select="emit('properties', node.document)"
-              >
-                <Info :size="14" />属性
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                class="document-card-menu__item"
-                @select="emit('rename', node.document)"
-              >
-                <Pencil :size="14" />重命名
-              </DropdownMenuItem>
-              <DropdownMenuSeparator class="document-card-menu__separator" />
-              <DropdownMenuItem
-                class="document-card-menu__item document-card-menu__item--danger"
-                @select="emit('delete', node.document)"
-              >
-                <Trash2 :size="14" />删除
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenuPortal>
-        </DropdownMenuRoot>
-      </span>
-    </div>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuPortal>
+        <ContextMenuContent class="document-card-menu" :collision-padding="8">
+          <ContextMenuItem
+            class="document-card-menu__item"
+            @select="emit('createChild', node.document.id)"
+          >
+            <Plus :size="14" />新建子页面
+          </ContextMenuItem>
+          <ContextMenuItem
+            class="document-card-menu__item"
+            @select="emit('properties', node.document)"
+          >
+            <Info :size="14" />属性
+          </ContextMenuItem>
+          <ContextMenuItem class="document-card-menu__item" @select="emit('rename', node.document)">
+            <Pencil :size="14" />重命名
+          </ContextMenuItem>
+          <ContextMenuSeparator class="document-card-menu__separator" />
+          <ContextMenuItem
+            class="document-card-menu__item document-card-menu__item--danger"
+            @select="emit('delete', node.document)"
+          >
+            <Trash2 :size="14" />删除
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenuPortal>
+    </ContextMenuRoot>
 
     <SidebarDocumentTree
       v-if="node.children.length > 0 && !collapsedDocumentIds.has(node.document.id)"

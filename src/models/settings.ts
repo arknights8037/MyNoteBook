@@ -1,4 +1,4 @@
-import { normalizeThemePreference, type ThemePreference } from '@/services/theme'
+import { normalizeThemePreference, type ThemePreference } from './theme'
 
 export type EditorContentWidth = 'compact' | 'standard' | 'wide'
 export type EditorFontSize = 'small' | 'standard' | 'large'
@@ -39,6 +39,7 @@ export interface AppSettings {
   confirmBeforeDelete: boolean
   sensitiveActionPasswordEnabled: boolean
   sensitiveActionPasswordHash: string
+  allowDeveloperMode: boolean
   reduceMotion: boolean
   dataDirectory: string | null
   shortcuts: AppShortcuts
@@ -72,6 +73,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   confirmBeforeDelete: true,
   sensitiveActionPasswordEnabled: false,
   sensitiveActionPasswordHash: '',
+  allowDeveloperMode: false,
   reduceMotion: false,
   dataDirectory: null,
   shortcuts: { ...DEFAULT_SHORTCUTS },
@@ -172,6 +174,10 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
         ? settings.sensitiveActionPasswordEnabled
         : DEFAULT_APP_SETTINGS.sensitiveActionPasswordEnabled,
     sensitiveActionPasswordHash,
+    allowDeveloperMode:
+      typeof settings.allowDeveloperMode === 'boolean'
+        ? settings.allowDeveloperMode
+        : DEFAULT_APP_SETTINGS.allowDeveloperMode,
     reduceMotion:
       typeof settings.reduceMotion === 'boolean'
         ? settings.reduceMotion

@@ -8,8 +8,14 @@ interface ChatCompletionChunk {
     }
     message?: {
       content?: string
+      reasoning_content?: string
     }
   }>
+}
+
+interface AiStreamDelta {
+  content: string
+  reasoning: string
 }
 
 export async function runAiMarkdownCompletion(input: AiRunInput): Promise<string> {
@@ -25,10 +31,10 @@ async function runChatCompletions(input: AiRunInput): Promise<string> {
     model: input.settings.model,
     stream: true,
     messages: [
-      { role: 'system', content: input.settings.systemPrompt },
+      { role: 'system', content: input.systemPrompt ?? input.settings.systemPrompt },
       {
         role: 'user',
-        content: buildUserPrompt(input.prompt, input.context),
+        content: buildUserPrompt(input.prompt, input.context, input.outputMode),
       },
     ],
   }
@@ -64,7 +70,9 @@ async function runChatCompletions(input: AiRunInput): Promise<string> {
   if (!response.body) {
     const data = (await response.json()) as ChatCompletionChunk
     const content = data.choices?.[0]?.message?.content ?? ''
-    input.onDelta(content)
+    const reasoning = data.choices?.[0]?.message?.reasoning_content ?? ''
+    if (reasoning) input.onDelta(reasoning, 'reasoning')
+    if (content) input.onDelta(content, 'content')
     return content
   }
 
@@ -95,11 +103,11 @@ async function runAnthropicMessagesCompletion(input: AiRunInput): Promise<string
     temperature: input.settings.temperature,
     top_p: input.settings.topP,
     stream: true,
-    system: input.settings.systemPrompt,
+    system: input.systemPrompt ?? input.settings.systemPrompt,
     messages: [
       {
         role: 'user',
-        content: buildUserPrompt(input.prompt, input.context),
+        content: buildUserPrompt(input.prompt, input.context, input.outputMode),
       },
     ],
   }
@@ -123,10 +131,12 @@ async function runAnthropicMessagesCompletion(input: AiRunInput): Promise<string
 
   if (!response.body) {
     const data = (await response.json()) as {
-      content?: Array<{ type?: string; text?: string }>
+      content?: Array<{ type?: string; text?: string; thinking?: string }>
     }
     const content = data.content?.find((part) => part.type === 'text')?.text ?? ''
-    input.onDelta(content)
+    const reasoning = data.content?.find((part) => part.type === 'thinking')?.thinking ?? ''
+    if (reasoning) input.onDelta(reasoning, 'reasoning')
+    if (content) input.onDelta(content, 'content')
     return content
   }
 
@@ -147,18 +157,27 @@ function getAnthropicThinking(input: AiRunInput): Record<string, unknown> | null
   }
 }
 
-function buildUserPrompt(prompt: string, context: string): string {
+function buildUserPrompt(
+  prompt: string,
+  context: string,
+  outputMode: AiRunInput['outputMode'] = 'markdown',
+): string {
   const parts = ['用户任务：', prompt.trim()]
   if (context.trim()) {
     parts.push('', '当前文档上下文：', context.trim())
   }
-  parts.push('', '请只输出 Markdown 正文，不要包裹额外解释。')
+  parts.push(
+    '',
+    outputMode === 'agent-json'
+      ? '请严格按系统中的 Agent 协议输出单个 JSON 对象，不要使用 Markdown 围栏。'
+      : '请只输出 Markdown 正文，不要包裹额外解释。',
+  )
   return parts.join('\n')
 }
 
 async function readStreamingResponse(
   response: Response,
-  onDelta: (delta: string) => void,
+  onDelta: (delta: string, channel?: 'content' | 'reasoning') => void,
 ): Promise<string> {
   const reader = response.body?.getReader()
   if (!reader) return ''
@@ -177,34 +196,46 @@ async function readStreamingResponse(
 
     for (const line of lines) {
       const delta = parseStreamingDataLine(line, parseDelta)
-      if (delta) {
-        fullText += delta
-        onDelta(delta)
+      if (delta.reasoning) {
+        onDelta(delta.reasoning, 'reasoning')
+      }
+      if (delta.content) {
+        fullText += delta.content
+        onDelta(delta.content, 'content')
       }
     }
   }
 
   const finalDelta = parseStreamingDataLine(buffer, parseDelta)
-  if (finalDelta) {
-    fullText += finalDelta
-    onDelta(finalDelta)
+  if (finalDelta.reasoning) {
+    onDelta(finalDelta.reasoning, 'reasoning')
+  }
+  if (finalDelta.content) {
+    fullText += finalDelta.content
+    onDelta(finalDelta.content, 'content')
   }
 
   return fullText
 }
 
-function parseDelta(payload: string): string {
+function parseDelta(payload: string): AiStreamDelta {
   try {
     const parsed = JSON.parse(payload) as ChatCompletionChunk
-    return parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.message?.content ?? ''
+    return {
+      content: parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.message?.content ?? '',
+      reasoning:
+        parsed.choices?.[0]?.delta?.reasoning_content ??
+        parsed.choices?.[0]?.message?.reasoning_content ??
+        '',
+    }
   } catch {
-    return ''
+    return { content: '', reasoning: '' }
   }
 }
 
 async function readAnthropicStreamingResponse(
   response: Response,
-  onDelta: (delta: string) => void,
+  onDelta: (delta: string, channel?: 'content' | 'reasoning') => void,
 ): Promise<string> {
   const reader = response.body?.getReader()
   if (!reader) return ''
@@ -223,42 +254,58 @@ async function readAnthropicStreamingResponse(
 
     for (const line of lines) {
       const delta = parseStreamingDataLine(line, parseAnthropicDelta)
-      if (delta) {
-        fullText += delta
-        onDelta(delta)
+      if (delta.reasoning) {
+        onDelta(delta.reasoning, 'reasoning')
+      }
+      if (delta.content) {
+        fullText += delta.content
+        onDelta(delta.content, 'content')
       }
     }
   }
 
   const finalDelta = parseStreamingDataLine(buffer, parseAnthropicDelta)
-  if (finalDelta) {
-    fullText += finalDelta
-    onDelta(finalDelta)
+  if (finalDelta.reasoning) {
+    onDelta(finalDelta.reasoning, 'reasoning')
+  }
+  if (finalDelta.content) {
+    fullText += finalDelta.content
+    onDelta(finalDelta.content, 'content')
   }
 
   return fullText
 }
 
-function parseStreamingDataLine(line: string, parsePayload: (payload: string) => string): string {
+function parseStreamingDataLine(
+  line: string,
+  parsePayload: (payload: string) => AiStreamDelta,
+): AiStreamDelta {
   const trimmed = line.trim()
-  if (!trimmed.startsWith('data:')) return ''
+  if (!trimmed.startsWith('data:')) return { content: '', reasoning: '' }
   const payload = trimmed.slice(5).trim()
-  if (!payload || payload === '[DONE]') return ''
+  if (!payload || payload === '[DONE]') return { content: '', reasoning: '' }
   return parsePayload(payload)
 }
 
-function parseAnthropicDelta(payload: string): string {
+function parseAnthropicDelta(payload: string): AiStreamDelta {
   try {
     const parsed = JSON.parse(payload) as {
       type?: string
       delta?: {
         type?: string
         text?: string
+        thinking?: string
       }
     }
-    if (parsed.type !== 'content_block_delta') return ''
-    return parsed.delta?.type === 'text_delta' ? (parsed.delta.text ?? '') : ''
+    if (parsed.type !== 'content_block_delta') return { content: '', reasoning: '' }
+    if (parsed.delta?.type === 'thinking_delta') {
+      return { content: '', reasoning: parsed.delta.thinking ?? '' }
+    }
+    return {
+      content: parsed.delta?.type === 'text_delta' ? (parsed.delta.text ?? '') : '',
+      reasoning: '',
+    }
   } catch {
-    return ''
+    return { content: '', reasoning: '' }
   }
 }

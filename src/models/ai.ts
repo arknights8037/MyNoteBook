@@ -1,24 +1,31 @@
 export type AiReasoningEffort = 'auto' | 'low' | 'medium' | 'high'
 export type AiProvider = 'openai' | 'anthropic' | 'deepseek' | 'qwen' | 'openai-compatible'
 
-export interface AiSettings {
-  provider: AiProvider
+export interface AiProviderProfile {
   endpoint: string
   apiKey: string
   model: string
+  availableModels: string[]
   reasoningEffort: AiReasoningEffort
-  systemPrompt: string
   temperature: number
   topP: number
   maxTokens: number
+}
+
+export interface AiSettings extends AiProviderProfile {
+  provider: AiProvider
+  providerProfiles: Record<AiProvider, AiProviderProfile>
+  systemPrompt: string
 }
 
 export interface AiRunInput {
   prompt: string
   context: string
   settings: AiSettings
-  onDelta: (delta: string) => void
+  onDelta: (delta: string, channel?: 'content' | 'reasoning') => void
   signal?: AbortSignal
+  systemPrompt?: string
+  outputMode?: 'markdown' | 'agent-json'
 }
 
 export interface AiProviderConfig {
@@ -31,130 +38,176 @@ export interface AiProviderConfig {
 
 const AI_SETTINGS_STORAGE_KEY = 'my-notebook:ai-settings'
 
-export const DEFAULT_AI_SETTINGS: AiSettings = {
-  provider: 'openai',
-  endpoint: 'https://api.openai.com/v1',
-  apiKey: '',
-  model: 'gpt-4.1-mini',
-  reasoningEffort: 'auto',
-  systemPrompt:
-    '你是一个文档笔记助手。请输出结构清晰的 Markdown，优先使用标题、列表、表格、代码块和数学公式。',
-  temperature: 0.4,
-  topP: 1,
-  maxTokens: 2048,
+export const AI_PROVIDER_CONFIGS: AiProviderConfig[] = [
+  { value: 'openai', label: 'OpenAI', description: 'Chat Completions', endpoint: 'https://api.openai.com/v1', models: [] },
+  { value: 'anthropic', label: 'Anthropic', description: 'Claude Messages', endpoint: 'https://api.anthropic.com/v1', models: [] },
+  { value: 'deepseek', label: 'DeepSeek', description: 'OpenAI-compatible', endpoint: 'https://api.deepseek.com', models: [] },
+  { value: 'qwen', label: '通义千问', description: 'DashScope 兼容模式', endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: [] },
+  { value: 'openai-compatible', label: '兼容接口', description: '自定义 OpenAI-compatible', endpoint: 'https://api.openai.com/v1', models: [] },
+]
+
+const DEFAULT_SYSTEM_PROMPT =
+  '你是一个文档笔记助手。请输出结构清晰的 Markdown，优先使用标题、列表、表格、代码块和数学公式。'
+
+function createDefaultProfile(provider: AiProvider): AiProviderProfile {
+  return {
+    endpoint: getAiProviderConfig(provider).endpoint,
+    apiKey: '',
+    model: '',
+    availableModels: [],
+    reasoningEffort: 'auto',
+    temperature: 0.4,
+    topP: 1,
+    maxTokens: 2048,
+  }
 }
 
-export const AI_PROVIDER_CONFIGS: AiProviderConfig[] = [
-  {
-    value: 'openai',
-    label: 'OpenAI',
-    description: 'Chat Completions',
-    endpoint: DEFAULT_AI_SETTINGS.endpoint,
-    models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-5-mini', 'gpt-5'],
-  },
-  {
-    value: 'anthropic',
-    label: 'Anthropic',
-    description: 'Claude Messages',
-    endpoint: 'https://api.anthropic.com/v1',
-    models: ['claude-sonnet-4-5', 'claude-opus-4-1', 'claude-3-5-haiku-latest'],
-  },
-  {
-    value: 'deepseek',
-    label: 'DeepSeek',
-    description: 'OpenAI-compatible',
-    endpoint: 'https://api.deepseek.com',
-    models: ['deepseek-chat', 'deepseek-reasoner'],
-  },
-  {
-    value: 'qwen',
-    label: '通义千问',
-    description: 'DashScope 兼容模式',
-    endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    models: ['qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen3-plus', 'qwen3-max'],
-  },
-  {
-    value: 'openai-compatible',
-    label: '兼容接口',
-    description: '自定义 OpenAI-compatible',
-    endpoint: DEFAULT_AI_SETTINGS.endpoint,
-    models: [DEFAULT_AI_SETTINGS.model],
-  },
-]
+function createDefaultProfiles(): Record<AiProvider, AiProviderProfile> {
+  return {
+    openai: createDefaultProfile('openai'),
+    anthropic: createDefaultProfile('anthropic'),
+    deepseek: createDefaultProfile('deepseek'),
+    qwen: createDefaultProfile('qwen'),
+    'openai-compatible': createDefaultProfile('openai-compatible'),
+  }
+}
+
+export const DEFAULT_AI_SETTINGS: AiSettings = createAiSettings('openai')
+
+export function createAiSettings(provider: AiProvider): AiSettings {
+  const providerProfiles = createDefaultProfiles()
+  return {
+    provider,
+    providerProfiles,
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    ...providerProfiles[provider],
+  }
+}
 
 export function getAiProviderConfig(provider: AiProvider): AiProviderConfig {
   return AI_PROVIDER_CONFIGS.find((option) => option.value === provider) ?? AI_PROVIDER_CONFIGS[0]
 }
 
-export function applyAiProviderDefaults(settings: AiSettings, provider: AiProvider): AiSettings {
-  const config = getAiProviderConfig(provider)
-  const shouldKeepCustomValues = settings.provider === provider || provider === 'openai-compatible'
-
+export function updateActiveAiProfile(
+  settings: AiSettings,
+  patch: Partial<AiProviderProfile>,
+): AiSettings {
+  const profile = normalizeProfile({ ...settings, ...patch }, settings.provider)
   return {
     ...settings,
-    provider,
-    endpoint: shouldKeepCustomValues ? settings.endpoint : config.endpoint,
-    model: shouldKeepCustomValues ? settings.model : config.models[0],
+    ...profile,
+    providerProfiles: { ...settings.providerProfiles, [settings.provider]: profile },
   }
+}
+
+export function applyAiProviderDefaults(settings: AiSettings, provider: AiProvider): AiSettings {
+  const committed = updateActiveAiProfile(settings, {})
+  const profile = committed.providerProfiles[provider] ?? createDefaultProfile(provider)
+  return { ...committed, provider, ...profile }
 }
 
 export function loadAiSettings(): AiSettings {
   try {
-    const parsed = JSON.parse(
-      globalThis.localStorage?.getItem(AI_SETTINGS_STORAGE_KEY) ?? '{}',
-    ) as Partial<AiSettings>
+    const parsed = JSON.parse(globalThis.localStorage?.getItem(AI_SETTINGS_STORAGE_KEY) ?? '{}') as Partial<AiSettings>
     return normalizeAiSettings(parsed)
   } catch {
-    return { ...DEFAULT_AI_SETTINGS }
+    return createAiSettings('openai')
   }
 }
 
 export function saveAiSettings(settings: AiSettings): void {
   try {
-    globalThis.localStorage?.setItem(
-      AI_SETTINGS_STORAGE_KEY,
-      JSON.stringify(normalizeAiSettings(settings)),
-    )
+    const persisted = updateActiveAiProfile(normalizeAiSettings(settings), {})
+    persisted.apiKey = ''
+    persisted.providerProfiles = Object.fromEntries(
+      Object.entries(persisted.providerProfiles).map(([provider, profile]) => [
+        provider,
+        { ...profile, apiKey: '' },
+      ]),
+    ) as Record<AiProvider, AiProviderProfile>
+    globalThis.localStorage?.setItem(AI_SETTINGS_STORAGE_KEY, JSON.stringify(persisted))
   } catch {
     // Settings remain active for the current session when storage is unavailable.
   }
 }
 
 export function normalizeAiSettings(settings: Partial<AiSettings>): AiSettings {
+  const provider = isAiProvider(settings.provider) ? settings.provider : 'openai'
+  const rawProfiles = isRecord(settings.providerProfiles) ? settings.providerProfiles : null
+  const providerProfiles = createDefaultProfiles()
+
+  for (const config of AI_PROVIDER_CONFIGS) {
+    const storedProfile = rawProfiles?.[config.value]
+    if (isRecord(storedProfile)) {
+      providerProfiles[config.value] = normalizeProfile(storedProfile, config.value)
+    }
+  }
+
+  // Legacy settings had one flat profile. Migrate it to the provider selected at upgrade time.
+  const hasLegacyProfile = !rawProfiles && hasFlatProfileFields(settings)
+  if (hasLegacyProfile) {
+    providerProfiles[provider] = normalizeProfile(settings, provider)
+  } else if (rawProfiles) {
+    providerProfiles[provider] = normalizeProfile(
+      { ...providerProfiles[provider], ...pickFlatProfile(settings) },
+      provider,
+    )
+  }
+
   return {
-    provider: isAiProvider(settings.provider) ? settings.provider : DEFAULT_AI_SETTINGS.provider,
-    endpoint: normalizeEndpoint(settings.endpoint),
-    apiKey: typeof settings.apiKey === 'string' ? settings.apiKey.trim() : '',
-    model:
-      typeof settings.model === 'string' && settings.model.trim()
-        ? settings.model.trim()
-        : DEFAULT_AI_SETTINGS.model,
-    reasoningEffort: isReasoningEffort(settings.reasoningEffort)
-      ? settings.reasoningEffort
-      : DEFAULT_AI_SETTINGS.reasoningEffort,
+    provider,
+    providerProfiles,
     systemPrompt:
       typeof settings.systemPrompt === 'string' && settings.systemPrompt.trim()
         ? settings.systemPrompt.trim()
-        : DEFAULT_AI_SETTINGS.systemPrompt,
-    temperature:
-      typeof settings.temperature === 'number' && Number.isFinite(settings.temperature)
-        ? Math.max(0, Math.min(settings.temperature, 2))
-        : DEFAULT_AI_SETTINGS.temperature,
-    topP:
-      typeof settings.topP === 'number' && Number.isFinite(settings.topP)
-        ? Math.max(0, Math.min(settings.topP, 1))
-        : DEFAULT_AI_SETTINGS.topP,
-    maxTokens:
-      typeof settings.maxTokens === 'number' && Number.isFinite(settings.maxTokens)
-        ? Math.max(1, Math.min(Math.round(settings.maxTokens), 128000))
-        : DEFAULT_AI_SETTINGS.maxTokens,
+        : DEFAULT_SYSTEM_PROMPT,
+    ...providerProfiles[provider],
   }
 }
 
-function normalizeEndpoint(endpoint: unknown): string {
-  const value =
-    typeof endpoint === 'string' && endpoint.trim() ? endpoint.trim() : DEFAULT_AI_SETTINGS.endpoint
+function normalizeProfile(settings: Partial<AiProviderProfile>, provider: AiProvider): AiProviderProfile {
+  const defaults = createDefaultProfile(provider)
+  return {
+    endpoint: normalizeEndpoint(settings.endpoint, defaults.endpoint),
+    apiKey: typeof settings.apiKey === 'string' ? settings.apiKey.trim() : '',
+    model: typeof settings.model === 'string' ? settings.model.trim() : '',
+    availableModels: normalizeModelList(settings.availableModels),
+    reasoningEffort: isReasoningEffort(settings.reasoningEffort) ? settings.reasoningEffort : 'auto',
+    temperature: clampNumber(settings.temperature, 0, 2, defaults.temperature),
+    topP: clampNumber(settings.topP, 0, 1, defaults.topP),
+    maxTokens: Math.round(clampNumber(settings.maxTokens, 1, 128000, defaults.maxTokens)),
+  }
+}
+
+function pickFlatProfile(settings: Partial<AiSettings>): Partial<AiProviderProfile> {
+  return {
+    endpoint: settings.endpoint,
+    apiKey: settings.apiKey,
+    model: settings.model,
+    availableModels: settings.availableModels,
+    reasoningEffort: settings.reasoningEffort,
+    temperature: settings.temperature,
+    topP: settings.topP,
+    maxTokens: settings.maxTokens,
+  }
+}
+
+function hasFlatProfileFields(settings: Partial<AiSettings>): boolean {
+  return Object.values(pickFlatProfile(settings)).some((value) => value !== undefined)
+}
+
+function normalizeModelList(models: unknown): string[] {
+  if (!Array.isArray(models)) return []
+  return Array.from(new Set(models.map((model) => (typeof model === 'string' ? model.trim() : '')).filter(Boolean))).slice(0, 200)
+}
+
+function normalizeEndpoint(endpoint: unknown, fallback: string): string {
+  const value = typeof endpoint === 'string' && endpoint.trim() ? endpoint.trim() : fallback
   return value.replace(/\/+$/, '')
+}
+
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(min, Math.min(value, max)) : fallback
 }
 
 function isReasoningEffort(value: unknown): value is AiReasoningEffort {
@@ -162,11 +215,9 @@ function isReasoningEffort(value: unknown): value is AiReasoningEffort {
 }
 
 function isAiProvider(value: unknown): value is AiProvider {
-  return (
-    value === 'openai' ||
-    value === 'anthropic' ||
-    value === 'deepseek' ||
-    value === 'qwen' ||
-    value === 'openai-compatible'
-  )
+  return AI_PROVIDER_CONFIGS.some((config) => config.value === value)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }

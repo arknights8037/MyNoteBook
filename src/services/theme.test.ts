@@ -22,6 +22,7 @@ describe('theme service', () => {
 
   it('normalizes current and legacy theme preferences', () => {
     expect(normalizeThemePreference('paper-light')).toBe('paper-light')
+    expect(normalizeThemePreference('inkstone-light')).toBe('inkstone-light')
     expect(normalizeThemePreference('dark')).toBe('graphite-dark')
     expect(normalizeThemePreference('light')).toBe('paper-light')
     expect(normalizeThemePreference('unknown')).toBe('system')

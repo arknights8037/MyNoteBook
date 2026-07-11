@@ -1,0 +1,46 @@
+.document-list__item {
+  color: var(--color-text-secondary);
+  background: transparent;
+}
+
+.document-list__item:hover {
+  background: color-mix(in srgb, var(--color-bg-hover) 76%, transparent);
+}
+
+.document-list__item--active,
+.settings-nav__item--active {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-bg-selected) 68%, transparent);
+}
+
+.document-list__item--active {
+  box-shadow: none;
+}
+
+.document-list__item--active::before,
+.document-list__item--drop-target::before {
+  background: color-mix(in srgb, var(--color-accent-primary) 82%, var(--color-bg-elevated));
+}
+
+.document-list__item--drop-available {
+  outline: 1px dashed color-mix(in srgb, var(--color-accent-primary) 34%, transparent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--color-accent-soft) 76%, transparent);
+  box-shadow: none;
+}
+
+.document-list__item--drop-target {
+  outline: 1px solid color-mix(in srgb, var(--color-accent-primary) 40%, transparent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--color-selection) 78%, transparent);
+  box-shadow: none;
+}
+
+.document-list__rename,
+.search-results__item,
+.document-properties__textarea,
+.share-preview {
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border-default);
+}

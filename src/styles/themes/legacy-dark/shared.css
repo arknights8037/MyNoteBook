@@ -1,0 +1,147 @@
+:root[data-theme='legacy-dark'] {
+  color: #dededb;
+  background: #20201f;
+  color-scheme: dark;
+}
+
+:root[data-theme='legacy-dark'] body,
+:root[data-theme='legacy-dark'] .app-shell,
+:root[data-theme='legacy-dark'] .editor-workspace,
+:root[data-theme='legacy-dark'] .document-workspace,
+:root[data-theme='legacy-dark'] .editor-panel,
+:root[data-theme='legacy-dark'] .editor-shell,
+:root[data-theme='legacy-dark'] .settings-page {
+  color: #dededb;
+  background: #20201f;
+}
+
+:root[data-theme='legacy-dark'] .document-sidebar,
+:root[data-theme='legacy-dark'] .settings-nav,
+:root[data-theme='legacy-dark'] .editor-inspector,
+:root[data-theme='legacy-dark'] .ui-drawer {
+  border-color: #373735;
+  background: #262625;
+}
+
+:root[data-theme='legacy-dark'] .topbar,
+:root[data-theme='legacy-dark'] .settings-page__header,
+:root[data-theme='legacy-dark'] .settings-card,
+:root[data-theme='legacy-dark'] .ui-dialog-card,
+:root[data-theme='legacy-dark'] .ui-popover,
+:root[data-theme='legacy-dark'] .ui-select-content,
+:root[data-theme='legacy-dark'] .ui-toast,
+:root[data-theme='legacy-dark'] .floating-help__button,
+:root[data-theme='legacy-dark'] .ai-chat-popover,
+:root[data-theme='legacy-dark'] .ai-chat-composer,
+:root[data-theme='legacy-dark'] .ai-chat-message .markdown-preview,
+:root[data-theme='legacy-dark'] .editor-context-menu,
+:root[data-theme='legacy-dark'] .editor-bubble-menu {
+  border-color: #3d3d3a;
+  color: #dededb;
+  background: #2b2b29;
+}
+
+:root[data-theme='legacy-dark'] .settings-row + .settings-row,
+:root[data-theme='legacy-dark'] .settings-page__header,
+:root[data-theme='legacy-dark'] .settings-card,
+:root[data-theme='legacy-dark'] .topbar,
+:root[data-theme='legacy-dark'] .ai-chat-popover__header,
+:root[data-theme='legacy-dark'] .ai-chat-composer,
+:root[data-theme='legacy-dark'] .document-sidebar {
+  border-color: #3a3a37;
+}
+
+:root[data-theme='legacy-dark'] .settings-section__header > span,
+:root[data-theme='legacy-dark'] .ui-button,
+:root[data-theme='legacy-dark'] .ui-input,
+:root[data-theme='legacy-dark'] .ui-select,
+:root[data-theme='legacy-dark'] .theme-option,
+:root[data-theme='legacy-dark'] .ai-chat-selector--primary,
+:root[data-theme='legacy-dark'] .ai-chat-menu,
+:root[data-theme='legacy-dark'] .ai-chat-input-shell,
+:root[data-theme='legacy-dark'] .settings-textarea,
+:root[data-theme='legacy-dark'] .ai-chat-message footer button,
+:root[data-theme='legacy-dark'] .shortcut-recorder {
+  border-color: #454542;
+  color: #d5d5d1;
+  background: #323230;
+}
+
+:root[data-theme='legacy-dark'] .ai-chat-composer textarea,
+:root[data-theme='legacy-dark'] .ai-chat-composer__actions button {
+  color: #d5d5d1;
+  background: transparent;
+}
+
+:root[data-theme='legacy-dark'] .ui-button:hover:not(:disabled),
+:root[data-theme='legacy-dark'] .settings-nav__item:hover,
+:root[data-theme='legacy-dark'] .ui-select-item[data-highlighted],
+:root[data-theme='legacy-dark'] .ai-chat-selector:hover,
+:root[data-theme='legacy-dark'] .ai-chat-selector[data-state='open'],
+:root[data-theme='legacy-dark'] .ai-chat-menu__item[data-highlighted],
+:root[data-theme='legacy-dark'] .ai-chat-menu__item--active {
+  color: #f0f0ed;
+  background: #3a3a37;
+}
+
+:root[data-theme='legacy-dark'] .settings-nav__item--active,
+:root[data-theme='legacy-dark'] .theme-option--active,
+:root[data-theme='legacy-dark'] .shortcut-recorder--recording {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, #292927);
+}
+
+:root[data-theme='legacy-dark'] .settings-row strong,
+:root[data-theme='legacy-dark'] .settings-section__header h2,
+:root[data-theme='legacy-dark'] .settings-page__header h1,
+:root[data-theme='legacy-dark'] .markdown-preview h1,
+:root[data-theme='legacy-dark'] .markdown-preview h2,
+:root[data-theme='legacy-dark'] .markdown-preview h3,
+:root[data-theme='legacy-dark'] .markdown-preview h4,
+:root[data-theme='legacy-dark'] .document-list__title,
+:root[data-theme='legacy-dark'] .topbar-title-input,
+:root[data-theme='legacy-dark'] .topbar-title-input .n-input__input-el,
+:root[data-theme='legacy-dark'] .ProseMirror {
+  color: #e6e6e2;
+}
+
+:root[data-theme='legacy-dark'] .settings-row small,
+:root[data-theme='legacy-dark'] .settings-section__header p,
+:root[data-theme='legacy-dark'] .settings-note,
+:root[data-theme='legacy-dark'] .ai-chat-popover__empty,
+:root[data-theme='legacy-dark'] .document-list__meta {
+  color: #999995;
+}
+
+:root[data-theme='legacy-dark'] .sidebar-section-heading,
+:root[data-theme='legacy-dark'] .editor-workspace__eyebrow,
+:root[data-theme='legacy-dark'] .document-list__empty,
+:root[data-theme='legacy-dark'] .document-list__subheading {
+  color: #999995;
+}
+
+:root[data-theme='legacy-dark'] .ai-chat-popover__messages {
+  background: #242423;
+}
+
+:root[data-theme='legacy-dark'] .ai-chat-message--user .markdown-preview {
+  background: color-mix(in srgb, var(--accent) 16%, #2b2b29);
+}
+
+:root[data-theme='legacy-dark'] .markdown-preview code {
+  background: #3a3a37;
+}
+
+:root[data-theme='legacy-dark'] .markdown-preview pre {
+  background: #191b1f;
+}
+
+:root[data-theme='legacy-dark'] .markdown-preview blockquote {
+  border-color: #55554f;
+  color: #bbbbb5;
+}
+
+:root[data-theme='legacy-dark'] .markdown-preview th,
+:root[data-theme='legacy-dark'] .markdown-preview td {
+  border-color: #464642;
+}

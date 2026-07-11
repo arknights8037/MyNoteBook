@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import 'katex/dist/katex.min.css'
+
 import {
   AlignCenter,
   AlignLeft,
@@ -26,10 +28,9 @@ import {
   Trash2,
   Underline,
   Undo2,
-  X,
   Sigma,
 } from '@lucide/vue'
-import { EditorContent, type Editor, useEditor } from '@tiptap/vue-3'
+import { EditorContent, type Editor, type JSONContent, useEditor } from '@tiptap/vue-3'
 import { BubbleMenu } from '@tiptap/vue-3/menus'
 import {
   ContextMenuContent,
@@ -43,7 +44,7 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from 'reka-ui'
-import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { createEditorExtensions } from './createEditorExtensions'
 import {
@@ -63,10 +64,19 @@ import {
 import { isSameEditorContent, normalizeEditorContent } from './editorContent'
 import { readImageFileAsDataUrl } from './imageFile'
 import { parseMarkdownDocument } from './markdownImport'
+import {
+  HIGHLIGHT_COLOR_SWATCHES,
+  TEXT_COLOR_SWATCHES,
+  useEditorColorFormatting,
+} from './composables/useEditorColorFormatting'
+import { useEditorJumpAid } from './composables/useEditorJumpAid'
+import EditorColorPickerPopover from './EditorColorPickerPopover.vue'
 import { assetService, getAssetUrl } from '@/infrastructure/assets/AssetService'
+import type { SelectedBlock } from '@/models/agent'
+import { createInternalDocumentHref, parseInternalDocumentHref } from '@/models/documentLink'
 import type { TiptapDocumentJson } from '@/models/document'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@/models/settings'
-import { NButton, NButtonGroup, NColorPicker, NIcon, NPopover, NTooltip } from '@/ui'
+import { NButton, NButtonGroup, NIcon, NTooltip } from '@/ui'
 
 const props = withDefaults(
   defineProps<{
@@ -95,50 +105,20 @@ const emit = defineEmits<{
   ready: []
   destroy: []
   imageError: [message: string]
-  openDocument: [documentId: string]
+  openDocument: [documentId: string, blockId?: string]
 }>()
 
 const initialContent = computed(() =>
   ensureTopLevelBlockIds(normalizeEditorContent(props.modelValue)),
 )
-const DEFAULT_TEXT_COLOR = '#333333'
-const DEFAULT_HIGHLIGHT_COLOR = '#fef08a'
-const RECENT_TEXT_COLORS_STORAGE_KEY = 'my-notebook:recent-text-colors'
-const RECENT_HIGHLIGHT_COLORS_STORAGE_KEY = 'my-notebook:recent-highlight-colors'
-const TEXT_COLOR_SWATCHES = [
-  '#111827',
-  '#dc2626',
-  '#ea580c',
-  '#ca8a04',
-  '#16a34a',
-  '#0891b2',
-  '#2563eb',
-  '#7c3aed',
-]
-const HIGHLIGHT_COLOR_SWATCHES = [
-  '#fef08a',
-  '#fde68a',
-  '#fed7aa',
-  '#fecaca',
-  '#ddd6fe',
-  '#bfdbfe',
-  '#bbf7d0',
-  '#a7f3d0',
-]
-const textColor = ref(DEFAULT_TEXT_COLOR)
-const highlightColor = ref(DEFAULT_HIGHLIGHT_COLOR)
-const recentTextColors = ref<string[]>(loadRecentColors(RECENT_TEXT_COLORS_STORAGE_KEY))
-const recentHighlightColors = ref<string[]>(loadRecentColors(RECENT_HIGHLIGHT_COLORS_STORAGE_KEY))
-const colorPopoverOpen = ref(false)
-const highlightPopoverOpen = ref(false)
 const imageFileInput = ref<InstanceType<typeof globalThis.HTMLInputElement> | null>(null)
 const attachmentFileInput = ref<InstanceType<typeof globalThis.HTMLInputElement> | null>(null)
 const pendingImagePosition = ref<number | null>(null)
 const pendingAttachmentPosition = ref<number | null>(null)
+const editorShellElement = ref<InstanceType<typeof globalThis.HTMLElement> | null>(null)
 const contextBlockPosition = ref<number | null>(null)
 const retainedBlockAvailable = ref(hasRetainedBlock())
 const editorRevision = ref(0)
-const INTERNAL_DOCUMENT_LINK_PREFIX = '#document='
 const editorAppearanceStyle = computed(() => ({
   '--editor-content-width': { compact: '720px', standard: '850px', wide: '1000px' }[
     props.settings.contentWidth
@@ -173,18 +153,10 @@ const MENU_ICON_COMPONENTS = {
   table: Table2,
 }
 
-interface JumpAidItem {
-  id: string
-  title: string
-  level: number
-  index: number
-}
-
-interface EditorJsonNode {
-  type?: string
-  text?: string
-  attrs?: Record<string, unknown>
-  content?: EditorJsonNode[]
+interface EditorBlockSnapshot extends SelectedBlock {
+  from: number
+  to: number
+  json: JSONContent
 }
 
 const editor = useEditor({
@@ -225,17 +197,40 @@ const editor = useEditor({
   },
 })
 
-const allJumpAidItems = computed(() => {
-  const revision = editorRevision.value
-  void revision
-  return collectJumpAidItems((props.modelValue ?? editor.value?.getJSON()) as TiptapDocumentJson)
+const {
+  textColor,
+  highlightColor,
+  recentTextColors,
+  recentHighlightColors,
+  colorPopoverOpen,
+  highlightPopoverOpen,
+  setTextColor,
+  previewTextColor,
+  setHighlightColor,
+  previewHighlightColor,
+  unsetTextColor,
+  unsetHighlightColor,
+  syncTextColor,
+  syncHighlightColor,
+  hasActiveTextColor,
+  hasActiveHighlight,
+} = useEditorColorFormatting(editor)
+
+const {
+  activeItemId: activeJumpAidItemId,
+  items: jumpAidItems,
+  position: jumpAidPosition,
+  visible: showJumpAid,
+  jumpToBlock,
+  revealBlock,
+  scheduleSync: scheduleActiveJumpAidSync,
+} = useEditorJumpAid({
+  editor,
+  content: () => props.modelValue,
+  revision: editorRevision,
+  settings: () => props.settings,
+  scrollContainer: editorShellElement,
 })
-const jumpAidPosition = computed(() => props.settings.jumpAidPosition ?? 'right')
-const jumpAidMaxLevel = computed(() => props.settings.jumpAidMaxLevel ?? 4)
-const jumpAidItems = computed(() => filterJumpAidItems(allJumpAidItems.value))
-const showJumpAid = computed(
-  () => props.settings.jumpAid !== 'off' && jumpAidItems.value.length > 0,
-)
 
 function shouldShowBubbleMenu({
   editor: activeEditor,
@@ -376,6 +371,60 @@ function insertMarkdown(markdown: string): void {
   activeEditor.chain().focus().insertContent(content).run()
 }
 
+function getCurrentDocumentBlocks(): EditorBlockSnapshot[] {
+  const activeEditor = editor.value
+  if (!activeEditor) return []
+
+  const blocks: EditorBlockSnapshot[] = []
+  activeEditor.state.doc.forEach((node, offset, index) => {
+    const id = isRecord(node.attrs) ? String(node.attrs.id ?? '') : ''
+    if (!id) return
+
+    blocks.push({
+      id,
+      type: node.type.name,
+      text: node.textBetween(0, node.content.size, '\n').trim(),
+      index,
+      from: offset,
+      to: offset + node.nodeSize,
+      json: node.toJSON(),
+    })
+  })
+  return blocks
+}
+
+function getSelectedBlocks(): EditorBlockSnapshot[] {
+  const activeEditor = editor.value
+  if (!activeEditor) return []
+
+  const { from, to, empty } = activeEditor.state.selection
+  const blocks = getCurrentDocumentBlocks()
+  if (empty) {
+    return blocks.filter((block) => from >= block.from && from <= block.to).slice(0, 1)
+  }
+
+  return blocks.filter((block) => block.to >= from && block.from <= to)
+}
+
+function replaceBlocksWithMarkdown(blockIds: string[], markdown: string): boolean {
+  const activeEditor = editor.value
+  if (!activeEditor || !activeEditor.isEditable || blockIds.length === 0 || !markdown.trim()) {
+    return false
+  }
+
+  const targetIds = new Set(blockIds)
+  const targetBlocks = getCurrentDocumentBlocks().filter((block) => targetIds.has(block.id))
+  if (targetBlocks.length === 0) return false
+
+  const parsed = parseMarkdownDocument(markdown, 'AI 输出')
+  const content = parsed.content.content ?? [{ type: 'paragraph' }]
+  const from = Math.min(...targetBlocks.map((block) => block.from))
+  const to = Math.max(...targetBlocks.map((block) => block.to))
+
+  activeEditor.chain().focus().insertContentAt({ from, to }, content).run()
+  return true
+}
+
 function captureContextBlock(event: InstanceType<typeof globalThis.MouseEvent>): void {
   const target = event.target
   const block =
@@ -390,10 +439,13 @@ function handleEditorClick(event: InstanceType<typeof globalThis.MouseEvent>): v
   const target = event.target
   const anchor = target instanceof globalThis.Element ? target.closest('a') : null
   const href = anchor?.getAttribute('href') ?? ''
-  if (!href.startsWith(INTERNAL_DOCUMENT_LINK_PREFIX)) return
+  const targetDocument = parseInternalDocumentHref(href)
+  if (!targetDocument) return
 
   event.preventDefault()
-  emit('openDocument', decodeURIComponent(href.slice(INTERNAL_DOCUMENT_LINK_PREFIX.length)))
+  if (targetDocument.blockId)
+    emit('openDocument', targetDocument.documentId, targetDocument.blockId)
+  else emit('openDocument', targetDocument.documentId)
 }
 
 function focusContextBlock(): boolean {
@@ -513,7 +565,7 @@ function insertAttachmentAfterContextBlock(): void {
 function insertInternalDocumentLink(target: { id: string; title: string }): void {
   const activeEditor = editor.value
   if (!activeEditor) return
-  const href = `${INTERNAL_DOCUMENT_LINK_PREFIX}${encodeURIComponent(target.id)}`
+  const href = createInternalDocumentHref(target.id)
 
   if (activeEditor.state.selection.empty) {
     activeEditor
@@ -652,141 +704,6 @@ function getClipboardImageFile(
   return null
 }
 
-function setTextColor(color: string | null): void {
-  const activeEditor = editor.value
-  const nextColor = color?.trim()
-  if (!activeEditor || !nextColor) {
-    return
-  }
-
-  textColor.value = nextColor
-  rememberTextColor(nextColor)
-  activeEditor.chain().focus().setColor(nextColor).run()
-}
-
-function previewTextColor(color: string | null): void {
-  const activeEditor = editor.value
-  const nextColor = color?.trim()
-  if (!activeEditor || !nextColor) {
-    return
-  }
-
-  textColor.value = nextColor
-  activeEditor.chain().setColor(nextColor).run()
-}
-
-function setHighlightColor(color: string | null): void {
-  const activeEditor = editor.value
-  const nextColor = color?.trim()
-  if (!activeEditor || !nextColor) {
-    return
-  }
-
-  highlightColor.value = nextColor
-  rememberRecentColor(nextColor, recentHighlightColors, RECENT_HIGHLIGHT_COLORS_STORAGE_KEY)
-  activeEditor.chain().focus().setHighlight({ color: nextColor }).run()
-}
-
-function previewHighlightColor(color: string | null): void {
-  const activeEditor = editor.value
-  const nextColor = color?.trim()
-  if (!activeEditor || !nextColor) {
-    return
-  }
-
-  highlightColor.value = nextColor
-  activeEditor.chain().setHighlight({ color: nextColor }).run()
-}
-
-function loadRecentColors(storageKey: string): string[] {
-  try {
-    const stored = globalThis.localStorage?.getItem(storageKey)
-    if (!stored) return []
-    const colors = JSON.parse(stored)
-    return Array.isArray(colors)
-      ? colors.filter((color): color is string => typeof color === 'string').slice(0, 6)
-      : []
-  } catch {
-    return []
-  }
-}
-
-function rememberTextColor(color: string): void {
-  rememberRecentColor(color, recentTextColors, RECENT_TEXT_COLORS_STORAGE_KEY)
-}
-
-function rememberRecentColor(color: string, recentColors: Ref<string[]>, storageKey: string): void {
-  const normalizedColor = color.toLowerCase()
-  recentColors.value = [
-    normalizedColor,
-    ...recentColors.value.filter((recentColor) => recentColor.toLowerCase() !== normalizedColor),
-  ].slice(0, 6)
-
-  try {
-    globalThis.localStorage?.setItem(storageKey, JSON.stringify(recentColors.value))
-  } catch {
-    // Storage can be unavailable in restricted webviews; the in-memory history still works.
-  }
-}
-
-function unsetTextColor(): void {
-  const activeEditor = editor.value
-  if (!activeEditor) {
-    return
-  }
-
-  textColor.value = DEFAULT_TEXT_COLOR
-  activeEditor.chain().focus().unsetColor().removeEmptyTextStyle().run()
-}
-
-function unsetHighlightColor(): void {
-  const activeEditor = editor.value
-  if (!activeEditor) {
-    return
-  }
-
-  highlightColor.value = DEFAULT_HIGHLIGHT_COLOR
-  activeEditor.chain().focus().unsetHighlight().run()
-}
-
-function syncTextColor(activeEditor: Editor): void {
-  textColor.value = getCurrentTextColor(activeEditor) || DEFAULT_TEXT_COLOR
-}
-
-function syncHighlightColor(activeEditor: Editor): void {
-  highlightColor.value = getCurrentHighlightColor(activeEditor) || DEFAULT_HIGHLIGHT_COLOR
-}
-
-function getCurrentTextColor(activeEditor: Editor): string {
-  const attributes = activeEditor.getAttributes('textStyle')
-
-  if (isRecord(attributes) && typeof attributes.color === 'string') {
-    return attributes.color
-  }
-
-  return ''
-}
-
-function hasActiveTextColor(): boolean {
-  const activeEditor = editor.value
-  return activeEditor ? getCurrentTextColor(activeEditor) !== '' : false
-}
-
-function getCurrentHighlightColor(activeEditor: Editor): string {
-  const attributes = activeEditor.getAttributes('highlight')
-
-  if (isRecord(attributes) && typeof attributes.color === 'string') {
-    return attributes.color
-  }
-
-  return ''
-}
-
-function hasActiveHighlight(): boolean {
-  const activeEditor = editor.value
-  return activeEditor ? activeEditor.isActive('highlight') : false
-}
-
 function getBubbleMenuContainer() {
   return globalThis.document.body
 }
@@ -799,84 +716,6 @@ function getCurrentLinkHref(activeEditor: Editor): string {
   }
 
   return ''
-}
-
-function collectJumpAidItems(document: TiptapDocumentJson | undefined): JumpAidItem[] {
-  const content = Array.isArray(document?.content) ? (document.content as EditorJsonNode[]) : []
-  const items: JumpAidItem[] = []
-
-  content.forEach((node, index) => {
-    const id = typeof node.attrs?.id === 'string' ? node.attrs.id : ''
-    if (!id) return
-
-    if (node.type === 'heading') {
-      items.push({
-        id,
-        index,
-        level: clampHeadingLevel(node.attrs?.level),
-        title: getNodePlainText(node) || '未命名标题',
-      })
-      return
-    }
-
-    if (node.type === 'collapsibleBlock' && node.attrs?.variant !== 'list') {
-      items.push({
-        id,
-        index,
-        level: clampHeadingLevel(node.attrs?.headingLevel),
-        title:
-          typeof node.attrs.title === 'string' && node.attrs.title.trim()
-            ? node.attrs.title
-            : '可折叠标题',
-      })
-    }
-  })
-
-  return items
-}
-
-function filterJumpAidItems(items: JumpAidItem[]): JumpAidItem[] {
-  if (props.settings.jumpAid === 'anchors') {
-    const primaryLevel = getPrimaryHeadingLevel(items)
-    return primaryLevel === null ? [] : items.filter((item) => item.level === primaryLevel)
-  }
-
-  if (props.settings.jumpAid === 'outline') {
-    return items.filter((item) => item.level <= jumpAidMaxLevel.value)
-  }
-
-  return []
-}
-
-function getPrimaryHeadingLevel(items: JumpAidItem[]): number | null {
-  if (items.length === 0) return null
-  return Math.min(...items.map((item) => item.level))
-}
-
-function getNodePlainText(node: EditorJsonNode): string {
-  if (typeof node.text === 'string') return node.text
-  if (!Array.isArray(node.content)) return ''
-  return node.content.map(getNodePlainText).join('').trim()
-}
-
-function clampHeadingLevel(value: unknown): number {
-  const level = Number(value)
-  return Number.isFinite(level) ? Math.max(1, Math.min(4, Math.round(level))) : 2
-}
-
-function jumpToBlock(item: JumpAidItem): void {
-  const selector = `[data-editor-block-id="${escapeAttributeSelectorValue(item.id)}"]`
-  const block =
-    editor.value?.view.dom.querySelector<InstanceType<typeof globalThis.HTMLElement>>(selector)
-
-  block?.scrollIntoView({
-    behavior: props.settings.reduceMotion ? 'auto' : 'smooth',
-    block: 'start',
-  })
-}
-
-function escapeAttributeSelectorValue(value: string): string {
-  return value.replace(/["\\]/g, '\\$&')
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -929,6 +768,7 @@ watch(
       emitUpdate: false,
       errorOnInvalidContent: true,
     })
+    void nextTick(scheduleActiveJumpAidSync)
   },
 )
 
@@ -942,10 +782,16 @@ defineExpose({
   shouldShowBubbleMenu,
   getJSON: () => editor.value?.getJSON() as TiptapDocumentJson | undefined,
   getText: () => editor.value?.getText() ?? '',
+  getCurrentDocumentBlocks,
+  getSelectedBlocks,
+  hasBlockSelection: () => Boolean(editor.value && !editor.value.state.selection.empty),
   focus: () => editor.value?.commands.focus(),
+  undo,
   insertImage,
   insertAttachment,
   insertMarkdown,
+  replaceBlocksWithMarkdown,
+  revealBlock,
   insertInternalDocumentLink,
   copyContextBlock,
   pasteRetainedBlock,
@@ -959,6 +805,7 @@ defineExpose({
   <ContextMenuRoot>
     <ContextMenuTrigger as-child>
       <div
+        ref="editorShellElement"
         class="editor-shell"
         :class="{
           'editor-shell--readonly': readonly,
@@ -1140,186 +987,42 @@ defineExpose({
               链接
             </NTooltip>
             <span class="bubble-toolbar__separator" aria-hidden="true"></span>
-            <NPopover
+            <EditorColorPickerPopover
               v-model:show="colorPopoverOpen"
-              trigger="click"
-              placement="bottom"
-              :z-index="1400"
-              :show-arrow="false"
+              v-model:value="textColor"
+              :recent-colors="recentTextColors"
+              :swatches="TEXT_COLOR_SWATCHES"
+              :active="hasActiveTextColor()"
+              label="文字颜色"
+              recent-swatch-label="设置最近使用的文字颜色"
+              swatch-label="设置文字颜色"
+              recent-aria-label="最近使用的文字颜色"
+              swatches-aria-label="常用文字颜色"
+              clear-label="清除颜色"
+              @preview="previewTextColor"
+              @change="setTextColor"
+              @clear="unsetTextColor"
             >
-              <template #trigger>
-                <NButton
-                  class="bubble-toolbar__button bubble-toolbar__button--color"
-                  :class="{ 'bubble-toolbar__button--active': hasActiveTextColor() }"
-                  size="small"
-                  quaternary
-                  circle
-                  aria-label="文字颜色"
-                  title="文字颜色"
-                  @mousedown.prevent
-                >
-                  <template #icon>
-                    <NIcon :size="16"><Palette /></NIcon>
-                  </template>
-                  <span
-                    class="bubble-toolbar__color-mark"
-                    :style="{ backgroundColor: textColor }"
-                  ></span>
-                </NButton>
-              </template>
-              <div class="bubble-color-panel">
-                <div v-if="recentTextColors.length" class="bubble-color-panel__section">
-                  <span class="bubble-color-panel__label">最近使用</span>
-                  <div
-                    class="bubble-color-panel__swatches bubble-color-panel__swatches--recent"
-                    aria-label="最近使用的文字颜色"
-                  >
-                    <button
-                      v-for="recentColor in recentTextColors"
-                      :key="recentColor"
-                      class="bubble-color-panel__swatch"
-                      :class="{
-                        'bubble-color-panel__swatch--active':
-                          textColor.toLowerCase() === recentColor.toLowerCase(),
-                      }"
-                      type="button"
-                      :style="{ backgroundColor: recentColor }"
-                      :aria-label="`设置最近使用的文字颜色 ${recentColor}`"
-                      @mousedown.prevent
-                      @click="setTextColor(recentColor)"
-                    ></button>
-                  </div>
-                </div>
-                <span class="bubble-color-panel__label">常用颜色</span>
-                <div class="bubble-color-panel__swatches" aria-label="常用文字颜色">
-                  <button
-                    v-for="swatch in TEXT_COLOR_SWATCHES"
-                    :key="swatch"
-                    class="bubble-color-panel__swatch"
-                    :class="{
-                      'bubble-color-panel__swatch--active':
-                        textColor.toLowerCase() === swatch.toLowerCase(),
-                    }"
-                    type="button"
-                    :style="{ backgroundColor: swatch }"
-                    :aria-label="`设置文字颜色 ${swatch}`"
-                    @mousedown.prevent
-                    @click="setTextColor(swatch)"
-                  ></button>
-                </div>
-                <NColorPicker
-                  v-model:value="textColor"
-                  class="bubble-color-panel__picker"
-                  :show-alpha="false"
-                  :modes="['hex']"
-                  size="small"
-                  @update:value="previewTextColor"
-                  @change:value="setTextColor"
-                />
-                <NButton
-                  class="bubble-color-panel__clear"
-                  size="small"
-                  quaternary
-                  @mousedown.prevent
-                  @click="unsetTextColor"
-                >
-                  <template #icon>
-                    <NIcon :size="14"><X /></NIcon>
-                  </template>
-                  清除颜色
-                </NButton>
-              </div>
-            </NPopover>
-            <NPopover
+              <template #icon><Palette /></template>
+            </EditorColorPickerPopover>
+            <EditorColorPickerPopover
               v-model:show="highlightPopoverOpen"
-              trigger="click"
-              placement="bottom"
-              :z-index="1400"
-              :show-arrow="false"
+              v-model:value="highlightColor"
+              :recent-colors="recentHighlightColors"
+              :swatches="HIGHLIGHT_COLOR_SWATCHES"
+              :active="hasActiveHighlight()"
+              label="荧光笔"
+              recent-swatch-label="设置最近使用的高亮颜色"
+              swatch-label="设置高亮颜色"
+              recent-aria-label="最近使用的高亮颜色"
+              swatches-aria-label="常用高亮颜色"
+              clear-label="清除高亮"
+              @preview="previewHighlightColor"
+              @change="setHighlightColor"
+              @clear="unsetHighlightColor"
             >
-              <template #trigger>
-                <NButton
-                  class="bubble-toolbar__button bubble-toolbar__button--color"
-                  :class="{ 'bubble-toolbar__button--active': hasActiveHighlight() }"
-                  size="small"
-                  quaternary
-                  circle
-                  aria-label="荧光笔"
-                  title="荧光笔"
-                  @mousedown.prevent
-                >
-                  <template #icon>
-                    <NIcon :size="16"><Highlighter /></NIcon>
-                  </template>
-                  <span
-                    class="bubble-toolbar__color-mark"
-                    :style="{ backgroundColor: highlightColor }"
-                  ></span>
-                </NButton>
-              </template>
-              <div class="bubble-color-panel">
-                <div v-if="recentHighlightColors.length" class="bubble-color-panel__section">
-                  <span class="bubble-color-panel__label">最近使用</span>
-                  <div
-                    class="bubble-color-panel__swatches bubble-color-panel__swatches--recent"
-                    aria-label="最近使用的高亮颜色"
-                  >
-                    <button
-                      v-for="recentColor in recentHighlightColors"
-                      :key="recentColor"
-                      class="bubble-color-panel__swatch"
-                      :class="{
-                        'bubble-color-panel__swatch--active':
-                          highlightColor.toLowerCase() === recentColor.toLowerCase(),
-                      }"
-                      type="button"
-                      :style="{ backgroundColor: recentColor }"
-                      :aria-label="`设置最近使用的高亮颜色 ${recentColor}`"
-                      @mousedown.prevent
-                      @click="setHighlightColor(recentColor)"
-                    ></button>
-                  </div>
-                </div>
-                <span class="bubble-color-panel__label">常用颜色</span>
-                <div class="bubble-color-panel__swatches" aria-label="常用高亮颜色">
-                  <button
-                    v-for="swatch in HIGHLIGHT_COLOR_SWATCHES"
-                    :key="swatch"
-                    class="bubble-color-panel__swatch"
-                    :class="{
-                      'bubble-color-panel__swatch--active':
-                        highlightColor.toLowerCase() === swatch.toLowerCase(),
-                    }"
-                    type="button"
-                    :style="{ backgroundColor: swatch }"
-                    :aria-label="`设置高亮颜色 ${swatch}`"
-                    @mousedown.prevent
-                    @click="setHighlightColor(swatch)"
-                  ></button>
-                </div>
-                <NColorPicker
-                  v-model:value="highlightColor"
-                  class="bubble-color-panel__picker"
-                  :show-alpha="false"
-                  :modes="['hex']"
-                  size="small"
-                  @update:value="previewHighlightColor"
-                  @change:value="setHighlightColor"
-                />
-                <NButton
-                  class="bubble-color-panel__clear"
-                  size="small"
-                  quaternary
-                  @mousedown.prevent
-                  @click="unsetHighlightColor"
-                >
-                  <template #icon>
-                    <NIcon :size="14"><X /></NIcon>
-                  </template>
-                  清除高亮
-                </NButton>
-              </div>
-            </NPopover>
+              <template #icon><Highlighter /></template>
+            </EditorColorPickerPopover>
             <span class="bubble-toolbar__separator" aria-hidden="true"></span>
             <NTooltip trigger="hover">
               <template #trigger>
@@ -1426,7 +1129,10 @@ defineExpose({
             :key="item.id"
             type="button"
             class="editor-jump-aid__item"
-            :class="`editor-jump-aid__item--level-${item.level}`"
+            :class="[
+              `editor-jump-aid__item--level-${item.level}`,
+              { 'editor-jump-aid__item--active': item.id === activeJumpAidItemId },
+            ]"
             :title="item.title"
             @click="jumpToBlock(item)"
           >

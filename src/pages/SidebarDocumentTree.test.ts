@@ -29,6 +29,12 @@ describe('SidebarDocumentTree', () => {
       global: {
         stubs: {
           NTooltip: { template: '<div><slot name="trigger" /><slot /></div>' },
+          ContextMenuRoot: { template: '<div><slot /></div>' },
+          ContextMenuTrigger: { template: '<div><slot /></div>' },
+          ContextMenuPortal: { template: '<div><slot /></div>' },
+          ContextMenuContent: { template: '<div><slot /></div>' },
+          ContextMenuItem: { template: '<button><slot /></button>' },
+          ContextMenuSeparator: { template: '<span />' },
           DropdownMenuRoot: { template: '<div><slot /></div>' },
           DropdownMenuTrigger: { template: '<div><slot /></div>' },
           DropdownMenuPortal: { template: '<div><slot /></div>' },

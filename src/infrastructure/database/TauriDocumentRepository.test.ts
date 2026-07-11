@@ -8,6 +8,8 @@ class MemorySqlClient implements SqlClient {
   readonly documents = new Map<string, DocumentRecord>()
   readonly tags = new Map<string, string>()
   readonly documentTags = new Map<string, Set<string>>()
+  batchTagQueryCount = 0
+  documentTagDeleteCount = 0
 
   async execute(sql: string, bindValues: SqlValue[] = []): Promise<SqlExecuteResult> {
     const normalizedSql = normalizeSql(sql)
@@ -145,6 +147,7 @@ class MemorySqlClient implements SqlClient {
 
     if (normalizedSql.startsWith('delete from document_tags')) {
       const [documentId] = bindValues
+      this.documentTagDeleteCount += 1
       this.documentTags.delete(String(documentId))
       return { rowsAffected: 1 }
     }
@@ -203,6 +206,18 @@ class MemorySqlClient implements SqlClient {
       return this.getDocumentTags(documentId).map((name) => ({ name }) as T)
     }
 
+    if (
+      normalizedSql.includes('select document_tags.document_id, tags.name') &&
+      normalizedSql.includes('where document_tags.document_id in')
+    ) {
+      this.batchTagQueryCount += 1
+      return bindValues.flatMap((documentId) =>
+        this.getDocumentTags(String(documentId)).map(
+          (name) => ({ document_id: String(documentId), name }) as T,
+        ),
+      )
+    }
+
     if (normalizedSql.includes('select id from tags where name = ?')) {
       const name = String(bindValues[0])
       const row = [...this.tags.entries()].find(([, tagName]) => tagName === name)
@@ -213,7 +228,12 @@ class MemorySqlClient implements SqlClient {
       return rows
         .filter((document) => document.parentId === null)
         .filter((document) => !normalizedSql.includes('and is_deleted = 0') || !document.isDeleted)
-        .sort((left, right) => left.sortOrder - right.sortOrder || right.updatedAt - left.updatedAt)
+        .sort(
+          (left, right) =>
+            left.sortOrder - right.sortOrder ||
+            left.createdAt - right.createdAt ||
+            left.id.localeCompare(right.id),
+        )
         .map((document) => toRow(document) as T)
     }
 
@@ -222,7 +242,26 @@ class MemorySqlClient implements SqlClient {
       return rows
         .filter((document) => document.parentId === parentId)
         .filter((document) => !normalizedSql.includes('and is_deleted = 0') || !document.isDeleted)
-        .sort((left, right) => left.sortOrder - right.sortOrder || right.updatedAt - left.updatedAt)
+        .sort(
+          (left, right) =>
+            left.sortOrder - right.sortOrder ||
+            left.createdAt - right.createdAt ||
+            left.id.localeCompare(right.id),
+        )
+        .map((document) => toRow(document) as T)
+    }
+
+    if (normalizedSql.includes('order by sort_order asc, created_at asc, id asc')) {
+      const limit = Number(bindValues[0])
+      return rows
+        .filter((document) => !normalizedSql.includes('is_deleted = 0') || !document.isDeleted)
+        .sort(
+          (left, right) =>
+            left.sortOrder - right.sortOrder ||
+            left.createdAt - right.createdAt ||
+            left.id.localeCompare(right.id),
+        )
+        .slice(0, limit)
         .map((document) => toRow(document) as T)
     }
 
@@ -242,6 +281,12 @@ class MemorySqlClient implements SqlClient {
     }
 
     throw new Error(`Unsupported select SQL in test: ${sql}`)
+  }
+
+  // FTS is covered by the real SQLite migration; this in-memory document repository fake only
+  // exercises the CRUD contract used by the existing tests.
+  async searchKnowledge(): Promise<never> {
+    throw new Error('Not implemented in MemorySqlClient')
   }
 
   private getDocumentTags(documentId: string): string[] {
@@ -309,6 +354,38 @@ describe('TauriDocumentRepository', () => {
     expect(staleUpdate.error.code).toBe('revision-conflict')
   })
 
+  it('does not rewrite tag relations when an update leaves tags unchanged', async () => {
+    await repository.create({ id: 'doc-1', title: 'Draft', tags: ['database'] })
+    const tagDeletesAfterCreate = sqlClient.documentTagDeleteCount
+
+    const updated = await repository.update({
+      id: 'doc-1',
+      expectedRevision: 1,
+      title: 'Published',
+    })
+
+    expect(updated.ok).toBe(true)
+    expect(sqlClient.documentTagDeleteCount).toBe(tagDeletesAfterCreate)
+    if (!updated.ok) return
+    expect(updated.value.tags).toEqual(['database'])
+  })
+
+  it('rewrites tag relations when tags are explicitly updated', async () => {
+    await repository.create({ id: 'doc-1', title: 'Draft', tags: ['old'] })
+    const tagDeletesAfterCreate = sqlClient.documentTagDeleteCount
+
+    const updated = await repository.update({
+      id: 'doc-1',
+      expectedRevision: 1,
+      tags: ['new'],
+    })
+
+    expect(updated.ok).toBe(true)
+    expect(sqlClient.documentTagDeleteCount).toBe(tagDeletesAfterCreate + 1)
+    if (!updated.ok) return
+    expect(updated.value.tags).toEqual(['new'])
+  })
+
   it('saves with SQLite-style upsert and revision control', async () => {
     const inserted = await repository.save({
       id: 'doc-1',
@@ -346,6 +423,32 @@ describe('TauriDocumentRepository', () => {
     expect(staleSave.ok).toBe(false)
     if (staleSave.ok) return
     expect(staleSave.error.code).toBe('revision-conflict')
+  })
+
+  it('does not rewrite unchanged tags during autosave', async () => {
+    const inserted = await repository.save({
+      id: 'doc-1',
+      expectedRevision: null,
+      title: 'Draft',
+      tags: ['database', 'performance'],
+      contentJson: '{"type":"doc"}',
+      plainText: 'Draft',
+    })
+    expect(inserted.ok).toBe(true)
+    if (!inserted.ok) return
+    const tagDeletesAfterInsert = sqlClient.documentTagDeleteCount
+
+    const saved = await repository.save({
+      id: 'doc-1',
+      expectedRevision: inserted.value.revision,
+      title: 'Draft',
+      tags: ['performance', 'database'],
+      contentJson: '{"type":"doc"}',
+      plainText: 'Updated body',
+    })
+
+    expect(saved.ok).toBe(true)
+    expect(sqlClient.documentTagDeleteCount).toBe(tagDeletesAfterInsert)
   })
 
   it('lazily migrates legacy block ids on save and keeps ids stable after read', async () => {
@@ -458,6 +561,21 @@ describe('TauriDocumentRepository', () => {
     if (!roots.ok) return
     expect(roots.value.map((document) => document.id)).toEqual(['doc-1'])
     expect(roots.value[0]?.createdAt).toBe(Date.now())
+    expect(sqlClient.batchTagQueryCount).toBe(1)
+  })
+
+  it('lists active documents in a stable position after updates', async () => {
+    await repository.create({ id: 'first', title: 'First', sortOrder: 1 })
+    vi.setSystemTime(new Date('2026-06-21T00:00:01.000Z'))
+    await repository.create({ id: 'second', title: 'Second', sortOrder: 2 })
+    vi.setSystemTime(new Date('2026-06-21T00:00:02.000Z'))
+    await repository.update({ id: 'first', expectedRevision: 1, title: 'First updated' })
+
+    const documents = await repository.listRecent({ limit: 200 })
+
+    expect(documents.ok).toBe(true)
+    if (!documents.ok) return
+    expect(documents.value.map((document) => document.id)).toEqual(['first', 'second'])
   })
 
   it('lists deleted documents separately', async () => {

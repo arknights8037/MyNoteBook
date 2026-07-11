@@ -8,6 +8,7 @@ import {
   type SaveDocumentInput,
   type UpdateDocumentInput,
 } from '@/models/document'
+import type { DocumentBlock } from '@/models/documentBlock'
 import { err, normalizeError, ok, type AppResult } from '@/models/result'
 import type { DocumentRepository } from '@/repositories/DocumentRepository'
 import type { SqlClient } from '@/repositories/SqlClient'
@@ -30,6 +31,22 @@ interface DocumentRow extends Record<string, unknown> {
   created_at: number
   updated_at: number
 }
+
+interface DocumentTagRow extends Record<string, unknown> {
+  document_id: string
+  name: string
+}
+
+const DOCUMENT_SUMMARY_COLUMNS = `
+  id, parent_id, document_kind, title, source_url, author, description,
+  plain_text, revision, sort_order, is_deleted, created_at, updated_at
+`
+const QUALIFIED_DOCUMENT_SUMMARY_COLUMNS = `
+  documents.id, documents.parent_id, documents.document_kind, documents.title,
+  documents.source_url, documents.author, documents.description, documents.plain_text,
+  documents.revision, documents.sort_order, documents.is_deleted,
+  documents.created_at, documents.updated_at
+`
 
 const DEFAULT_CONTENT_JSON = serializeEditorContent(EMPTY_TIPTAP_DOCUMENT)
 
@@ -132,15 +149,15 @@ export class TauriDocumentRepository implements DocumentRepository {
   ): Promise<AppResult<DocumentSummary[]>> {
     try {
       const rows = await this.sqlClient.select<DocumentRow>(
-        `SELECT *
+        `SELECT ${DOCUMENT_SUMMARY_COLUMNS}
          FROM documents
          WHERE ${parentId === null ? 'parent_id IS NULL' : 'parent_id = ?'}
            ${options.includeDeleted ? '' : 'AND is_deleted = 0'}
-         ORDER BY sort_order ASC, updated_at DESC`,
+         ORDER BY sort_order ASC, created_at ASC, id ASC`,
         parentId === null ? [] : [parentId],
       )
 
-      return ok(await Promise.all(rows.map((row) => this.mapDocumentSummaryRow(row))))
+      return ok(await this.mapDocumentSummaryRows(rows))
     } catch (error) {
       return err(normalizeError(error, 'Failed to list documents.'))
     }
@@ -153,15 +170,15 @@ export class TauriDocumentRepository implements DocumentRepository {
 
     try {
       const rows = await this.sqlClient.select<DocumentRow>(
-        `SELECT *
+        `SELECT ${DOCUMENT_SUMMARY_COLUMNS}
          FROM documents
          WHERE ${options.includeDeleted ? '1 = 1' : 'is_deleted = 0'}
-         ORDER BY updated_at DESC
+         ORDER BY sort_order ASC, created_at ASC, id ASC
          LIMIT ?`,
         [limit],
       )
 
-      return ok(await Promise.all(rows.map((row) => this.mapDocumentSummaryRow(row))))
+      return ok(await this.mapDocumentSummaryRows(rows))
     } catch (error) {
       return err(normalizeError(error, 'Failed to list recent documents.'))
     }
@@ -172,7 +189,7 @@ export class TauriDocumentRepository implements DocumentRepository {
 
     try {
       const rows = await this.sqlClient.select<DocumentRow>(
-        `SELECT *
+        `SELECT ${DOCUMENT_SUMMARY_COLUMNS}
          FROM documents
          WHERE is_deleted = 1
          ORDER BY updated_at DESC
@@ -180,9 +197,71 @@ export class TauriDocumentRepository implements DocumentRepository {
         [limit],
       )
 
-      return ok(await Promise.all(rows.map((row) => this.mapDocumentSummaryRow(row))))
+      return ok(await this.mapDocumentSummaryRows(rows))
     } catch (error) {
       return err(normalizeError(error, 'Failed to list deleted documents.'))
+    }
+  }
+
+  async searchKnowledge(
+    query: string,
+    options: { limit?: number } = {},
+  ): Promise<AppResult<DocumentSummary[]>> {
+    const ftsQuery = buildFtsQuery(query)
+    if (!ftsQuery) return ok([])
+    const limit = Math.max(1, Math.min(options.limit ?? 5, 20))
+
+    try {
+      const rows = await this.sqlClient.select<DocumentRow>(
+        `SELECT ${QUALIFIED_DOCUMENT_SUMMARY_COLUMNS}
+         FROM document_search
+         INNER JOIN documents ON documents.id = document_search.document_id
+         WHERE document_search MATCH ?
+           AND documents.document_kind = 'article'
+           AND documents.is_deleted = 0
+         ORDER BY bm25(document_search), documents.updated_at DESC
+         LIMIT ?`,
+        [ftsQuery, limit],
+      )
+      return ok(await this.mapDocumentSummaryRows(rows))
+    } catch (error) {
+      return err(normalizeError(error, 'Failed to search knowledge documents.'))
+    }
+  }
+
+  async listBlocks(documentId: DocumentId): Promise<AppResult<DocumentBlock[]>> {
+    try {
+      const rows = await this.sqlClient.select<{
+        document_id: string
+        id: string
+        block_type: string
+        block_index: number
+        content_json: string
+        plain_text: string
+        document_revision: number
+        updated_at: number
+      }>(
+        `SELECT document_id, id, block_type, block_index, content_json, plain_text,
+                document_revision, updated_at
+         FROM blocks
+         WHERE document_id = ?
+         ORDER BY block_index ASC`,
+        [documentId],
+      )
+      return ok(
+        rows.map((row) => ({
+          id: row.id,
+          documentId: row.document_id,
+          type: row.block_type,
+          index: row.block_index,
+          contentJson: row.content_json,
+          plainText: row.plain_text,
+          documentRevision: row.document_revision,
+          updatedAt: row.updated_at,
+        })),
+      )
+    } catch (error) {
+      return err(normalizeError(error, 'Failed to list document blocks.'))
     }
   }
 
@@ -209,14 +288,21 @@ export class TauriDocumentRepository implements DocumentRepository {
       sourceUrl: input.sourceUrl ?? existing.sourceUrl,
       author: input.author ?? existing.author,
       description: input.description ?? existing.description,
-      contentJson: input.contentJson === undefined ? existing.contentJson : normalizeContentJson(input.contentJson),
+      contentJson:
+        input.contentJson === undefined
+          ? existing.contentJson
+          : normalizeContentJson(input.contentJson),
       plainText: input.plainText ?? existing.plainText,
       sortOrder: input.sortOrder ?? existing.sortOrder,
       revision: existing.revision + 1,
       updatedAt: Date.now(),
     }
 
-    return this.persistExistingDocument(nextDocument, input.expectedRevision)
+    return this.persistExistingDocument(
+      nextDocument,
+      input.expectedRevision,
+      input.tags !== undefined,
+    )
   }
 
   async save(input: SaveDocumentInput): Promise<AppResult<DocumentRecord>> {
@@ -283,11 +369,16 @@ export class TauriDocumentRepository implements DocumentRepository {
           message: `Document "${input.id}" was changed before autosave completed.`,
         })
       }
-      if (input.tags !== undefined) {
-        await this.syncDocumentTags(input.id, normalizeTags(input.tags))
+      const savedResult = await this.findById(input.id)
+      if (!savedResult.ok || input.tags === undefined) {
+        return savedResult
       }
 
-      return this.findById(input.id)
+      const nextTags = normalizeTags(input.tags)
+      if (!areStringArraysEqual(savedResult.value.tags, nextTags)) {
+        await this.syncDocumentTags(input.id, nextTags)
+      }
+      return ok({ ...savedResult.value, tags: nextTags })
     } catch (error) {
       return err(normalizeError(error, 'Failed to save document.'))
     }
@@ -374,6 +465,7 @@ export class TauriDocumentRepository implements DocumentRepository {
   private async persistExistingDocument(
     document: DocumentRecord,
     expectedRevision: number,
+    syncTags = false,
   ): Promise<AppResult<DocumentRecord>> {
     try {
       const result = await this.sqlClient.execute(
@@ -417,7 +509,9 @@ export class TauriDocumentRepository implements DocumentRepository {
           message: `Document "${document.id}" was changed before the update completed.`,
         })
       }
-      await this.syncDocumentTags(document.id, document.tags)
+      if (syncTags) {
+        await this.syncDocumentTags(document.id, document.tags)
+      }
 
       return ok(document)
     } catch (error) {
@@ -434,11 +528,35 @@ export class TauriDocumentRepository implements DocumentRepository {
     }
   }
 
-  private async mapDocumentSummaryRow(row: DocumentRow): Promise<DocumentSummary> {
-    return {
+  private async mapDocumentSummaryRows(rows: DocumentRow[]): Promise<DocumentSummary[]> {
+    if (rows.length === 0) return []
+
+    const tagsByDocumentId = await this.listDocumentTagsBatch(rows.map((row) => row.id))
+    return rows.map((row) => ({
       ...mapDocumentBase(row),
-      tags: await this.listDocumentTags(row.id),
+      tags: tagsByDocumentId.get(row.id) ?? [],
+    }))
+  }
+
+  private async listDocumentTagsBatch(
+    documentIds: DocumentId[],
+  ): Promise<Map<DocumentId, string[]>> {
+    const placeholders = documentIds.map(() => '?').join(', ')
+    const rows = await this.sqlClient.select<DocumentTagRow>(
+      `SELECT document_tags.document_id, tags.name
+       FROM document_tags
+       INNER JOIN tags ON tags.id = document_tags.tag_id
+       WHERE document_tags.document_id IN (${placeholders})
+       ORDER BY document_tags.document_id ASC, tags.name COLLATE NOCASE ASC`,
+      documentIds,
+    )
+    const tagsByDocumentId = new Map<DocumentId, string[]>()
+    for (const row of rows) {
+      const tags = tagsByDocumentId.get(row.document_id) ?? []
+      tags.push(row.name)
+      tagsByDocumentId.set(row.document_id, tags)
     }
+    return tagsByDocumentId
   }
 
   private async listDocumentTags(documentId: DocumentId): Promise<string[]> {
@@ -509,6 +627,12 @@ function normalizeTags(tags: string[] | undefined): string[] {
   ).slice(0, 20)
 }
 
+function areStringArraysEqual(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false
+  const rightValues = new Set(right)
+  return left.every((value) => rightValues.has(value))
+}
+
 function createTagId(tag: string): string {
   const safeTag = tag
     .toLocaleLowerCase()
@@ -534,4 +658,13 @@ function normalizeContentJson(contentJson: string | undefined): string {
   } catch {
     return DEFAULT_CONTENT_JSON
   }
+}
+
+function buildFtsQuery(query: string): string {
+  const terms = query
+    .replace(/["']/g, ' ')
+    .match(/[\p{L}\p{N}_-]{2,}/gu)
+    ?.slice(0, 12)
+    .map((term) => `"${term}"`)
+  return terms?.join(' OR ') ?? ''
 }

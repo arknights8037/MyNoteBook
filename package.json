@@ -19,6 +19,8 @@
     "e2e": "playwright test"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.12",
+    "@ai-sdk/openai-compatible": "^3.0.7",
     "@lucide/vue": "^1.21.0",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.4.0",
@@ -51,11 +53,13 @@
     "@visactor/vtable": "1.26.3",
     "@visactor/vtable-editors": "1.26.3",
     "@vueuse/core": "^13.9.0",
+    "ai": "^7.0.22",
     "katex": "^0.17.0",
     "lowlight": "^3.3.0",
     "mermaid": "^11.16.0",
     "reka-ui": "^2.10.1",
-    "vue": "^3.5.38"
+    "vue": "^3.5.38",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

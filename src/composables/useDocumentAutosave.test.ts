@@ -22,6 +22,38 @@ function createDocument(revision: number): DocumentRecord {
 }
 
 describe('useDocumentAutosave', () => {
+  it('preserves document metadata in autosave payloads', async () => {
+    const service: DocumentAutosaveService = {
+      saveDocument: vi.fn(async () => ok(createDocument(2))),
+    }
+    const autosave = useDocumentAutosave({
+      documentId: 'doc-1',
+      documentService: service,
+      initialRevision: 1,
+      getSnapshot: () => ({
+        title: 'Document',
+        content: EMPTY_TIPTAP_DOCUMENT,
+        plainText: 'Document',
+        tags: ['database'],
+        sourceUrl: 'https://example.com',
+        author: 'Author',
+        description: 'Description',
+      }),
+    })
+
+    autosave.markDirty()
+    await autosave.flush()
+
+    expect(service.saveDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tags: ['database'],
+        sourceUrl: 'https://example.com',
+        author: 'Author',
+        description: 'Description',
+      }),
+    )
+  })
+
   it('debounces repeated dirty marks before saving', async () => {
     vi.useFakeTimers()
     let nextRevision = 1

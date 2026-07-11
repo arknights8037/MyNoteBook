@@ -5,6 +5,7 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-show",
     "dialog:default",
     "fs:default",
     "log:default",
@@ -17,4 +18,3 @@
     "window-state:default"
   ]
 }
-

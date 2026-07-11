@@ -1,0 +1,8 @@
+@import './semantic/shared.css';
+@import './semantic/settings.css';
+@import './semantic/documents.css';
+@import './semantic/editor.css';
+@import './semantic/content-blocks.css';
+@import './semantic/overlays.css';
+@import './semantic/ai-chat.css';
+@import './semantic/secondary.css';

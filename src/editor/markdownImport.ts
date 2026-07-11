@@ -13,6 +13,7 @@ export interface MarkdownImportResult {
 interface ListItemDraft {
   text: string
   ordered: boolean
+  taskChecked?: boolean
 }
 
 const DEFAULT_IMPORTED_TITLE = '导入的 Markdown'
@@ -21,7 +22,7 @@ export function parseMarkdownDocument(
   markdown: string,
   fallbackTitle = DEFAULT_IMPORTED_TITLE,
 ): MarkdownImportResult {
-  const normalizedMarkdown = markdown.replace(/\r\n?/g, '\n')
+  const normalizedMarkdown = markdown.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')
   const lines = normalizedMarkdown.split('\n')
   const content: JSONContent[] = []
   const plainTextLines: string[] = []
@@ -61,10 +62,12 @@ export function parseMarkdownDocument(
     if (listItems.length === 0) return
 
     const isOrdered = listItems[0]?.ordered ?? false
+    const isTaskList = !isOrdered && listItems.some((item) => item.taskChecked !== undefined)
     content.push({
-      type: isOrdered ? 'orderedList' : 'bulletList',
+      type: isTaskList ? 'taskList' : isOrdered ? 'orderedList' : 'bulletList',
       content: listItems.map((item) => ({
-        type: 'listItem',
+        type: isTaskList ? 'taskItem' : 'listItem',
+        attrs: isTaskList ? { checked: item.taskChecked === true } : undefined,
         content: [createTextBlock('paragraph', item.text)],
       })),
     })
@@ -211,18 +214,24 @@ export function parseMarkdownDocument(
       continue
     }
 
+    const taskListMatch = line.match(/^\s*[-*+]\s+\[([ xX])\]\s+(.+)$/)
     const unorderedListMatch = line.match(/^\s*[-*+]\s+(.+)$/)
     const orderedListMatch = line.match(/^\s*\d+\.\s+(.+)$/)
-    if (unorderedListMatch || orderedListMatch) {
+    if (taskListMatch || unorderedListMatch || orderedListMatch) {
       flushParagraph()
       flushQuote()
       const ordered = Boolean(orderedListMatch)
-      if (listItems.length > 0 && listItems[0].ordered !== ordered) {
+      const isTask = Boolean(taskListMatch)
+      if (
+        listItems.length > 0 &&
+        (listItems[0].ordered !== ordered || (listItems[0].taskChecked !== undefined) !== isTask)
+      ) {
         flushList()
       }
       listItems.push({
-        text: (unorderedListMatch?.[1] ?? orderedListMatch?.[1] ?? '').trim(),
+        text: (taskListMatch?.[2] ?? unorderedListMatch?.[1] ?? orderedListMatch?.[1] ?? '').trim(),
         ordered,
+        taskChecked: taskListMatch ? taskListMatch[1].toLowerCase() === 'x' : undefined,
       })
       continue
     }

@@ -14,6 +14,16 @@ describe('markdownImport', () => {
     expect(imported.plainText).toContain('正文内容')
   })
 
+  it('strips an UTF-8 BOM before parsing the first heading', () => {
+    const imported = parseMarkdownDocument('\uFEFF# 项目说明\n\n正文内容', 'fallback.md')
+
+    expect(imported.title).toBe('项目说明')
+    expect(imported.content.content?.[0]).toMatchObject({
+      type: 'heading',
+      attrs: expect.objectContaining({ level: 1 }),
+    })
+  })
+
   it('converts common markdown blocks into tiptap content', () => {
     const imported = parseMarkdownDocument(
       [
@@ -39,6 +49,25 @@ describe('markdownImport', () => {
       'codeBlock',
       'horizontalRule',
     ])
+  })
+
+  it('converts markdown task list items into task blocks', () => {
+    const imported = parseMarkdownDocument(['- [x] 已完成', '- [ ] 待处理'].join('\n'))
+
+    expect(imported.content.content?.[0]).toMatchObject({
+      type: 'taskList',
+      content: [
+        {
+          type: 'taskItem',
+          attrs: expect.objectContaining({ checked: true }),
+        },
+        {
+          type: 'taskItem',
+          attrs: expect.objectContaining({ checked: false }),
+        },
+      ],
+    })
+    expect(imported.plainText).toContain('已完成')
   })
 
   it('imports fourth-level headings', () => {

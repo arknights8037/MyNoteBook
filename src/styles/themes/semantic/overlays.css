@@ -1,0 +1,167 @@
+.slash-command-host,
+.slash-command,
+.block-transform-menu,
+.document-card-menu,
+.editor-context-menu,
+.bubble-toolbar,
+.bubble-color-panel,
+.ui-popover,
+.ui-select-content,
+.ai-chat-menu,
+.vtable-block__menu,
+.vtable-field-menu,
+.math-block__popover {
+  border-color: var(--color-border-default);
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 18px 48px color-mix(in srgb, #000 18%, transparent);
+}
+
+.ui-select-content,
+.document-card-menu,
+.editor-context-menu,
+.block-transform-menu,
+.slash-command,
+.ai-chat-menu,
+.vtable-block__menu,
+.vtable-field-menu,
+.math-block__popover {
+  color-scheme: light dark;
+}
+
+.ui-select-content .ui-select-item,
+.document-card-menu__item,
+.editor-context-menu__item,
+.block-transform-menu__item,
+.slash-command__item,
+.ai-chat-menu__item,
+.vtable-block__menu button,
+.math-block__type-list button {
+  color: var(--color-text-primary);
+  background: transparent;
+}
+
+.vtable-field-menu button,
+.math-block__template-button,
+.math-block__symbol-grid button {
+  border-color: var(--color-border-default);
+  color: var(--color-text-primary);
+  background: var(--color-bg-surface);
+}
+
+.ui-select-content .ui-select-item[data-highlighted],
+.document-card-menu__item[data-highlighted],
+.editor-context-menu__item[data-highlighted],
+.block-transform-menu__item:hover,
+.slash-command__item:hover,
+.slash-command__item--selected,
+.ai-chat-menu__item[data-highlighted],
+.vtable-block__menu button:hover:not(:disabled),
+.vtable-field-menu button:hover:not(:disabled),
+.math-block__type-list button:hover,
+.math-block__template-button:hover,
+.math-block__symbol-grid button:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.ui-select[data-state='open'],
+.document-list__more:hover:not(:disabled),
+.document-list__more[data-state='open'],
+.ai-chat-selector:hover,
+.ai-chat-selector[data-state='open'],
+.vtable-block__more summary:hover,
+.vtable-block__more[open] summary {
+  border-color: var(--color-border-default);
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.ui-select-content .ui-select-item[data-state='checked'],
+.ai-chat-menu__item--active,
+.vtable-field-menu__presets .vtable-field-menu__preset--active,
+.math-block__type-list .math-block__type-button--active {
+  border-color: color-mix(in srgb, var(--color-accent-primary) 38%, var(--color-border-default));
+  color: var(--color-accent-primary);
+  background: var(--color-accent-soft);
+}
+
+.document-card-menu__item--danger,
+.editor-context-menu__item--danger,
+.vtable-block__menu .vtable-block__menu-danger {
+  color: var(--color-status-error);
+}
+
+.document-card-menu__item--danger[data-highlighted],
+.editor-context-menu__item--danger[data-highlighted],
+.vtable-block__menu .vtable-block__menu-danger:hover:not(:disabled) {
+  color: var(--color-status-error);
+  background: color-mix(in srgb, var(--color-status-error) 13%, var(--color-bg-elevated));
+}
+
+.document-card-menu__separator,
+.editor-context-menu__separator,
+.vtable-block__menu-separator,
+.vtable-field-menu__header,
+.vtable-field-menu__footer,
+.math-block__latex-row,
+.math-block__type-list {
+  border-color: var(--color-border-subtle);
+}
+
+.document-card-menu__separator,
+.editor-context-menu__separator,
+.vtable-block__menu-separator {
+  background: var(--color-border-subtle);
+}
+
+.slash-command__description,
+.slash-command__empty,
+.editor-context-menu__label,
+.editor-context-menu__item kbd,
+.bubble-color-panel__label,
+.vtable-block__menu .vtable-block__menu-label,
+.vtable-field-menu__field > span,
+.vtable-field-menu__checkbox span,
+.vtable-field-menu__chips em,
+.ai-chat-menu__item-copy small,
+.ai-chat-history-menu__copy small {
+  color: var(--color-text-tertiary);
+}
+
+.slash-command__icon,
+.editor-context-menu__glyph,
+.block-transform-menu__shortcut,
+.ui-select-item__indicator {
+  color: var(--color-accent-primary);
+  background: var(--color-accent-soft);
+}
+
+.block-transform-menu__shortcut,
+.slash-command__icon,
+.vtable-field-menu__chips span {
+  border-color: var(--color-border-default);
+}
+
+.vtable-field-menu__header span,
+.vtable-field-menu__section-title span,
+.ai-chat-menu__item-copy strong,
+.ai-chat-history-menu__copy strong {
+  color: var(--color-text-primary);
+}
+
+.vtable-field-menu input[type='text'],
+.vtable-field-menu select,
+.vtable-field-menu textarea {
+  border-color: var(--color-border-default);
+  color: var(--color-text-primary);
+  background: var(--color-bg-surface);
+}
+
+.vtable-field-menu input[type='text']:focus,
+.vtable-field-menu select:focus,
+.vtable-field-menu textarea:focus {
+  border-color: var(--color-accent-primary);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-focus-ring) 20%, transparent);
+}

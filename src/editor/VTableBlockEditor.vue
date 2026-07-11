@@ -25,20 +25,17 @@ import type {
 } from '@visactor/vtable/es/ts-types'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 
-import { getCssColorValue } from '@/services/theme'
-import { createDefaultTableRows, normalizeTableRows } from './structuredBlocks'
+import { normalizeTableRows } from './structuredBlocks'
 import {
   TABLE_ENUM_PRESETS,
   TABLE_FIELD_TYPES,
   applyTableFieldsToRows,
   getTableFieldTypeLabel,
   insertTableField,
-  normalizeEnumOptions,
   normalizeTableFields,
   removeTableField,
   syncTableFieldsFromHeader,
   type TableField,
-  type TableFieldType,
 } from './tableFields'
 import {
   clearTableRange,
@@ -57,8 +54,15 @@ import {
   type TableSortDirection,
 } from './tableOperations'
 import VueMuteTableEditor from './VueMuteTableEditor.vue'
+import { useVTableFieldMenu } from './composables/useVTableFieldMenu'
+import {
+  getVTableFieldName,
+  normalizeVTableRows,
+  rowsToVTableRecords,
+  vtableRecordsToRows,
+} from './vtableDataAdapter'
+import { getVTableThemeColors } from './vtableTheme'
 
-type VTableRecord = Record<string, string | number | null | undefined>
 type VTableModule = typeof import('@visactor/vtable/es/ListTable-all')
 type VTableEditorsModule = typeof import('@visactor/vtable-editors')
 type VTableRegisterModule = typeof import('@visactor/vtable/es/register')
@@ -102,17 +106,10 @@ const selectedRange = ref<TableCellRange>({
   start: { row: 0, column: 0 },
   end: { row: 0, column: 0 },
 })
-const fieldMenuState = ref({
-  open: false,
-  column: 0,
-  x: 0,
-  y: 0,
-})
-const fieldDraft = ref<TableField | null>(null)
-const pendingEnumOption = ref('')
 let lastTablePointerDownAt = 0
+let resizeFrame = 0
 
-const baseRows = computed(() => normalizeRows(props.rows))
+const baseRows = computed(() => normalizeVTableRows(props.rows))
 const tableFields = computed(() => normalizeTableFields(props.fields, baseRows.value))
 const tableRows = computed(() => applyTableFieldsToRows(baseRows.value, tableFields.value))
 const columnCount = computed(() => getTableColumnCount(tableRows.value))
@@ -130,8 +127,7 @@ const activeFieldTypeLabel = computed(() =>
 )
 const selectedCellCount = computed(() => {
   const rowCount = Math.abs(selectedRange.value.end.row - selectedRange.value.start.row) + 1
-  const colCount =
-    Math.abs(selectedRange.value.end.column - selectedRange.value.start.column) + 1
+  const colCount = Math.abs(selectedRange.value.end.column - selectedRange.value.start.column) + 1
   return rowCount * colCount
 })
 const selectionSummary = computed(() =>
@@ -140,6 +136,35 @@ const selectionSummary = computed(() =>
 const canvasHeight = computed(() =>
   Math.min(446, Math.max(164, tableRows.value.length * BASE_ROW_HEIGHT + 2)),
 )
+
+const {
+  state: fieldMenuState,
+  draft: fieldDraft,
+  pendingEnumOption,
+  open: openFieldMenu,
+  close: closeFieldMenu,
+  updateName: updateFieldDraftName,
+  updateType: updateFieldDraftType,
+  updateDescription: updateFieldDraftDescription,
+  toggleAllowCustomOptions,
+  applyPreset: applyEnumPreset,
+  addEnumOption,
+  removeEnumOption,
+  collectColumnValues: collectColumnValuesAsEnumOptions,
+  apply: applyFieldDraft,
+  isEnumFieldType,
+} = useVTableFieldMenu({
+  container,
+  fields: tableFields,
+  rows: tableRows,
+  activateHeaderCell: (address) => {
+    activeCell.value = address
+    selectedRange.value = { start: { ...address }, end: { ...address } }
+    focusTableCell(address)
+  },
+  commitRows: (rows, focusCell, fields) => commitRows(rows, focusCell, fields),
+  refreshTable: (rows, fields) => refreshTableOption(rows, fields),
+})
 
 watch(
   tableRows,
@@ -151,7 +176,7 @@ watch(
       return
     }
 
-    table.value?.setRecords(rowsToRecords(nextRows))
+    table.value?.setRecords(rowsToVTableRecords(nextRows))
     requestTableResize()
   },
   { deep: true },
@@ -240,6 +265,10 @@ async function mountVTable(): Promise<void> {
 }
 
 function releaseVTable(): void {
+  if (resizeFrame !== 0) {
+    globalThis.cancelAnimationFrame(resizeFrame)
+    resizeFrame = 0
+  }
   resizeObserver.value?.disconnect()
   resizeObserver.value = null
 
@@ -265,7 +294,11 @@ function refreshTableOption(rows: string[][], fields = tableFields.value): void 
 }
 
 function requestTableResize(): void {
-  globalThis.requestAnimationFrame(() => table.value?.resize())
+  if (resizeFrame !== 0) return
+  resizeFrame = globalThis.requestAnimationFrame(() => {
+    resizeFrame = 0
+    table.value?.resize()
+  })
 }
 
 function updateSelection(col: number, row: number, ranges: CellRange[]): void {
@@ -280,7 +313,7 @@ function updateSelection(col: number, row: number, ranges: CellRange[]): void {
 }
 
 function emitRowsFromTable(): void {
-  const nextRows = recordsToRows(table.value?.records ?? [], columnCount.value)
+  const nextRows = vtableRecordsToRows(table.value?.records ?? [], columnCount.value)
   const nextFields = syncTableFieldsFromHeader(tableFields.value, nextRows[0] ?? [])
   isApplyingTableUpdate.value = true
   emit('updateFields', nextFields)
@@ -303,7 +336,7 @@ function commitRows(
   if (getTableColumnCount(normalizedRows) !== columnCount.value) {
     refreshTableOption(normalizedRows, nextFields)
   } else {
-    table.value?.setRecords(rowsToRecords(normalizedRows))
+    table.value?.setRecords(rowsToVTableRecords(normalizedRows))
   }
 
   requestTableResize()
@@ -323,7 +356,11 @@ function addRecord(afterIndex = tableRows.value.length - 1): void {
 
 function addField(afterIndex = columnCount.value - 1): void {
   const columnIndex = Math.max(0, Math.min(afterIndex + 1, columnCount.value))
-  commitRows(insertTableColumn(tableRows.value, afterIndex), { row: 0, column: columnIndex }, insertTableField(tableFields.value, afterIndex))
+  commitRows(
+    insertTableColumn(tableRows.value, afterIndex),
+    { row: 0, column: columnIndex },
+    insertTableField(tableFields.value, afterIndex),
+  )
 }
 
 function duplicateActiveRow(): void {
@@ -347,10 +384,14 @@ function removeActiveRow(): void {
 function removeActiveColumn(): void {
   if (columnCount.value <= 1) return
   const columnIndex = activeCell.value.column
-  commitRows(removeTableColumn(tableRows.value, columnIndex), {
-    row: activeCell.value.row,
-    column: Math.max(0, columnIndex - 1),
-  }, removeTableField(tableFields.value, columnIndex))
+  commitRows(
+    removeTableColumn(tableRows.value, columnIndex),
+    {
+      row: activeCell.value.row,
+      column: Math.max(0, columnIndex - 1),
+    },
+    removeTableField(tableFields.value, columnIndex),
+  )
 }
 
 function clearSelection(): void {
@@ -429,130 +470,6 @@ function closeOperationsMenu(event: InstanceType<typeof globalThis.MouseEvent>):
   }
 }
 
-function openFieldMenu(
-  columnIndex: number,
-  event?: InstanceType<typeof globalThis.Event>,
-): void {
-  const field = tableFields.value[columnIndex]
-  if (!field || !container.value) return
-
-  const containerRect = container.value.getBoundingClientRect()
-  const menuMaxX = Math.max(10, containerRect.width - 320)
-  const eventPoint =
-    event && 'clientX' in event && 'clientY' in event
-      ? (event as InstanceType<typeof globalThis.MouseEvent>)
-      : null
-  activeCell.value = { row: 0, column: columnIndex }
-  selectedRange.value = { start: { ...activeCell.value }, end: { ...activeCell.value } }
-  fieldDraft.value = cloneField(field)
-  pendingEnumOption.value = ''
-  fieldMenuState.value = {
-    open: true,
-    column: columnIndex,
-    x: Math.min(Math.max((eventPoint?.clientX ?? containerRect.left) - containerRect.left, 10), menuMaxX),
-    y: Math.min(Math.max((eventPoint?.clientY ?? containerRect.top) - containerRect.top, 10), 120),
-  }
-  focusTableCell({ row: 0, column: columnIndex })
-}
-
-function closeFieldMenu(): void {
-  fieldMenuState.value.open = false
-  fieldDraft.value = null
-  pendingEnumOption.value = ''
-}
-
-function updateFieldDraftName(value: string): void {
-  if (!fieldDraft.value) return
-  fieldDraft.value = { ...fieldDraft.value, name: value }
-}
-
-function updateFieldDraftType(value: string): void {
-  if (!fieldDraft.value) return
-  const type = value as TableFieldType
-  fieldDraft.value = {
-    ...fieldDraft.value,
-    type,
-    enumOptions:
-      fieldDraft.value.enumOptions.length > 0 || !isEnumFieldType(type)
-        ? fieldDraft.value.enumOptions
-        : TABLE_ENUM_PRESETS[0].options,
-    enumPreset:
-      fieldDraft.value.enumPreset || (isEnumFieldType(type) ? TABLE_ENUM_PRESETS[0].key : ''),
-  }
-}
-
-function updateFieldDraftDescription(value: string): void {
-  if (!fieldDraft.value) return
-  fieldDraft.value = { ...fieldDraft.value, description: value }
-}
-
-function toggleAllowCustomOptions(checked: boolean): void {
-  if (!fieldDraft.value) return
-  fieldDraft.value = { ...fieldDraft.value, allowCustomOptions: checked }
-}
-
-function applyEnumPreset(presetKey: string): void {
-  if (!fieldDraft.value) return
-  const preset = TABLE_ENUM_PRESETS.find((item) => item.key === presetKey)
-  if (!preset) return
-  fieldDraft.value = {
-    ...fieldDraft.value,
-    enumPreset: preset.key,
-    enumOptions: preset.options,
-  }
-}
-
-function addEnumOption(): void {
-  if (!fieldDraft.value) return
-  const nextOptions = normalizeEnumOptions([...fieldDraft.value.enumOptions, pendingEnumOption.value])
-  fieldDraft.value = {
-    ...fieldDraft.value,
-    enumPreset: 'custom',
-    enumOptions: nextOptions,
-  }
-  pendingEnumOption.value = ''
-}
-
-function removeEnumOption(option: string): void {
-  if (!fieldDraft.value) return
-  fieldDraft.value = {
-    ...fieldDraft.value,
-    enumPreset: 'custom',
-    enumOptions: fieldDraft.value.enumOptions.filter((item) => item !== option),
-  }
-}
-
-function collectColumnValuesAsEnumOptions(): void {
-  if (!fieldDraft.value) return
-  const columnIndex = fieldMenuState.value.column
-  const columnValues = tableRows.value.slice(1).map((row) => row[columnIndex])
-  fieldDraft.value = {
-    ...fieldDraft.value,
-    enumPreset: 'custom',
-    enumOptions: normalizeEnumOptions([...fieldDraft.value.enumOptions, ...columnValues]),
-  }
-}
-
-function applyFieldDraft(): void {
-  const draft = fieldDraft.value
-  if (!draft) return
-
-  const columnIndex = fieldMenuState.value.column
-  const normalizedDraft = {
-    ...draft,
-    name: draft.name.trim() || `字段 ${getTableColumnLabel(columnIndex)}`,
-    enumOptions: normalizeEnumOptions(draft.enumOptions),
-  }
-  const nextFields = tableFields.value.map((field, index) =>
-    index === columnIndex ? normalizedDraft : field,
-  )
-  const nextRows = applyTableFieldsToRows(tableRows.value, nextFields)
-
-  commitRows(nextRows, { row: 0, column: columnIndex }, nextFields)
-  refreshTableOption(nextRows, nextFields)
-  closeFieldMenu()
-}
-
 function registerEditors(fields: TableField[]): void {
   if (!registerModule.value || !editorsModule.value) return
 
@@ -590,14 +507,6 @@ function getEnumEditorName(field: TableField, columnIndex: number): string {
   return `my-notebook-enum-${field.id || columnIndex}`
 }
 
-function cloneField(field: TableField): TableField {
-  return { ...field, enumOptions: [...field.enumOptions] }
-}
-
-function isEnumFieldType(type: TableFieldType): boolean {
-  return type === 'select' || type === 'multiSelect'
-}
-
 function createTableOptions(
   rows: string[][],
   fields = tableFields.value,
@@ -605,7 +514,7 @@ function createTableOptions(
   const colors = getVTableThemeColors()
 
   return {
-    records: rowsToRecords(rows),
+    records: rowsToVTableRecords(rows),
     columns: createColumns(getTableColumnCount(rows), fields),
     showHeader: false,
     frozenRowCount: 1,
@@ -680,67 +589,21 @@ function createTableOptions(
   }
 }
 
-function getVTableThemeColors(): {
-  surface: string
-  headerSurface: string
-  gridLine: string
-  text: string
-  searchMatch: string
-  selectionBorder: string
-  selectionBackground: string
-  scrollbar: string
-} {
-  const getColor = (name: string, fallback: string): string => getCssColorValue(name) || fallback
-
-  return {
-    surface: getColor('--color-bg-elevated', '#ffffff'),
-    headerSurface: getColor('--color-editor-table-header', '#f7f8fa'),
-    gridLine: getColor('--color-editor-table-border', '#e6e8eb'),
-    text: getColor('--color-text-primary', '#282b30'),
-    searchMatch: getColor('--color-diff-modified-bg', '#fff3c4'),
-    selectionBorder: getColor('--color-accent-primary', '#3975b7'),
-    selectionBackground: getColor('--color-selection', 'rgba(57, 117, 183, 0.07)'),
-    scrollbar: getColor('--color-text-disabled', 'rgba(99, 107, 118, 0.36)'),
-  }
-}
-
 function isSearchMatch(row: number, column: number): boolean {
   const query = searchQuery.value.trim().toLocaleLowerCase('zh-CN')
-  return query.length > 0 && tableRows.value[row]?.[column]?.toLocaleLowerCase('zh-CN').includes(query)
+  return (
+    query.length > 0 && tableRows.value[row]?.[column]?.toLocaleLowerCase('zh-CN').includes(query)
+  )
 }
 
 function createColumns(count: number, fields = tableFields.value): ColumnDefine[] {
   return Array.from({ length: count }, (_, index) => ({
-    field: getFieldName(index),
+    field: getVTableFieldName(index),
     title: fields[index]?.name ?? getTableColumnLabel(index),
     width: BASE_COLUMN_WIDTH,
     minWidth: 104,
     editor: getEditorName(fields[index] ?? tableFields.value[index], index),
   }))
-}
-
-function rowsToRecords(rows: string[][]): VTableRecord[] {
-  const width = getTableColumnCount(rows)
-  return rows.map((row) =>
-    Object.fromEntries(
-      Array.from({ length: width }, (_, index) => [getFieldName(index), row[index] ?? '']),
-    ),
-  )
-}
-
-function recordsToRows(records: VTableRecord[], width: number): string[][] {
-  return records.map((record) =>
-    Array.from({ length: width }, (_, index) => String(record[getFieldName(index)] ?? '')),
-  )
-}
-
-function getFieldName(index: number): string {
-  return `c${index}`
-}
-
-function normalizeRows(value: unknown): string[][] {
-  const normalizedRows = normalizeTableRows(value)
-  return normalizedRows.length > 0 ? normalizedRows : createDefaultTableRows()
 }
 </script>
 
@@ -834,9 +697,7 @@ function normalizeRows(value: unknown): string[][] {
           <button type="button" :disabled="activeCell.row === 0" @click="duplicateActiveRow">
             <CopyPlus :size="14" /> 复制当前行
           </button>
-          <button type="button" @click="clearSelection">
-            <Eraser :size="14" /> 清空所选内容
-          </button>
+          <button type="button" @click="clearSelection"><Eraser :size="14" /> 清空所选内容</button>
           <span class="vtable-block__menu-separator"></span>
           <button type="button" @click="sortActiveColumn('ascending')">
             <ArrowDownAZ :size="14" /> 按“{{ activeColumnName }}”升序
@@ -896,7 +757,11 @@ function normalizeRows(value: unknown): string[][] {
           :value="fieldDraft.type"
           @change="updateFieldDraftType(($event.target as HTMLSelectElement).value)"
         >
-          <option v-for="fieldType in TABLE_FIELD_TYPES" :key="fieldType.value" :value="fieldType.value">
+          <option
+            v-for="fieldType in TABLE_FIELD_TYPES"
+            :key="fieldType.value"
+            :value="fieldType.value"
+          >
             {{ fieldType.label }}
           </option>
         </select>
@@ -933,7 +798,11 @@ function normalizeRows(value: unknown): string[][] {
         <div class="vtable-field-menu__chips">
           <span v-for="option in fieldDraft.enumOptions" :key="option">
             {{ option }}
-            <button type="button" :aria-label="`删除枚举 ${option}`" @click="removeEnumOption(option)">
+            <button
+              type="button"
+              :aria-label="`删除枚举 ${option}`"
+              @click="removeEnumOption(option)"
+            >
               <X :size="12" />
             </button>
           </span>

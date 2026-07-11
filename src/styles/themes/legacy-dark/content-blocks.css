@@ -1,0 +1,120 @@
+:root[data-theme='legacy-dark'] .math-block--selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+:root[data-theme='legacy-dark'] .math-block__field,
+:root[data-theme='legacy-dark'] .math-block__result-row {
+  color: #e7e7e3;
+  background: #292b2f;
+}
+
+:root[data-theme='legacy-dark'] .math-block--panel-open .math-block__result-row {
+  border-color: #414349;
+}
+
+:root[data-theme='legacy-dark'] .math-block__field-icon {
+  color: #c8ccd4;
+  background: #383b40;
+}
+
+:root[data-theme='legacy-dark'] .math-block__placeholder {
+  color: #8f96a3;
+}
+
+:root[data-theme='legacy-dark'] .math-block__latex-row {
+  border-color: #414349;
+  background: #252729;
+}
+
+:root[data-theme='legacy-dark'] .math-block__latex-row > span {
+  border-color: #414349;
+  color: #9ca3af;
+  background: #2d3033;
+}
+
+:root[data-theme='legacy-dark'] .math-block__latex-row textarea {
+  color: #d8dee9;
+  background: #252729;
+}
+
+:root[data-theme='legacy-dark'] .math-block__latex-row textarea::placeholder {
+  color: #747b86;
+}
+
+:root[data-theme='legacy-dark'] .math-block__latex-row textarea:focus {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+:root[data-theme='legacy-dark'] .math-block__popover {
+  border-color: #414349;
+  background: #252729;
+}
+
+:root[data-theme='legacy-dark'] .math-block__type-list {
+  border-color: #414349;
+  background: #2d3033;
+}
+
+:root[data-theme='legacy-dark'] .math-block__type-list button {
+  color: #b8bec8;
+}
+
+:root[data-theme='legacy-dark'] .math-block__type-list button:hover {
+  color: #f0f3f7;
+  background: #383b40;
+}
+
+:root[data-theme='legacy-dark'] .math-block__type-list .math-block__type-button--active {
+  color: #d9e9ff;
+  background: color-mix(in srgb, var(--accent) 24%, #2d3033);
+}
+
+:root[data-theme='legacy-dark'] .math-block__template-button,
+:root[data-theme='legacy-dark'] .math-block__symbol-grid button {
+  border-color: #464a52;
+  color: #e4e7ec;
+  background: #303238;
+}
+
+:root[data-theme='legacy-dark'] .math-block__template-button:hover,
+:root[data-theme='legacy-dark'] .math-block__symbol-grid button:hover {
+  border-color: color-mix(in srgb, var(--accent) 52%, #464a52);
+  color: #d9e9ff;
+  background: color-mix(in srgb, var(--accent) 18%, #303238);
+}
+
+:root[data-theme='legacy-dark'] .math-block__error {
+  border-color: #70413d;
+  color: #ffb4a8;
+  background: #3c2a29;
+}
+
+:root[data-theme='legacy-dark'] .collapsible-block__summary:hover {
+  background: #2f2f2d;
+}
+
+:root[data-theme='legacy-dark'] .collapsible-block__toggle {
+  color: #aab4c0;
+}
+
+:root[data-theme='legacy-dark'] .collapsible-block__toggle:hover {
+  color: #d9e9ff;
+  background: color-mix(in srgb, var(--accent) 20%, #2f2f2d);
+}
+
+:root[data-theme='legacy-dark'] .collapsible-block__title {
+  color: #e6e6e2;
+}
+
+:root[data-theme='legacy-dark'] .collapsible-block__title::placeholder {
+  color: #8f969f;
+}
+
+:root[data-theme='legacy-dark'] .collapsible-block--collapsed .collapsible-block__title {
+  color: #c8c8c3;
+}
+
+:root[data-theme='legacy-dark'] .collapsible-block__content {
+  color: #dededb;
+}

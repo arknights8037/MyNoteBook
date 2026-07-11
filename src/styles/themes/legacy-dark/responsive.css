@@ -1,0 +1,17 @@
+@media (max-width: 1050px) {
+  .settings-layout {
+    grid-template-columns: 152px minmax(0, 1fr);
+  }
+
+  .settings-page__body {
+    width: min(720px, calc(100% - 32px));
+  }
+
+  .settings-row--font {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-font-control {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -7,30 +7,28 @@ import { DragGesture } from '@use-gesture/vanilla'
 import { BLOCK_ID_ATTRIBUTE } from './blockId'
 import { getBlockIndentAttributes, INDENT_ATTRIBUTE, normalizeIndentLevel } from './blockIndent'
 import { TRANSFORM_BLOCK_TYPES } from './blockTypeRegistry'
+import { resolveDropInsertPosition } from './blockDropPosition'
+import { getBlockElement, getBlockRangeClientRect, getTopLevelBlockAtPoint } from './blockGeometry'
+import {
+  countTrailingEmptyParagraphs,
+  getIndentLevel,
+  getMovableBlockRange,
+  getSwapTargetBlock,
+  getTopLevelBlockAtSelection,
+  getTopLevelBlocksInRange,
+  isControllableBlock,
+  isEmptyParagraph,
+  type BlockRange,
+} from './blockRanges'
+
+export { resolveDropInsertPosition } from './blockDropPosition'
+export type { BlockRange } from './blockRanges'
 
 const BlockControlsPluginKey = new PluginKey<BlockControlsState>('block-controls')
 
 interface BlockControlsState {
   draggingRange: BlockRange | null
   isFocused: boolean
-}
-
-interface TopLevelBlock {
-  node: ProseMirrorNode
-  pos: number
-}
-
-export interface BlockRange {
-  from: number
-  to: number
-}
-
-interface BlockClientRect {
-  top: number
-  bottom: number
-  left: number
-  width: number
-  height: number
 }
 
 interface BlockControlsFocusMeta {
@@ -381,11 +379,15 @@ function renderBlockHandles(
   overlay: HTMLElement,
   scrollContainer: HTMLElement | null,
 ): void {
-  overlay.replaceChildren()
-
   if (!scrollContainer || !editor.isEditable) {
+    overlay.replaceChildren()
     return
   }
+
+  const containerRect = scrollContainer.getBoundingClientRect()
+  const viewportTop = containerRect.top - 96
+  const viewportBottom = containerRect.bottom + 96
+  const handles = globalThis.document.createDocumentFragment()
 
   view.state.doc.forEach((node, pos) => {
     if (!isControllableBlock(node)) {
@@ -397,15 +399,18 @@ function renderBlockHandles(
       return
     }
 
-    const handle = createBlockHandle(editor, view, pos)
     const blockRect = blockElement.getBoundingClientRect()
-    const containerRect = scrollContainer.getBoundingClientRect()
+    if (blockRect.bottom < viewportTop || blockRect.top > viewportBottom) {
+      return
+    }
 
+    const handle = createBlockHandle(editor, view, pos)
     handle.style.top = `${blockRect.top - containerRect.top + scrollContainer.scrollTop + getHandleTopOffset(blockElement)}px`
     handle.style.left = `${blockRect.left - containerRect.left + scrollContainer.scrollLeft + getHandleLeftOffset()}px`
-
-    overlay.append(handle)
+    handles.append(handle)
   })
+
+  overlay.replaceChildren(handles)
 }
 
 function createBlockHandle(editor: Editor, view: EditorView, pos: number): HTMLElement {
@@ -731,24 +736,6 @@ function moveBlockRangeAtPoint(
   return moveTopLevelBlockRangeAsJson(editor, view, sourceRange, insertPos)
 }
 
-export function resolveDropInsertPosition(
-  sourceRange: BlockRange,
-  targetRange: BlockRange,
-  shouldInsertAfter: boolean,
-): number {
-  const naturalInsertPos = shouldInsertAfter ? targetRange.to : targetRange.from
-
-  if (naturalInsertPos === sourceRange.from && targetRange.to === sourceRange.from) {
-    return targetRange.from
-  }
-
-  if (naturalInsertPos === sourceRange.to && targetRange.from === sourceRange.to) {
-    return targetRange.to
-  }
-
-  return naturalInsertPos
-}
-
 function getBlockRangeDomElements(view: EditorView, range: BlockRange): HTMLElement[] {
   return getTopLevelBlocksInRange(view.state, range.from, range.to)
     .map((block) => getBlockElement(view, block.pos))
@@ -1027,277 +1014,6 @@ function clearPressedBlockRange(view: EditorView): void {
   pressedRange = null
 }
 
-function getTopLevelBlockAtSelection(state: EditorState): TopLevelBlock | null {
-  const selectionFrom = state.selection.from
-  let offset = 0
-
-  for (let index = 0; index < state.doc.childCount; index += 1) {
-    const node = state.doc.child(index)
-    const end = offset + node.nodeSize
-
-    if (selectionFrom >= offset && selectionFrom <= end) {
-      return { node, pos: offset }
-    }
-
-    offset = end
-  }
-
-  return null
-}
-
-function getTopLevelBlocksInRange(state: EditorState, from: number, to: number): TopLevelBlock[] {
-  const blocks: TopLevelBlock[] = []
-  let offset = 0
-
-  for (let index = 0; index < state.doc.childCount; index += 1) {
-    const node = state.doc.child(index)
-    const end = offset + node.nodeSize
-
-    if (offset >= from && end <= to) {
-      blocks.push({ node, pos: offset })
-    }
-
-    offset = end
-  }
-
-  return blocks
-}
-
-function getSwapTargetBlock(
-  state: EditorState,
-  targetBlock: TopLevelBlock,
-  sourceIndent: number,
-): TopLevelBlock {
-  let candidate = targetBlock
-  let offset = 0
-
-  for (let index = 0; index < state.doc.childCount; index += 1) {
-    const node = state.doc.child(index)
-    const nodeStart = offset
-    const nodeEnd = nodeStart + node.nodeSize
-
-    if (nodeStart > targetBlock.pos) {
-      break
-    }
-
-    if (nodeStart <= targetBlock.pos && targetBlock.pos < nodeEnd) {
-      if (getIndentLevel(node) <= sourceIndent) {
-        candidate = { node, pos: nodeStart }
-      }
-      break
-    }
-
-    if (getIndentLevel(node) <= sourceIndent) {
-      candidate = { node, pos: nodeStart }
-    }
-
-    offset = nodeEnd
-  }
-
-  return candidate
-}
-
-function getBlockRangeClientRect(view: EditorView, range: BlockRange): BlockClientRect | null {
-  const blocks = getTopLevelBlocksInRange(view.state, range.from, range.to)
-  if (blocks.length === 0) {
-    return null
-  }
-
-  let top = Number.POSITIVE_INFINITY
-  let right = Number.NEGATIVE_INFINITY
-  let bottom = Number.NEGATIVE_INFINITY
-  let left = Number.POSITIVE_INFINITY
-
-  for (const block of blocks) {
-    const rect = getInteractiveBlockClientRect(view, block.pos)
-    if (!rect) {
-      continue
-    }
-
-    top = Math.min(top, rect.top)
-    right = Math.max(right, rect.left + rect.width)
-    bottom = Math.max(bottom, rect.bottom)
-    left = Math.min(left, rect.left)
-  }
-
-  if (
-    !Number.isFinite(top) ||
-    !Number.isFinite(right) ||
-    !Number.isFinite(bottom) ||
-    !Number.isFinite(left)
-  ) {
-    return null
-  }
-
-  return {
-    top,
-    bottom,
-    left,
-    width: right - left,
-    height: bottom - top,
-  }
-}
-
-function getControllableTopLevelBlocks(state: EditorState): TopLevelBlock[] {
-  const blocks: TopLevelBlock[] = []
-  let offset = 0
-
-  for (let index = 0; index < state.doc.childCount; index += 1) {
-    const node = state.doc.child(index)
-
-    if (isControllableBlock(node)) {
-      blocks.push({ node, pos: offset })
-    }
-
-    offset += node.nodeSize
-  }
-
-  return blocks
-}
-
-function getMovableBlockRange(state: EditorState, sourcePos: number): BlockRange {
-  const sourceNode = state.doc.nodeAt(sourcePos)
-  if (!sourceNode) {
-    return { from: sourcePos, to: sourcePos }
-  }
-
-  const sourceIndent = getIndentLevel(sourceNode)
-  let rangeEnd = sourcePos + sourceNode.nodeSize
-  let offset = 0
-  let foundSource = false
-
-  for (let index = 0; index < state.doc.childCount; index += 1) {
-    const node = state.doc.child(index)
-    const nodeStart = offset
-    const nodeEnd = nodeStart + node.nodeSize
-
-    if (nodeStart === sourcePos) {
-      foundSource = true
-      rangeEnd = nodeEnd
-      offset = nodeEnd
-      continue
-    }
-
-    if (foundSource) {
-      if (getIndentLevel(node) <= sourceIndent) {
-        break
-      }
-
-      rangeEnd = nodeEnd
-    }
-
-    offset = nodeEnd
-  }
-
-  return { from: sourcePos, to: rangeEnd }
-}
-
-function getTopLevelBlockAtPoint(
-  view: EditorView,
-  top: number,
-  excludedRange?: BlockRange,
-): TopLevelBlock | null {
-  let closestBlock: TopLevelBlock | null = null
-  let closestDistance = Number.POSITIVE_INFINITY
-  let firstBlockTop = Number.POSITIVE_INFINITY
-  let lastBlockBottom = Number.NEGATIVE_INFINITY
-
-  for (const block of getControllableTopLevelBlocks(view.state)) {
-    if (excludedRange && block.pos >= excludedRange.from && block.pos < excludedRange.to) {
-      continue
-    }
-
-    if (isTrailingEmptyParagraph(view.state, block)) {
-      continue
-    }
-
-    const element = getBlockElement(view, block.pos)
-    if (!element) {
-      continue
-    }
-
-    const rect = getInteractiveBlockClientRect(view, block.pos)
-    if (!rect) {
-      continue
-    }
-
-    firstBlockTop = Math.min(firstBlockTop, rect.top)
-    lastBlockBottom = Math.max(lastBlockBottom, rect.bottom)
-    if (top >= rect.top && top <= rect.bottom) {
-      return block
-    }
-
-    const distance = top < rect.top ? rect.top - top : top - rect.bottom
-    if (distance < closestDistance) {
-      closestDistance = distance
-      closestBlock = block
-    }
-  }
-
-  if (top < firstBlockTop || top > lastBlockBottom) {
-    return null
-  }
-
-  return closestBlock
-}
-
-function getInteractiveBlockClientRect(view: EditorView, pos: number): BlockClientRect | null {
-  const element = getBlockElement(view, pos)
-  if (!element) {
-    return null
-  }
-
-  const rect = element.getBoundingClientRect()
-  const adjacentBlocks = getAdjacentControllableBlocks(view.state, pos)
-  const previousRect = adjacentBlocks.previous
-    ? getRawBlockClientRect(view, adjacentBlocks.previous.pos)
-    : null
-  const nextRect = adjacentBlocks.next ? getRawBlockClientRect(view, adjacentBlocks.next.pos) : null
-
-  const top = previousRect ? (previousRect.bottom + rect.top) * 0.5 : rect.top
-  const bottom = nextRect ? (rect.bottom + nextRect.top) * 0.5 : rect.bottom
-  return {
-    top,
-    bottom,
-    left: rect.left,
-    width: rect.width,
-    height: bottom - top,
-  }
-}
-
-function getRawBlockClientRect(view: EditorView, pos: number): DOMRect | null {
-  const element = getBlockElement(view, pos)
-  return element?.getBoundingClientRect() ?? null
-}
-
-function getAdjacentControllableBlocks(
-  state: EditorState,
-  pos: number,
-): { previous: TopLevelBlock | null; next: TopLevelBlock | null } {
-  const blocks = getControllableTopLevelBlocks(state)
-  const index = blocks.findIndex((block) => block.pos === pos)
-
-  return {
-    previous: index > 0 ? blocks[index - 1] : null,
-    next: index >= 0 && index < blocks.length - 1 ? blocks[index + 1] : null,
-  }
-}
-
-function countTrailingEmptyParagraphs(state: EditorState): number {
-  let count = 0
-
-  for (let index = state.doc.childCount - 1; index >= 0; index -= 1) {
-    const node = state.doc.child(index)
-    if (!isEmptyParagraph(node)) {
-      break
-    }
-
-    count += 1
-  }
-
-  return count
-}
-
 function trimExcessTrailingEmptyParagraphs(view: EditorView, allowedTrailingCount: number): void {
   let trailingCount = countTrailingEmptyParagraphs(view.state)
   const excessCount = trailingCount - allowedTrailingCount
@@ -1332,31 +1048,6 @@ function trimExcessTrailingEmptyParagraphs(view: EditorView, allowedTrailingCoun
   }
 }
 
-function isTrailingEmptyParagraph(state: EditorState, block: TopLevelBlock): boolean {
-  return block.pos + block.node.nodeSize === state.doc.content.size && isEmptyParagraph(block.node)
-}
-
-function isEmptyParagraph(node: ProseMirrorNode): boolean {
-  return node.type.name === 'paragraph' && node.textContent.trim() === ''
-}
-
-function getBlockElement(view: EditorView, pos: number): HTMLElement | null {
-  const nodeDom = view.nodeDOM(pos)
-  if (nodeDom instanceof HTMLElement) {
-    if (nodeDom.matches('[data-editor-block-pos]')) {
-      return nodeDom
-    }
-
-    const decoratedAncestor = nodeDom.closest<HTMLElement>('[data-editor-block-pos]')
-    if (decoratedAncestor) {
-      return decoratedAncestor
-    }
-  }
-
-  const element = view.dom.querySelector(`[data-editor-block-pos="${pos}"]`)
-  return element instanceof HTMLElement ? element : null
-}
-
 function selectBlock(editor: Editor, pos: number): void {
   const node = editor.state.doc.nodeAt(pos)
   if (!node) {
@@ -1378,10 +1069,6 @@ function focusInsideBlock(editor: Editor, pos: number): void {
     editor.state.tr.setSelection(TextSelection.create(editor.state.doc, textPosition)),
   )
   editor.view.focus()
-}
-
-function isControllableBlock(node: ProseMirrorNode): boolean {
-  return node.type.isBlock && node.type.name !== 'listItem' && node.type.name !== 'taskItem'
 }
 
 function indentSelectedBlock(editor: Editor, delta: 1 | -1): boolean {
@@ -1451,10 +1138,6 @@ function isCursorAtStartOfBlock(block: TopLevelBlock, cursorPosition: number): b
   }
 
   return block.node.textBetween(0, offsetInsideBlock, '\n', '\n').length === 0
-}
-
-function getIndentLevel(node: ProseMirrorNode): number {
-  return normalizeIndentLevel(node.attrs[INDENT_ATTRIBUTE])
 }
 
 function getBlockId(node: ProseMirrorNode): string {

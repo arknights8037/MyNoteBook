@@ -7,6 +7,7 @@ import type {
   UpdateDocumentInput,
 } from '@/models/document'
 import type { AppResult } from '@/models/result'
+import type { DocumentBlock } from '@/models/documentBlock'
 import type { DocumentRepository } from '@/repositories/DocumentRepository'
 
 export class DocumentService {
@@ -30,6 +31,14 @@ export class DocumentService {
 
   listDeletedDocuments(limit = 50): Promise<AppResult<DocumentSummary[]>> {
     return this.documentRepository.listDeleted({ limit })
+  }
+
+  searchKnowledgeDocuments(query: string, limit = 5): Promise<AppResult<DocumentSummary[]>> {
+    return this.documentRepository.searchKnowledge(query, { limit })
+  }
+
+  listDocumentBlocks(documentId: DocumentId): Promise<AppResult<DocumentBlock[]>> {
+    return this.documentRepository.listBlocks(documentId)
   }
 
   updateDocument(input: UpdateDocumentInput): Promise<AppResult<DocumentRecord>> {

@@ -18,6 +18,10 @@ export interface DocumentAutosaveSnapshot {
   plainText: string
   parentId?: DocumentId | null
   documentKind?: DocumentKind
+  tags?: string[]
+  sourceUrl?: string
+  author?: string
+  description?: string
   sortOrder?: number
 }
 
@@ -29,8 +33,9 @@ export interface UseDocumentAutosaveOptions {
   documentId: MaybeRefOrGetter<DocumentId>
   documentService: MaybeRefOrGetter<DocumentAutosaveService | null>
   getSnapshot: () => DocumentAutosaveSnapshot | null
-  debounceMs?: number
+  debounceMs?: MaybeRefOrGetter<number>
   initialRevision?: MaybeRefOrGetter<number | null>
+  onSaved?: (document: DocumentRecord) => void
 }
 
 export interface UseDocumentAutosaveReturn {
@@ -72,7 +77,7 @@ export function useDocumentAutosave(
     clearPendingTimer()
     timer = setTimeout(() => {
       void flush()
-    }, debounceMs)
+    }, Math.max(0, toValue(debounceMs)))
   }
 
   function markDirty(): void {
@@ -123,6 +128,10 @@ export function useDocumentAutosave(
       parentId: snapshot.parentId ?? null,
       documentKind: snapshot.documentKind ?? 'article',
       title: snapshot.title,
+      tags: snapshot.tags,
+      sourceUrl: snapshot.sourceUrl,
+      author: snapshot.author,
+      description: snapshot.description,
       contentJson: serializeEditorContent(snapshot.content),
       plainText: snapshot.plainText,
       sortOrder: snapshot.sortOrder ?? 0,
@@ -143,6 +152,7 @@ export function useDocumentAutosave(
       return saveResult
     }
 
+    options.onSaved?.(saveResult.value)
     revision.value = saveResult.value.revision
     error.value = null
 

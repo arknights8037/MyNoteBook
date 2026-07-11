@@ -14,6 +14,8 @@ interface EditorShellExpose {
   getText: () => string
   focus: () => boolean | undefined
   insertImage: () => void
+  getCurrentDocumentBlocks: () => Array<{ id: string }>
+  revealBlock: (blockId: string) => boolean
 }
 
 describe('EditorShell', () => {
@@ -45,6 +47,29 @@ describe('EditorShell', () => {
     const shell = wrapper.vm as unknown as EditorShellExpose
     expect(shell.getText()).toContain('阶段二编辑器')
     expect(shell.getJSON()).toMatchObject(content)
+    wrapper.unmount()
+  })
+
+  it('reveals a stable source block without exposing DOM selection logic to callers', async () => {
+    const wrapper = mount(EditorShell, {
+      attachTo: document.body,
+      props: {
+        modelValue: {
+          type: 'doc',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: '来源段落' }] }],
+        },
+      },
+    })
+    await nextTick()
+    await flushPromises()
+    const shell = wrapper.vm as unknown as EditorShellExpose
+    const blockId = shell.getCurrentDocumentBlocks()[0]?.id ?? ''
+
+    expect(shell.revealBlock(blockId)).toBe(true)
+    expect(wrapper.find(`[data-editor-block-id="${blockId}"]`).classes()).toContain(
+      'editor-block--source-target',
+    )
+    expect(shell.revealBlock('missing-block')).toBe(false)
     wrapper.unmount()
   })
 

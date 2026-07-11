@@ -7,6 +7,7 @@ import type {
   UpdateDocumentInput,
 } from '@/models/document'
 import type { AppResult } from '@/models/result'
+import type { DocumentBlock } from '@/models/documentBlock'
 
 export interface DocumentRepository {
   create(input: CreateDocumentInput): Promise<AppResult<DocumentRecord>>
@@ -23,6 +24,11 @@ export interface DocumentRepository {
     limit?: number
   }): Promise<AppResult<DocumentSummary[]>>
   listDeleted(options?: { limit?: number }): Promise<AppResult<DocumentSummary[]>>
+  searchKnowledge(
+    query: string,
+    options?: { limit?: number },
+  ): Promise<AppResult<DocumentSummary[]>>
+  listBlocks(documentId: DocumentId): Promise<AppResult<DocumentBlock[]>>
   update(input: UpdateDocumentInput): Promise<AppResult<DocumentRecord>>
   save(input: SaveDocumentInput): Promise<AppResult<DocumentRecord>>
   softDelete(id: DocumentId, expectedRevision: number): Promise<AppResult<DocumentRecord>>

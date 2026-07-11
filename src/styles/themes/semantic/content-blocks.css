@@ -1,0 +1,68 @@
+:root[data-theme='nord-dark'] .settings-nav__item--active {
+  color: #eceff4;
+  background: color-mix(in srgb, var(--color-accent-primary) 34%, var(--color-bg-active));
+  box-shadow:
+    inset 3px 0 0 var(--color-accent-primary),
+    0 0 0 1px color-mix(in srgb, var(--color-accent-primary) 30%, transparent);
+}
+
+:root[data-theme='nord-dark'] .settings-nav__item--active svg {
+  color: var(--color-accent-primary);
+}
+
+.vtable-block__toolbar button:hover:not(:disabled),
+.vtable-block__more summary:hover,
+.vtable-block__menu button:hover:not(:disabled),
+.vtable-field-menu button:hover:not(:disabled),
+.math-block__type-list button:hover,
+.math-block__template-button:hover,
+.math-block__symbol-grid button:hover,
+.collapsible-block__summary:hover,
+.collapsible-block__toggle:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.vtable-field-menu__presets .vtable-field-menu__preset--active,
+.math-block__type-list .math-block__type-button--active {
+  color: var(--color-accent-primary);
+  background: var(--color-accent-soft);
+}
+
+.collapsible-block,
+.collapsible-block__summary,
+.collapsible-block__content {
+  color: var(--color-text-primary);
+}
+
+.collapsible-block--selected {
+  background: transparent;
+  box-shadow: none;
+}
+
+.collapsible-block--selected .collapsible-block__summary {
+  outline: 1px solid color-mix(in srgb, var(--color-accent-primary) 34%, transparent);
+  background: color-mix(in srgb, var(--color-editor-block-selected) 64%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--color-accent-primary) 64%, transparent);
+}
+
+.collapsible-block__toggle {
+  color: var(--color-text-tertiary);
+}
+
+.collapsible-block__toggle:hover {
+  color: var(--color-accent-primary);
+  background: var(--color-accent-soft);
+}
+
+.collapsible-block__title {
+  color: var(--color-text-primary);
+}
+
+.collapsible-block--collapsed .collapsible-block__title {
+  color: var(--color-text-secondary);
+}
+
+.collapsible-block__content {
+  border-left: 1px solid color-mix(in srgb, var(--color-border-default) 62%, transparent);
+}

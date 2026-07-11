@@ -1,0 +1,136 @@
+:root[data-theme='legacy-dark'] .editor-shell__content > [data-indent-level]::before {
+  background: #3d3d3a;
+}
+
+:root[data-theme='legacy-dark'] .editor-shell__content .editor-block:hover::after,
+:root[data-theme='legacy-dark'] .editor-shell__content .editor-block--selected::after {
+  background: #2f2f2d;
+}
+
+:root[data-theme='legacy-dark'] .editor-shell__content .editor-block--pressed::after,
+:root[data-theme='legacy-dark'] .editor-shell__content .editor-block--dragging::after {
+  background: color-mix(in srgb, var(--accent) 13%, #292927);
+  box-shadow:
+    0 0 0 2px var(--accent),
+    0 0 0 6px color-mix(in srgb, var(--accent) 20%, transparent),
+    0 14px 32px rgb(0 0 0 / 24%);
+}
+
+:root[data-theme='legacy-dark'] .block-control-handle--pressed {
+  color: #d9e9ff;
+  background: color-mix(in srgb, var(--accent) 25%, #292927);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+:root[data-theme='legacy-dark'] .block-control-handle--dragging {
+  color: #eeeeea;
+  background: #3d3d3a;
+  box-shadow: 0 10px 24px rgb(0 0 0 / 30%);
+}
+
+:root[data-theme='legacy-dark'] .editor-shell__content .is-empty[data-placeholder]::before {
+  color: #8f9aaa;
+}
+
+:root[data-theme='legacy-dark'] .editor-shell__content blockquote {
+  border-left-color: var(--accent);
+  color: #9aa6b6;
+}
+
+:root[data-theme='legacy-dark'] .editor-shell__content pre {
+  color: #d8dee9;
+  background: #252729;
+}
+
+:root[data-theme='legacy-dark'] .editor-shell__content code {
+  color: #ffb4a8;
+  background: #3b302e;
+}
+
+:root[data-theme='legacy-dark'] .editor-shell__content pre code {
+  color: inherit;
+  background: transparent;
+}
+
+:root[data-theme='legacy-dark'] .editor-shell__content .code-block-node,
+:root[data-theme='legacy-dark'] .editor-shell__content .code-block-node:hover,
+:root[data-theme='legacy-dark'] .editor-shell__content .editor-block--selected .code-block-node {
+  border-color: #414349;
+  color: #d8dee9;
+  background: #252729;
+}
+
+:root[data-theme='legacy-dark'] .editor-shell__content .editor-block--pressed .code-block-node,
+:root[data-theme='legacy-dark'] .editor-shell__content .editor-block--dragging .code-block-node {
+  background: color-mix(in srgb, var(--accent) 10%, #252729);
+}
+
+:root[data-theme='legacy-dark'] .editor-shell__content .code-block-node--mermaid {
+  background: #252729;
+}
+
+:root[data-theme='legacy-dark'] .code-block-node__toolbar {
+  border-color: #414349;
+  background: #2d3033;
+}
+
+:root[data-theme='legacy-dark'] .code-block-node__actions,
+:root[data-theme='legacy-dark'] .code-block-node__chevron,
+:root[data-theme='legacy-dark'] .code-block-node__wrap {
+  color: #b8bec8;
+}
+
+:root[data-theme='legacy-dark'] .code-block-node__title .n-input__input-el {
+  color: #d8dee9;
+}
+
+:root[data-theme='legacy-dark'] .code-block-node__divider {
+  background: #4a4d54;
+}
+
+:root[data-theme='legacy-dark'] .code-block-node__gutter {
+  color: #7f8794;
+  background: #292b2f;
+}
+
+:root[data-theme='legacy-dark'] .editor-shell__content .code-block-node code {
+  color: #d8dee9;
+}
+
+:root[data-theme='legacy-dark'] .code-block-node__mermaid-preview {
+  border-color: #414349;
+  background:
+    linear-gradient(90deg, rgb(255 255 255 / 4%) 1px, transparent 1px),
+    linear-gradient(rgb(255 255 255 / 4%) 1px, transparent 1px), #27292d;
+  background-size: 22px 22px;
+}
+
+:root[data-theme='legacy-dark'] .code-block-node__mermaid-status,
+:root[data-theme='legacy-dark'] .code-block-node__mermaid-empty {
+  border-color: #4a4d54;
+  color: #aeb5c0;
+  background: rgb(37 39 43 / 84%);
+}
+
+:root[data-theme='legacy-dark'] .code-block-node__mermaid-error {
+  border-color: #70413d;
+  color: #ffb4a8;
+  background: #3c2a29;
+}
+
+:root[data-theme='legacy-dark'] .editor-shell__content .hljs-keyword,
+:root[data-theme='legacy-dark'] .editor-shell__content .hljs-selector-tag,
+:root[data-theme='legacy-dark'] .editor-shell__content .hljs-built_in {
+  color: #a78bfa;
+}
+
+:root[data-theme='legacy-dark'] .editor-shell__content .hljs-string,
+:root[data-theme='legacy-dark'] .editor-shell__content .hljs-attr,
+:root[data-theme='legacy-dark'] .editor-shell__content .hljs-symbol {
+  color: #6ee7b7;
+}
+
+:root[data-theme='legacy-dark'] .editor-shell__content .hljs-number,
+:root[data-theme='legacy-dark'] .editor-shell__content .hljs-literal {
+  color: #fbbf24;
+}

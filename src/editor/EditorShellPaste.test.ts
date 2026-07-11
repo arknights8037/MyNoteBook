@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import type { Editor } from '@tiptap/vue-3'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 
 import EditorShell from './EditorShell.vue'
@@ -47,17 +47,15 @@ describe('EditorShell image paste', () => {
     })
 
     shell.editor?.view.dom.dispatchEvent(pasteEvent)
-    await new Promise((resolve) => globalThis.setTimeout(resolve, 20))
-    await flushPromises()
-    await nextTick()
-
-    const imageNode = shell.getJSON()?.content?.find((node) => node.type === 'imageFigure')
     expect(pasteEvent.defaultPrevented).toBe(true)
-    expect(imageNode?.attrs).toMatchObject({
-      alt: '剪贴板图片.png',
-      originalName: '剪贴板图片.png',
+    await vi.waitFor(() => {
+      const imageNode = shell.getJSON()?.content?.find((node) => node.type === 'imageFigure')
+      expect(imageNode?.attrs).toMatchObject({
+        alt: '剪贴板图片.png',
+        originalName: '剪贴板图片.png',
+      })
+      expect(imageNode?.attrs?.src).toMatch(/^data:image\/png;base64,/)
     })
-    expect(imageNode?.attrs?.src).toMatch(/^data:image\/png;base64,/)
     wrapper.unmount()
   })
 })
