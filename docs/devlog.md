@@ -1,5 +1,22 @@
 # 开发日志
 
+## 2026-07-14：页面入口纯装配化
+
+### 实现
+
+- 将 Home、Audit、Automation、Knowledge Control、Plugin/Skill 和 Settings 的完整界面控制器迁入对应 `src/features/*/components/*Surface.vue`。
+- `src/pages` 中生产页面缩减为 7～38 行，只选择 composition provider、注入依赖及转发公开 props/events。
+- 新增 `surfaceServiceProviders.ts`，集中提供缓存的 Audit Repository、Automation Service、Document Service 与 Document Transfer Service。
+- Workspace 不再导入其他 page；它直接组合 sibling feature surface，并从 Home page 接收具体服务 provider。
+- `pages/home` 与 `pages/settings` 私有模块分别归入 workspace/settings feature；Document Transfer composable 不再自行动态选择 Tauri adapter。
+
+### 验证
+
+- `pnpm typecheck` 与 `pnpm build`：通过。
+- 页面装配与迁移模块定向回归：6 个测试文件、9 项测试通过。
+- `pnpm test:run`：92 个测试文件通过、1 个跳过；323 项通过、2 项跳过。首轮仅复现既有 EditorShell 图片时序抖动，隔离复验及第二次全量通过。
+- `pnpm lint`：0 error、保留既有 `AiChatPanel.vue` `v-html` 警告；跨层依赖搜索与 `git diff --check` 通过。
+
 ## 2026-07-14：Vue 前端目录与依赖方向整理
 
 ### 实现

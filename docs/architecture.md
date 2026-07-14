@@ -22,7 +22,7 @@ Tauri commands should delegate immediately to these modules. Database code must 
 ## Frontend application
 
 - `src/app/composition`: application composition roots. Factories in this directory are the only frontend modules that assemble application services with concrete Tauri/SQLite adapters.
-- `src/pages`: route- or workspace-surface orchestration and page-private UI. Pages may coordinate services but should not own reusable feature components, parsing, persistence, or rendering algorithms.
+- `src/pages`: thin route/workspace entry points. Pages select composition providers, pass dependencies into feature surfaces, and forward public props/events; they do not own feature state, persistence calls, or rendering algorithms.
 - `src/features`: reusable, user-facing feature modules. Each feature may own its `components`, local pure state/projectors, and feature tests; it must not import `src/pages`.
 - `src/composables`: Vue lifecycle and reactive workflows shared by a page or feature, such as AI secret loading and chat-history persistence.
 - `src/services`: framework-independent application workflows and integrations.
@@ -33,7 +33,7 @@ Tauri commands should delegate immediately to these modules. Database code must 
 
 ## Dependency direction
 
-`app/composition` may depend on every layer required to assemble the application. Pages depend on feature components and composables; feature components depend on composables, services, and models. Services depend on repository interfaces and models. Infrastructure implements repository interfaces and is selected only at the application boundary. Domain models and pure editor utilities must not import Vue components or Tauri APIs. Reusable features and lower layers must not import pages.
+`app/composition` may depend on every layer required to assemble the application. Pages depend only on composition providers, feature surfaces, and public model types. Feature surfaces depend on sibling features, composables, services, repository contracts, and models, with concrete adapters injected by pages. Services depend on repository interfaces and models. Infrastructure implements repository interfaces and is selected only at the application boundary. Domain models and pure editor utilities must not import Vue components or Tauri APIs. Reusable features and lower layers must not import pages.
 
 Startup paths must remain non-blocking: database initialization and the initial document list may run at startup, but API-key/keyring access is lazy and begins only when an AI action requires it.
 
@@ -53,7 +53,9 @@ Startup paths must remain non-blocking: database initialization and the initial 
 - `models/work.ts` / `WorkService` / `ResultVerifier`: unified TaskRun state machine, artifacts, evidence and verification policy. Verification never writes canonical documents directly.
 - `models/view.ts` / `ViewService`: Query/Projection definitions and immutable dependency snapshots. Views are manually refreshed read models; writeback is readonly or a proposed ChangeSet.
 - `models/governance.ts` / `DelegationService` / `CliAgentAdapter`: external capability grants and versioned file protocol; adapters cannot bypass Work or Document boundaries.
-- `services/KnowledgeControlService.ts`: application coordinator for Knowledge, View, verification and Delegation workflows. `KnowledgeControlPage.vue` owns only page state; `features/knowledge-control/components/*Panel.vue` own focused presentation surfaces.
+- `services/KnowledgeControlService.ts`: application coordinator for Knowledge, View, verification and Delegation workflows. `KnowledgeControlPage.vue` only injects the coordinator; `KnowledgeControlSurface.vue` owns feature state and its focused panels own presentation.
+- `features/workspace/components/WorkspaceSurface.vue`: owns the local-first workspace UI and coordinates existing document/AI composables. `pages/HomePage.vue` only injects its Audit, Automation, Document, Transfer and Knowledge Control providers.
+- `features/audit`, `features/automation`, `features/settings`, and `features/integrations/skills`: own their complete user-facing surfaces; corresponding page files are thin application entries.
 - `services/AgentResourceDraftService.ts`: draft-creation use case with injected Automation and Skill ports. `app/composition/agentResourceDraftServiceFactory.ts` selects the concrete database and Tauri implementations.
 - `models/providerCapabilities.ts`: one Provider/Model capability decision point used by settings, runtime request shaping and provenance audit.
 
@@ -65,10 +67,10 @@ Generated View generation belongs to View Application Service, while model execu
 
 The following files are still composition hotspots. Refactors should extract complete responsibilities with narrow inputs and outputs, not merely move line ranges:
 
-1. `pages/HomePage.vue`: extract the AI/Agent session coordinator, document import/export workflow, and document command controller. Keep the page responsible for wiring workspace surfaces together.
+1. `features/workspace/components/WorkspaceSurface.vue`: continue extracting the AI/Agent session coordinator and document command controller while retaining workspace layout and cross-feature surface switching.
 2. `editor/EditorShell.vue`: extract toolbar/context-menu surfaces and editor interaction composables. Keep TipTap creation and public editor commands in the shell.
 3. `editor/blockControls.ts`: separate ProseMirror selection/positioning mechanics from block commands and clipboard behavior.
-4. `pages/SettingsPage.vue`: split settings sections into focused form components while the page owns draft state and emits one normalized settings contract.
+4. `features/integrations/skills/components/PluginSkillsSurface.vue`: extract the Skill file-editing state machine from presentation once another consumer or workflow requires it.
 5. `infrastructure/database/TauriDocumentRepository.ts`: separate row mapping/query definitions from repository transaction orchestration.
 
 Cross-layer imports should be checked during each extraction. In particular, `models` must not depend on `services`, and infrastructure-specific Tauri APIs must not leak into models, repositories, or reusable editor algorithms.

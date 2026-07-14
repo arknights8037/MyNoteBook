@@ -13,20 +13,8 @@ import type { DocumentTransferService } from '@/services/DocumentTransferService
 import type { DocumentImportFormat } from '@/features/documents/documentFile'
 import type { DocumentSidebarExpose, EditorShellExpose, MarkdownFileInput } from './homePageTypes'
 
-let documentTransferPromise: Promise<DocumentTransferService> | null = null
-
-function getDocumentTransfer(): Promise<DocumentTransferService> {
-  documentTransferPromise ??= Promise.all([
-    import('@/services/DocumentTransferService'),
-    import('@/infrastructure/transfer/tauriDocumentTransferFilePort'),
-  ]).then(
-    ([{ DocumentTransferService }, { tauriDocumentTransferFilePort }]) =>
-      new DocumentTransferService(tauriDocumentTransferFilePort),
-  )
-  return documentTransferPromise
-}
-
 interface DocumentTransferActionsOptions {
+  getDocumentTransfer: () => Promise<DocumentTransferService>
   documentSidebar: Ref<DocumentSidebarExpose | null>
   editor: Ref<EditorShellExpose | null>
   editorContent: Ref<TiptapDocumentJson>
@@ -86,7 +74,7 @@ export function useDocumentTransferActions(options: DocumentTransferActionsOptio
       if (!flushResult.ok) return
 
       try {
-        const documentTransfer = await getDocumentTransfer()
+        const documentTransfer = await options.getDocumentTransfer()
         const parsed = documentTransfer.parseImport({
           fileName: file.name,
           text: await file.text(),
@@ -140,7 +128,7 @@ export function useDocumentTransferActions(options: DocumentTransferActionsOptio
 
     const prepared = await prepareCurrentDocumentExport()
     if (!prepared) return
-    const documentTransfer = await getDocumentTransfer()
+    const documentTransfer = await options.getDocumentTransfer()
     const saved = await documentTransfer.saveExport(prepared, format, '未命名文档')
     if (saved) options.notify.success(format === 'markdown' ? 'Markdown 已导出' : 'HTML 已导出')
   }
@@ -160,7 +148,7 @@ export function useDocumentTransferActions(options: DocumentTransferActionsOptio
 
     const [{ ensureTopLevelBlockIds }, documentTransfer] = await Promise.all([
       import('@/editor/blockId'),
-      getDocumentTransfer(),
+      options.getDocumentTransfer(),
     ])
     return documentTransfer.prepareExport({
       document,

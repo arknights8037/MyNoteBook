@@ -11,6 +11,8 @@
 - [x] 合并 Projection/Generated View 来源与依赖构建逻辑。
 - [x] 按 Vue 页面/功能/应用组合边界整理前端目录，移除页面层兼容转发文件。
 - [x] Agent Resource Draft 改为依赖注入，数据库与 Tauri 实现仅在 `app/composition` 组装。
+- [x] 将所有 `*Page.vue` 收缩为 7～38 行的最终装配入口，完整界面状态迁入对应 feature surface。
+- [x] 页面通过 composition provider 注入 Audit、Automation、Document、Transfer 与 Knowledge Control 实现；feature 不反向引用 pages。
 - [ ] Windows 桌面人工 smoke test。
 
 ## 当前里程碑：架构审计与渐进改造规划

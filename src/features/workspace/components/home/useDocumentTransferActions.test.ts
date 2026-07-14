@@ -8,6 +8,7 @@ function createActions(authorize: () => Promise<boolean>) {
   const showImportModal = ref(false)
   const openFilePicker = vi.fn()
   const actions = useDocumentTransferActions({
+    getDocumentTransfer: vi.fn(),
     documentSidebar: ref({ openFilePicker }),
     editor: ref(null),
     editorContent: ref({ type: 'doc', content: [] }),
