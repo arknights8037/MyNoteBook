@@ -22,11 +22,14 @@ const draftTrigger = ref<AutomationTriggerType>('manual')
 const draftIntervalMinutes = ref(60)
 const draftDailyTime = ref('09:00')
 const bindCurrentDocument = ref(true)
+const activeTab = ref<'tasks' | 'runs'>('tasks')
+const showComposer = ref(false)
 type BrowserEvent = InstanceType<typeof globalThis.Event>
 type BrowserInputElement = InstanceType<typeof globalThis.HTMLInputElement>
 
 const enabledCount = computed(() => tasks.value.filter((task) => task.enabled).length)
 const queuedCount = computed(() => runs.value.filter((run) => run.status === 'queued').length)
+const shouldShowComposer = computed(() => showComposer.value || tasks.value.length === 0)
 const triggerOptions = [
   { label: '手动触发', value: 'manual' },
   { label: '按间隔', value: 'interval' },
@@ -79,6 +82,7 @@ async function createTask(): Promise<void> {
   }
   draftName.value = ''
   draftInstruction.value = ''
+  showComposer.value = false
   await load()
 }
 
@@ -136,16 +140,62 @@ onMounted(load)
         <h1>自动化任务</h1>
         <p>{{ enabledCount }} 个已启用 · {{ queuedCount }} 个等待执行</p>
       </div>
-      <NButton secondary :loading="loading" @click="load">
-        <template #icon
-          ><NIcon :size="15"><RefreshCw /></NIcon
-        ></template>
-        刷新
-      </NButton>
+      <div class="operations-page__header-actions">
+        <NButton secondary :loading="loading" @click="load">
+          <template #icon><NIcon :size="15"><RefreshCw /></NIcon></template>
+          刷新
+        </NButton>
+        <NButton
+          v-if="activeTab === 'tasks' && !shouldShowComposer"
+          type="primary"
+          @click="showComposer = true"
+        >
+          <template #icon><NIcon :size="15"><Plus /></NIcon></template>
+          新建自动化
+        </NButton>
+      </div>
     </header>
 
     <div class="operations-page__content">
-      <section class="automation-compose" aria-label="新建自动化">
+      <nav class="surface-tabs surface-tabs--compact" role="tablist" aria-label="自动化页面">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === 'tasks'"
+          :class="{ 'is-active': activeTab === 'tasks' }"
+          @click="activeTab = 'tasks'"
+        >
+          <CalendarClock :size="17" /><span><strong>任务</strong><small>创建并管理自动化</small></span><em>{{ tasks.length }}</em>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === 'runs'"
+          :class="{ 'is-active': activeTab === 'runs' }"
+          @click="activeTab = 'runs'"
+        >
+          <CirclePlay :size="17" /><span><strong>运行记录</strong><small>查看执行状态与结果</small></span><em>{{ runs.length }}</em>
+        </button>
+      </nav>
+
+      <aside class="surface-guide">
+        <CalendarClock v-if="activeTab === 'tasks'" :size="18" />
+        <CirclePlay v-else :size="18" />
+        <div v-if="activeTab === 'tasks'">
+          <strong>自动化会按时间或手动触发任务</strong>
+          <p>第一次使用建议先创建“手动触发”任务，确认指令效果后再改成定时运行。</p>
+        </div>
+        <div v-else>
+          <strong>这里记录每一次执行</strong>
+          <p>“等待执行器”表示任务已入队；运行完成或失败后会在这里保留结果状态。</p>
+        </div>
+      </aside>
+
+      <section
+        v-if="activeTab === 'tasks' && shouldShowComposer"
+        class="automation-compose"
+        aria-label="新建自动化"
+      >
         <div class="operations-section-heading">
           <strong>新建任务</strong><span>定义会写入本地队列</span>
         </div>
@@ -186,12 +236,13 @@ onMounted(load)
             ></template>
             创建
           </NButton>
+          <NButton v-if="tasks.length > 0" quaternary @click="showComposer = false">取消</NButton>
         </footer>
       </section>
 
       <p v-if="error" class="operations-error" role="alert">{{ error }}</p>
 
-      <section aria-label="自动化定义">
+      <section v-if="activeTab === 'tasks'" aria-label="自动化定义">
         <div class="operations-section-heading">
           <strong>任务定义</strong><span>{{ tasks.length }} 项</span>
         </div>
@@ -233,7 +284,7 @@ onMounted(load)
         </article>
       </section>
 
-      <section aria-label="最近运行">
+      <section v-else aria-label="最近运行">
         <div class="operations-section-heading">
           <strong>最近运行</strong><span>{{ runs.length }} 条</span>
         </div>

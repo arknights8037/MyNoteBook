@@ -50,6 +50,116 @@
   padding: 28px 0 64px;
 }
 
+.operations-page__header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.surface-tabs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.surface-tabs--compact {
+  grid-template-columns: repeat(2, minmax(190px, 1fr));
+}
+
+.surface-tabs > button {
+  display: grid;
+  min-width: 0;
+  min-height: 66px;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 9px;
+  padding: 10px 12px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-subtle);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.surface-tabs > button:hover {
+  border-color: var(--color-border-default);
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+}
+
+.surface-tabs > button.is-active {
+  border-color: color-mix(in srgb, var(--color-agent-accent) 55%, var(--color-border-default));
+  color: var(--color-agent-accent);
+  background: var(--color-agent-thinking-bg);
+}
+
+.surface-tabs > button > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.surface-tabs > button strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.surface-tabs > button small {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.surface-tabs > button em {
+  min-width: 22px;
+  border-radius: 999px;
+  padding: 3px 6px;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-elevated);
+  font-size: 10px;
+  font-style: normal;
+  text-align: center;
+}
+
+.surface-guide {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-agent-accent) 24%, var(--color-border-subtle));
+  border-radius: 9px;
+  padding: 13px 15px;
+  color: var(--color-agent-accent);
+  background: color-mix(in srgb, var(--color-agent-thinking-bg) 66%, transparent);
+}
+
+.surface-guide > div {
+  display: grid;
+  gap: 3px;
+}
+
+.surface-guide strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.surface-guide p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.settings-page__guide {
+  margin-bottom: 4px;
+}
+
 .operations-section-heading {
   display: flex;
   align-items: baseline;
@@ -404,10 +514,16 @@
 
 @media (max-width: 760px) {
   .operations-page__header,
+  .operations-page__header-actions,
   .automation-compose footer,
   .audit-toolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .surface-tabs,
+  .surface-tabs--compact {
+    grid-template-columns: 1fr;
   }
 
   .operations-page__content {

@@ -12,9 +12,23 @@ describe('SettingsPage', () => {
     })
 
     expect(wrapper.text()).toContain('通用偏好')
+
+    await wrapper
+      .findAll('.settings-nav__item')
+      .find((button) => button.text().includes('数据'))
+      ?.trigger('click')
     expect(wrapper.text()).toContain('数据存储')
-    expect(wrapper.text()).toContain('快捷键')
+
+    await wrapper
+      .findAll('.settings-nav__item')
+      .find((button) => button.text().includes('编辑器'))
+      ?.trigger('click')
     expect(wrapper.text()).toContain('复制当前块')
+
+    await wrapper
+      .findAll('.settings-nav__item')
+      .find((button) => button.text().includes('安全'))
+      ?.trigger('click')
     expect(wrapper.text()).toContain('允许开发模式')
 
     await wrapper.get('button[aria-label="返回文章"]').trigger('click')
@@ -33,6 +47,10 @@ describe('SettingsPage', () => {
       props: { settings: { ...DEFAULT_APP_SETTINGS } },
       attachTo: document.body,
     })
+    await wrapper
+      .findAll('.settings-nav__item')
+      .find((button) => button.text().includes('快捷键'))
+      ?.trigger('click')
     const recorder = wrapper.findAll('.shortcut-recorder')[0]
     await recorder!.trigger('click')
     await recorder!.trigger('keydown', { key: 'P', ctrlKey: true, shiftKey: true })

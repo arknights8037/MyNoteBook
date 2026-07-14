@@ -13,6 +13,9 @@
 - [x] Agent Resource Draft 改为依赖注入，数据库与 Tauri 实现仅在 `app/composition` 组装。
 - [x] 将所有 `*Page.vue` 收缩为 7～38 行的最终装配入口，完整界面状态迁入对应 feature surface。
 - [x] 页面通过 composition provider 注入 Audit、Automation、Document、Transfer 与 Knowledge Control 实现；feature 不反向引用 pages。
+- [x] 扩展页按 Skills、MCP 服务、内置插件分为互斥 Tab，避免三套工作流同时铺开。
+- [x] Knowledge、Automation、Settings 改为单任务切换，并为高级页面补充用途、首个操作和安全边界提示。
+- [x] Audit 增加只读定位与排障入口说明；复杂空状态改为明确下一步。
 - [ ] Windows 桌面人工 smoke test。
 
 ## 当前里程碑：架构审计与渐进改造规划

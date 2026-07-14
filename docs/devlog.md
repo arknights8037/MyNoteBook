@@ -1,5 +1,23 @@
 # 开发日志
 
+## 2026-07-14：新手友好的功能面渐进披露
+
+### 实现
+
+- 插件与扩展页新增 Skills、MCP 服务、内置插件三个可访问 Tab，默认只展示最常用的 Skill 工作流，头部操作随当前 Tab 变化。
+- Knowledge Control 改为知识规则、智能视图、任务验收三个任务面，并将 Rule、View、TaskRun 等首屏术语改为中文用途说明。
+- Automation 分离任务与运行记录；已有任务时收起创建表单，无任务时直接展示安全的首次创建路径。
+- Settings 左侧分类改为真正的单分类切换，不再一次渲染七组设置；当前分类显示用途和自动保存说明。
+- Audit 增加只读排障提示；各高级功能统一采用 Tab、引导卡片和可行动空状态。
+
+### 验证
+
+- `pnpm typecheck`：通过。
+- 相关组件：5 个测试文件、6 项测试通过；新增扩展 Tab 互斥展示回归测试。
+- 使用本地 Firefox 实际点击验证扩展、Knowledge、Settings、Automation 的首屏和 Tab 切换；非 Tauri 浏览器预览仅保留预期的 `invoke` 不可用提示。
+- `pnpm test:run`：93 个测试文件通过、1 个跳过；324 项通过、2 项跳过。
+- `pnpm build`：通过；`pnpm lint` 为 0 error，保留既有 `AiChatPanel.vue` `v-html` 警告；`git diff --check` 通过。
+
 ## 2026-07-14：页面入口纯装配化
 
 ### 实现

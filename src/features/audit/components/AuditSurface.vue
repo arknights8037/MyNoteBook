@@ -107,6 +107,13 @@ onMounted(load)
     </header>
 
     <div class="operations-page__content">
+      <aside class="surface-guide">
+        <ClipboardList :size="18" />
+        <div>
+          <strong>这里是只读的操作记录</strong>
+          <p>遇到任务失败或行为不符合预期时，先按类型筛选，再点击一条记录查看详细信息。</p>
+        </div>
+      </aside>
       <div class="audit-toolbar">
         <label class="audit-search">
           <Search :size="15" />

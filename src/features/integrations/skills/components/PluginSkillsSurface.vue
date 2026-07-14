@@ -4,6 +4,7 @@ import { openPath } from '@tauri-apps/plugin-opener'
 import {
   AlertTriangle,
   Blocks,
+  Cable,
   Check,
   ChevronRight,
   Code2,
@@ -47,6 +48,7 @@ const fileContent = ref('')
 const fileDraft = ref('')
 const query = ref('')
 const filter = ref<'all' | 'enabled' | 'invalid'>('all')
+const activeTab = ref<'skills' | 'mcp' | 'builtin'>('skills')
 const filterOptions: Array<{ value: 'all' | 'enabled' | 'invalid'; label: string }> = [
   { value: 'all', label: '全部' },
   { value: 'enabled', label: '已启用' },
@@ -63,6 +65,45 @@ type BrowserInputElement = InstanceType<typeof globalThis.HTMLInputElement>
 
 const isNative = Reflect.has(globalThis, '__TAURI_INTERNALS__')
 const enabledCount = computed(() => skills.value.filter((skill) => skill.enabled).length)
+const extensionTabs = computed(() => [
+  {
+    id: 'skills' as const,
+    label: 'Skills',
+    description: '教会 Agent 如何完成特定工作',
+    count: skills.value.length,
+    icon: Code2,
+  },
+  {
+    id: 'mcp' as const,
+    label: 'MCP 服务',
+    description: '连接外部工具与数据源',
+    count: null,
+    icon: Cable,
+  },
+  {
+    id: 'builtin' as const,
+    label: '内置插件',
+    description: '查看应用自带能力',
+    count: plugins.length,
+    icon: Puzzle,
+  },
+])
+const activeTabGuide = computed(() =>
+  ({
+    skills: {
+      title: '想让 Agent 学会一套固定做法？从 Skill 开始',
+      description: '新建一个简单 Skill，或导入已有的 SKILL.md 目录；启用后 Agent 会在合适的任务中按需读取。',
+    },
+    mcp: {
+      title: '需要连接其他应用或数据？配置 MCP 服务',
+      description: 'MCP 服务可以提供工具和只读资源。首次使用建议只添加你信任的本地服务。',
+    },
+    builtin: {
+      title: '这些能力已经随应用安装',
+      description: '内置插件无需配置。这里用于了解它们能做什么，以及可以使用哪些命令。',
+    },
+  })[activeTab.value],
+)
 const selectedSkill = computed(
   () => skills.value.find((skill) => skill.id === selectedSkillId.value) ?? null,
 )
@@ -270,7 +311,7 @@ onMounted(() => void loadSkills())
         <h1>插件与技能</h1>
         <p>兼容标准 SKILL.md 目录，并让 Agent 按需读取下属脚本、资料和资源。</p>
       </div>
-      <div class="plugin-skills-page__header-actions">
+      <div v-if="activeTab === 'skills'" class="plugin-skills-page__header-actions">
         <div class="plugin-skills-page__summary">
           <strong>{{ enabledCount }}</strong>
           <span>已启用 / {{ skills.length }} 个 Skill</span>
@@ -296,8 +337,29 @@ onMounted(() => void loadSkills())
     </header>
 
     <div class="plugin-skills-page__content">
-      <McpServersPanel />
-      <section class="skill-library" aria-label="本地技能库">
+      <nav class="surface-tabs" role="tablist" aria-label="扩展类型">
+        <button
+          v-for="tab in extensionTabs"
+          :key="tab.id"
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === tab.id"
+          :class="{ 'is-active': activeTab === tab.id }"
+          @click="activeTab = tab.id"
+        >
+          <component :is="tab.icon" :size="17" />
+          <span><strong>{{ tab.label }}</strong><small>{{ tab.description }}</small></span>
+          <em v-if="tab.count !== null">{{ tab.count }}</em>
+        </button>
+      </nav>
+
+      <aside class="surface-guide">
+        <Sparkles :size="18" />
+        <div><strong>{{ activeTabGuide.title }}</strong><p>{{ activeTabGuide.description }}</p></div>
+      </aside>
+
+      <McpServersPanel v-if="activeTab === 'mcp'" />
+      <section v-else-if="activeTab === 'skills'" class="skill-library" aria-label="本地技能库">
         <div class="skill-library__toolbar">
           <NInput v-model:value="query" size="small" clearable placeholder="搜索技能">
             <template #prefix><Search :size="14" /></template>
@@ -448,7 +510,7 @@ onMounted(() => void loadSkills())
         </div>
       </section>
 
-      <section class="builtin-plugins" aria-label="内置插件">
+      <section v-else class="builtin-plugins" aria-label="内置插件">
         <div class="plugin-skills-page__section-heading">
           <span>内置插件</span><small>随应用提供，不使用 SKILL.md 目录</small>
         </div>

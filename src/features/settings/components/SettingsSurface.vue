@@ -83,14 +83,17 @@ const aiModelFetchStatus = ref('')
 let sensitivePasswordRequestId = 0
 
 const navigation = [
-  { id: 'general', label: '通用', icon: SlidersHorizontal },
-  { id: 'security', label: '安全', icon: ShieldCheck },
-  { id: 'appearance', label: '外观', icon: Palette },
-  { id: 'editor', label: '编辑器', icon: Type },
-  { id: 'ai', label: 'AI', icon: Bot },
-  { id: 'data', label: '数据', icon: Database },
-  { id: 'shortcuts', label: '快捷键', icon: Keyboard },
+  { id: 'general', label: '通用', description: '启动、新建与开发选项', icon: SlidersHorizontal },
+  { id: 'security', label: '安全', description: '敏感操作保护', icon: ShieldCheck },
+  { id: 'appearance', label: '外观', description: '主题、字体与动效', icon: Palette },
+  { id: 'editor', label: '编辑器', description: '排版、保存与块操作', icon: Type },
+  { id: 'ai', label: 'AI', description: '模型、参数与提示词', icon: Bot },
+  { id: 'data', label: '数据', description: '本地存储位置', icon: Database },
+  { id: 'shortcuts', label: '快捷键', description: '常用操作按键', icon: Keyboard },
 ]
+const activeNavigation = computed(
+  () => navigation.find((item) => item.id === activeSection.value) ?? navigation[0],
+)
 const widthOptions = [
   { label: '紧凑（720px）', value: 'compact' },
   { label: '标准（850px）', value: 'standard' },
@@ -352,10 +355,6 @@ function recordShortcut(action: ShortcutAction, event: BrowserKeyboardEvent): vo
 function scrollToSection(sectionId: string): void {
   activeSection.value = sectionId
   if (sectionId === 'ai') emit('aiSectionOpen')
-  globalThis.document?.getElementById(`settings-${sectionId}`)?.scrollIntoView({
-    behavior: props.settings.reduceMotion ? 'auto' : 'smooth',
-    block: 'start',
-  })
 }
 
 function prioritizeFonts(fonts: string[], preferredFonts: string[]): string[] {
@@ -493,19 +492,24 @@ onMounted(async () => {
       </nav>
 
       <div class="settings-page__body">
-        <GeneralSettingsSection />
+        <aside class="surface-guide settings-page__guide">
+          <component :is="activeNavigation.icon" :size="18" />
+          <div><strong>{{ activeNavigation.label }}设置</strong><p>{{ activeNavigation.description }}。修改后会立即保存并应用。</p></div>
+        </aside>
 
-        <SecuritySettingsSection />
+        <GeneralSettingsSection v-if="activeSection === 'general'" />
 
-        <AppearanceSettingsSection />
+        <SecuritySettingsSection v-else-if="activeSection === 'security'" />
 
-        <EditorSettingsSection />
+        <AppearanceSettingsSection v-else-if="activeSection === 'appearance'" />
 
-        <DataSettingsSection />
+        <EditorSettingsSection v-else-if="activeSection === 'editor'" />
 
-        <AiSettingsSection />
+        <DataSettingsSection v-else-if="activeSection === 'data'" />
 
-        <ShortcutSettingsSection />
+        <AiSettingsSection v-else-if="activeSection === 'ai'" />
+
+        <ShortcutSettingsSection v-else />
 
         <aside class="settings-note">
           <Settings :size="17" /><span>设置保存在本机，并立即应用到整个应用。</span>

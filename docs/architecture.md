@@ -37,6 +37,14 @@ Tauri commands should delegate immediately to these modules. Database code must 
 
 Startup paths must remain non-blocking: database initialization and the initial document list may run at startup, but API-key/keyring access is lazy and begins only when an AI action requires it.
 
+## Surface interaction rules
+
+- A feature surface presents one primary task at a time. Unrelated workflows use accessible tabs instead of a single long page.
+- Every advanced surface starts with a short explanation of what it is for, when to use it, and the safest first action.
+- Empty states explain the next step; they do not expose internal model names without a user-facing description.
+- Creation forms stay visible when a collection is empty, then become an explicit primary action after the first item exists.
+- Technical identifiers and provenance remain available for inspection, but must not compete with the primary action on the first screen.
+
 ## Feature ownership
 
 - `useDocumentCollection`: owns the active/deleted document collections, sidebar tree projection, group selection, and expansion state. Pages consume this API instead of synchronizing multiple lists or rebuilding tree state.

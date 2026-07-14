@@ -50,6 +50,11 @@ describe('AutomationPage', () => {
 
     expect(wrapper.get('.operations-page__header').text()).toContain('自动化任务')
     expect(wrapper.get('.automation-row').text()).toContain('每日总结')
+
+    const runsTab = wrapper
+      .findAll('[role="tab"]')
+      .find((tab) => tab.text().includes('运行记录'))
+    await runsTab?.trigger('click')
     expect(wrapper.get('.automation-run-row').text()).toContain('等待执行器')
   })
 })

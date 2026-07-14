@@ -18,9 +18,14 @@ describe('KnowledgeControlPage', () => {
     })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Knowledge Objects')
-    expect(wrapper.text()).toContain('Query / Projection / Generated Views')
-    expect(wrapper.text()).toContain('TaskRun Verification')
+    expect(wrapper.text()).toContain('知识规则')
+
+    const tabs = wrapper.findAll('[role="tab"]')
+    await tabs.find((tab) => tab.text().includes('智能视图'))?.trigger('click')
+    expect(wrapper.text()).toContain('视图不会修改原始文档')
+
+    await tabs.find((tab) => tab.text().includes('任务验收'))?.trigger('click')
+    expect(wrapper.text()).toContain('任务结果需要独立验收')
     expect(control.load).toHaveBeenCalled()
   })
 })

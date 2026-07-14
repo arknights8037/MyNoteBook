@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BookOpenCheck, RefreshCw } from '@lucide/vue'
+import { BookOpenCheck, ListChecks, RefreshCw, ShieldCheck } from '@lucide/vue'
 import { onMounted, ref } from 'vue'
 
 import { loadAiSettings } from '@/models/ai'
@@ -34,6 +34,7 @@ const error = ref('')
 const delegationGrant = ref('')
 const activeGrant = ref<DelegationGrant | null>(null)
 const activeDelegationRun = ref<TaskRun | null>(null)
+const activeTab = ref<'knowledge' | 'views' | 'tasks'>('knowledge')
 const cliExportPath = ref('')
 const cliSubmissionPath = ref('')
 const cliCapabilityToken = ref('')
@@ -169,8 +170,8 @@ onMounted(load)
     <header class="operations-page__header">
       <div>
         <span class="operations-page__eyebrow"><BookOpenCheck :size="15" />KNOWLEDGE CONTROL</span>
-        <h1>知识对象与视图</h1>
-        <p>规范知识保持锚定；视图只保存查询、依赖和可重建快照。</p>
+        <h1>知识中心</h1>
+        <p>把重要规则整理成可信知识，再通过视图和任务验收安全地重复使用。</p>
       </div>
       <NButton secondary :loading="loading" @click="load">
         <template #icon><NIcon :size="15"><RefreshCw /></NIcon></template>
@@ -180,7 +181,55 @@ onMounted(load)
 
     <div class="operations-page__content p1-domain-grid">
       <p v-if="error" class="operations-error" role="alert">{{ error }}</p>
+      <nav class="surface-tabs" role="tablist" aria-label="知识中心功能">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === 'knowledge'"
+          :class="{ 'is-active': activeTab === 'knowledge' }"
+          @click="activeTab = 'knowledge'"
+        >
+          <ShieldCheck :size="17" /><span><strong>知识规则</strong><small>保存规则、决策和证据</small></span><em>{{ objects.length }}</em>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === 'views'"
+          :class="{ 'is-active': activeTab === 'views' }"
+          @click="activeTab = 'views'"
+        >
+          <BookOpenCheck :size="17" /><span><strong>智能视图</strong><small>汇总和重组已有知识</small></span><em>{{ views.length }}</em>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === 'tasks'"
+          :class="{ 'is-active': activeTab === 'tasks' }"
+          @click="activeTab = 'tasks'"
+        >
+          <ListChecks :size="17" /><span><strong>任务验收</strong><small>检查结果与外部协作</small></span><em>{{ taskRuns.length }}</em>
+        </button>
+      </nav>
+
+      <aside class="surface-guide">
+        <ShieldCheck v-if="activeTab === 'knowledge'" :size="18" />
+        <BookOpenCheck v-else-if="activeTab === 'views'" :size="18" />
+        <ListChecks v-else :size="18" />
+        <div v-if="activeTab === 'knowledge'">
+          <strong>先从一条重要规则开始</strong>
+          <p>知识规则会锚定当前文档，适合保存长期有效的约束、决定或证据来源。</p>
+        </div>
+        <div v-else-if="activeTab === 'views'">
+          <strong>视图不会修改原始文档</strong>
+          <p>它会按条件查询、投影或生成摘要；需要写回时仍会经过明确确认。</p>
+        </div>
+        <div v-else>
+          <strong>任务结果需要独立验收</strong>
+          <p>在这里检查运行结果，或把受限任务交给 CLI Agent；外部工具不能直接改写文档。</p>
+        </div>
+      </aside>
       <KnowledgeObjectsPanel
+        v-if="activeTab === 'knowledge'"
         v-model:object-type="objectType"
         v-model:title="objectTitle"
         :objects="objects"
@@ -188,6 +237,7 @@ onMounted(load)
         @create="createObject"
       />
       <ViewsPanel
+        v-else-if="activeTab === 'views'"
         v-model:view-type="viewType"
         v-model:name="viewName"
         v-model:query="viewQuery"
@@ -203,6 +253,7 @@ onMounted(load)
         @fork="forkView"
       />
       <TaskRunsPanel
+        v-else
         v-model:export-path="cliExportPath"
         v-model:submission-path="cliSubmissionPath"
         v-model:capability-token="cliCapabilityToken"
