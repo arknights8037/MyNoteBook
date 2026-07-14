@@ -10,7 +10,7 @@ import type {
 } from '@/models/document'
 import type { AppError } from '@/models/result'
 import type { DocumentTransferService } from '@/services/DocumentTransferService'
-import type { DocumentImportFormat } from '../documentFile'
+import type { DocumentImportFormat } from '@/features/documents/documentFile'
 import type { DocumentSidebarExpose, EditorShellExpose, MarkdownFileInput } from './homePageTypes'
 
 let documentTransferPromise: Promise<DocumentTransferService> | null = null

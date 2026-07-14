@@ -36,7 +36,7 @@ import {
 } from '@/services/SkillService'
 import { NButton, NIcon, NInput, NModal } from '@/ui'
 import { useMessage } from '@/ui/services'
-import McpServersPanel from './McpServersPanel.vue'
+import McpServersPanel from '@/features/integrations/mcp/components/McpServersPanel.vue'
 
 const plugins = listBuiltinPlugins()
 const message = useMessage()

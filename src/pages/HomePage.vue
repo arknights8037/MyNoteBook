@@ -34,7 +34,7 @@ import {
 import { DocumentService } from '@/services/DocumentService'
 import { renderAiMarkdown } from '@/services/AiMarkdownRenderer'
 import { applyTheme, setThemePreference, subscribeToSystemTheme } from '@/services/theme'
-import DocumentSidebar, { type SidebarView } from './DocumentSidebar.vue'
+import DocumentSidebar, { type SidebarView } from '@/features/documents/components/DocumentSidebar.vue'
 import AgentAuthorizationModal from './home/AgentAuthorizationModal.vue'
 import {
   displayDocumentTitle,
@@ -55,7 +55,7 @@ const EditorShell = defineAsyncComponent({
   suspensible: false,
 })
 const SettingsPage = defineLazySurface(() => import('@/pages/SettingsPage.vue'))
-const AiChatPanel = defineLazySurface(() => import('./AiChatPanel.vue'))
+const AiChatPanel = defineLazySurface(() => import('@/features/ai-chat/components/AiChatPanel.vue'))
 const PluginSkillsPage = defineLazySurface(() => import('./PluginSkillsPage.vue'))
 const AutomationPage = defineLazySurface(() => import('./AutomationPage.vue'))
 const AuditPage = defineLazySurface(() => import('./AuditPage.vue'))

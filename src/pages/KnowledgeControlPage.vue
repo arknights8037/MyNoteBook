@@ -2,16 +2,16 @@
 import { BookOpenCheck, RefreshCw } from '@lucide/vue'
 import { onMounted, ref } from 'vue'
 
-import { createKnowledgeControlService } from '@/infrastructure/database/knowledgeControlServiceFactory'
+import { createKnowledgeControlService } from '@/app/composition/knowledgeControlServiceFactory'
 import { loadAiSettings } from '@/models/ai'
 import type { DelegationGrant } from '@/models/governance'
 import type { KnowledgeObject, KnowledgeObjectType } from '@/models/knowledge'
 import type { ViewDefinition, ViewType, ViewWritebackPolicy } from '@/models/view'
 import type { TaskRun } from '@/models/work'
 import type { KnowledgeControlService } from '@/services/KnowledgeControlService'
-import KnowledgeObjectsPanel from './knowledge-control/KnowledgeObjectsPanel.vue'
-import TaskRunsPanel from './knowledge-control/TaskRunsPanel.vue'
-import ViewsPanel from './knowledge-control/ViewsPanel.vue'
+import KnowledgeObjectsPanel from '@/features/knowledge-control/components/KnowledgeObjectsPanel.vue'
+import TaskRunsPanel from '@/features/knowledge-control/components/TaskRunsPanel.vue'
+import ViewsPanel from '@/features/knowledge-control/components/ViewsPanel.vue'
 import { NButton, NIcon } from '@/ui'
 
 const props = defineProps<{ currentDocumentId: string; currentDocumentRevision: number }>()

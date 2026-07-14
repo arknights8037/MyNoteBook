@@ -355,14 +355,16 @@ export function useAgentRun(options: UseAgentRunOptions) {
                   executeNativeTool: executeRustAgentTool,
                   requestAuthorizerInput: (request) => waitForAuthorizerInput(request, editPlan),
                   createAutomationDraft: async (input) => {
-                    const { createAutomationDraft } =
-                      await import('@/services/AgentResourceDraftService')
-                    return createAutomationDraft(input, options.createId)
+                    const { createAgentResourceDraftService } =
+                      await import('@/app/composition/agentResourceDraftServiceFactory')
+                    const service = await createAgentResourceDraftService(options.createId)
+                    return service.createAutomationDraft(input)
                   },
                   createSkillDraft: async (input) => {
-                    const { createSkillDraft } =
-                      await import('@/services/AgentResourceDraftService')
-                    return createSkillDraft(input)
+                    const { createAgentResourceDraftService } =
+                      await import('@/app/composition/agentResourceDraftServiceFactory')
+                    const service = await createAgentResourceDraftService(options.createId)
+                    return service.createSkillDraft(input)
                   },
                 })
               },

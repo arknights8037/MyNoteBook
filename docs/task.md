@@ -9,6 +9,8 @@
 - [x] 建立 Knowledge Control 应用协调器和单一 composition factory。
 - [x] 拆分 Knowledge/View/TaskRun 页面组件，父页面只保留状态与事件编排。
 - [x] 合并 Projection/Generated View 来源与依赖构建逻辑。
+- [x] 按 Vue 页面/功能/应用组合边界整理前端目录，移除页面层兼容转发文件。
+- [x] Agent Resource Draft 改为依赖注入，数据库与 Tauri 实现仅在 `app/composition` 组装。
 - [ ] Windows 桌面人工 smoke test。
 
 ## 当前里程碑：架构审计与渐进改造规划

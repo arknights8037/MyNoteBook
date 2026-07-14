@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
 import SidebarDocumentTree from './SidebarDocumentTree.vue'
-import type { SidebarDocumentNode } from './documentTree'
+import type { SidebarDocumentNode } from '../documentTree'
 import type { DocumentSummary } from '@/models/document'
 
 describe('SidebarDocumentTree', () => {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ok } from '@/models/result'
+import { AgentResourceDraftService } from './AgentResourceDraftService'
 
 const createTask = vi.fn()
 const createSkill = vi.fn()
@@ -8,18 +9,19 @@ const readSkillFile = vi.fn()
 const writeSkillFile = vi.fn()
 const setSkillEnabled = vi.fn()
 
-vi.mock('@/infrastructure/database/automationRepositoryFactory', () => ({
-  createAutomationRepository: async () => ({ createTask }),
-}))
-
-vi.mock('./SkillService', () => ({
-  createSkill,
-  readSkillFile,
-  writeSkillFile,
-  setSkillEnabled,
-}))
-
 describe('AgentResourceDraftService', () => {
+  function createService() {
+    return new AgentResourceDraftService(
+      { createTask },
+      {
+        create: createSkill,
+        readFile: readSkillFile,
+        writeFile: writeSkillFile,
+        setEnabled: setSkillEnabled,
+      },
+    )
+  }
+
   beforeEach(() => {
     createTask.mockReset()
     createSkill.mockReset()
@@ -30,21 +32,25 @@ describe('AgentResourceDraftService', () => {
 
   it('persists automations as disabled drafts without scheduling them', async () => {
     createTask.mockImplementation(async (input) =>
-      ok({ ...input, updatedAt: input.createdAt, nextRunAt: null, lastRunAt: null }),
+      ok({
+        ...input,
+        id: 'automation-1',
+        createdAt: 1,
+        updatedAt: 1,
+        nextRunAt: null,
+        lastRunAt: null,
+      }),
     )
-    const { createAutomationDraft } = await import('./AgentResourceDraftService')
+    const service = createService()
 
     await expect(
-      createAutomationDraft(
-        {
-          name: '每日摘要',
-          instruction: '整理今日变化',
-          triggerType: 'daily',
-          triggerConfig: { dailyTime: '18:30' },
-          documentId: 'doc-1',
-        },
-        (prefix) => `${prefix}-1`,
-      ),
+      service.createAutomationDraft({
+        name: '每日摘要',
+        instruction: '整理今日变化',
+        triggerType: 'daily',
+        triggerConfig: { dailyTime: '18:30' },
+        documentId: 'doc-1',
+      }),
     ).resolves.toEqual({
       created: true,
       id: 'automation-1',
@@ -52,7 +58,7 @@ describe('AgentResourceDraftService', () => {
       enabled: false,
     })
     expect(createTask).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'automation-1', enabled: false }),
+      expect.objectContaining({ enabled: false }),
     )
   })
 
@@ -61,10 +67,10 @@ describe('AgentResourceDraftService', () => {
     readSkillFile.mockResolvedValue(
       '---\nname: weekly-report\ndescription: 整理周报\n---\n\n# placeholder',
     )
-    const { createSkillDraft } = await import('./AgentResourceDraftService')
+    const service = createService()
 
     await expect(
-      createSkillDraft({
+      service.createSkillDraft({
         name: '周报整理',
         description: '整理周报',
         instructions: '## 触发条件\n\n仅在用户要求生成周报时触发。',
@@ -87,9 +93,9 @@ describe('AgentResourceDraftService', () => {
   it('immediately disables drafts when connected to an older native runtime', async () => {
     createSkill.mockResolvedValue({ id: 'legacy-skill', name: '旧运行时 Skill', enabled: true })
     readSkillFile.mockResolvedValue('---\nname: legacy-skill\ndescription: test\n---\n')
-    const { createSkillDraft } = await import('./AgentResourceDraftService')
+    const service = createService()
 
-    await createSkillDraft({
+    await service.createSkillDraft({
       name: '旧运行时 Skill',
       description: '兼容测试',
       instructions: '保持停用。',

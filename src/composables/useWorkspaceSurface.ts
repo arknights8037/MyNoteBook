@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 
-import type { WorkspaceSurface } from '@/pages/DocumentSidebar.vue'
+import type { WorkspaceSurface } from '@/features/documents/components/DocumentSidebar.vue'
 
 export function useWorkspaceSurface() {
   const showAiChat = ref(true)

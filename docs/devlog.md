@@ -1,5 +1,21 @@
 # 开发日志
 
+## 2026-07-14：Vue 前端目录与依赖方向整理
+
+### 实现
+
+- `src/pages` 仅保留页面入口及 `home`、`settings` 页面私有模块；AI Chat、Document、Knowledge Control 与 MCP 功能组件迁入对应 `src/features`。
+- Document 文件规则、列表状态、展示投影和树算法连同测试归入 `features/documents`，删除页面层的兼容 re-export。
+- Knowledge Control 工厂迁入 `src/app/composition`；`AgentResourceDraftService` 改为注入 Automation/Skill 端口，新增 composition factory 连接数据库仓储与 Tauri Skill API。
+- 更新所有生产代码和测试引用；低层模块不再引用 pages，services 不再直接引用 infrastructure。
+
+### 验证
+
+- `pnpm typecheck` 与 `pnpm build`：通过。
+- 定向回归：9 个测试文件、23 项测试通过。
+- `pnpm test:run`：92 个测试文件通过、1 个跳过；323 项通过、2 项跳过。首轮复现既有 EditorShell 图片用例时序抖动，隔离复验及第二次全量均通过。
+- `pnpm lint`：0 error、保留既有 `AiChatPanel.vue` `v-html` 警告；`git diff --check` 通过。
+
 ## 2026-07-14：分层与重复代码审查
 
 - 将 Work、View、Governance 中三份重复的 Domain Event/Outbox SQL 合并到 Rust `domain_events`，统一 actor、correlation、causation 和事务写入规则。

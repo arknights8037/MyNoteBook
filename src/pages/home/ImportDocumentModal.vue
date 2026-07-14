@@ -2,7 +2,7 @@
 import { FileText, Upload } from '@lucide/vue'
 
 import { NModal } from '@/ui'
-import type { DocumentImportFormat } from '../documentFile'
+import type { DocumentImportFormat } from '@/features/documents/documentFile'
 
 const show = defineModel<boolean>('show', { required: true })
 

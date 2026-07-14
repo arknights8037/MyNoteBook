@@ -21,27 +21,30 @@ Tauri commands should delegate immediately to these modules. Database code must 
 
 ## Frontend application
 
-- `src/pages`: route-level orchestration and visible workspace state. Pages may coordinate services but should not own parsing, persistence, or rendering algorithms.
+- `src/app/composition`: application composition roots. Factories in this directory are the only frontend modules that assemble application services with concrete Tauri/SQLite adapters.
+- `src/pages`: route- or workspace-surface orchestration and page-private UI. Pages may coordinate services but should not own reusable feature components, parsing, persistence, or rendering algorithms.
+- `src/features`: reusable, user-facing feature modules. Each feature may own its `components`, local pure state/projectors, and feature tests; it must not import `src/pages`.
 - `src/composables`: Vue lifecycle and reactive workflows shared by a page or feature, such as AI secret loading and chat-history persistence.
 - `src/services`: framework-independent application workflows and integrations.
 - `src/repositories`: persistence contracts; `src/infrastructure` contains their Tauri/SQLite implementations.
 - `src/models`: shared domain types, defaults, validation, and serialization boundaries.
 - `src/editor`: TipTap integration and editor-specific pure modules. `EditorShell.vue` owns editor UI composition; parsing, outline construction, block operations, and storage helpers belong in adjacent modules.
+- `src/ui`: generic presentation primitives without product workflow ownership.
 
 ## Dependency direction
 
-UI components depend on composables and services. Services depend on repository interfaces and models. Infrastructure implements repository interfaces and is selected at the application boundary. Domain models and pure editor utilities must not import Vue components or Tauri APIs.
+`app/composition` may depend on every layer required to assemble the application. Pages depend on feature components and composables; feature components depend on composables, services, and models. Services depend on repository interfaces and models. Infrastructure implements repository interfaces and is selected only at the application boundary. Domain models and pure editor utilities must not import Vue components or Tauri APIs. Reusable features and lower layers must not import pages.
 
 Startup paths must remain non-blocking: database initialization and the initial document list may run at startup, but API-key/keyring access is lazy and begins only when an AI action requires it.
 
 ## Feature ownership
 
 - `useDocumentCollection`: owns the active/deleted document collections, sidebar tree projection, group selection, and expansion state. Pages consume this API instead of synchronizing multiple lists or rebuilding tree state.
-- `DocumentSidebar.vue`: owns the document-navigation surface, tree projection, group counts, file input, and semantic UI events. It does not call document services or mutate application state directly.
+- `features/documents/components/DocumentSidebar.vue`: owns the document-navigation surface, tree projection, group counts, file input, and semantic UI events. It does not call document services or mutate application state directly.
 - `useDocumentSearch`: owns query indexing, result projection, search-modal lifecycle, and result snippets. Navigation after choosing a result remains a page-level concern.
 - `useSensitiveAuthorization`: owns the complete password authorization state machine. Callers request authorization and receive a boolean; they do not manipulate pending promise resolvers.
 - `models/theme.ts`: owns theme identifiers and persisted-value normalization. `services/theme.ts` owns DOM application, system-theme observation, and CSS variables.
-- `editor/documentTemplate.ts`: owns valid initial TipTap documents. File-name and import-extension rules live in `pages/documentFile.ts` because they belong to the document workspace boundary rather than the editor engine.
+- `editor/documentTemplate.ts`: owns valid initial TipTap documents. File-name and import-extension rules live in `features/documents/documentFile.ts` because they belong to the document feature rather than the editor engine.
 - `models/documentLink.ts`: owns the backward-compatible internal document/block link format. UI surfaces parse links through this module rather than slicing hashes themselves.
 - `models/documentBlock.ts`: defines the read-only block projection contract. `documents.content_json` remains the write source of truth; SQLite triggers own projection synchronization.
 - `services/AgentCommandService.ts`: validates deterministic write commands and expands them into confirmation proposals. It never writes documents or imports Tauri APIs.
@@ -50,7 +53,8 @@ Startup paths must remain non-blocking: database initialization and the initial 
 - `models/work.ts` / `WorkService` / `ResultVerifier`: unified TaskRun state machine, artifacts, evidence and verification policy. Verification never writes canonical documents directly.
 - `models/view.ts` / `ViewService`: Query/Projection definitions and immutable dependency snapshots. Views are manually refreshed read models; writeback is readonly or a proposed ChangeSet.
 - `models/governance.ts` / `DelegationService` / `CliAgentAdapter`: external capability grants and versioned file protocol; adapters cannot bypass Work or Document boundaries.
-- `services/KnowledgeControlService.ts`: application coordinator for Knowledge, View, verification and Delegation workflows. `KnowledgeControlPage.vue` owns only page state; `pages/knowledge-control/*Panel.vue` own focused presentation surfaces.
+- `services/KnowledgeControlService.ts`: application coordinator for Knowledge, View, verification and Delegation workflows. `KnowledgeControlPage.vue` owns only page state; `features/knowledge-control/components/*Panel.vue` own focused presentation surfaces.
+- `services/AgentResourceDraftService.ts`: draft-creation use case with injected Automation and Skill ports. `app/composition/agentResourceDraftServiceFactory.ts` selects the concrete database and Tauri implementations.
 - `models/providerCapabilities.ts`: one Provider/Model capability decision point used by settings, runtime request shaping and provenance audit.
 
 Knowledge Objects may reference Document Core, and Context Compiler may consume effective Knowledge Objects. Work coordinates runs and verification but crosses the Document boundary only through ChangeSet/Patch application. View depends on Document/Knowledge snapshots and must never become a fact source. Infrastructure transactions that publish verification or View snapshots stay in Rust commands.

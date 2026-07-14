@@ -7,7 +7,7 @@ const control = vi.hoisted(() => ({
   load: vi.fn(async () => ({ objects: [], views: [], taskRuns: [] })),
 }))
 
-vi.mock('@/infrastructure/database/knowledgeControlServiceFactory', () => ({
+vi.mock('@/app/composition/knowledgeControlServiceFactory', () => ({
   createKnowledgeControlService: async () => control,
 }))
 
