@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { Sparkles } from '@lucide/vue'
-import { NButton, NIcon, NTooltip, useDialog, useMessage } from '@/ui'
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+
+import NButton from '@/ui/NButton.vue'
+import NIcon from '@/ui/NIcon.vue'
+import NTooltip from '@/ui/NTooltip.vue'
+import { useDialog, useMessage } from '@/ui/services'
 
 import { useAiConversation } from '@/composables/useAiConversation'
 import { useAgentRun } from '@/composables/useAgentRun'
@@ -15,7 +19,6 @@ import { useAiPreferences } from '@/composables/useAiPreferences'
 import { useHomeKeyboardShortcuts } from '@/composables/useHomeKeyboardShortcuts'
 import { ensureTopLevelBlockIds } from '@/editor/blockId'
 import { parseEditorContentJson } from '@/editor/editorContent'
-import { parseMarkdownDocument } from '@/editor/markdownImport'
 import { createDocumentRepository } from '@/infrastructure/database/documentRepositoryFactory'
 import { EMPTY_TIPTAP_DOCUMENT, type DocumentId, type DocumentSummary } from '@/models/document'
 import { AI_PROVIDER_CONFIGS } from '@/models/ai'
@@ -32,30 +35,62 @@ import { DocumentService } from '@/services/DocumentService'
 import { renderAiMarkdown } from '@/services/AiMarkdownRenderer'
 import { applyTheme, setThemePreference, subscribeToSystemTheme } from '@/services/theme'
 import DocumentSidebar, { type SidebarView } from './DocumentSidebar.vue'
+import AgentAuthorizationModal from './home/AgentAuthorizationModal.vue'
 import {
   displayDocumentTitle,
   formatDocumentTimestamp,
   normalizeDocumentTitle,
 } from '@/features/documents/documentPresentation'
-import AgentPatchReviewModal from './home/AgentPatchReviewModal.vue'
-import CreateViewModal from './home/CreateViewModal.vue'
-import DeveloperInspectorDrawer from './home/DeveloperInspectorDrawer.vue'
-import DocumentNameModals from './home/DocumentNameModals.vue'
-import DocumentPropertiesModal from './home/DocumentPropertiesModal.vue'
-import DocumentSearchModal from './home/DocumentSearchModal.vue'
 import EditorTopbar from './home/EditorTopbar.vue'
-import ImportDocumentModal from './home/ImportDocumentModal.vue'
-import SensitiveAuthorizationModal from './home/SensitiveAuthorizationModal.vue'
-import SharePreviewModal from './home/SharePreviewModal.vue'
+import LazySurfaceLoader from './home/LazySurfaceLoader.vue'
 import type { DocumentSidebarExpose, EditorShellExpose } from './home/homePageTypes'
 import { useDocumentTransferActions } from './home/useDocumentTransferActions'
 import { useHomeAiMessageActions } from './home/useHomeAiMessageActions'
 import { CREATE_VIEW_TEMPLATES, type CreateViewKind } from './home/viewTemplates'
 
-const EditorShell = defineAsyncComponent(() => import('@/editor/EditorShell.vue'))
-const SettingsPage = defineAsyncComponent(() => import('@/pages/SettingsPage.vue'))
-const AiChatPanel = defineAsyncComponent(() => import('./AiChatPanel.vue'))
-const PluginSkillsPage = defineAsyncComponent(() => import('./PluginSkillsPage.vue'))
+const EditorShell = defineAsyncComponent({
+  loader: () => import('@/editor/EditorShell.vue'),
+  loadingComponent: LazySurfaceLoader,
+  delay: 80,
+  suspensible: false,
+})
+const SettingsPage = defineLazySurface(() => import('@/pages/SettingsPage.vue'))
+const AiChatPanel = defineLazySurface(() => import('./AiChatPanel.vue'))
+const PluginSkillsPage = defineLazySurface(() => import('./PluginSkillsPage.vue'))
+const AutomationPage = defineLazySurface(() => import('./AutomationPage.vue'))
+const AuditPage = defineLazySurface(() => import('./AuditPage.vue'))
+const KnowledgeControlPage = defineLazySurface(() => import('./KnowledgeControlPage.vue'))
+const AgentPatchReviewModal = defineLazyComponent(() => import('./home/AgentPatchReviewModal.vue'))
+const CreateViewModal = defineLazyComponent(() => import('./home/CreateViewModal.vue'))
+const DeveloperInspectorDrawer = defineLazyComponent(
+  () => import('./home/DeveloperInspectorDrawer.vue'),
+)
+const DocumentNameModals = defineLazyComponent(() => import('./home/DocumentNameModals.vue'))
+const DocumentPropertiesModal = defineLazyComponent(
+  () => import('./home/DocumentPropertiesModal.vue'),
+)
+const DocumentSearchModal = defineLazyComponent(() => import('./home/DocumentSearchModal.vue'))
+const ImportDocumentModal = defineLazyComponent(() => import('./home/ImportDocumentModal.vue'))
+const SensitiveAuthorizationModal = defineLazyComponent(
+  () => import('./home/SensitiveAuthorizationModal.vue'),
+)
+const SharePreviewModal = defineLazyComponent(() => import('./home/SharePreviewModal.vue'))
+
+function defineLazySurface(loader: () => Promise<unknown>) {
+  return defineAsyncComponent({
+    loader: loader as () => Promise<{ default: never }>,
+    loadingComponent: LazySurfaceLoader,
+    delay: 80,
+    suspensible: false,
+  })
+}
+
+function defineLazyComponent(loader: () => Promise<unknown>) {
+  return defineAsyncComponent({
+    loader: loader as () => Promise<{ default: never }>,
+    suspensible: false,
+  })
+}
 
 const createDocumentId = (): DocumentId => createEntityId('doc')
 const createDocumentService = async (): Promise<DocumentService> =>
@@ -73,10 +108,16 @@ const {
   aiChatFullscreen,
   showSettings,
   showPluginSkills,
+  showAutomations,
+  showAudit,
+  showKnowledgeControl,
   activeSurface,
   openAgentWorkspace,
   openSettingsSurface,
   openPluginSkillsSurface,
+  openAutomationsSurface,
+  openAuditSurface,
+  openKnowledgeControlSurface,
   openDocumentSurface,
   closeAiChat,
   setAiChatWorkspace,
@@ -217,6 +258,7 @@ const {
   showAgentPatchModal,
   lastAppliedAgentTask,
   lastAppliedPatchSet,
+  restoreForDocument: restoreAgentStateForDocument,
   toggleAgentPatchAccepted,
   updateAgentPatchAfter,
   setAllPendingAgentPatchesAccepted,
@@ -228,6 +270,7 @@ const {
   updateAgentTaskPersistence,
 } = useAgentPatchWorkflow({
   error: aiError,
+  tasks: agentTasks,
   notify: message,
   createTransactionId: createDocumentId,
   document: {
@@ -313,6 +356,7 @@ const agentRun = useAgentRun({
     updateTaskPersistence: updateAgentTaskPersistence,
   },
 })
+const agentRuntimeState = agentRun.runtimeState
 let unsubscribeSystemTheme: (() => void) | null = null
 const {
   defaultDataDirectory,
@@ -377,14 +421,27 @@ const visibleErrorMessage = computed(
 const revisionText = computed(() => autosave.revision.value?.toString() ?? '-')
 const saveStatusClass = computed(() => `save-status--${autosave.status.value}`)
 
-const { showSearchModal, searchQuery, searchResults, openSearch, closeSearch, getSearchSnippet } =
-  useDocumentSearch({
-    documents,
-    getGroupArticleCount,
-    onOpen: () => {
-      sidebarView.value = 'documents'
-    },
-  })
+const {
+  showSearchModal,
+  searchQuery,
+  searchResults,
+  isSearching,
+  openSearch,
+  closeSearch,
+  getSearchSnippet,
+} = useDocumentSearch({
+  documents,
+  getGroupArticleCount,
+  searchDocuments: async (query, limit) => {
+    if (!documentService.value) return []
+    const result = await documentService.value.searchKnowledgeDocuments(query, limit)
+    if (!result.ok) throw new Error(result.error.message)
+    return result.value
+  },
+  onOpen: () => {
+    sidebarView.value = 'documents'
+  },
+})
 const { handleGlobalKeydown, handleDeveloperToolKeydown } = useHomeKeyboardShortcuts(appSettings, {
   search: openSearch,
   newDocument: () => {
@@ -406,6 +463,8 @@ const saveStatusText = computed(() => {
   return '保存失败'
 })
 
+let hasInitializedDocuments = false
+
 onMounted(async () => {
   globalThis.performance.mark('notebook:home-mounted')
   globalThis.addEventListener('keydown', handleDeveloperToolKeydown, true)
@@ -415,6 +474,7 @@ onMounted(async () => {
   // Documents are the startup-critical path. Native secret and path services can be slow on
   // some Windows installations, so they must not hold the file tree behind an empty screen.
   await initializeDocuments()
+  hasInitializedDocuments = true
   globalThis.performance.mark('notebook:documents-ready')
   if (import.meta.env.DEV) {
     const marks = globalThis.performance
@@ -423,6 +483,7 @@ onMounted(async () => {
       .map((entry) => `${entry.name}=${Math.round(entry.startTime)}ms`)
     globalThis.console.info(`[startup] ${marks.join(', ')}`)
   }
+  void restoreAgentStateForDocument(currentDocumentId.value, { markInterrupted: true })
   void initializeDefaultDataDirectory()
 })
 
@@ -439,6 +500,16 @@ watch(
     syncTheme()
   },
   { deep: true, immediate: true },
+)
+
+watch(
+  currentDocumentId,
+  (documentId, previousDocumentId) => {
+    if (hasInitializedDocuments && documentId && documentId !== previousDocumentId) {
+      void restoreAgentStateForDocument(documentId)
+    }
+  },
+  { flush: 'sync' },
 )
 
 function updateSettings(settings: AppSettings): void {
@@ -466,6 +537,12 @@ function stopAiAssistant(): void {
   agentRun.stop()
 }
 
+function answerAgentAuthorization(requestId: string, answer: string): void {
+  if (!agentRun.answerAuthorization(requestId, answer)) {
+    message.error('这个授权问题已失效，请等待 Agent 的最新状态')
+  }
+}
+
 const {
   openChat: openAiChat,
   retryMessage: retryAiChatMessage,
@@ -491,7 +568,10 @@ const {
   notify: message,
 })
 
-const clearAiChat = aiConversation.clear
+function clearAiChat(): void {
+  agentRun.resetRuntime()
+  aiConversation.clear()
+}
 const forkAiChatAtMessage = aiConversation.forkAtMessage
 const editAiChatMessage = aiConversation.editMessage
 
@@ -501,6 +581,7 @@ const renderMarkdownMessage = renderAiMarkdown
 
 async function createAndOpenView(kind: CreateViewKind): Promise<void> {
   const template = CREATE_VIEW_TEMPLATES[kind]
+  const { parseMarkdownDocument } = await import('@/editor/markdownImport')
   const parsed = parseMarkdownDocument(template.markdown, template.title)
   showCreateViewModal.value = false
 
@@ -578,7 +659,7 @@ function documentParentTitle(document: DocumentSummary): string {
 }
 
 function documentCharacterCount(document: DocumentSummary): number {
-  return Array.from(document.plainText.trim()).length
+  return document.characterCount ?? Array.from(document.plainText.trim()).length
 }
 </script>
 
@@ -586,7 +667,10 @@ function documentCharacterCount(document: DocumentSummary): number {
   <main class="app-shell">
     <section
       class="editor-workspace"
-      :class="{ 'editor-workspace--ai-workspace': showAiChat && aiChatFullscreen }"
+      :class="{
+        'editor-workspace--ai-workspace': showAiChat && aiChatFullscreen,
+        'editor-workspace--ai-docked': showAiChat && !aiChatFullscreen,
+      }"
     >
       <DocumentSidebar
         ref="documentSidebar"
@@ -606,6 +690,9 @@ function documentCharacterCount(document: DocumentSummary): number {
         @agent="openAgentWorkspace"
         @new-view="showCreateViewModal = true"
         @plugins="openPluginSkillsSurface"
+        @automations="openAutomationsSurface"
+        @audit="openAuditSurface"
+        @knowledge="openKnowledgeControlSurface"
         @settings="openSettingsSurface"
         @import="importDocumentFile"
         @file-change="handleImportFileChange"
@@ -644,6 +731,22 @@ function documentCharacterCount(document: DocumentSummary): number {
 
         <PluginSkillsPage v-else-if="showPluginSkills" key="plugin-skills" />
 
+        <AutomationPage
+          v-else-if="showAutomations"
+          key="automations"
+          :current-document-id="currentDocumentId"
+          :current-document-title="documentTitle"
+        />
+
+        <AuditPage v-else-if="showAudit" key="audit" />
+
+        <KnowledgeControlPage
+          v-else-if="showKnowledgeControl"
+          key="knowledge-control"
+          :current-document-id="currentDocumentId"
+          :current-document-revision="currentDocument?.revision ?? 0"
+        />
+
         <div
           v-else
           key="document-workspace"
@@ -671,6 +774,7 @@ function documentCharacterCount(document: DocumentSummary): number {
             :error="aiError"
             :is-running="aiIsRunning"
             :agent-step="activeAgentTask?.currentStep ?? ''"
+            :runtime-state="agentRuntimeState"
             :render-markdown-message="renderMarkdownMessage"
             @select-mode="selectAiMode"
             @select-provider="selectAiProvider"
@@ -748,6 +852,7 @@ function documentCharacterCount(document: DocumentSummary): number {
         v-if="showAiChat && !aiChatFullscreen"
         v-model:prompt="aiPrompt"
         :workspace="false"
+        docked
         :mode="aiChatMode"
         :mode-label="aiModeLabel"
         :mode-options="AI_MODE_OPTIONS"
@@ -765,6 +870,7 @@ function documentCharacterCount(document: DocumentSummary): number {
         :error="aiError"
         :is-running="aiIsRunning"
         :agent-step="activeAgentTask?.currentStep ?? ''"
+        :runtime-state="agentRuntimeState"
         :render-markdown-message="renderMarkdownMessage"
         @select-mode="selectAiMode"
         @select-provider="selectAiProvider"
@@ -795,10 +901,16 @@ function documentCharacterCount(document: DocumentSummary): number {
         <NButton size="small" secondary @click="rollbackLastAgentTask">撤销</NButton>
       </div>
 
-      <CreateViewModal v-model:show="showCreateViewModal" @select="createAndOpenView" />
+      <CreateViewModal
+        v-if="showCreateViewModal"
+        v-model:show="showCreateViewModal"
+        @select="createAndOpenView"
+      />
 
       <AgentPatchReviewModal
+        v-if="pendingAgentTask && pendingAgentPatchSet"
         v-model:show="showAgentPatchModal"
+        :workspace="aiChatFullscreen"
         :task="pendingAgentTask"
         :patch-set="pendingAgentPatchSet"
         :patches="pendingAgentPatches"
@@ -812,6 +924,7 @@ function documentCharacterCount(document: DocumentSummary): number {
       />
 
       <DeveloperInspectorDrawer
+        v-if="showInspector"
         v-model:show="showInspector"
         :error-message="visibleErrorMessage"
         :save-status="saveStatusText"
@@ -821,6 +934,7 @@ function documentCharacterCount(document: DocumentSummary): number {
       />
 
       <SensitiveAuthorizationModal
+        v-if="showSensitiveAuthModal"
         v-model:show="showSensitiveAuthModal"
         v-model:password="sensitiveAuthPassword"
         :title="sensitiveAuthTitle"
@@ -830,18 +944,32 @@ function documentCharacterCount(document: DocumentSummary): number {
         @cancel="cancelSensitiveAuthorization"
       />
 
-      <ImportDocumentModal v-model:show="showImportModal" @select="chooseImportFormat" />
+      <AgentAuthorizationModal
+        v-if="agentRuntimeState.authorizationRequest"
+        :request="agentRuntimeState.authorizationRequest"
+        @answer="answerAgentAuthorization"
+        @cancel="stopAiAssistant"
+      />
+
+      <ImportDocumentModal
+        v-if="showImportModal"
+        v-model:show="showImportModal"
+        @select="chooseImportFormat"
+      />
 
       <SharePreviewModal
+        v-if="showShareModal"
         v-model:show="showShareModal"
         :html="shareHtml"
         @export="exportCurrentDocument"
       />
 
       <DocumentSearchModal
+        v-if="showSearchModal"
         v-model:show="showSearchModal"
         v-model:query="searchQuery"
         :results="searchResults"
+        :searching="isSearching"
         :display-title="displayTitle"
         :get-snippet="getSearchSnippet"
         @open-first="openFirstSearchResult"
@@ -849,6 +977,7 @@ function documentCharacterCount(document: DocumentSummary): number {
       />
 
       <DocumentPropertiesModal
+        v-if="showPropertiesModal"
         v-model:show="showPropertiesModal"
         v-model:tags="propertiesDraftTags"
         v-model:source-url="propertiesDraftSourceUrl"
@@ -866,6 +995,7 @@ function documentCharacterCount(document: DocumentSummary): number {
       />
 
       <DocumentNameModals
+        v-if="showRenameModal || showCreateGroupModal"
         v-model:show-rename="showRenameModal"
         v-model:rename-title="renameTitle"
         v-model:show-create-group="showCreateGroupModal"

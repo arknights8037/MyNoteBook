@@ -1,5 +1,9 @@
 import type { AgentToolCall } from '@/models/agentTool'
 import type { AiSettings } from '@/models/ai'
+import type { AgentAuthorizationRequest } from '@/models/agentRuntime'
+import type { AgentRunIntent } from '@/models/agentSlashCommand'
+import type { AgentExternalTool } from '@/models/mcp'
+import type { ExecutionPolicy } from '@/models/executionPolicy'
 import type { AgentToolExecutionResult, AgentToolRequest } from './AgentToolExecutor'
 
 export interface AgentRuntimeResult {
@@ -12,6 +16,7 @@ export interface AgentProgressUpdate {
   phase: 'planning' | 'tool_running' | 'tool_completed' | 'finalizing'
   toolName?: string
   detail: string
+  toolCall?: AgentToolCall
 }
 
 export interface AgentRuntimeInput {
@@ -20,10 +25,14 @@ export interface AgentRuntimeInput {
   context: string
   settings: AiSettings
   systemPrompt: string
+  intent?: AgentRunIntent
   signal?: AbortSignal
   createId: () => string
   executeTool: (request: AgentToolRequest) => Promise<AgentToolExecutionResult>
   recordToolCall: (call: AgentToolCall) => Promise<void>
+  requestAuthorizerInput?: (request: Omit<AgentAuthorizationRequest, 'id'>) => Promise<string>
+  externalTools?: AgentExternalTool[]
+  executionPolicy?: ExecutionPolicy
   onDelta?: (delta: string, channel?: 'content' | 'reasoning') => void
   onProgress?: (update: AgentProgressUpdate) => void
 }

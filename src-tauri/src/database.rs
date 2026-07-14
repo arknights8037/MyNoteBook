@@ -155,6 +155,22 @@ async fn detect_legacy_baseline(pool: &SqlitePool) -> Result<Option<i64>, String
     if table_exists(pool, "agent_document_creation_transactions").await? {
         version = 7;
     }
+    if table_exists(pool, "automation_tasks").await?
+        && table_exists(pool, "automation_runs").await?
+    {
+        version = 8;
+    }
+    if table_exists(pool, "context_bundles").await?
+        && column_exists(pool, "agent_tasks", "execution_policy_json").await?
+    {
+        version = 9;
+    }
+    if table_exists(pool, "knowledge_objects").await?
+        && table_exists(pool, "task_runs").await?
+        && table_exists(pool, "view_definitions").await?
+    {
+        version = 10;
+    }
     Ok(Some(version))
 }
 
@@ -257,4 +273,278 @@ async fn optimize_database(pool: &SqlitePool) -> Result<(), String> {
             .map_err(database_error)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn fresh_database_reaches_current_schema() {
+        let path = std::env::temp_dir().join(format!(
+            "my-notebook-p0-schema-{}-{}.db",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let pool = get_pool_for_path(&path, true).await.expect("open database");
+        DATABASE_MIGRATOR.run(pool.as_ref()).await.expect("migrate");
+        assert!(table_exists(pool.as_ref(), "context_bundles")
+            .await
+            .expect("context bundle table"));
+        assert!(
+            column_exists(pool.as_ref(), "agent_tasks", "execution_policy_json")
+                .await
+                .expect("execution policy column")
+        );
+        assert!(
+            column_exists(pool.as_ref(), "agent_tool_calls", "correlation_id")
+                .await
+                .expect("tool correlation column")
+        );
+        assert!(table_exists(pool.as_ref(), "knowledge_objects")
+            .await
+            .expect("knowledge table"));
+        assert!(table_exists(pool.as_ref(), "task_runs")
+            .await
+            .expect("task run table"));
+        assert!(table_exists(pool.as_ref(), "view_definitions")
+            .await
+            .expect("view table"));
+        drop(pool);
+        close_pool(&path).await.expect("close database");
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("db-wal"));
+        let _ = fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[tokio::test]
+    async fn p0_migration_upgrades_an_existing_v8_schema() {
+        let path = std::env::temp_dir().join(format!(
+            "my-notebook-v8-upgrade-{}-{}.db",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let pool = get_pool_for_path(&path, true).await.expect("open database");
+        for sql in [
+            include_str!("../migrations/0001_create_documents_and_assets.sql"),
+            include_str!("../migrations/0002_add_document_kind.sql"),
+            include_str!("../migrations/0003_add_assets_tags_and_document_metadata.sql"),
+            include_str!("../migrations/0004_add_agent_audit_and_document_search.sql"),
+            include_str!("../migrations/0005_add_agent_tool_calls.sql"),
+            include_str!("../migrations/0006_add_document_blocks.sql"),
+            include_str!("../migrations/0007_add_agent_document_creation.sql"),
+            include_str!("../migrations/0008_add_automations.sql"),
+        ] {
+            sqlx::raw_sql(sql)
+                .execute(pool.as_ref())
+                .await
+                .expect("build v8 schema");
+        }
+        sqlx::query(
+            "INSERT INTO agent_tasks (id, session_id, document_id, status, user_instruction, \
+             context_scope, model, current_step, created_at) \
+             VALUES ('legacy-task', 'doc', 'doc', 'completed', 'legacy', \
+             'current_document', 'model', 'done', 1)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("legacy task");
+        sqlx::raw_sql(include_str!(
+            "../migrations/0009_add_p0_trusted_runtime.sql"
+        ))
+        .execute(pool.as_ref())
+        .await
+        .expect("upgrade to v9");
+        let correlation_id: String =
+            sqlx::query_scalar("SELECT correlation_id FROM agent_tasks WHERE id = 'legacy-task'")
+                .fetch_one(pool.as_ref())
+                .await
+                .expect("backfilled correlation id");
+        assert_eq!(correlation_id, "legacy-task");
+        assert!(table_exists(pool.as_ref(), "context_bundles")
+            .await
+            .expect("context bundle table"));
+        drop(pool);
+        close_pool(&path).await.expect("close database");
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("db-wal"));
+        let _ = fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[tokio::test]
+    async fn p1_migration_maps_existing_work_and_marks_views_stale() {
+        let path = std::env::temp_dir().join(format!(
+            "my-notebook-v9-upgrade-{}-{}.db",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let pool = get_pool_for_path(&path, true).await.expect("open database");
+        for sql in [
+            include_str!("../migrations/0001_create_documents_and_assets.sql"),
+            include_str!("../migrations/0002_add_document_kind.sql"),
+            include_str!("../migrations/0003_add_assets_tags_and_document_metadata.sql"),
+            include_str!("../migrations/0004_add_agent_audit_and_document_search.sql"),
+            include_str!("../migrations/0005_add_agent_tool_calls.sql"),
+            include_str!("../migrations/0006_add_document_blocks.sql"),
+            include_str!("../migrations/0007_add_agent_document_creation.sql"),
+            include_str!("../migrations/0008_add_automations.sql"),
+            include_str!("../migrations/0009_add_p0_trusted_runtime.sql"),
+        ] {
+            sqlx::raw_sql(sql)
+                .execute(pool.as_ref())
+                .await
+                .expect("build v9 schema");
+        }
+        sqlx::query(
+            "INSERT INTO documents (id, parent_id, document_kind, title, content_json, plain_text, \
+             schema_version, revision, sort_order, is_deleted, created_at, updated_at) \
+             VALUES ('doc-1', NULL, 'article', 'Doc', \
+             '{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"attrs\":{\"id\":\"b1\"}}]}', \
+             '', 2, 1, 0, 0, 1, 1)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("document");
+        sqlx::query(
+            "INSERT INTO automation_tasks (id, name, instruction, trigger_type, trigger_config_json, \
+             enabled, created_at, updated_at) VALUES ('auto-1', 'Auto', 'Do work', 'manual', '{}', 1, 1, 1)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("automation");
+        sqlx::query(
+            "INSERT INTO automation_runs (id, automation_id, trigger_source, status, input_json, queued_at, correlation_id) \
+             VALUES ('auto-run-1', 'auto-1', 'manual', 'queued', '{}', 2, 'corr-auto')",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("automation run");
+        sqlx::query(
+            "INSERT INTO agent_tasks (id, session_id, document_id, status, user_instruction, context_scope, \
+             model, current_step, created_at, correlation_id) VALUES \
+             ('agent-1', 'doc-1', 'doc-1', 'waiting_confirmation', 'Update', 'current_document', \
+              'model', 'Waiting', 3, 'corr-agent')",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("agent task");
+        sqlx::query(
+            "INSERT INTO agent_patch_sets (task_id, model, created_at) VALUES ('agent-1', 'model', 4)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("patch set");
+        sqlx::raw_sql(include_str!(
+            "../migrations/0010_add_p1_knowledge_work_views.sql"
+        ))
+        .execute(pool.as_ref())
+        .await
+        .expect("upgrade to v10");
+        let mapped_definitions: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_definitions WHERE automation_id = 'auto-1'",
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("mapped definition");
+        let mapped_runs: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM task_runs WHERE id IN ('taskrun-automation-auto-run-1', 'taskrun-agent-agent-1')",
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("mapped runs");
+        let mapped_change_sets: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM change_sets WHERE agent_task_id = 'agent-1'")
+                .fetch_one(pool.as_ref())
+                .await
+                .expect("mapped change set");
+        assert_eq!(mapped_definitions, 1);
+        assert_eq!(mapped_runs, 2);
+        assert_eq!(mapped_change_sets, 1);
+
+        sqlx::query(
+            "INSERT INTO view_definitions (id, name, view_type, scope_query_json, render_spec_json, \
+             writeback_policy, stale, version, current_snapshot_id, created_at, updated_at) \
+             VALUES ('view-1', 'View', 'query', '{}', '{}', 'readonly', 0, 1, 'snapshot-1', 5, 5)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("view");
+        sqlx::query(
+            "INSERT INTO view_snapshots (id, view_id, status, source_snapshot_hash, render_json, created_at) \
+             VALUES ('snapshot-1', 'view-1', 'fresh', 'hash', '{}', 5)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("snapshot");
+        sqlx::query(
+            "INSERT INTO view_dependencies (snapshot_id, view_id, source_type, document_id, source_revision) \
+             VALUES ('snapshot-1', 'view-1', 'document_block', 'doc-1', 1)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("dependency");
+        sqlx::query("UPDATE documents SET revision = 2, updated_at = 6 WHERE id = 'doc-1'")
+            .execute(pool.as_ref())
+            .await
+            .expect("document update");
+        let stale: i64 =
+            sqlx::query_scalar("SELECT stale FROM view_definitions WHERE id = 'view-1'")
+                .fetch_one(pool.as_ref())
+                .await
+                .expect("stale view");
+        assert_eq!(stale, 1);
+        sqlx::raw_sql(include_str!(
+            "../migrations/0011_add_p2_external_governance_generated_views.sql"
+        ))
+        .execute(pool.as_ref())
+        .await
+        .expect("upgrade to v11");
+        let preserved: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM view_dependencies WHERE snapshot_id = 'snapshot-1' AND view_id = 'view-1'",
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("preserved P1 dependency");
+        assert_eq!(preserved, 1);
+        sqlx::query(
+            "INSERT INTO view_definitions (id, name, view_type, scope_query_json, render_spec_json, \
+             writeback_policy, generation_prompt, generation_provider, generation_model, stale, \
+             version, created_at, updated_at) VALUES \
+             ('generated-1', 'Generated', 'generated', '{}', '{}', 'readonly', 'summarize', \
+              'openai', 'gpt-5-mini', 1, 1, 7, 7)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("generated view");
+        for table in [
+            "delegations",
+            "idempotency_records",
+            "domain_events",
+            "outbox_messages",
+            "external_submissions",
+        ] {
+            let exists: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+            )
+            .bind(table)
+            .fetch_one(pool.as_ref())
+            .await
+            .expect("P2 table");
+            assert_eq!(exists, 1, "missing {table}");
+        }
+        drop(pool);
+        close_pool(&path).await.expect("close database");
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("db-wal"));
+        let _ = fs::remove_file(path.with_extension("db-shm"));
+    }
 }

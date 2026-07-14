@@ -1,4 +1,6 @@
 import type { AiRunInput } from '@/models/ai'
+import { proxyAiFetch } from './AiHttpService'
+import { resolveProviderCapabilities } from '@/models/providerCapabilities'
 
 interface ChatCompletionChunk {
   choices?: Array<{
@@ -53,7 +55,7 @@ async function runChatCompletions(input: AiRunInput): Promise<string> {
     requestBody.enable_thinking = false
   }
 
-  const response = await fetch(endpoint, {
+  const response = await proxyAiFetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -67,7 +69,7 @@ async function runChatCompletions(input: AiRunInput): Promise<string> {
     throw new Error('AI 请求失败：' + response.status + ' ' + (await response.text()))
   }
 
-  if (!response.body) {
+  if (!isStreamingResponse(response)) {
     const data = (await response.json()) as ChatCompletionChunk
     const content = data.choices?.[0]?.message?.content ?? ''
     const reasoning = data.choices?.[0]?.message?.reasoning_content ?? ''
@@ -82,17 +84,14 @@ async function runChatCompletions(input: AiRunInput): Promise<string> {
 function getReasoningEffort(input: AiRunInput): 'low' | 'medium' | 'high' | null {
   const effort = input.settings.reasoningEffort
   if (effort === 'auto') return null
-  if (input.settings.provider === 'qwen' || input.settings.provider === 'deepseek') return effort
-  if (!supportsReasoningEffort(input.settings.model)) return null
-  return effort
-}
-
-function supportsReasoningEffort(model: string): boolean {
-  return /^(o\d|o-|gpt-5)/i.test(model.trim())
+  return resolveProviderCapabilities(input.settings.provider, input.settings.model).reasoningEffort
+    ? effort
+    : null
 }
 
 function supportsSamplingParameters(input: AiRunInput): boolean {
-  return input.settings.provider !== 'openai' || !supportsReasoningEffort(input.settings.model)
+  const capabilities = resolveProviderCapabilities(input.settings.provider, input.settings.model)
+  return capabilities.temperature && capabilities.topP
 }
 
 async function runAnthropicMessagesCompletion(input: AiRunInput): Promise<string> {
@@ -114,7 +113,7 @@ async function runAnthropicMessagesCompletion(input: AiRunInput): Promise<string
   const thinking = getAnthropicThinking(input)
   if (thinking) requestBody.thinking = thinking
 
-  const response = await fetch(endpoint, {
+  const response = await proxyAiFetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -129,7 +128,7 @@ async function runAnthropicMessagesCompletion(input: AiRunInput): Promise<string
     throw new Error('AI 请求失败：' + response.status + ' ' + (await response.text()))
   }
 
-  if (!response.body) {
+  if (!isStreamingResponse(response)) {
     const data = (await response.json()) as {
       content?: Array<{ type?: string; text?: string; thinking?: string }>
     }
@@ -285,6 +284,10 @@ function parseStreamingDataLine(
   const payload = trimmed.slice(5).trim()
   if (!payload || payload === '[DONE]') return { content: '', reasoning: '' }
   return parsePayload(payload)
+}
+
+function isStreamingResponse(response: Response): boolean {
+  return Boolean(response.body) && response.headers.get('content-type')?.includes('text/event-stream')
 }
 
 function parseAnthropicDelta(payload: string): AiStreamDelta {

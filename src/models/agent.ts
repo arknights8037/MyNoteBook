@@ -1,3 +1,6 @@
+import type { AiProvider } from './ai'
+import { createDefaultExecutionPolicy, type ExecutionPolicy } from './executionPolicy'
+
 export type AgentTaskStatus =
   | 'pending'
   | 'running'
@@ -31,6 +34,12 @@ export interface AgentTask {
   createdAt: number
   completedAt: number | null
   error: string | null
+  correlationId: string
+  causationId: string | null
+  executionPolicy: ExecutionPolicy
+  contextBundleId: string | null
+  provider: AiProvider
+  taskRunId: string | null
 }
 
 export interface BlockPatch {
@@ -136,6 +145,10 @@ export function createAgentTask(input: {
   userInstruction: string
   contextScope: AgentTask['contextScope']
   model: string
+  provider?: AiProvider
+  executionPolicy?: ExecutionPolicy
+  correlationId?: string
+  causationId?: string | null
 }): AgentTask {
   return {
     id: input.id,
@@ -148,6 +161,13 @@ export function createAgentTask(input: {
     createdAt: Date.now(),
     completedAt: null,
     error: null,
+    correlationId: input.correlationId ?? input.id,
+    causationId: input.causationId ?? null,
+    executionPolicy:
+      input.executionPolicy ?? createDefaultExecutionPolicy({ tokenBudget: 2048, allowedTools: [] }),
+    contextBundleId: null,
+    provider: input.provider ?? 'openai',
+    taskRunId: null,
   }
 }
 

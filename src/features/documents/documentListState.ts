@@ -18,6 +18,7 @@ export function documentRecordToSummary(document: DocumentRecord): DocumentSumma
     author: document.author,
     description: document.description,
     plainText: document.plainText,
+    characterCount: Array.from(document.plainText.trim()).length,
     revision: document.revision,
     sortOrder: document.sortOrder,
     isDeleted: document.isDeleted,

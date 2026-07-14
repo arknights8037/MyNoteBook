@@ -3,12 +3,15 @@ import {
   Archive,
   Blocks,
   Bot,
+  CalendarClock,
   ChevronDown,
   ChevronRight,
   Ellipsis,
   Folder,
   FolderOpen,
   Info,
+  BookOpenCheck,
+  ClipboardList,
   Pencil,
   Plus,
   RotateCcw,
@@ -42,10 +45,20 @@ import {
   countSidebarDocumentNodes,
 } from '@/features/documents/documentTree'
 import type { DocumentId, DocumentSummary } from '@/models/document'
-import { NButton, NButtonGroup, NIcon, NTooltip } from '@/ui'
+import NButton from '@/ui/NButton.vue'
+import NButtonGroup from '@/ui/NButtonGroup.vue'
+import NIcon from '@/ui/NIcon.vue'
+import NTooltip from '@/ui/NTooltip.vue'
 
 export type SidebarView = 'documents' | 'trash'
-export type WorkspaceSurface = 'agent' | 'document' | 'plugins' | 'settings'
+export type WorkspaceSurface =
+  | 'agent'
+  | 'document'
+  | 'plugins'
+  | 'automations'
+  | 'audit'
+  | 'knowledge'
+  | 'settings'
 type BrowserEvent = InstanceType<typeof globalThis.Event>
 type BrowserDragEvent = InstanceType<typeof globalThis.DragEvent>
 type BrowserInputElement = InstanceType<typeof globalThis.HTMLInputElement>
@@ -70,6 +83,9 @@ const emit = defineEmits<{
   agent: []
   'new-view': []
   plugins: []
+  automations: []
+  audit: []
+  knowledge: []
   settings: []
   import: []
   'file-change': [event: BrowserEvent]
@@ -127,14 +143,27 @@ defineExpose({ openFilePicker })
 <template>
   <aside class="document-sidebar" aria-label="文档管理">
     <header class="sidebar-brand">
-      <button type="button" class="sidebar-brand__home" aria-label="打开 Agent Work" @click="emit('agent')">
+      <button
+        type="button"
+        class="sidebar-brand__home"
+        aria-label="打开 Agent Work"
+        @click="emit('agent')"
+      >
         <span class="sidebar-brand__mark" aria-hidden="true"><Bot :size="17" /></span>
         <strong>myNoteBook</strong>
       </button>
       <NTooltip trigger="hover">
         <template #trigger>
-          <NButton class="sidebar-quickbar__button" quaternary circle aria-label="搜索" @click="emit('search')">
-            <template #icon><NIcon :size="21"><Search /></NIcon></template>
+          <NButton
+            class="sidebar-quickbar__button"
+            quaternary
+            circle
+            aria-label="搜索"
+            @click="emit('search')"
+          >
+            <template #icon
+              ><NIcon :size="21"><Search /></NIcon
+            ></template>
           </NButton>
         </template>
         搜索
@@ -150,8 +179,17 @@ defineExpose({ openFilePicker })
       >
         <Bot :size="18" /><span>Agent Work</span>
       </button>
+      <button
+        type="button"
+        class="sidebar-primary-nav__item"
+        :class="{ 'sidebar-primary-nav__item--active': activeSurface === 'knowledge' }"
+        @click="emit('knowledge')"
+      >
+        <BookOpenCheck :size="18" /><span>知识控制</span>
+      </button>
       <button type="button" class="sidebar-primary-nav__item" @click="emit('new-view')">
-        <View :size="18" /><span>新建视图</span><Plus class="sidebar-primary-nav__trailing" :size="15" />
+        <View :size="18" /><span>新建视图</span
+        ><Plus class="sidebar-primary-nav__trailing" :size="15" />
       </button>
       <button
         type="button"
@@ -160,6 +198,22 @@ defineExpose({ openFilePicker })
         @click="emit('plugins')"
       >
         <Blocks :size="18" /><span>插件技能</span>
+      </button>
+      <button
+        type="button"
+        class="sidebar-primary-nav__item"
+        :class="{ 'sidebar-primary-nav__item--active': activeSurface === 'automations' }"
+        @click="emit('automations')"
+      >
+        <CalendarClock :size="18" /><span>自动化任务</span>
+      </button>
+      <button
+        type="button"
+        class="sidebar-primary-nav__item"
+        :class="{ 'sidebar-primary-nav__item--active': activeSurface === 'audit' }"
+        @click="emit('audit')"
+      >
+        <ClipboardList :size="18" /><span>审计记录</span>
       </button>
       <button
         type="button"
@@ -177,23 +231,43 @@ defineExpose({ openFilePicker })
         <NTooltip trigger="hover">
           <template #trigger>
             <NButton size="tiny" quaternary circle aria-label="导入" @click="emit('import')">
-              <template #icon><NIcon :size="14"><Upload /></NIcon></template>
+              <template #icon
+                ><NIcon :size="14"><Upload /></NIcon
+              ></template>
             </NButton>
           </template>
           导入 JSON / Markdown
         </NTooltip>
         <NTooltip trigger="hover">
           <template #trigger>
-            <NButton size="tiny" quaternary circle aria-label="新建分组" :disabled="busy" @click="emit('create-group')">
-              <template #icon><NIcon :size="14"><Folder /></NIcon></template>
+            <NButton
+              size="tiny"
+              quaternary
+              circle
+              aria-label="新建分组"
+              :disabled="busy"
+              @click="emit('create-group')"
+            >
+              <template #icon
+                ><NIcon :size="14"><Folder /></NIcon
+              ></template>
             </NButton>
           </template>
           新建分组
         </NTooltip>
         <NTooltip trigger="hover">
           <template #trigger>
-            <NButton size="tiny" quaternary circle aria-label="新建页面" :disabled="busy" @click="emit('create-document', null)">
-              <template #icon><NIcon :size="14"><Plus /></NIcon></template>
+            <NButton
+              size="tiny"
+              quaternary
+              circle
+              aria-label="新建页面"
+              :disabled="busy"
+              @click="emit('create-document', null)"
+            >
+              <template #icon
+                ><NIcon :size="14"><Plus /></NIcon
+              ></template>
             </NButton>
           </template>
           新建页面
@@ -224,39 +298,78 @@ defineExpose({ openFilePicker })
               @dragleave="emit('group-drag-leave', $event, group.id)"
               @drop.stop.prevent="emit('group-drop', $event, group.id)"
             >
-              <button type="button" class="document-list__select" :disabled="busy" @click="emit('toggle-group', group.id)">
+              <button
+                type="button"
+                class="document-list__select"
+                :disabled="busy"
+                @click="emit('toggle-group', group.id)"
+              >
                 <ChevronRight v-if="collapsedGroupIds.has(group.id)" :size="14" />
                 <ChevronDown v-else :size="14" />
                 <Folder v-if="collapsedGroupIds.has(group.id)" :size="16" />
                 <FolderOpen v-else :size="16" />
                 <span class="document-list__main">
                   <NTooltip trigger="hover">
-                    <template #trigger><span class="document-list__title">{{ displayDocumentTitle(group) }}</span></template>
+                    <template #trigger
+                      ><span class="document-list__title">{{
+                        displayDocumentTitle(group)
+                      }}</span></template
+                    >
                     {{ displayDocumentTitle(group) }}
                   </NTooltip>
-                  <span class="document-list__meta">{{ getGroupArticleCount(group.id) }} 个页面</span>
+                  <span class="document-list__meta"
+                    >{{ getGroupArticleCount(group.id) }} 个页面</span
+                  >
                 </span>
               </button>
               <span class="document-list__actions document-list__actions--menu">
-                <span v-if="canDropArticleIntoGroup(group.id)" class="document-list__drop-hint">放入此分组</span>
+                <span v-if="canDropArticleIntoGroup(group.id)" class="document-list__drop-hint"
+                  >放入此分组</span
+                >
                 <NTooltip trigger="hover">
                   <template #trigger>
-                    <NButton class="document-list__more" size="tiny" quaternary :aria-label="`${displayDocumentTitle(group)}中新建页面`" :disabled="busy" @click.stop="emit('create-document', group.id)">
-                      <template #icon><NIcon :size="14"><Plus /></NIcon></template>
+                    <NButton
+                      class="document-list__more"
+                      size="tiny"
+                      quaternary
+                      :aria-label="`${displayDocumentTitle(group)}中新建页面`"
+                      :disabled="busy"
+                      @click.stop="emit('create-document', group.id)"
+                    >
+                      <template #icon
+                        ><NIcon :size="14"><Plus /></NIcon
+                      ></template>
                     </NButton>
                   </template>
                   新建页面
                 </NTooltip>
                 <DropdownMenuRoot>
                   <DropdownMenuTrigger as-child>
-                    <NButton class="document-list__more" size="tiny" quaternary :aria-label="`${displayDocumentTitle(group)}更多操作`" :disabled="busy" @click.stop>
-                      <template #icon><NIcon :size="15"><Ellipsis /></NIcon></template>
+                    <NButton
+                      class="document-list__more"
+                      size="tiny"
+                      quaternary
+                      :aria-label="`${displayDocumentTitle(group)}更多操作`"
+                      :disabled="busy"
+                      @click.stop
+                    >
+                      <template #icon
+                        ><NIcon :size="15"><Ellipsis /></NIcon
+                      ></template>
                     </NButton>
                   </DropdownMenuTrigger>
                   <DropdownMenuPortal>
                     <DropdownMenuContent class="document-card-menu" align="end" :side-offset="5">
-                      <DropdownMenuItem class="document-card-menu__item" @select="emit('properties', group)"><Info :size="14" />属性</DropdownMenuItem>
-                      <DropdownMenuItem class="document-card-menu__item" @select="emit('rename', group)"><Pencil :size="14" />重命名分组</DropdownMenuItem>
+                      <DropdownMenuItem
+                        class="document-card-menu__item"
+                        @select="emit('properties', group)"
+                        ><Info :size="14" />属性</DropdownMenuItem
+                      >
+                      <DropdownMenuItem
+                        class="document-card-menu__item"
+                        @select="emit('rename', group)"
+                        ><Pencil :size="14" />重命名分组</DropdownMenuItem
+                      >
                     </DropdownMenuContent>
                   </DropdownMenuPortal>
                 </DropdownMenuRoot>
@@ -265,9 +378,17 @@ defineExpose({ openFilePicker })
           </ContextMenuTrigger>
           <ContextMenuPortal>
             <ContextMenuContent class="document-card-menu" :collision-padding="8">
-              <ContextMenuItem class="document-card-menu__item" @select="emit('create-document', group.id)"><Plus :size="14" />新建页面</ContextMenuItem>
-              <ContextMenuItem class="document-card-menu__item" @select="emit('properties', group)"><Info :size="14" />属性</ContextMenuItem>
-              <ContextMenuItem class="document-card-menu__item" @select="emit('rename', group)"><Pencil :size="14" />重命名分组</ContextMenuItem>
+              <ContextMenuItem
+                class="document-card-menu__item"
+                @select="emit('create-document', group.id)"
+                ><Plus :size="14" />新建页面</ContextMenuItem
+              >
+              <ContextMenuItem class="document-card-menu__item" @select="emit('properties', group)"
+                ><Info :size="14" />属性</ContextMenuItem
+              >
+              <ContextMenuItem class="document-card-menu__item" @select="emit('rename', group)"
+                ><Pencil :size="14" />重命名分组</ContextMenuItem
+              >
             </ContextMenuContent>
           </ContextMenuPortal>
         </ContextMenuRoot>
@@ -291,7 +412,12 @@ defineExpose({ openFilePicker })
         />
       </div>
 
-      <p v-if="articleGroups.length > 0 && ungroupedArticleNodes.length > 0" class="document-list__subheading">未分组</p>
+      <p
+        v-if="articleGroups.length > 0 && ungroupedArticleNodes.length > 0"
+        class="document-list__subheading"
+      >
+        未分组
+      </p>
 
       <SidebarDocumentTree
         :nodes="ungroupedArticleNodes"
@@ -309,7 +435,12 @@ defineExpose({ openFilePicker })
         @drag-end="emit('article-drag-end')"
       />
 
-      <p v-if="articleGroups.length === 0 && ungroupedArticleNodes.length === 0" class="document-list__empty">暂无文档</p>
+      <p
+        v-if="articleGroups.length === 0 && ungroupedArticleNodes.length === 0"
+        class="document-list__empty"
+      >
+        暂无文档
+      </p>
     </div>
 
     <div v-if="view === 'trash'" class="document-list">
@@ -317,29 +448,58 @@ defineExpose({ openFilePicker })
       <ContextMenuRoot v-for="document in deletedDocuments" :key="document.id">
         <ContextMenuTrigger as-child>
           <div class="document-list__item">
-            <button type="button" class="document-list__select" :disabled="busy" @click="emit('restore', document)">
+            <button
+              type="button"
+              class="document-list__select"
+              :disabled="busy"
+              @click="emit('restore', document)"
+            >
               <Archive :size="16" />
               <span class="document-list__main">
                 <NTooltip trigger="hover">
-                  <template #trigger><span class="document-list__title">{{ displayDocumentTitle(document) }}</span></template>
+                  <template #trigger
+                    ><span class="document-list__title">{{
+                      displayDocumentTitle(document)
+                    }}</span></template
+                  >
                   {{ displayDocumentTitle(document) }}
                 </NTooltip>
-                <span class="document-list__meta">删除于 {{ formatDocumentUpdatedAt(document.updatedAt) }}</span>
+                <span class="document-list__meta"
+                  >删除于 {{ formatDocumentUpdatedAt(document.updatedAt) }}</span
+                >
               </span>
             </button>
             <span class="document-list__actions">
               <NTooltip trigger="hover">
                 <template #trigger>
-                  <NButton size="tiny" quaternary circle aria-label="恢复" :disabled="busy" @click.stop="emit('restore', document)">
-                    <template #icon><NIcon :size="14"><RotateCcw /></NIcon></template>
+                  <NButton
+                    size="tiny"
+                    quaternary
+                    circle
+                    aria-label="恢复"
+                    :disabled="busy"
+                    @click.stop="emit('restore', document)"
+                  >
+                    <template #icon
+                      ><NIcon :size="14"><RotateCcw /></NIcon
+                    ></template>
                   </NButton>
                 </template>
                 恢复
               </NTooltip>
               <NTooltip trigger="hover">
                 <template #trigger>
-                  <NButton size="tiny" quaternary circle aria-label="彻底删除" :disabled="busy" @click.stop="emit('permanently-delete', document)">
-                    <template #icon><NIcon :size="14"><Trash2 /></NIcon></template>
+                  <NButton
+                    size="tiny"
+                    quaternary
+                    circle
+                    aria-label="彻底删除"
+                    :disabled="busy"
+                    @click.stop="emit('permanently-delete', document)"
+                  >
+                    <template #icon
+                      ><NIcon :size="14"><Trash2 /></NIcon
+                    ></template>
                   </NButton>
                 </template>
                 彻底删除
@@ -349,8 +509,14 @@ defineExpose({ openFilePicker })
         </ContextMenuTrigger>
         <ContextMenuPortal>
           <ContextMenuContent class="document-card-menu" :collision-padding="8">
-            <ContextMenuItem class="document-card-menu__item" @select="emit('restore', document)"><RotateCcw :size="14" />恢复</ContextMenuItem>
-            <ContextMenuItem class="document-card-menu__item document-card-menu__item--danger" @select="emit('permanently-delete', document)"><Trash2 :size="14" />彻底删除</ContextMenuItem>
+            <ContextMenuItem class="document-card-menu__item" @select="emit('restore', document)"
+              ><RotateCcw :size="14" />恢复</ContextMenuItem
+            >
+            <ContextMenuItem
+              class="document-card-menu__item document-card-menu__item--danger"
+              @select="emit('permanently-delete', document)"
+              ><Trash2 :size="14" />彻底删除</ContextMenuItem
+            >
           </ContextMenuContent>
         </ContextMenuPortal>
       </ContextMenuRoot>
@@ -359,8 +525,15 @@ defineExpose({ openFilePicker })
     </div>
 
     <div class="sidebar-footer">
-      <NButton class="market-link" :class="{ 'market-link--active': view === 'trash' }" quaternary @click="toggleView">
-        <template #icon><NIcon :size="17"><Trash2 /></NIcon></template>
+      <NButton
+        class="market-link"
+        :class="{ 'market-link--active': view === 'trash' }"
+        quaternary
+        @click="toggleView"
+      >
+        <template #icon
+          ><NIcon :size="17"><Trash2 /></NIcon
+        ></template>
         回收站
       </NButton>
     </div>

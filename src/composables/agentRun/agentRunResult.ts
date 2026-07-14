@@ -47,8 +47,7 @@ export function resolveAgentRunResult(input: {
     targetBlocks: input.targetBlocks,
     contextSources,
     createId: input.createId,
-    allowMarkdownFallback:
-      input.mode === 'edit' || input.usesSelection || input.foundTargetScope,
+    allowMarkdownFallback: input.mode === 'edit' || input.usesSelection || input.foundTargetScope,
   })
   let patchSet = parsed.patchSet
   if (parsed.commands.length > 0) {
@@ -100,7 +99,7 @@ export function formatAgentRunSummary(input: {
         : '当前内容无需修改。')
   const report =
     (input.toolCallCount ?? 0) > 0
-      ? `\n\n已查阅 ${input.toolCallCount} 次资料，共完成 ${input.rounds ?? 0} 轮处理。`
+      ? `\n\n已完成 ${input.toolCallCount} 次工具调用，共进行 ${input.rounds ?? 0} 轮处理。`
       : ''
   return `${summary}${report}`
 }

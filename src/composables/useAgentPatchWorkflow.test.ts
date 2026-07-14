@@ -59,6 +59,51 @@ describe('useAgentPatchWorkflow', () => {
     expect(workflow.lastAppliedAgentTask.value).toBeNull()
     expect(notify.success).toHaveBeenLastCalledWith('已撤销最近一次 Agent 修改')
   })
+
+  it('restores a pending proposal and recoverable transaction for the current document', async () => {
+    const { workflow, repository } = createWorkflow()
+    const recoveredTask = task()
+    const recoveredPatchSet = patchSet()
+    const transaction = {
+      id: 'recovered-transaction',
+      taskId: recoveredTask.id,
+      documentId: 'doc-1',
+      beforeRevision: 1,
+      resultingRevision: 2,
+      status: 'applied' as const,
+      createdAt: 100,
+      rolledBackAt: null,
+    }
+    repository.loadRecoveryState.mockResolvedValueOnce(
+      ok({
+        tasks: [recoveredTask],
+        pendingTask: recoveredTask,
+        pendingPatchSet: recoveredPatchSet,
+        lastAppliedTask: recoveredTask,
+        lastAppliedPatchSet: recoveredPatchSet,
+        lastAppliedTransaction: transaction,
+      }),
+    )
+
+    await workflow.restoreForDocument('doc-1')
+
+    expect(workflow.pendingAgentTask.value).toMatchObject({ id: recoveredTask.id })
+    expect(workflow.showAgentPatchModal.value).toBe(true)
+    expect(workflow.lastAppliedAgentTransactionId.value).toBe('recovered-transaction')
+  })
+
+  it('records a rejected proposal as a completed task', async () => {
+    const { workflow, repository } = createWorkflow()
+    workflow.pendingAgentTask.value = task()
+    workflow.pendingAgentPatchSet.value = patchSet()
+
+    await workflow.rejectPendingAgentPatches()
+
+    expect(repository.rejectPatchSet).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'completed', currentStep: '用户已拒绝全部修改' }),
+      expect.any(Array),
+    )
+  })
 })
 
 function createWorkflow() {
@@ -76,6 +121,7 @@ function createWorkflow() {
   }
   const applied: AppliedAgentPatchSet = { document: appliedDocument, transaction }
   const repository = {
+    loadRecoveryState: vi.fn(),
     applyPatchSet: vi.fn().mockResolvedValue(ok(applied)),
     rollbackTransaction: vi.fn().mockResolvedValue(
       ok({

@@ -1,4 +1,7 @@
+import { invoke } from '@tauri-apps/api/core'
+
 import type { AiSettings } from '@/models/ai'
+import { loadAiApiKey } from '@/services/AiSecretService'
 
 interface ModelsResponse {
   data?: Array<{ id?: string; name?: string; display_name?: string }>
@@ -6,17 +9,14 @@ interface ModelsResponse {
 }
 
 export async function fetchAiModelOptions(settings: AiSettings): Promise<string[]> {
-  const endpoint = settings.endpoint.replace(/\/+$/, '') + '/models'
-  const response = await fetch(endpoint, {
-    method: 'GET',
-    headers: createModelListHeaders(settings),
+  const apiKey = await resolveModelListApiKey(settings)
+  const payload = await invoke<ModelsResponse>('fetch_ai_models', {
+    input: {
+      endpoint: settings.endpoint,
+      provider: settings.provider,
+      apiKey,
+    },
   })
-
-  if (!response.ok) {
-    throw new Error('获取模型失败：' + response.status + ' ' + (await response.text()))
-  }
-
-  const payload = (await response.json()) as ModelsResponse
   const models = [
     ...(payload.data ?? []).map(readModelId),
     ...(payload.models ?? []).map(readModelId),
@@ -30,16 +30,15 @@ export async function fetchAiModelOptions(settings: AiSettings): Promise<string[
   return uniqueModels.sort((a, b) => a.localeCompare(b))
 }
 
-function createModelListHeaders(settings: AiSettings): Record<string, string> {
-  if (settings.provider === 'anthropic') {
-    return {
-      'anthropic-version': '2023-06-01',
-      ...(settings.apiKey ? { 'x-api-key': settings.apiKey } : {}),
-    }
-  }
+async function resolveModelListApiKey(settings: AiSettings): Promise<string> {
+  const configuredApiKey = settings.apiKey.trim()
+  if (configuredApiKey) return configuredApiKey
 
-  return {
-    ...(settings.apiKey ? { Authorization: 'Bearer ' + settings.apiKey } : {}),
+  try {
+    return (await loadAiApiKey(settings.provider)).trim()
+  } catch {
+    // Public model endpoints can still be queried when the local secret store is unavailable.
+    return ''
   }
 }
 

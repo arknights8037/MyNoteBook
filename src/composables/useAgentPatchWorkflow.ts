@@ -1,7 +1,5 @@
 import { computed, ref, type Ref } from 'vue'
 
-import { applyAgentBlockPatches } from '@/editor/agentBlockPatch'
-import { parseMarkdownDocument } from '@/editor/markdownImport'
 import {
   validateBlockPatch,
   type AgentPatchSet,
@@ -11,7 +9,6 @@ import {
 import type { DocumentId, DocumentRecord, TiptapDocumentJson } from '@/models/document'
 import { createEntityId } from '@/models/id'
 import type { AgentRepository } from '@/repositories/AgentRepository'
-import { createAgentRepository } from '@/infrastructure/database/agentRepositoryFactory'
 
 export interface AgentPatchDocumentSnapshot {
   id: DocumentId
@@ -36,6 +33,7 @@ export interface AgentPatchWorkflowNotifier {
 export interface UseAgentPatchWorkflowOptions {
   document: AgentPatchDocumentAdapter
   error: Ref<string>
+  tasks?: Ref<AgentTask[]>
   notify: AgentPatchWorkflowNotifier
   createRepository?: () => Promise<AgentRepository>
   createTransactionId?: () => string
@@ -53,9 +51,38 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
     pendingAgentPatches.value.filter((patch) => patch.accepted),
   )
   const createTransactionId = options.createTransactionId ?? (() => createEntityId('transaction'))
+  let recoveryRequestId = 0
 
   async function getAgentRepository(): Promise<AgentRepository> {
-    return (options.createRepository ?? createAgentRepository)()
+    if (options.createRepository) return options.createRepository()
+    const { createAgentRepository } =
+      await import('@/infrastructure/database/agentRepositoryFactory')
+    return createAgentRepository()
+  }
+
+  async function restoreForDocument(
+    documentId: DocumentId,
+    restoreOptions: { markInterrupted?: boolean } = {},
+  ): Promise<void> {
+    const requestId = ++recoveryRequestId
+    const recovered = await (
+      await getAgentRepository()
+    ).loadRecoveryState(documentId, restoreOptions)
+    if (requestId !== recoveryRequestId) return
+    if (!recovered.ok) {
+      options.notify.error(recovered.error.message)
+      return
+    }
+
+    if (options.tasks) options.tasks.value = recovered.value.tasks
+    pendingAgentTask.value = recovered.value.pendingTask
+    pendingAgentPatchSet.value = recovered.value.pendingPatchSet
+    showAgentPatchModal.value = Boolean(
+      recovered.value.pendingTask && recovered.value.pendingPatchSet,
+    )
+    lastAppliedAgentTask.value = recovered.value.lastAppliedTask
+    lastAppliedPatchSet.value = recovered.value.lastAppliedPatchSet
+    lastAppliedAgentTransactionId.value = recovered.value.lastAppliedTransaction?.id ?? null
   }
 
   function toggleAgentPatchAccepted(patchId: string, accepted: boolean): void {
@@ -83,8 +110,8 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
 
   async function rejectPendingAgentPatches(): Promise<void> {
     if (pendingAgentTask.value) {
-      pendingAgentTask.value.status = 'cancelled'
-      pendingAgentTask.value.currentStep = '用户已拒绝修改'
+      pendingAgentTask.value.status = 'completed'
+      pendingAgentTask.value.currentStep = '用户已拒绝全部修改'
       pendingAgentTask.value.completedAt = Date.now()
       const repository = await getAgentRepository()
       const rejected = await repository.rejectPatchSet(
@@ -115,7 +142,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
 
     const snapshot = options.document.getSnapshot()
     if (snapshot.dirty) {
-      failPendingAgentTask('文档已有未保存改动，请保存后重新生成 Agent 修改。')
+      await failPendingAgentTask('文档已有未保存改动，请保存后重新生成 Agent 修改。')
       return
     }
 
@@ -128,7 +155,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
         currentBlocks: snapshot.blocks,
       })
       if (!validation.ok) {
-        failPendingAgentTask(validation.error ?? '补丁校验失败。')
+        await failPendingAgentTask(validation.error ?? '补丁校验失败。')
         return
       }
     }
@@ -136,11 +163,12 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
     const creationPatches = acceptedPatches.filter((patch) => patch.operation === 'create_document')
     if (creationPatches.length > 0) {
       if (creationPatches.length !== 1 || acceptedPatches.length !== 1) {
-        failPendingAgentTask('新建文档必须作为独立提案确认。')
+        await failPendingAgentTask('新建文档必须作为独立提案确认。')
         return
       }
       const creationPatch = creationPatches[0]
       if (!creationPatch) return
+      const { parseMarkdownDocument } = await import('@/editor/markdownImport')
       const imported = parseMarkdownDocument(
         creationPatch.after,
         creationPatch.documentTitle || 'Agent 新建文档',
@@ -155,18 +183,24 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
         transactionId: createTransactionId(),
       })
       if (!applied.ok || !applied.value.document) {
-        failPendingAgentTask(applied.ok ? '新文档创建后无法读取。' : applied.error.message)
+        await failPendingAgentTask(applied.ok ? '新文档创建后无法读取。' : applied.error.message)
         return
       }
       options.document.mergeDocument(applied.value.document)
-      completeTask(task, patchSet, applied.value.transaction.id, applied.value.transaction.createdAt)
+      completeTask(
+        task,
+        patchSet,
+        applied.value.transaction.id,
+        applied.value.transaction.createdAt,
+      )
       options.notify.success('Agent 新文档已创建，可用撤销恢复')
       return
     }
 
+    const { applyAgentBlockPatches } = await import('@/editor/agentBlockPatch')
     const nextContent = applyAgentBlockPatches(snapshot.content, acceptedPatches)
     if (!nextContent.ok || !nextContent.content || nextContent.plainText === undefined) {
-      failPendingAgentTask(nextContent.error ?? '无法生成 Agent 修改后的文档内容。')
+      await failPendingAgentTask(nextContent.error ?? '无法生成 Agent 修改后的文档内容。')
       return
     }
 
@@ -180,7 +214,9 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
       transactionId: createTransactionId(),
     })
     if (!applied.ok || !applied.value.document) {
-      failPendingAgentTask(applied.ok ? 'Agent 修改完成后无法读取目标文档。' : applied.error.message)
+      await failPendingAgentTask(
+        applied.ok ? 'Agent 修改完成后无法读取目标文档。' : applied.error.message,
+      )
       return
     }
     options.document.applyDocument(applied.value.document)
@@ -207,13 +243,19 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
     showAgentPatchModal.value = false
   }
 
-  function failPendingAgentTask(error: string): void {
+  async function failPendingAgentTask(error: string): Promise<void> {
     if (pendingAgentTask.value) {
       pendingAgentTask.value.status = 'failed'
       pendingAgentTask.value.currentStep = '补丁校验失败'
       pendingAgentTask.value.completedAt = Date.now()
       pendingAgentTask.value.error = error
-      void updateAgentTaskPersistence(pendingAgentTask.value)
+      try {
+        await updateAgentTaskPersistence(pendingAgentTask.value)
+      } catch (persistenceError) {
+        options.notify.error(
+          persistenceError instanceof Error ? persistenceError.message : String(persistenceError),
+        )
+      }
     }
     options.error.value = error
     options.notify.error(error)
@@ -247,7 +289,8 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
 
   async function updateAgentTaskPersistence(task: AgentTask): Promise<void> {
     const repository = await getAgentRepository()
-    await repository.updateTask(task)
+    const updated = await repository.updateTask(task)
+    if (!updated.ok) throw new Error(updated.error.message)
   }
 
   return {
@@ -259,6 +302,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
     lastAppliedAgentTask,
     lastAppliedPatchSet,
     lastAppliedAgentTransactionId,
+    restoreForDocument,
     toggleAgentPatchAccepted,
     updateAgentPatchAfter,
     setAllPendingAgentPatchesAccepted,

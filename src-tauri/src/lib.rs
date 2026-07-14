@@ -2,9 +2,18 @@ use tauri_plugin_sql::{Migration, MigrationKind};
 
 mod agent_repository;
 mod agent_tools;
+mod ai_models;
+mod ai_proxy;
 mod database;
+mod document_core;
+mod domain_events;
+mod governance;
+mod mcp;
 mod secret_store;
+mod skills;
 mod storage;
+mod views;
+mod work;
 
 fn migrations() -> Vec<Migration> {
     vec![
@@ -50,6 +59,30 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0007_add_agent_document_creation.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 8,
+            description: "add_automations",
+            sql: include_str!("../migrations/0008_add_automations.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 9,
+            description: "add_p0_trusted_runtime",
+            sql: include_str!("../migrations/0009_add_p0_trusted_runtime.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 10,
+            description: "add_p1_knowledge_work_views",
+            sql: include_str!("../migrations/0010_add_p1_knowledge_work_views.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 11,
+            description: "add_p2_external_governance_generated_views",
+            sql: include_str!("../migrations/0011_add_p2_external_governance_generated_views.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -61,19 +94,49 @@ pub fn run() {
             storage::get_system_fonts,
             storage::get_default_data_directory,
             database::prepare_database,
+            document_core::persist_document,
+            document_core::rebuild_document_projections,
             storage::migrate_data_directory,
             storage::store_asset_data_url,
             storage::get_asset_data_url,
             storage::resolve_asset_path,
             storage::write_text_file,
+            skills::list_installed_skills,
+            skills::import_skill_directory,
+            skills::create_skill,
+            skills::set_skill_enabled,
+            skills::read_skill_file,
+            skills::write_skill_file,
+            skills::remove_installed_skill,
+            skills::get_skills_directory,
+            mcp::list_mcp_servers,
+            mcp::import_mcp_config,
+            mcp::set_mcp_server_enabled,
+            mcp::set_mcp_server_trusted,
+            mcp::remove_mcp_server,
+            mcp::list_mcp_tools,
+            mcp::call_mcp_tool,
+            mcp::list_mcp_resources,
+            mcp::read_mcp_resource,
             agent_repository::save_agent_patch_set,
+            agent_repository::save_agent_context_bundle,
             agent_repository::apply_agent_patch_set,
             agent_repository::apply_agent_document_creation,
             agent_repository::reject_agent_patch_set,
             agent_repository::rollback_agent_transaction,
             secret_store::get_ai_api_key,
             secret_store::set_ai_api_key,
-            agent_tools::execute_rig_tool
+            ai_models::fetch_ai_models,
+            ai_proxy::proxy_ai_request,
+            agent_tools::execute_rig_tool,
+            work::commit_result_verification,
+            work::decide_change_set,
+            views::commit_view_refresh,
+            views::set_view_manual_override,
+            governance::create_delegation,
+            governance::submit_external_work,
+            governance::claim_outbox_messages,
+            governance::settle_outbox_message
         ])
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())

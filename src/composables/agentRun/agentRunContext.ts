@@ -70,7 +70,11 @@ export async function buildAgentRunContext(input: {
     }
   }
 
-  const sources = retrieval?.sources ?? []
+  const sources = (retrieval?.sources ?? []).map((source) =>
+    source.documentId === document.id
+      ? { ...source, revision: document.revision ?? source.revision }
+      : source,
+  )
   if (sources.length > 0) {
     lines.push(
       '',

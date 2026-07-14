@@ -56,7 +56,9 @@ describe('DocumentSidebar', () => {
     expect(wrapper.get('.sidebar-primary-nav__item--active').text()).toContain('Agent Work')
     await wrapper.get('.sidebar-primary-nav button:nth-child(2)').trigger('click')
     await wrapper.get('.sidebar-primary-nav button:nth-child(3)').trigger('click')
+    await wrapper.get('.sidebar-primary-nav button:nth-child(4)').trigger('click')
 
+    expect(wrapper.emitted('knowledge')).toHaveLength(1)
     expect(wrapper.emitted('new-view')).toHaveLength(1)
     expect(wrapper.emitted('plugins')).toHaveLength(1)
   })

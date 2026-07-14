@@ -1,4 +1,4 @@
-export type AgentToolRisk = 'read' | 'write'
+export type AgentToolRisk = 'read' | 'draft' | 'write'
 export type AgentToolCallStatus = 'pending' | 'running' | 'completed' | 'failed' | 'rejected'
 
 export interface AgentToolDefinition {
@@ -9,6 +9,14 @@ export interface AgentToolDefinition {
     | 'search_documents'
     | 'read_document'
     | 'find_blocks_by_regex'
+    | 'read_skill_file'
+    | 'request_authorizer_input'
+    | 'execute_shell'
+    | 'inspect_environment_paths'
+    | 'discover_local_tools'
+    | 'get_system_info'
+    | 'create_automation_draft'
+    | 'create_skill_draft'
     | 'replace_text_by_regex'
     | 'replace_block'
     | 'insert_blocks'

@@ -5,6 +5,8 @@
 ## 文档
 
 - [Agent Runtime 与工具协议](docs/agent-runtime.md)
+- [自动化任务与审计](docs/automations.md)
+- [MCP Client 与外部服务配置](docs/mcp-client.md)
 - [数据库持久化与运维](docs/database.md)
 
 ## 开发

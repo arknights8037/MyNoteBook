@@ -6,12 +6,15 @@ import { normalizeError, err, ok, type AppResult } from '@/models/result'
 import { loadAppSettings } from '@/models/settings'
 import type {
   AgentDocumentTransaction,
+  AgentRecoveryState,
   ApplyAgentDocumentCreationInput,
   AgentRepository,
   AppliedAgentPatchSet,
   ApplyAgentPatchSetInput,
 } from '@/repositories/AgentRepository'
 import type { SqlClient } from '@/repositories/SqlClient'
+import type { ContextBundle } from '@/models/contextBundle'
+import { createDefaultExecutionPolicy } from '@/models/executionPolicy'
 import { TauriDocumentRepository } from './TauriDocumentRepository'
 
 interface AgentTransactionCommandResult {
@@ -21,6 +24,64 @@ interface AgentTransactionCommandResult {
   beforeRevision: number
   resultingRevision: number
   createdAt: number
+}
+
+interface AgentTaskRow extends Record<string, unknown> {
+  id: string
+  session_id: string
+  status: string
+  user_instruction: string
+  context_scope: string
+  model: string
+  current_step: string
+  created_at: number
+  completed_at: number | null
+  error: string | null
+  correlation_id?: string | null
+  causation_id?: string | null
+  execution_policy_json?: string
+  context_bundle_id?: string | null
+  provider?: string | null
+  task_run_id?: string | null
+}
+
+interface AgentPatchRow extends Record<string, unknown> {
+  id: string
+  task_id: string
+  operation: string
+  document_id: string
+  block_id: string
+  target_block_ids_json: string
+  expected_version: number
+  before_text: string
+  after_text: string
+  reason: string
+  status: string
+  document_title: string | null
+  parent_document_id: string | null
+}
+
+interface AgentPatchSetRow extends Record<string, unknown> {
+  task_id: string
+  model: string
+  created_at: number
+}
+
+interface AgentSourceRow extends Record<string, unknown> {
+  document_id: string
+  document_title: string
+  block_ids_json: string
+}
+
+interface AgentTransactionRow extends Record<string, unknown> {
+  id: string
+  task_id: string
+  document_id: string
+  before_revision: number
+  resulting_revision: number
+  status: string
+  created_at: number
+  rolled_back_at: number | null
 }
 
 /** Persists Agent audit records and delegates multi-statement writes to Rust transactions. */
@@ -36,8 +97,9 @@ export class TauriAgentRepository implements AgentRepository {
       await this.sqlClient.execute(
         `INSERT INTO agent_tasks (
           id, session_id, document_id, status, user_instruction, context_scope, model,
-          current_step, error, created_at, completed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          current_step, error, created_at, completed_at, correlation_id, causation_id,
+          execution_policy_json, context_bundle_id, provider
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           task.id,
           task.sessionId,
@@ -50,11 +112,107 @@ export class TauriAgentRepository implements AgentRepository {
           task.error,
           task.createdAt,
           task.completedAt,
+          task.correlationId,
+          task.causationId,
+          JSON.stringify(task.executionPolicy),
+          task.contextBundleId,
+          task.provider,
         ],
       )
       return ok(task)
     } catch (error) {
       return err(normalizeError(error, '无法创建 Agent 任务。'))
+    }
+  }
+
+  async loadRecoveryState(
+    documentId: string,
+    options: { markInterrupted?: boolean } = {},
+  ): Promise<AppResult<AgentRecoveryState>> {
+    try {
+      if (options.markInterrupted) {
+        const interruptedAt = Date.now()
+        await this.sqlClient.execute(
+          `UPDATE agent_tasks
+           SET status = 'failed', current_step = '任务因应用中断而停止',
+               error = '应用在任务完成前关闭。', completed_at = ?
+           WHERE status IN ('pending', 'running')`,
+          [interruptedAt],
+        )
+      }
+      const taskRows = await this.sqlClient.select<AgentTaskRow>(
+        `SELECT id, session_id, status, user_instruction, context_scope, model,
+                current_step, error, created_at, completed_at, correlation_id, causation_id,
+                execution_policy_json, context_bundle_id, provider, task_run_id
+         FROM agent_tasks
+         WHERE document_id = ?
+         ORDER BY created_at DESC
+         LIMIT 50`,
+        [documentId],
+      )
+      const tasks = taskRows.map(mapTaskRow)
+      const pendingTask = tasks.find((task) => task.status === 'waiting_confirmation') ?? null
+      const pendingPatchSet = pendingTask ? await this.loadPatchSet(pendingTask.id) : null
+
+      const transactionRows = await this.sqlClient.select<AgentTransactionRow>(
+        `SELECT transaction_id AS id, task_id, target_document_id AS document_id,
+                before_revision, resulting_revision, status, created_at, rolled_back_at
+         FROM (
+           SELECT tx.id AS transaction_id, tx.task_id, tx.document_id AS target_document_id,
+                  tx.before_revision, tx.resulting_revision, tx.status, tx.created_at,
+                  tx.rolled_back_at
+           FROM agent_document_transactions tx
+           INNER JOIN agent_tasks task ON task.id = tx.task_id
+           INNER JOIN documents document ON document.id = tx.document_id
+           WHERE task.document_id = ? AND tx.status = 'applied'
+             AND document.is_deleted = 0 AND document.revision = tx.resulting_revision
+           UNION ALL
+           SELECT creation.id AS transaction_id, creation.task_id,
+                  creation.document_id AS target_document_id, 0 AS before_revision,
+                  1 AS resulting_revision, creation.status, creation.created_at,
+                  creation.rolled_back_at
+           FROM agent_document_creation_transactions creation
+           INNER JOIN agent_tasks task ON task.id = creation.task_id
+           INNER JOIN documents document ON document.id = creation.document_id
+           WHERE task.document_id = ? AND creation.status = 'applied'
+             AND document.is_deleted = 0 AND document.revision = 1
+         )
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [documentId, documentId],
+      )
+      const lastAppliedTransaction = transactionRows[0]
+        ? mapTransactionRow(transactionRows[0])
+        : null
+      let lastAppliedTask = lastAppliedTransaction
+        ? (tasks.find((task) => task.id === lastAppliedTransaction.taskId) ?? null)
+        : null
+      if (lastAppliedTransaction && !lastAppliedTask) {
+        const transactionTaskRows = await this.sqlClient.select<AgentTaskRow>(
+          `SELECT id, session_id, status, user_instruction, context_scope, model,
+                  current_step, error, created_at, completed_at, correlation_id, causation_id,
+                  execution_policy_json, context_bundle_id, provider, task_run_id
+           FROM agent_tasks
+           WHERE id = ?
+           LIMIT 1`,
+          [lastAppliedTransaction.taskId],
+        )
+        lastAppliedTask = transactionTaskRows[0] ? mapTaskRow(transactionTaskRows[0]) : null
+      }
+      const lastAppliedPatchSet = lastAppliedTask
+        ? await this.loadPatchSet(lastAppliedTask.id)
+        : null
+
+      return ok({
+        tasks,
+        pendingTask: pendingPatchSet ? pendingTask : null,
+        pendingPatchSet,
+        lastAppliedTask: lastAppliedPatchSet ? lastAppliedTask : null,
+        lastAppliedPatchSet,
+        lastAppliedTransaction: lastAppliedPatchSet ? lastAppliedTransaction : null,
+      })
+    } catch (error) {
+      return err(normalizeError(error, '无法恢复 Agent 任务状态。'))
     }
   }
 
@@ -79,8 +237,8 @@ export class TauriAgentRepository implements AgentRepository {
       await this.sqlClient.execute(
         `INSERT INTO agent_tool_calls (
           id, task_id, tool_name, arguments_json, result_json, status,
-          started_at, completed_at, error
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          started_at, completed_at, error, correlation_id, causation_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           result_json = excluded.result_json,
           status = excluded.status,
@@ -96,11 +254,53 @@ export class TauriAgentRepository implements AgentRepository {
           call.startedAt,
           call.completedAt,
           call.error,
+          call.taskId,
+          call.taskId,
         ],
       )
       return ok(call)
     } catch (error) {
       return err(normalizeError(error, '无法保存 Agent 工具调用记录。'))
+    }
+  }
+
+  async saveContextBundle(
+    bundle: ContextBundle,
+    provenance: {
+      provider: string
+      modelParameters: Record<string, unknown>
+      ignoredParameters: string[]
+      skillVersions: Array<{ id: string; version: string | null }>
+    },
+  ): Promise<AppResult<ContextBundle>> {
+    try {
+      await invoke('save_agent_context_bundle', {
+        input: {
+          dataDirectory: loadAppSettings().dataDirectory,
+          id: bundle.id,
+          taskId: bundle.taskId,
+          version: bundle.version,
+          scopeJson: JSON.stringify(bundle.scope),
+          permissionSnapshotJson: JSON.stringify(bundle.permissionSnapshot),
+          sourcesJson: JSON.stringify(bundle.sources),
+          activeRulesJson: JSON.stringify(bundle.activeRules),
+          decisionsJson: JSON.stringify(bundle.decisions),
+          conflictsJson: JSON.stringify(bundle.conflicts),
+          compilerJson: JSON.stringify(bundle.compiler),
+          snapshotHash: bundle.snapshotHash,
+          correlationId: bundle.correlationId,
+          causationId: bundle.causationId,
+          executionPolicyJson: JSON.stringify(bundle.compiler.executionPolicy),
+          provider: provenance.provider,
+          modelParametersJson: JSON.stringify(provenance.modelParameters),
+          ignoredParametersJson: JSON.stringify(provenance.ignoredParameters),
+          skillVersionsJson: JSON.stringify(provenance.skillVersions),
+          createdAt: bundle.createdAt,
+        },
+      })
+      return ok(bundle)
+    } catch (error) {
+      return err(normalizeError(error, '无法保存 Context Bundle。'))
     }
   }
 
@@ -239,6 +439,146 @@ export class TauriAgentRepository implements AgentRepository {
     } catch (error) {
       return err(normalizeError(error, '无法撤销 Agent 修改。'))
     }
+  }
+
+  private async loadPatchSet(taskId: string): Promise<AgentPatchSet | null> {
+    const setRows = await this.sqlClient.select<AgentPatchSetRow>(
+      `SELECT task_id, model, created_at
+       FROM agent_patch_sets
+       WHERE task_id = ?
+       LIMIT 1`,
+      [taskId],
+    )
+    const set = setRows[0]
+    if (!set) return null
+
+    const [patchRows, sourceRows] = await Promise.all([
+      this.sqlClient.select<AgentPatchRow>(
+        `SELECT id, task_id, operation, document_id, block_id, target_block_ids_json,
+                expected_version, before_text, after_text, reason, status,
+                document_title, parent_document_id
+         FROM agent_patches
+         WHERE task_id = ?
+         ORDER BY created_at ASC, id ASC`,
+        [taskId],
+      ),
+      this.sqlClient.select<AgentSourceRow>(
+        `SELECT document_id, document_title, block_ids_json
+         FROM agent_task_sources
+         WHERE task_id = ?
+         ORDER BY created_at ASC, document_id ASC`,
+        [taskId],
+      ),
+    ])
+    if (patchRows.length === 0) return null
+
+    return {
+      taskId: set.task_id,
+      model: set.model,
+      createdAt: set.created_at,
+      patches: patchRows.map((row) => ({
+        patchId: row.id,
+        taskId: row.task_id,
+        operation: mapPatchOperation(row.operation),
+        documentId: row.document_id,
+        blockId: row.block_id,
+        targetBlockIds: parseStringArray(row.target_block_ids_json),
+        expectedVersion: row.expected_version,
+        before: row.before_text,
+        after: row.after_text,
+        reason: row.reason,
+        accepted: row.status !== 'rejected',
+        documentTitle: row.document_title ?? undefined,
+        parentDocumentId: row.parent_document_id,
+      })),
+      contextSources: sourceRows.map((row) => ({
+        documentId: row.document_id,
+        documentTitle: row.document_title,
+        blockIds: parseStringArray(row.block_ids_json),
+      })),
+    }
+  }
+}
+
+function mapTaskRow(row: AgentTaskRow): AgentTask {
+  const status = [
+    'pending',
+    'running',
+    'waiting_confirmation',
+    'completed',
+    'failed',
+    'cancelled',
+  ].includes(row.status)
+    ? (row.status as AgentTask['status'])
+    : 'failed'
+  const contextScope = ['selection', 'current_block', 'current_document'].includes(
+    row.context_scope,
+  )
+    ? (row.context_scope as AgentTask['contextScope'])
+    : 'current_document'
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    status,
+    userInstruction: row.user_instruction,
+    contextScope,
+    model: row.model,
+    currentStep: row.current_step,
+    createdAt: row.created_at,
+    completedAt: row.completed_at,
+    error: row.error,
+    correlationId: row.correlation_id ?? row.id,
+    causationId: row.causation_id ?? null,
+    executionPolicy: parseExecutionPolicy(row.execution_policy_json),
+    contextBundleId: row.context_bundle_id ?? null,
+    provider: mapProvider(row.provider),
+    taskRunId: row.task_run_id ?? null,
+  }
+}
+
+function parseExecutionPolicy(value: string | undefined) {
+  const fallback = createDefaultExecutionPolicy({ tokenBudget: 2048, allowedTools: [] })
+  if (!value) return fallback
+  try {
+    return { ...fallback, ...(JSON.parse(value) as object), version: 1 as const }
+  } catch {
+    return fallback
+  }
+}
+
+function mapProvider(value: unknown): AgentTask['provider'] {
+  return ['openai', 'anthropic', 'deepseek', 'qwen', 'openai-compatible'].includes(String(value))
+    ? (value as AgentTask['provider'])
+    : 'openai'
+}
+
+function mapPatchOperation(value: string): BlockPatch['operation'] {
+  return ['replace', 'insert_before', 'insert_after', 'append', 'create_document'].includes(value)
+    ? (value as BlockPatch['operation'])
+    : 'replace'
+}
+
+function parseStringArray(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : []
+  } catch {
+    return []
+  }
+}
+
+function mapTransactionRow(row: AgentTransactionRow): AgentDocumentTransaction {
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    documentId: row.document_id,
+    beforeRevision: row.before_revision,
+    resultingRevision: row.resulting_revision,
+    status: row.status === 'rolled_back' ? 'rolled_back' : 'applied',
+    createdAt: row.created_at,
+    rolledBackAt: row.rolled_back_at,
   }
 }
 

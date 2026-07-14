@@ -2,6 +2,7 @@ import { createAgentTask, findRelevantBlocksForInstruction, type AgentTask, type
 import type { AiChatMode } from '@/models/aiChatMode'
 import type { AiSettings } from '@/models/ai'
 import type { AgentRunDocumentSnapshot, AgentRunSnapshot } from './types'
+import { createDefaultAgentExecutionPolicy } from '@/services/AgentToolRegistry'
 
 export interface AgentEditPlan {
   task: AgentTask
@@ -57,6 +58,8 @@ export function createAgentEditPlan(input: {
           ? 'selection'
           : 'current_block',
     model: snapshot.settings.model,
+    provider: snapshot.settings.provider,
+    executionPolicy: createDefaultAgentExecutionPolicy(snapshot.settings.maxTokens),
   })
   task.status = 'running'
   task.currentStep = '正在生成修改补丁'

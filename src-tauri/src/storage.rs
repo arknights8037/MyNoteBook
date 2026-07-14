@@ -89,6 +89,16 @@ pub async fn migrate_data_directory(
         copy_directory_recursive(&source_assets_directory, &temporary_assets_directory)
             .map_err(|error| format!("复制附件失败：{error}"))?;
     }
+    let source_skills_directory = source_directory.join("skills");
+    let temporary_skills_directory = destination_directory.join("skills.migrating");
+    if temporary_skills_directory.exists() {
+        fs::remove_dir_all(&temporary_skills_directory)
+            .map_err(|error| format!("清理临时技能目录失败：{error}"))?;
+    }
+    if source_skills_directory.is_dir() {
+        copy_directory_recursive(&source_skills_directory, &temporary_skills_directory)
+            .map_err(|error| format!("复制技能失败：{error}"))?;
+    }
 
     let backup_path = if destination_path.exists() {
         let timestamp = SystemTime::now()
@@ -121,6 +131,15 @@ pub async fn migrate_data_directory(
         }
         fs::rename(&temporary_assets_directory, &destination_assets_directory)
             .map_err(|error| format!("启用新附件目录失败：{error}"))?;
+    }
+    let destination_skills_directory = destination_directory.join("skills");
+    if temporary_skills_directory.is_dir() {
+        if destination_skills_directory.exists() {
+            fs::remove_dir_all(&destination_skills_directory)
+                .map_err(|error| format!("替换技能目录失败：{error}"))?;
+        }
+        fs::rename(&temporary_skills_directory, &destination_skills_directory)
+            .map_err(|error| format!("启用新技能目录失败：{error}"))?;
     }
 
     Ok(DataDirectoryChange {

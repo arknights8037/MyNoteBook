@@ -10,6 +10,33 @@ class MemorySqlClient implements SqlClient {
   readonly documentTags = new Map<string, Set<string>>()
   batchTagQueryCount = 0
   documentTagDeleteCount = 0
+  readonly selectedSql: string[] = []
+
+  async persistCore(document: DocumentRecord, expectedRevision: number | null): Promise<void> {
+    const existing = this.documents.get(document.id)
+    if ((existing?.revision ?? null) !== expectedRevision) {
+      throw new Error('文档版本冲突')
+    }
+    const previousTags = existing?.tags ?? []
+    const nextTags = [...document.tags].sort((left, right) => left.localeCompare(right))
+    if (previousTags.join('\0') !== nextTags.join('\0')) {
+      this.documentTagDeleteCount += 1
+      const tagIds = new Set<string>()
+      for (const tag of nextTags) {
+        const existingTag = [...this.tags.entries()].find(([, value]) => value === tag)
+        const tagId = existingTag?.[0] ?? `tag-${this.tags.size + 1}`
+        this.tags.set(tagId, tag)
+        tagIds.add(tagId)
+      }
+      this.documentTags.set(document.id, tagIds)
+    }
+    this.documents.set(document.id, {
+      ...document,
+      tags: nextTags,
+      revision: existing ? existing.revision + 1 : 1,
+      createdAt: existing?.createdAt ?? document.createdAt,
+    })
+  }
 
   async execute(sql: string, bindValues: SqlValue[] = []): Promise<SqlExecuteResult> {
     const normalizedSql = normalizeSql(sql)
@@ -187,6 +214,7 @@ class MemorySqlClient implements SqlClient {
     bindValues: SqlValue[] = [],
   ): Promise<T[]> {
     const normalizedSql = normalizeSql(sql)
+    this.selectedSql.push(normalizedSql)
     const rows = [...this.documents.values()]
 
     if (normalizedSql.includes('where id = ?')) {
@@ -234,7 +262,7 @@ class MemorySqlClient implements SqlClient {
             left.createdAt - right.createdAt ||
             left.id.localeCompare(right.id),
         )
-        .map((document) => toRow(document) as T)
+        .map((document) => this.projectDocumentRow(document, normalizedSql) as T)
     }
 
     if (normalizedSql.includes('parent_id = ?')) {
@@ -248,7 +276,7 @@ class MemorySqlClient implements SqlClient {
             left.createdAt - right.createdAt ||
             left.id.localeCompare(right.id),
         )
-        .map((document) => toRow(document) as T)
+        .map((document) => this.projectDocumentRow(document, normalizedSql) as T)
     }
 
     if (normalizedSql.includes('order by sort_order asc, created_at asc, id asc')) {
@@ -262,7 +290,7 @@ class MemorySqlClient implements SqlClient {
             left.id.localeCompare(right.id),
         )
         .slice(0, limit)
-        .map((document) => toRow(document) as T)
+        .map((document) => this.projectDocumentRow(document, normalizedSql) as T)
     }
 
     if (normalizedSql.includes('order by updated_at desc')) {
@@ -277,7 +305,7 @@ class MemorySqlClient implements SqlClient {
         })
         .sort((left, right) => right.updatedAt - left.updatedAt)
         .slice(0, limit)
-        .map((document) => toRow(document) as T)
+        .map((document) => this.projectDocumentRow(document, normalizedSql) as T)
     }
 
     throw new Error(`Unsupported select SQL in test: ${sql}`)
@@ -296,6 +324,21 @@ class MemorySqlClient implements SqlClient {
       .filter((tag): tag is string => Boolean(tag))
       .sort((left, right) => left.localeCompare(right))
   }
+
+  private projectDocumentRow(
+    document: DocumentRecord,
+    normalizedSql: string,
+  ): Record<string, unknown> {
+    const row = toRow(document)
+    if (
+      normalizedSql.includes('length(trim(plain_text)) as character_count') &&
+      !normalizedSql.includes('documents.plain_text')
+    ) {
+      row.plain_text = undefined
+      row.character_count = Array.from(document.plainText.trim()).length
+    }
+    return row
+  }
 }
 
 describe('TauriDocumentRepository', () => {
@@ -306,7 +349,9 @@ describe('TauriDocumentRepository', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-06-21T00:00:00.000Z'))
     sqlClient = new MemorySqlClient()
-    repository = new TauriDocumentRepository(sqlClient)
+    repository = new TauriDocumentRepository(sqlClient, (document, expectedRevision) =>
+      sqlClient.persistCore(document, expectedRevision),
+    )
   })
 
   it('creates and reads a document', async () => {
@@ -561,7 +606,25 @@ describe('TauriDocumentRepository', () => {
     if (!roots.ok) return
     expect(roots.value.map((document) => document.id)).toEqual(['doc-1'])
     expect(roots.value[0]?.createdAt).toBe(Date.now())
+    expect(roots.value[0]?.plainText).toBe('')
+    expect(roots.value[0]?.characterCount).toBe(0)
     expect(sqlClient.batchTagQueryCount).toBe(1)
+  })
+
+  it('keeps full document bodies out of list queries', async () => {
+    await repository.create({ id: 'doc-1', title: 'Large note', plainText: '正文'.repeat(10_000) })
+
+    const documents = await repository.listRecent({ limit: 200 })
+
+    expect(documents.ok).toBe(true)
+    if (!documents.ok) return
+    expect(documents.value[0]?.plainText).toBe('')
+    expect(documents.value[0]?.characterCount).toBe(20_000)
+    const listQuery = sqlClient.selectedSql.find((sql) =>
+      sql.includes('order by sort_order asc, created_at asc, id asc'),
+    )
+    expect(listQuery).toContain('length(trim(plain_text)) as character_count')
+    expect(listQuery).not.toContain('description, plain_text, revision')
   })
 
   it('lists active documents in a stable position after updates', async () => {

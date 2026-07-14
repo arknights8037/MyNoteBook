@@ -2,8 +2,6 @@ import { computed, nextTick, ref, type ComputedRef, type Ref } from 'vue'
 
 import type { CreateWorkspaceDocumentOptions } from '@/composables/useDocumentWorkspace'
 import type { UseDocumentAutosaveReturn } from '@/composables/useDocumentAutosave'
-import { ensureTopLevelBlockIds } from '@/editor/blockId'
-import { tauriDocumentTransferFilePort } from '@/infrastructure/transfer/tauriDocumentTransferFilePort'
 import type {
   DocumentId,
   DocumentRecord,
@@ -11,11 +9,22 @@ import type {
   TiptapDocumentJson,
 } from '@/models/document'
 import type { AppError } from '@/models/result'
-import { DocumentTransferService } from '@/services/DocumentTransferService'
+import type { DocumentTransferService } from '@/services/DocumentTransferService'
 import type { DocumentImportFormat } from '../documentFile'
 import type { DocumentSidebarExpose, EditorShellExpose, MarkdownFileInput } from './homePageTypes'
 
-const documentTransfer = new DocumentTransferService(tauriDocumentTransferFilePort)
+let documentTransferPromise: Promise<DocumentTransferService> | null = null
+
+function getDocumentTransfer(): Promise<DocumentTransferService> {
+  documentTransferPromise ??= Promise.all([
+    import('@/services/DocumentTransferService'),
+    import('@/infrastructure/transfer/tauriDocumentTransferFilePort'),
+  ]).then(
+    ([{ DocumentTransferService }, { tauriDocumentTransferFilePort }]) =>
+      new DocumentTransferService(tauriDocumentTransferFilePort),
+  )
+  return documentTransferPromise
+}
 
 interface DocumentTransferActionsOptions {
   documentSidebar: Ref<DocumentSidebarExpose | null>
@@ -77,6 +86,7 @@ export function useDocumentTransferActions(options: DocumentTransferActionsOptio
       if (!flushResult.ok) return
 
       try {
+        const documentTransfer = await getDocumentTransfer()
         const parsed = documentTransfer.parseImport({
           fileName: file.name,
           text: await file.text(),
@@ -130,6 +140,7 @@ export function useDocumentTransferActions(options: DocumentTransferActionsOptio
 
     const prepared = await prepareCurrentDocumentExport()
     if (!prepared) return
+    const documentTransfer = await getDocumentTransfer()
     const saved = await documentTransfer.saveExport(prepared, format, '未命名文档')
     if (saved) options.notify.success(format === 'markdown' ? 'Markdown 已导出' : 'HTML 已导出')
   }
@@ -147,6 +158,10 @@ export function useDocumentTransferActions(options: DocumentTransferActionsOptio
       return null
     }
 
+    const [{ ensureTopLevelBlockIds }, documentTransfer] = await Promise.all([
+      import('@/editor/blockId'),
+      getDocumentTransfer(),
+    ])
     return documentTransfer.prepareExport({
       document,
       content: ensureTopLevelBlockIds(

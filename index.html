@@ -108,6 +108,7 @@
       }
 
       .startup-shell__content {
+        position: relative;
         min-width: 0;
         padding: 24px 34px;
       }
@@ -138,6 +139,91 @@
         width: 70%;
       }
 
+      .startup-shell__status {
+        position: absolute;
+        right: 34px;
+        bottom: 34px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: #575752;
+      }
+
+      :root[data-theme-mode='dark'] .startup-shell__status {
+        color: #d4d4d0;
+      }
+
+      .startup-shell__status > span:last-child {
+        display: grid;
+        gap: 2px;
+      }
+
+      .startup-shell__status strong {
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .startup-shell__status small {
+        color: #92928d;
+        font-size: 11px;
+      }
+
+      .startup-shell__spinner {
+        position: relative;
+        width: 30px;
+        height: 30px;
+        animation: startup-spin 1.8s linear infinite;
+      }
+
+      .startup-shell__spinner i {
+        position: absolute;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #f1604c;
+      }
+
+      .startup-shell__spinner i:nth-child(1) {
+        top: 0;
+        left: 11px;
+      }
+
+      .startup-shell__spinner i:nth-child(2) {
+        right: 1px;
+        bottom: 4px;
+        opacity: 0.65;
+      }
+
+      .startup-shell__spinner i:nth-child(3) {
+        bottom: 4px;
+        left: 1px;
+        opacity: 0.35;
+      }
+
+      .startup-shell__progress {
+        position: absolute;
+        right: 34px;
+        bottom: 20px;
+        width: 180px;
+        height: 2px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #e2e2de;
+      }
+
+      :root[data-theme-mode='dark'] .startup-shell__progress {
+        background: #3c3e42;
+      }
+
+      .startup-shell__progress i {
+        display: block;
+        width: 42%;
+        height: 100%;
+        border-radius: inherit;
+        background: #f1604c;
+        animation: startup-progress 1.45s ease-in-out infinite;
+      }
+
       @keyframes startup-pulse {
         from {
           opacity: 0.5;
@@ -147,10 +233,30 @@
         }
       }
 
+      @keyframes startup-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @keyframes startup-progress {
+        from {
+          transform: translateX(-110%);
+        }
+        to {
+          transform: translateX(350%);
+        }
+      }
+
       @media (prefers-reduced-motion: reduce) {
         .startup-shell__nav-lines span,
         .startup-shell__document span,
         .startup-shell__toolbar {
+          animation: none;
+        }
+
+        .startup-shell__spinner,
+        .startup-shell__progress i {
           animation: none;
         }
       }
@@ -200,12 +306,20 @@
             <span></span><span></span><span></span><span></span>
           </div>
         </aside>
-        <section class="startup-shell__content" aria-hidden="true">
-          <div class="startup-shell__toolbar"></div>
-          <div class="startup-shell__document">
+        <section class="startup-shell__content">
+          <div class="startup-shell__toolbar" aria-hidden="true"></div>
+          <div class="startup-shell__document" aria-hidden="true">
             <span class="startup-shell__title"></span>
             <span></span><span></span><span></span>
           </div>
+          <div class="startup-shell__status" role="status" aria-live="polite">
+            <span class="startup-shell__spinner" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span>
+              <strong>正在打开知识库</strong>
+              <small>准备本地文档与编辑器</small>
+            </span>
+          </div>
+          <span class="startup-shell__progress" aria-hidden="true"><i></i></span>
         </section>
       </main>
     </div>

@@ -4,8 +4,14 @@ use rig_core::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{Connection, Row, SqliteConnection};
-use std::{fmt, path::PathBuf, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    env, fmt, fs,
+    path::{Component, Path, PathBuf},
+    time::{Duration, Instant},
+};
 use tauri::AppHandle;
+use tokio::{process::Command, time::timeout};
 
 use crate::database::{configured_data_directory, DATABASE_FILENAME};
 
@@ -121,6 +127,284 @@ struct ReadDocumentResult {
     tags: Vec<String>,
 }
 
+const DEFAULT_SHELL_TIMEOUT_MS: u64 = 10_000;
+const MIN_SHELL_TIMEOUT_MS: u64 = 1_000;
+const MAX_SHELL_TIMEOUT_MS: u64 = 30_000;
+const DEFAULT_SHELL_OUTPUT_LIMIT: usize = 32 * 1024;
+const MIN_SHELL_OUTPUT_LIMIT: usize = 4 * 1024;
+const MAX_SHELL_OUTPUT_LIMIT: usize = 64 * 1024;
+
+#[derive(Clone)]
+struct ExecuteShellTool;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExecuteShellArgs {
+    command: String,
+    #[serde(default)]
+    args: Vec<String>,
+    timeout_ms: Option<u64>,
+    max_output_chars: Option<usize>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExecuteShellResult {
+    command: String,
+    args: Vec<String>,
+    working_directory: String,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    truncated: bool,
+    duration_ms: u128,
+    timeout_ms: u64,
+    max_output_chars: usize,
+}
+
+struct ShellCommandSpec {
+    program: String,
+    args: Vec<String>,
+    environment: HashMap<String, String>,
+}
+
+impl Tool for ExecuteShellTool {
+    const NAME: &'static str = "execute_shell";
+    type Error = NativeToolError;
+    type Args = ExecuteShellArgs;
+    type Output = ExecuteShellResult;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "执行白名单内的只读 Windows PowerShell 命令或本机工具；不接受脚本字符串。"
+                .to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "enum": ["Get-Process", "Get-Service", "Get-Command", "Get-Date", "git", "rg", "where.exe", "node", "pnpm", "npm", "python", "cargo", "rustc"]
+                    },
+                    "args": {
+                        "type": "array",
+                        "items": { "type": "string", "maxLength": 500 },
+                        "maxItems": 12
+                    },
+                    "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 30000 },
+                    "maxOutputChars": { "type": "integer", "minimum": 4096, "maximum": 65536 }
+                },
+                "required": ["command"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let (timeout_ms, output_limit) =
+            resolve_shell_limits(args.timeout_ms, args.max_output_chars)?;
+        let spec = build_shell_command(&args.command, &args.args)?;
+        let working_directory = std::env::current_dir().map_err(native_error)?;
+        let started_at = Instant::now();
+        let mut process = Command::new(&spec.program);
+        process
+            .args(&spec.args)
+            .envs(&spec.environment)
+            .current_dir(&working_directory)
+            .kill_on_drop(true);
+        let output = timeout(Duration::from_millis(timeout_ms), process.output())
+            .await
+            .map_err(|_| NativeToolError(format!("命令执行超过 {timeout_ms} 毫秒，已终止。")))?
+            .map_err(|error| NativeToolError(format!("无法启动 {}：{error}", args.command)))?;
+        let (stdout, stdout_truncated) = bounded_output(&output.stdout, output_limit);
+        let (stderr, stderr_truncated) = bounded_output(&output.stderr, output_limit);
+        Ok(ExecuteShellResult {
+            command: args.command,
+            args: args.args,
+            working_directory: working_directory.display().to_string(),
+            exit_code: output.status.code(),
+            stdout,
+            stderr,
+            truncated: stdout_truncated || stderr_truncated,
+            duration_ms: started_at.elapsed().as_millis(),
+            timeout_ms,
+            max_output_chars: output_limit,
+        })
+    }
+}
+
+#[derive(Clone)]
+struct InspectEnvironmentPathsTool;
+
+#[derive(Deserialize)]
+struct EmptyArgs {}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EnvironmentPathEntry {
+    path: String,
+    exists: bool,
+    is_directory: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EnvironmentPathsResult {
+    path_entries: Vec<EnvironmentPathEntry>,
+    path_extensions: Vec<String>,
+    powershell_module_paths: Vec<EnvironmentPathEntry>,
+}
+
+impl Tool for InspectEnvironmentPathsTool {
+    const NAME: &'static str = "inspect_environment_paths";
+    type Error = NativeToolError;
+    type Args = EmptyArgs;
+    type Output = EnvironmentPathsResult;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "检查当前进程可见的 PATH、PATHEXT 和 PSModulePath；不返回其他环境变量。"
+                .to_string(),
+            parameters: serde_json::json!({ "type": "object", "properties": {} }),
+        }
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        Ok(EnvironmentPathsResult {
+            path_entries: environment_path_entries("PATH", 128),
+            path_extensions: env::var("PATHEXT")
+                .unwrap_or_default()
+                .split(';')
+                .filter_map(|value| nonempty(value).map(str::to_string))
+                .take(32)
+                .collect(),
+            powershell_module_paths: environment_path_entries("PSModulePath", 64),
+        })
+    }
+}
+
+#[derive(Clone)]
+struct DiscoverLocalToolsTool;
+
+#[derive(Deserialize)]
+struct DiscoverLocalToolsArgs {
+    #[serde(default)]
+    names: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalToolResult {
+    name: String,
+    found: bool,
+    paths: Vec<String>,
+}
+
+impl Tool for DiscoverLocalToolsTool {
+    const NAME: &'static str = "discover_local_tools";
+    type Error = NativeToolError;
+    type Args = DiscoverLocalToolsArgs;
+    type Output = Vec<LocalToolResult>;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "在 PATH 中发现指定或常见本机工具，不执行任何程序。".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "names": {
+                        "type": "array",
+                        "items": { "type": "string", "minLength": 1, "maxLength": 80 },
+                        "maxItems": 32
+                    }
+                }
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let names: Vec<String> = if args.names.is_empty() {
+            [
+                "powershell",
+                "pwsh",
+                "git",
+                "rg",
+                "node",
+                "pnpm",
+                "npm",
+                "python",
+                "py",
+                "cargo",
+                "rustc",
+                "code",
+                "docker",
+                "java",
+                "go",
+                "dotnet",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+        } else {
+            args.names
+        };
+        if names.len() > 32 || names.iter().any(|name| !is_safe_tool_name(name)) {
+            return Err(NativeToolError(
+                "工具名最多 32 个，且只能包含字母、数字、点、下划线、加号和连字符。".to_string(),
+            ));
+        }
+        Ok(discover_local_tools(&names))
+    }
+}
+
+#[derive(Clone)]
+struct GetSystemInfoTool;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemInfoResult {
+    operating_system: &'static str,
+    family: &'static str,
+    architecture: &'static str,
+    logical_cpu_count: usize,
+    current_directory: String,
+    computer_name: Option<String>,
+}
+
+impl Tool for GetSystemInfoTool {
+    const NAME: &'static str = "get_system_info";
+    type Error = NativeToolError;
+    type Args = EmptyArgs;
+    type Output = SystemInfoResult;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "读取操作系统、架构、逻辑 CPU 数和当前工作目录。".to_string(),
+            parameters: serde_json::json!({ "type": "object", "properties": {} }),
+        }
+    }
+
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        Ok(SystemInfoResult {
+            operating_system: env::consts::OS,
+            family: env::consts::FAMILY,
+            architecture: env::consts::ARCH,
+            logical_cpu_count: std::thread::available_parallelism()
+                .map(usize::from)
+                .unwrap_or(1),
+            current_directory: env::current_dir()
+                .map_err(native_error)?
+                .display()
+                .to_string(),
+            computer_name: env::var("COMPUTERNAME")
+                .ok()
+                .filter(|value| !value.is_empty()),
+        })
+    }
+}
+
 impl Tool for ReadDocumentTool {
     const NAME: &'static str = "read_document";
     type Error = NativeToolError;
@@ -185,6 +469,10 @@ pub(crate) async fn execute_rig_tool(
             database_path: database_path.clone(),
         })
         .static_tool(ReadDocumentTool { database_path })
+        .static_tool(ExecuteShellTool)
+        .static_tool(InspectEnvironmentPathsTool)
+        .static_tool(DiscoverLocalToolsTool)
+        .static_tool(GetSystemInfoTool)
         .build();
     toolset
         .call(&input.name, input.arguments_json)
@@ -215,13 +503,345 @@ fn build_fts_query(value: &str) -> String {
         .join(" OR ")
 }
 
+fn build_shell_command(
+    command: &str,
+    args: &[String],
+) -> Result<ShellCommandSpec, NativeToolError> {
+    if args.len() > 12
+        || args
+            .iter()
+            .any(|value| value.len() > 500 || value.contains('\0'))
+    {
+        return Err(NativeToolError("命令参数超出数量或长度限制。".to_string()));
+    }
+    match command {
+        "Get-Process" => powershell_query(
+            args,
+            "Get-Process | Select-Object -First 50 Name,Id,CPU,WorkingSet | ConvertTo-Json -Compress",
+            "Get-Process -Name $env:MYNOTEBOOK_AGENT_TARGET -ErrorAction Stop | Select-Object -First 50 Name,Id,CPU,WorkingSet | ConvertTo-Json -Compress",
+        ),
+        "Get-Service" => powershell_query(
+            args,
+            "Get-Service | Select-Object -First 50 Name,Status,DisplayName | ConvertTo-Json -Compress",
+            "Get-Service -Name $env:MYNOTEBOOK_AGENT_TARGET -ErrorAction Stop | Select-Object -First 50 Name,Status,DisplayName | ConvertTo-Json -Compress",
+        ),
+        "Get-Command" => {
+            let target = require_safe_name(args, "Get-Command 需要且只接受一个命令名。")?;
+            powershell_spec(
+                "Get-Command -Name $env:MYNOTEBOOK_AGENT_TARGET -ErrorAction Stop | Select-Object Name,CommandType,Source,Version | ConvertTo-Json -Compress",
+                Some(target),
+            )
+        }
+        "Get-Date" if args.is_empty() => powershell_spec("Get-Date -Format o", None),
+        "git" => build_git_command(args),
+        "rg" => build_rg_command(args),
+        "where.exe" => {
+            let target = require_safe_name(args, "where.exe 需要且只接受一个工具名。")?;
+            Ok(executable_spec("where.exe", vec![target.to_string()]))
+        }
+        "node" | "cargo" | "rustc" => build_version_command(command, command, args),
+        "pnpm" => build_version_command(command, "pnpm.cmd", args),
+        "npm" => build_version_command(command, "npm.cmd", args),
+        "python" => build_version_command(command, "python.exe", args),
+        _ => Err(NativeToolError(format!("命令 {command} 不在白名单中。"))),
+    }
+}
+
+fn resolve_shell_limits(
+    timeout_ms: Option<u64>,
+    max_output_chars: Option<usize>,
+) -> Result<(u64, usize), NativeToolError> {
+    let timeout_ms = timeout_ms.unwrap_or(DEFAULT_SHELL_TIMEOUT_MS);
+    if !(MIN_SHELL_TIMEOUT_MS..=MAX_SHELL_TIMEOUT_MS).contains(&timeout_ms) {
+        return Err(NativeToolError(format!(
+            "timeoutMs 必须在 {MIN_SHELL_TIMEOUT_MS} 到 {MAX_SHELL_TIMEOUT_MS} 之间。"
+        )));
+    }
+    let output_limit = max_output_chars.unwrap_or(DEFAULT_SHELL_OUTPUT_LIMIT);
+    if !(MIN_SHELL_OUTPUT_LIMIT..=MAX_SHELL_OUTPUT_LIMIT).contains(&output_limit) {
+        return Err(NativeToolError(format!(
+            "maxOutputChars 必须在 {MIN_SHELL_OUTPUT_LIMIT} 到 {MAX_SHELL_OUTPUT_LIMIT} 之间。"
+        )));
+    }
+    Ok((timeout_ms, output_limit))
+}
+
+fn powershell_query(
+    args: &[String],
+    list_script: &str,
+    named_script: &str,
+) -> Result<ShellCommandSpec, NativeToolError> {
+    match args {
+        [] => powershell_spec(list_script, None),
+        _ => {
+            let target = require_safe_name(args, "该 PowerShell 查询最多接受一个名称参数。")?;
+            powershell_spec(named_script, Some(target))
+        }
+    }
+}
+
+fn powershell_spec(
+    script: &str,
+    target: Option<&str>,
+) -> Result<ShellCommandSpec, NativeToolError> {
+    let mut environment = HashMap::new();
+    if let Some(target) = target {
+        environment.insert("MYNOTEBOOK_AGENT_TARGET".to_string(), target.to_string());
+    }
+    Ok(ShellCommandSpec {
+        program: "powershell.exe".to_string(),
+        args: vec![
+            "-NoLogo".to_string(),
+            "-NoProfile".to_string(),
+            "-NonInteractive".to_string(),
+            "-Command".to_string(),
+            script.to_string(),
+        ],
+        environment,
+    })
+}
+
+fn require_safe_name<'a>(args: &'a [String], message: &str) -> Result<&'a str, NativeToolError> {
+    if args.len() != 1
+        || args[0].is_empty()
+        || !args[0]
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "._-*?".contains(character))
+    {
+        return Err(NativeToolError(message.to_string()));
+    }
+    Ok(&args[0])
+}
+
+fn build_git_command(args: &[String]) -> Result<ShellCommandSpec, NativeToolError> {
+    let Some((subcommand, options)) = args.split_first() else {
+        return Err(NativeToolError("git 必须指定只读子命令。".to_string()));
+    };
+    let valid = match subcommand.as_str() {
+        "status" => options
+            .iter()
+            .all(|arg| matches!(arg.as_str(), "--short" | "--branch" | "--porcelain=v1")),
+        "diff" => options.iter().all(|arg| {
+            matches!(
+                arg.as_str(),
+                "--cached" | "--stat" | "--name-only" | "--name-status"
+            )
+        }),
+        "log" => validate_git_log_options(options),
+        "branch" => options
+            .iter()
+            .all(|arg| matches!(arg.as_str(), "--show-current" | "--list")),
+        "rev-parse" => {
+            matches!(options, [value] if matches!(value.as_str(), "--show-toplevel" | "--is-inside-work-tree"))
+                || matches!(options, [flag, head] if flag == "--abbrev-ref" && head == "HEAD")
+        }
+        "ls-files" => options.is_empty(),
+        _ => false,
+    };
+    if !valid {
+        return Err(NativeToolError(format!(
+            "git 子命令或参数不在只读白名单中：{}",
+            args.join(" ")
+        )));
+    }
+    let mut safe_args = args.to_vec();
+    if subcommand == "diff" {
+        safe_args.insert(1, "--no-ext-diff".to_string());
+    }
+    if subcommand == "log"
+        && !options
+            .iter()
+            .any(|arg| arg == "-n" || arg.starts_with("-n"))
+    {
+        safe_args.extend(["-n".to_string(), "50".to_string()]);
+    }
+    Ok(executable_spec("git.exe", safe_args))
+}
+
+fn validate_git_log_options(args: &[String]) -> bool {
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--oneline" | "--decorate" | "--all" => index += 1,
+            "-n" if index + 1 < args.len() => {
+                let count = args[index + 1].parse::<u16>().ok();
+                if !matches!(count, Some(1..=100)) {
+                    return false;
+                }
+                index += 2;
+            }
+            value if value.starts_with("-n") => {
+                let count = value[2..].parse::<u16>().ok();
+                if !matches!(count, Some(1..=100)) {
+                    return false;
+                }
+                index += 1;
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+fn build_rg_command(args: &[String]) -> Result<ShellCommandSpec, NativeToolError> {
+    if !(1..=2).contains(&args.len()) || args[0].is_empty() {
+        return Err(NativeToolError(
+            "rg 仅接受搜索表达式和可选的相对路径。".to_string(),
+        ));
+    }
+    if let Some(path) = args.get(1) {
+        let path = Path::new(path);
+        if path.is_absolute()
+            || path.components().any(|part| {
+                matches!(
+                    part,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            })
+        {
+            return Err(NativeToolError(
+                "rg 只能搜索当前工作目录内的相对路径。".to_string(),
+            ));
+        }
+    }
+    let mut safe_args = vec![
+        "--no-config".to_string(),
+        "--color".to_string(),
+        "never".to_string(),
+        "--line-number".to_string(),
+        "--max-count".to_string(),
+        "50".to_string(),
+        "--".to_string(),
+        args[0].clone(),
+    ];
+    if let Some(path) = args.get(1) {
+        safe_args.push(path.clone());
+    }
+    Ok(executable_spec("rg.exe", safe_args))
+}
+
+fn build_version_command(
+    label: &str,
+    program: &str,
+    args: &[String],
+) -> Result<ShellCommandSpec, NativeToolError> {
+    if !args.is_empty() && args != ["--version"] {
+        return Err(NativeToolError(format!("{label} 仅允许查询 --version。")));
+    }
+    Ok(executable_spec(program, vec!["--version".to_string()]))
+}
+
+fn executable_spec(program: &str, args: Vec<String>) -> ShellCommandSpec {
+    ShellCommandSpec {
+        program: program.to_string(),
+        args,
+        environment: HashMap::new(),
+    }
+}
+
+fn bounded_output(bytes: &[u8], limit: usize) -> (String, bool) {
+    let value = String::from_utf8_lossy(bytes);
+    let mut characters = value.chars();
+    let output: String = characters.by_ref().take(limit).collect();
+    (output, characters.next().is_some())
+}
+
+fn environment_path_entries(variable: &str, limit: usize) -> Vec<EnvironmentPathEntry> {
+    let Some(value) = env::var_os(variable) else {
+        return Vec::new();
+    };
+    let mut seen = HashSet::new();
+    env::split_paths(&value)
+        .filter(|path| !path.as_os_str().is_empty())
+        .filter(|path| seen.insert(path.to_string_lossy().to_lowercase()))
+        .take(limit)
+        .map(|path| EnvironmentPathEntry {
+            exists: path.exists(),
+            is_directory: path.is_dir(),
+            path: path.display().to_string(),
+        })
+        .collect()
+}
+
+fn nonempty(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
+}
+
+fn is_safe_tool_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 80
+        && name.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-' | '+')
+        })
+}
+
+fn discover_local_tools(names: &[String]) -> Vec<LocalToolResult> {
+    let path_entries = env::var_os("PATH")
+        .map(|value| env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let extensions = executable_extensions();
+    names
+        .iter()
+        .map(|name| {
+            let candidate_names = if Path::new(name).extension().is_some() {
+                vec![name.clone()]
+            } else {
+                extensions
+                    .iter()
+                    .map(|extension| format!("{name}{extension}"))
+                    .collect()
+            };
+            let mut found_paths = Vec::new();
+            let mut seen = HashSet::new();
+            for directory in &path_entries {
+                for candidate_name in &candidate_names {
+                    let candidate = directory.join(candidate_name);
+                    if fs::metadata(&candidate).is_ok_and(|metadata| metadata.is_file()) {
+                        let display = candidate.display().to_string();
+                        if seen.insert(display.to_lowercase()) {
+                            found_paths.push(display);
+                        }
+                        if found_paths.len() >= 3 {
+                            break;
+                        }
+                    }
+                }
+                if found_paths.len() >= 3 {
+                    break;
+                }
+            }
+            LocalToolResult {
+                name: name.clone(),
+                found: !found_paths.is_empty(),
+                paths: found_paths,
+            }
+        })
+        .collect()
+}
+
+fn executable_extensions() -> Vec<String> {
+    let mut extensions: Vec<String> = env::var("PATHEXT")
+        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
+        .split(';')
+        .filter_map(|value| nonempty(value).map(|value| value.to_ascii_lowercase()))
+        .collect();
+    if !extensions.iter().any(String::is_empty) {
+        extensions.push(String::new());
+    }
+    extensions
+}
+
 fn native_error(error: impl fmt::Display) -> NativeToolError {
     NativeToolError(error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::build_fts_query;
+    use super::{
+        build_fts_query, build_shell_command, discover_local_tools, is_safe_tool_name,
+        resolve_shell_limits,
+    };
 
     #[test]
     fn fts_query_is_bounded_and_quoted() {
@@ -229,5 +849,42 @@ mod tests {
             build_fts_query("P1 Agent Loop"),
             "\"P1\" OR \"Agent\" OR \"Loop\""
         );
+    }
+
+    #[test]
+    fn shell_allowlist_accepts_read_only_commands() {
+        assert!(build_shell_command("Get-Process", &["code".to_string()]).is_ok());
+        assert!(build_shell_command("git", &["status".to_string(), "--short".to_string()]).is_ok());
+        assert!(build_shell_command("rg", &["Agent".to_string(), "src".to_string()]).is_ok());
+    }
+
+    #[test]
+    fn shell_allowlist_rejects_scripts_writes_and_parent_paths() {
+        assert!(build_shell_command("powershell", &["Remove-Item".to_string()]).is_err());
+        assert!(build_shell_command("git", &["reset".to_string(), "--hard".to_string()]).is_err());
+        assert!(build_shell_command("rg", &["secret".to_string(), "..\\".to_string()]).is_err());
+        assert!(build_shell_command("Get-Command", &["git; whoami".to_string()]).is_err());
+    }
+
+    #[test]
+    fn local_tool_discovery_validates_names_and_scans_path() {
+        assert!(is_safe_tool_name("git.exe"));
+        assert!(!is_safe_tool_name("..\\git.exe"));
+        assert!(!is_safe_tool_name("git;whoami"));
+        let results = discover_local_tools(&["tool-that-does-not-exist-019f593a".to_string()]);
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].found);
+    }
+
+    #[test]
+    fn shell_resource_limits_are_flexible_but_bounded() {
+        assert_eq!(resolve_shell_limits(None, None).unwrap(), (10_000, 32_768));
+        assert_eq!(
+            resolve_shell_limits(Some(2_500), Some(8_192)).unwrap(),
+            (2_500, 8_192)
+        );
+        assert!(resolve_shell_limits(Some(999), None).is_err());
+        assert!(resolve_shell_limits(Some(30_001), None).is_err());
+        assert!(resolve_shell_limits(None, Some(70_000)).is_err());
     }
 }

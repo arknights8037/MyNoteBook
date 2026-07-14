@@ -3,9 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_AI_SETTINGS } from '@/models/ai'
 import { runAiMarkdownCompletion } from './AiMarkdownService'
 
+const proxyRequest = vi.hoisted(() => vi.fn())
+
+vi.mock('./AiHttpService', () => ({
+  proxyAiFetch: proxyRequest,
+}))
+
 describe('AiMarkdownService', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    proxyRequest.mockReset()
   })
 
   it('sends reasoning effort only for reasoning-capable models', async () => {
@@ -183,13 +190,12 @@ describe('AiMarkdownService', () => {
 })
 
 function mockSuccessfulFetch(payload: unknown = { choices: [{ message: { content: 'ok' } }] }) {
-  const fetchMock = vi.fn(async () => ({
-    ok: true,
-    body: null,
-    json: async () => payload,
-  })) as unknown as typeof fetch
-  vi.stubGlobal('fetch', fetchMock)
-  return fetchMock as unknown as ReturnType<typeof vi.fn>
+  proxyRequest.mockResolvedValue(
+    new Response(JSON.stringify(payload), {
+      headers: { 'content-type': 'application/json' },
+    }),
+  )
+  return proxyRequest
 }
 
 function mockStreamingFetch(chunks: string[]) {
@@ -202,10 +208,8 @@ function mockStreamingFetch(chunks: string[]) {
       controller.close()
     },
   })
-  const fetchMock = vi.fn(async () => ({
-    ok: true,
-    body,
-  })) as unknown as typeof fetch
-  vi.stubGlobal('fetch', fetchMock)
-  return fetchMock as unknown as ReturnType<typeof vi.fn>
+  proxyRequest.mockResolvedValue(
+    new Response(body, { headers: { 'content-type': 'text/event-stream' } }),
+  )
+  return proxyRequest
 }

@@ -1,15 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_AI_SETTINGS } from '@/models/ai'
+import { invoke } from '@tauri-apps/api/core'
+import { loadAiApiKey } from './AiSecretService'
 import { fetchAiModelOptions } from './AiModelService'
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+}))
+
+vi.mock('./AiSecretService', () => ({
+  loadAiApiKey: vi.fn(),
+}))
 
 describe('AiModelService', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    vi.mocked(loadAiApiKey).mockReset().mockResolvedValue('')
+    vi.mocked(invoke).mockReset()
   })
 
   it('fetches OpenAI-compatible model ids from the target endpoint', async () => {
-    const fetchMock = mockModelsFetch({
+    const invokeMock = mockModelsRequest({
       data: [{ id: 'z-model' }, { id: 'a-model' }],
     })
 
@@ -21,14 +33,17 @@ describe('AiModelService', () => {
       }),
     ).resolves.toEqual(['a-model', 'z-model'])
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://example.com/v1/models')
-    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
-      Authorization: 'Bearer key',
+    expect(invokeMock).toHaveBeenCalledWith('fetch_ai_models', {
+      input: {
+        endpoint: 'https://example.com/v1/',
+        provider: 'openai',
+        apiKey: 'key',
+      },
     })
   })
 
   it('uses Anthropic headers for Anthropic model discovery', async () => {
-    const fetchMock = mockModelsFetch({
+    const invokeMock = mockModelsRequest({
       data: [{ id: 'claude-sonnet' }],
     })
 
@@ -39,15 +54,49 @@ describe('AiModelService', () => {
       apiKey: 'anthropic-key',
     })
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.anthropic.com/v1/models')
-    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
-      'anthropic-version': '2023-06-01',
-      'x-api-key': 'anthropic-key',
+    expect(invokeMock).toHaveBeenCalledWith('fetch_ai_models', {
+      input: {
+        endpoint: 'https://api.anthropic.com/v1',
+        provider: 'anthropic',
+        apiKey: 'anthropic-key',
+      },
     })
   })
 
+  it('loads the provider key before fetching model groups when settings are not hydrated yet', async () => {
+    vi.mocked(loadAiApiKey).mockResolvedValue('stored-provider-key')
+    const invokeMock = mockModelsRequest({ data: [{ id: 'group-model' }] })
+
+    await fetchAiModelOptions({
+      ...DEFAULT_AI_SETTINGS,
+      provider: 'openai-compatible',
+      endpoint: 'https://example.com/v1',
+      apiKey: '',
+    })
+
+    expect(loadAiApiKey).toHaveBeenCalledWith('openai-compatible')
+    expect(invokeMock).toHaveBeenCalledWith('fetch_ai_models', {
+      input: {
+        endpoint: 'https://example.com/v1',
+        provider: 'openai-compatible',
+        apiKey: 'stored-provider-key',
+      },
+    })
+  })
+
+  it('does not read the secret store when the current settings already contain a key', async () => {
+    mockModelsRequest({ data: [{ id: 'model' }] })
+
+    await fetchAiModelOptions({
+      ...DEFAULT_AI_SETTINGS,
+      apiKey: ' current-key ',
+    })
+
+    expect(loadAiApiKey).not.toHaveBeenCalled()
+  })
+
   it('reports unrecognized model payloads', async () => {
-    mockModelsFetch({ data: [] })
+    mockModelsRequest({ data: [] })
 
     await expect(fetchAiModelOptions(DEFAULT_AI_SETTINGS)).rejects.toThrow(
       '没有返回可识别的模型列表',
@@ -55,11 +104,8 @@ describe('AiModelService', () => {
   })
 })
 
-function mockModelsFetch(payload: unknown) {
-  const fetchMock = vi.fn(async () => ({
-    ok: true,
-    json: async () => payload,
-  })) as unknown as typeof fetch
-  vi.stubGlobal('fetch', fetchMock)
-  return fetchMock as unknown as ReturnType<typeof vi.fn>
+function mockModelsRequest(payload: unknown) {
+  const invokeMock = vi.mocked(invoke)
+  invokeMock.mockResolvedValue(payload)
+  return invokeMock
 }

@@ -48,6 +48,8 @@ export interface DocumentSummary {
   author: string
   description: string
   plainText: string
+  /** Character count is populated for lightweight list rows whose full text is loaded on demand. */
+  characterCount?: number
   revision: number
   sortOrder: number
   isDeleted: boolean

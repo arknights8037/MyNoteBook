@@ -3,6 +3,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import type { LanguageModel } from 'ai'
 
 import type { AiSettings } from '@/models/ai'
+import { proxyAiFetch } from './AiHttpService'
 
 export function createAiSdkModel(settings: AiSettings): LanguageModel {
   const baseURL = settings.endpoint.replace(/\/+$/, '')
@@ -11,6 +12,7 @@ export function createAiSdkModel(settings: AiSettings): LanguageModel {
       apiKey: settings.apiKey,
       baseURL,
       name: 'mynotebook-anthropic',
+      fetch: proxyAiFetch,
     })(settings.model)
   }
 
@@ -19,6 +21,7 @@ export function createAiSdkModel(settings: AiSettings): LanguageModel {
     apiKey: settings.apiKey,
     baseURL,
     includeUsage: true,
+    fetch: proxyAiFetch,
   })
   return provider(settings.model)
 }

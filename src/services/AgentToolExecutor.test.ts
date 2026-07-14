@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { executeAgentTool, type AgentToolExecutionContext } from './AgentToolExecutor'
 
@@ -21,16 +21,154 @@ const context: AgentToolExecutionContext = {
 describe('AgentToolExecutor', () => {
   it('executes whitelisted read tools', async () => {
     await expect(
-      executeAgentTool(
-        { name: 'find_blocks_by_regex', arguments: { pattern: 'P0' } },
-        context,
-      ),
+      executeAgentTool({ name: 'find_blocks_by_regex', arguments: { pattern: 'P0' } }, context),
     ).resolves.toMatchObject({ ok: true, value: [{ id: 'p0' }] })
   })
 
   it('does not execute write tools inside the loop', async () => {
     await expect(
       executeAgentTool({ name: 'replace_text_by_regex', arguments: {} }, context),
-    ).resolves.toMatchObject({ ok: false, error: expect.stringContaining('不能在 loop 中直接执行') })
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('不能在 loop 中直接执行'),
+    })
+  })
+
+  it('delegates the shell tool to the native allowlisted executor', async () => {
+    const executeNativeTool = async (name: string, args: Record<string, unknown>) => ({
+      name,
+      args,
+    })
+    await expect(
+      executeAgentTool(
+        {
+          name: 'execute_shell',
+          arguments: {
+            command: 'git',
+            args: ['status', '--short'],
+            timeoutMs: 5_000,
+            maxOutputChars: 8_192,
+          },
+        },
+        { ...context, executeNativeTool },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        name: 'execute_shell',
+        args: {
+          command: 'git',
+          args: ['status', '--short'],
+          timeoutMs: 5_000,
+          maxOutputChars: 8_192,
+        },
+      },
+    })
+  })
+
+  it('reads a relative file from an enabled skill through the native executor', async () => {
+    const executeNativeTool = async (name: string, args: Record<string, unknown>) => ({
+      name,
+      args,
+    })
+    await expect(
+      executeAgentTool(
+        {
+          name: 'read_skill_file',
+          arguments: { skillId: 'writer', relativePath: 'references/style.md' },
+        },
+        { ...context, executeNativeTool },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        name: 'read_skill_file',
+        args: { skillId: 'writer', relativePath: 'references/style.md' },
+      },
+    })
+  })
+
+  it('pauses for an authorizer answer and returns it to the model', async () => {
+    const requestAuthorizerInput = vi.fn(async () => '保留原结构')
+    await expect(
+      executeAgentTool(
+        {
+          name: 'request_authorizer_input',
+          arguments: {
+            question: '采用哪种结构？',
+            context: '两种结构都会改变目录。',
+            options: ['保留原结构', '重新分组'],
+            allowFreeText: true,
+          },
+        },
+        { ...context, requestAuthorizerInput },
+      ),
+    ).resolves.toEqual({ ok: true, value: { answer: '保留原结构' } })
+    expect(requestAuthorizerInput).toHaveBeenCalledWith({
+      question: '采用哪种结构？',
+      context: '两种结构都会改变目录。',
+      options: ['保留原结构', '重新分组'],
+      allowFreeText: true,
+    })
+  })
+
+  it('rejects shell resource limits outside the native policy', async () => {
+    await expect(
+      executeAgentTool(
+        { name: 'execute_shell', arguments: { command: 'git', timeoutMs: 60_000 } },
+        { ...context, executeNativeTool: async () => ({}) },
+      ),
+    ).resolves.toMatchObject({ ok: false, error: expect.stringContaining('1000 到 30000') })
+  })
+
+  it('creates a disabled automation draft only after inline authorization', async () => {
+    const requestAuthorizerInput = vi.fn(async () => '创建停用草稿')
+    const createAutomationDraft = vi.fn(async (input) => ({ ...input, created: true }))
+
+    await expect(
+      executeAgentTool(
+        {
+          name: 'create_automation_draft',
+          arguments: {
+            name: '每日摘要',
+            instruction: '总结当前文档的新变化',
+            triggerType: 'daily',
+            dailyTime: '18:30',
+          },
+        },
+        { ...context, requestAuthorizerInput, createAutomationDraft },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { created: true, name: '每日摘要', triggerConfig: { dailyTime: '18:30' } },
+    })
+    expect(requestAuthorizerInput).toHaveBeenCalledWith(
+      expect.objectContaining({ options: ['创建停用草稿', '取消'], allowFreeText: false }),
+    )
+    expect(createAutomationDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ documentId: 'doc-1', triggerType: 'daily' }),
+    )
+  })
+
+  it('does not create a Skill draft when authorization is cancelled', async () => {
+    const createSkillDraft = vi.fn(async () => ({ created: true }))
+    await expect(
+      executeAgentTool(
+        {
+          name: 'create_skill_draft',
+          arguments: {
+            name: '周报整理',
+            description: '把项目记录整理为周报',
+            instructions: '仅在用户要求整理周报时触发。',
+          },
+        },
+        {
+          ...context,
+          requestAuthorizerInput: async () => '取消',
+          createSkillDraft,
+        },
+      ),
+    ).resolves.toEqual({ ok: true, value: { created: false, reason: '用户取消创建。' } })
+    expect(createSkillDraft).not.toHaveBeenCalled()
   })
 })

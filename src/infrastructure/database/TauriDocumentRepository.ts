@@ -1,3 +1,5 @@
+import { invoke } from '@tauri-apps/api/core'
+
 import {
   DOCUMENT_SCHEMA_VERSION,
   EMPTY_TIPTAP_DOCUMENT,
@@ -13,6 +15,7 @@ import { err, normalizeError, ok, type AppResult } from '@/models/result'
 import type { DocumentRepository } from '@/repositories/DocumentRepository'
 import type { SqlClient } from '@/repositories/SqlClient'
 import { parseEditorContentJson, serializeEditorContent } from '@/editor/editorContent'
+import { loadAppSettings } from '@/models/settings'
 
 interface DocumentRow extends Record<string, unknown> {
   id: string
@@ -23,7 +26,8 @@ interface DocumentRow extends Record<string, unknown> {
   author?: string
   description?: string
   content_json: string
-  plain_text: string
+  plain_text?: string
+  character_count?: number
   schema_version: number
   revision: number
   sort_order: number
@@ -39,11 +43,13 @@ interface DocumentTagRow extends Record<string, unknown> {
 
 const DOCUMENT_SUMMARY_COLUMNS = `
   id, parent_id, document_kind, title, source_url, author, description,
-  plain_text, revision, sort_order, is_deleted, created_at, updated_at
+  length(trim(plain_text)) AS character_count,
+  revision, sort_order, is_deleted, created_at, updated_at
 `
 const QUALIFIED_DOCUMENT_SUMMARY_COLUMNS = `
   documents.id, documents.parent_id, documents.document_kind, documents.title,
   documents.source_url, documents.author, documents.description, documents.plain_text,
+  length(trim(documents.plain_text)) AS character_count,
   documents.revision, documents.sort_order, documents.is_deleted,
   documents.created_at, documents.updated_at
 `
@@ -51,7 +57,13 @@ const QUALIFIED_DOCUMENT_SUMMARY_COLUMNS = `
 const DEFAULT_CONTENT_JSON = serializeEditorContent(EMPTY_TIPTAP_DOCUMENT)
 
 export class TauriDocumentRepository implements DocumentRepository {
-  constructor(private readonly sqlClient: SqlClient) {}
+  constructor(
+    private readonly sqlClient: SqlClient,
+    private readonly persistCore: (
+      document: DocumentRecord,
+      expectedRevision: number | null,
+    ) => Promise<void> = persistDocumentThroughTauri,
+  ) {}
 
   async create(input: CreateDocumentInput): Promise<AppResult<DocumentRecord>> {
     const now = Date.now()
@@ -74,49 +86,7 @@ export class TauriDocumentRepository implements DocumentRepository {
       updatedAt: now,
     }
 
-    try {
-      await this.sqlClient.execute(
-        `INSERT INTO documents (
-          id,
-          parent_id,
-          document_kind,
-          title,
-          source_url,
-          author,
-          description,
-          content_json,
-          plain_text,
-          schema_version,
-          revision,
-          sort_order,
-          is_deleted,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          document.id,
-          document.parentId,
-          document.documentKind,
-          document.title,
-          document.sourceUrl,
-          document.author,
-          document.description,
-          document.contentJson,
-          document.plainText,
-          document.schemaVersion,
-          document.revision,
-          document.sortOrder,
-          document.isDeleted ? 1 : 0,
-          document.createdAt,
-          document.updatedAt,
-        ],
-      )
-      await this.syncDocumentTags(document.id, document.tags)
-
-      return ok(document)
-    } catch (error) {
-      return err(normalizeError(error, 'Failed to create document.'))
-    }
+    return this.persistThroughDocumentCore(document, null, 'Failed to create document.')
   }
 
   async findById(
@@ -298,90 +268,37 @@ export class TauriDocumentRepository implements DocumentRepository {
       updatedAt: Date.now(),
     }
 
-    return this.persistExistingDocument(
-      nextDocument,
-      input.expectedRevision,
-      input.tags !== undefined,
-    )
+    return this.persistExistingDocument(nextDocument, input.expectedRevision)
   }
 
   async save(input: SaveDocumentInput): Promise<AppResult<DocumentRecord>> {
     const now = Date.now()
-    const expectedRevision = input.expectedRevision ?? -1
-    const insertRevision = 1
-
-    try {
-      const result = await this.sqlClient.execute(
-        `INSERT INTO documents (
-          id,
-          parent_id,
-          document_kind,
-          title,
-          source_url,
-          author,
-          description,
-          content_json,
-          plain_text,
-          schema_version,
-          revision,
-          sort_order,
-          is_deleted,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          parent_id = excluded.parent_id,
-          document_kind = excluded.document_kind,
-          title = excluded.title,
-          source_url = excluded.source_url,
-          author = excluded.author,
-          description = excluded.description,
-          content_json = excluded.content_json,
-          plain_text = excluded.plain_text,
-          schema_version = excluded.schema_version,
-          revision = documents.revision + 1,
-          sort_order = excluded.sort_order,
-          is_deleted = 0,
-          updated_at = excluded.updated_at
-        WHERE documents.revision = ? AND documents.is_deleted = 0`,
-        [
-          input.id,
-          input.parentId ?? null,
-          input.documentKind ?? 'article',
-          input.title,
-          input.sourceUrl ?? '',
-          input.author ?? '',
-          input.description ?? '',
-          normalizeContentJson(input.contentJson),
-          input.plainText,
-          DOCUMENT_SCHEMA_VERSION,
-          insertRevision,
-          input.sortOrder ?? 0,
-          now,
-          now,
-          expectedRevision,
-        ],
-      )
-
-      if (result.rowsAffected !== 1) {
-        return err({
-          code: 'revision-conflict',
-          message: `Document "${input.id}" was changed before autosave completed.`,
-        })
-      }
-      const savedResult = await this.findById(input.id)
-      if (!savedResult.ok || input.tags === undefined) {
-        return savedResult
-      }
-
-      const nextTags = normalizeTags(input.tags)
-      if (!areStringArraysEqual(savedResult.value.tags, nextTags)) {
-        await this.syncDocumentTags(input.id, nextTags)
-      }
-      return ok({ ...savedResult.value, tags: nextTags })
-    } catch (error) {
-      return err(normalizeError(error, 'Failed to save document.'))
-    }
+    const existingResult =
+      input.expectedRevision === null ? null : await this.findById(input.id)
+    if (existingResult && !existingResult.ok) return existingResult
+    const existing = existingResult?.value
+    return this.persistThroughDocumentCore(
+      {
+        id: input.id,
+        parentId: input.parentId ?? null,
+        documentKind: input.documentKind ?? 'article',
+        title: input.title,
+        tags: normalizeTags(input.tags ?? existing?.tags),
+        sourceUrl: input.sourceUrl ?? '',
+        author: input.author ?? '',
+        description: input.description ?? '',
+        contentJson: normalizeContentJson(input.contentJson),
+        plainText: input.plainText,
+        schemaVersion: DOCUMENT_SCHEMA_VERSION,
+        revision: input.expectedRevision ?? 0,
+        sortOrder: input.sortOrder ?? 0,
+        isDeleted: false,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      },
+      input.expectedRevision,
+      'Failed to save document.',
+    )
   }
 
   async softDelete(id: DocumentId, expectedRevision: number): Promise<AppResult<DocumentRecord>> {
@@ -465,57 +382,28 @@ export class TauriDocumentRepository implements DocumentRepository {
   private async persistExistingDocument(
     document: DocumentRecord,
     expectedRevision: number,
-    syncTags = false,
+  ): Promise<AppResult<DocumentRecord>> {
+    return this.persistThroughDocumentCore(
+      document,
+      expectedRevision,
+      'Failed to persist document.',
+    )
+  }
+
+  private async persistThroughDocumentCore(
+    document: DocumentRecord,
+    expectedRevision: number | null,
+    fallbackMessage: string,
   ): Promise<AppResult<DocumentRecord>> {
     try {
-      const result = await this.sqlClient.execute(
-        `UPDATE documents
-         SET parent_id = ?,
-             document_kind = ?,
-             title = ?,
-             source_url = ?,
-             author = ?,
-             description = ?,
-             content_json = ?,
-             plain_text = ?,
-             schema_version = ?,
-             revision = ?,
-             sort_order = ?,
-             is_deleted = ?,
-             updated_at = ?
-         WHERE id = ? AND revision = ?`,
-        [
-          document.parentId,
-          document.documentKind,
-          document.title,
-          document.sourceUrl,
-          document.author,
-          document.description,
-          document.contentJson,
-          document.plainText,
-          document.schemaVersion,
-          document.revision,
-          document.sortOrder,
-          document.isDeleted ? 1 : 0,
-          document.updatedAt,
-          document.id,
-          expectedRevision,
-        ],
-      )
-
-      if (result.rowsAffected !== 1) {
-        return err({
-          code: 'revision-conflict',
-          message: `Document "${document.id}" was changed before the update completed.`,
-        })
-      }
-      if (syncTags) {
-        await this.syncDocumentTags(document.id, document.tags)
-      }
-
-      return ok(document)
+      await this.persistCore(document, expectedRevision)
+      return this.findById(document.id, { includeDeleted: true })
     } catch (error) {
-      return err(normalizeError(error, 'Failed to persist document.'))
+      const message = error instanceof Error ? error.message : String(error)
+      if (/revision|版本冲突|版本.*变化/i.test(message)) {
+        return err({ code: 'revision-conflict', message, cause: error })
+      }
+      return err(normalizeError(error, fallbackMessage))
     }
   }
 
@@ -535,6 +423,7 @@ export class TauriDocumentRepository implements DocumentRepository {
     return rows.map((row) => ({
       ...mapDocumentBase(row),
       tags: tagsByDocumentId.get(row.id) ?? [],
+      characterCount: row.character_count ?? Array.from((row.plain_text ?? '').trim()).length,
     }))
   }
 
@@ -571,31 +460,30 @@ export class TauriDocumentRepository implements DocumentRepository {
     return rows.map((row) => row.name)
   }
 
-  private async syncDocumentTags(documentId: DocumentId, tags: string[]): Promise<void> {
-    const normalizedTags = normalizeTags(tags)
-    await this.sqlClient.execute('DELETE FROM document_tags WHERE document_id = ?', [documentId])
+}
 
-    const now = Date.now()
-    for (const tag of normalizedTags) {
-      const tagId = createTagId(tag)
-      await this.sqlClient.execute(
-        `INSERT INTO tags (id, name, created_at)
-         VALUES (?, ?, ?)
-         ON CONFLICT(name) DO NOTHING`,
-        [tagId, tag, now],
-      )
-      const rows = await this.sqlClient.select<{ id: string }>(
-        'SELECT id FROM tags WHERE name = ? LIMIT 1',
-        [tag],
-      )
-      const resolvedTagId = rows[0]?.id ?? tagId
-      await this.sqlClient.execute(
-        `INSERT OR IGNORE INTO document_tags (document_id, tag_id, created_at)
-         VALUES (?, ?, ?)`,
-        [documentId, resolvedTagId, now],
-      )
-    }
-  }
+async function persistDocumentThroughTauri(
+  document: DocumentRecord,
+  expectedRevision: number | null,
+): Promise<void> {
+  await invoke('persist_document', {
+    input: {
+      dataDirectory: loadAppSettings().dataDirectory,
+      id: document.id,
+      expectedRevision,
+      parentId: document.parentId,
+      documentKind: document.documentKind,
+      title: document.title,
+      tags: normalizeTags(document.tags),
+      sourceUrl: document.sourceUrl,
+      author: document.author,
+      description: document.description,
+      contentJson: normalizeContentJson(document.contentJson),
+      sortOrder: document.sortOrder,
+      isDeleted: document.isDeleted,
+      updatedAt: document.updatedAt,
+    },
+  })
 }
 
 function mapDocumentBase(row: DocumentRow) {
@@ -607,7 +495,7 @@ function mapDocumentBase(row: DocumentRow) {
     sourceUrl: row.source_url ?? '',
     author: row.author ?? '',
     description: row.description ?? '',
-    plainText: row.plain_text,
+    plainText: row.plain_text ?? '',
     revision: row.revision,
     sortOrder: row.sort_order,
     isDeleted: row.is_deleted === 1,
@@ -625,25 +513,6 @@ function normalizeTags(tags: string[] | undefined): string[] {
         .map((tag) => tag.slice(0, 40)),
     ),
   ).slice(0, 20)
-}
-
-function areStringArraysEqual(left: string[], right: string[]): boolean {
-  if (left.length !== right.length) return false
-  const rightValues = new Set(right)
-  return left.every((value) => rightValues.has(value))
-}
-
-function createTagId(tag: string): string {
-  const safeTag = tag
-    .toLocaleLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40)
-  const randomId =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
-  return `tag-${safeTag || 'item'}-${randomId}`
 }
 
 function mapDocumentKind(value: unknown): 'article' | 'group' {

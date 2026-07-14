@@ -2,6 +2,7 @@ import type { AgentPatchSet, AgentTask, BlockPatch } from '@/models/agent'
 import type { AgentToolCall } from '@/models/agentTool'
 import type { DocumentId, DocumentRecord } from '@/models/document'
 import type { AppResult } from '@/models/result'
+import type { ContextBundle } from '@/models/contextBundle'
 
 export interface AgentDocumentTransaction {
   id: string
@@ -28,6 +29,15 @@ export interface AppliedAgentPatchSet {
   transaction: AgentDocumentTransaction
 }
 
+export interface AgentRecoveryState {
+  tasks: AgentTask[]
+  pendingTask: AgentTask | null
+  pendingPatchSet: AgentPatchSet | null
+  lastAppliedTask: AgentTask | null
+  lastAppliedPatchSet: AgentPatchSet | null
+  lastAppliedTransaction: AgentDocumentTransaction | null
+}
+
 export interface ApplyAgentDocumentCreationInput {
   task: AgentTask
   patchSet: AgentPatchSet
@@ -39,9 +49,22 @@ export interface ApplyAgentDocumentCreationInput {
 
 export interface AgentRepository {
   createTask(task: AgentTask): Promise<AppResult<AgentTask>>
+  loadRecoveryState(
+    documentId: DocumentId,
+    options?: { markInterrupted?: boolean },
+  ): Promise<AppResult<AgentRecoveryState>>
   savePatchSet(patchSet: AgentPatchSet): Promise<AppResult<AgentPatchSet>>
   updateTask(task: AgentTask): Promise<AppResult<AgentTask>>
   recordToolCall(call: AgentToolCall): Promise<AppResult<AgentToolCall>>
+  saveContextBundle(
+    bundle: ContextBundle,
+    provenance: {
+      provider: string
+      modelParameters: Record<string, unknown>
+      ignoredParameters: string[]
+      skillVersions: Array<{ id: string; version: string | null }>
+    },
+  ): Promise<AppResult<ContextBundle>>
   rejectPatchSet(task: AgentTask, patches: BlockPatch[]): Promise<AppResult<AgentTask>>
   applyPatchSet(input: ApplyAgentPatchSetInput): Promise<AppResult<AppliedAgentPatchSet>>
   applyDocumentCreation(

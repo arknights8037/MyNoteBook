@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { Bot, DownloadCloud } from '@lucide/vue'
+import { computed } from 'vue'
 
 import { NButton, NIcon, NInput, NSelect } from '@/ui'
 import { AI_PROVIDER_CONFIGS, type AiProvider } from '@/models/ai'
+import { resolveProviderCapabilities } from '@/models/providerCapabilities'
 import { useSettingsSectionContext } from './settingsSectionContext'
 
 const {
@@ -17,6 +19,9 @@ const {
   updateAiTopP,
   updateAiMaxTokens,
 } = useSettingsSectionContext()
+const capabilities = computed(() =>
+  resolveProviderCapabilities(aiSettings.value.provider, aiSettings.value.model),
+)
 </script>
 
 <template>
@@ -87,7 +92,7 @@ const {
           @update:value="updateAi('apiKey', $event)"
         />
       </div>
-      <div class="settings-row">
+      <div v-if="capabilities.temperature" class="settings-row">
         <span><strong>温度</strong><small>0 更稳定，2 更发散。</small></span>
         <NInput
           :value="String(aiSettings.temperature)"
@@ -98,7 +103,7 @@ const {
           @update:value="updateAiTemperature"
         />
       </div>
-      <div class="settings-row">
+      <div v-if="capabilities.topP" class="settings-row">
         <span><strong>Top P</strong><small>控制采样范围，1 表示不额外限制。</small></span>
         <NInput
           :value="String(aiSettings.topP)"
@@ -120,6 +125,12 @@ const {
           step="256"
           @update:value="updateAiMaxTokens"
         />
+      </div>
+      <div class="settings-row settings-row--stacked">
+        <span><strong>模型能力</strong><small>由 Provider/Model Capability Matrix 驱动。</small></span>
+        <small class="settings-ai-model-status">
+          Tools {{ capabilities.toolChoice ? '✓' : '—' }} · Structured Output {{ capabilities.structuredOutput ? '✓' : '—' }} · Reasoning {{ capabilities.reasoningEffort ? '✓' : '—' }} · Streaming {{ capabilities.streaming ? '✓' : '—' }}
+        </small>
       </div>
       <div class="settings-row settings-row--stacked">
         <span><strong>系统提示词</strong><small>控制 AI 输出的 Markdown 风格和边界。</small></span>

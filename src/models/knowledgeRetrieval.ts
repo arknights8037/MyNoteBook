@@ -9,6 +9,7 @@ export interface KnowledgeSource {
   score: number
   isCurrentDocument: boolean
   blockId?: string
+  revision?: number
 }
 
 export interface KnowledgeRetrievalResult {
@@ -50,6 +51,7 @@ export function buildKnowledgeRetrievalContext(input: {
     contentSnippet: createSnippet(input.currentDocumentText, queryTerms),
     score: Number.MAX_SAFE_INTEGER,
     isCurrentDocument: true,
+    revision: input.documents.find((document) => document.id === input.currentDocumentId)?.revision ?? 0,
   })
 
   const scoredSources = input.documents
@@ -173,6 +175,7 @@ function scoreDocument(document: DocumentSummary, queryTerms: string[]): ScoredK
     contentSnippet: createSnippet(document.plainText, queryTerms),
     score,
     isCurrentDocument: false,
+    revision: document.revision,
     titleMatches,
     strongMatches,
   }

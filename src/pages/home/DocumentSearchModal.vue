@@ -6,6 +6,7 @@ import type { DocumentSummary } from '@/models/document'
 
 defineProps<{
   results: DocumentSummary[]
+  searching: boolean
   displayTitle: (document: DocumentSummary) => string
   getSnippet: (document: DocumentSummary) => string
 }>()
@@ -36,7 +37,9 @@ const emit = defineEmits<{
       aria-label="搜索标题或正文"
       @keydown.enter.prevent="emit('openFirst')"
     >
-      <template #prefix><NIcon :size="17"><Search /></NIcon></template>
+      <template #prefix
+        ><NIcon :size="17"><Search /></NIcon
+      ></template>
     </NInput>
 
     <div v-if="query.trim()" class="search-results" role="listbox" aria-label="搜索结果">
@@ -54,7 +57,8 @@ const emit = defineEmits<{
           <span class="search-results__snippet">{{ getSnippet(document) }}</span>
         </span>
       </button>
-      <p v-if="results.length === 0" class="search-results__empty">没有找到匹配的笔记</p>
+      <p v-if="searching && results.length === 0" class="search-results__empty">正在搜索…</p>
+      <p v-else-if="results.length === 0" class="search-results__empty">没有找到匹配的笔记</p>
     </div>
     <p v-else class="search-results__hint">输入关键词搜索标题和正文，按 Enter 打开首条结果。</p>
   </NModal>

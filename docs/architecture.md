@@ -10,6 +10,12 @@ This document defines the responsibility boundaries used when splitting large fi
 - `src-tauri/src/secret_store.rs`: AES-GCM API-key envelope encryption, OS keyring integration, and the process-memory decrypted-key cache.
 - `src-tauri/src/agent_repository.rs`: Agent task, patch, transaction, and audit persistence.
 - `src-tauri/src/agent_tools.rs`: native Agent tool commands and their database-backed execution.
+- `src-tauri/src/document_core.rs`: trusted Tiptap validation, canonical plain-text/block projection, transactional document persistence, and projection repair.
+- `src-tauri/src/work.rs`: atomic Result Verification, TaskRun transition, ChangeSet and Approval persistence.
+- `src-tauri/src/views.rs`: atomic View snapshot/dependency refresh and current-snapshot publication.
+- `src-tauri/src/governance.rs`: Delegation capability enforcement, idempotent external submissions, Domain Event/Outbox transactions and delivery leases.
+- `src-tauri/src/domain_events.rs`: the single transactional Domain Event + Outbox writer shared by Work, View and Governance commands.
+- `src-tauri/src/bin/mynotebook-mcp.rs`: standalone read-only stdio MCP Resource Server; database connections are query-only.
 
 Tauri commands should delegate immediately to these modules. Database code must use the shared pools from `database.rs`; opening ad hoc SQLite connections bypasses connection settings and migrations.
 
@@ -39,6 +45,17 @@ Startup paths must remain non-blocking: database initialization and the initial 
 - `models/documentLink.ts`: owns the backward-compatible internal document/block link format. UI surfaces parse links through this module rather than slicing hashes themselves.
 - `models/documentBlock.ts`: defines the read-only block projection contract. `documents.content_json` remains the write source of truth; SQLite triggers own projection synchronization.
 - `services/AgentCommandService.ts`: validates deterministic write commands and expands them into confirmation proposals. It never writes documents or imports Tauri APIs.
+- `models/executionPolicy.ts` and `models/contextBundle.ts`: versioned Agent limits and immutable context provenance; Runtime consumes these contracts and repository infrastructure persists them.
+- `models/knowledge.ts` / `KnowledgeService`: versioned Rule, Decision, Evidence and ChangeSet semantics anchored to canonical documents.
+- `models/work.ts` / `WorkService` / `ResultVerifier`: unified TaskRun state machine, artifacts, evidence and verification policy. Verification never writes canonical documents directly.
+- `models/view.ts` / `ViewService`: Query/Projection definitions and immutable dependency snapshots. Views are manually refreshed read models; writeback is readonly or a proposed ChangeSet.
+- `models/governance.ts` / `DelegationService` / `CliAgentAdapter`: external capability grants and versioned file protocol; adapters cannot bypass Work or Document boundaries.
+- `services/KnowledgeControlService.ts`: application coordinator for Knowledge, View, verification and Delegation workflows. `KnowledgeControlPage.vue` owns only page state; `pages/knowledge-control/*Panel.vue` own focused presentation surfaces.
+- `models/providerCapabilities.ts`: one Provider/Model capability decision point used by settings, runtime request shaping and provenance audit.
+
+Knowledge Objects may reference Document Core, and Context Compiler may consume effective Knowledge Objects. Work coordinates runs and verification but crosses the Document boundary only through ChangeSet/Patch application. View depends on Document/Knowledge snapshots and must never become a fact source. Infrastructure transactions that publish verification or View snapshots stay in Rust commands.
+
+Generated View generation belongs to View Application Service, while model execution is injected through `GeneratedViewExecutor`. Manual override changes the publication rule: refresh persists a preview and provenance but cannot replace `current_snapshot_id`. Integration Gateway exposes read-only MCP Resources and capability-scoped submissions; Governance persists the accepted fact and Outbox record atomically.
 
 ## Remaining decomposition targets
 

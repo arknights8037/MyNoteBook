@@ -6,6 +6,7 @@ export function resolveAiExecutionMode(
 ): Exclude<AiChatMode, 'auto'> {
   if (mode !== 'auto') return mode
   const normalizedPrompt = prompt.toLocaleLowerCase()
+  if (isDocumentCreationPrompt(normalizedPrompt)) return 'agent'
   if (/(全面|多步|调研|检索|知识库|对比|规划|方案|梳理.*资料|整合.*资料)/.test(normalizedPrompt)) {
     return 'agent'
   }
@@ -13,6 +14,14 @@ export function resolveAiExecutionMode(
     return 'edit'
   }
   return 'ask'
+}
+
+export function inferAiAgentIntent(prompt: string): 'create' | 'default' {
+  return isDocumentCreationPrompt(prompt) ? 'create' : 'default'
+}
+
+function isDocumentCreationPrompt(prompt: string): boolean {
+  return /(?:新建|创建|建立|新增)[^。！？\n]{0,24}(?:子页面|页面|文档|笔记)/i.test(prompt)
 }
 
 export function buildAiPrompt(prompt: string, mode: Exclude<AiChatMode, 'auto'>): string {

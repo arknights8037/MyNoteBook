@@ -26,7 +26,9 @@ import {
 
 import type { SidebarDocumentNode } from '@/features/documents/documentTree'
 import type { DocumentId, DocumentSummary } from '@/models/document'
-import { NButton, NIcon, NTooltip } from '@/ui'
+import NButton from '@/ui/NButton.vue'
+import NIcon from '@/ui/NIcon.vue'
+import NTooltip from '@/ui/NTooltip.vue'
 
 defineOptions({ name: 'SidebarDocumentTree' })
 

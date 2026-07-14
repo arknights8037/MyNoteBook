@@ -1,21 +1,31 @@
 <script setup lang="ts">
 import {
+  Activity,
+  Bot,
   BookOpen,
   Check,
+  CircleCheck,
+  CircleX,
   ChevronDown,
   Database,
+  FilePlus2,
   FileText,
   History,
+  LoaderCircle,
+  ListChecks,
+  MessageCircleQuestion,
   Copy,
   GitFork,
   Maximize2,
   Minimize2,
   Pencil,
   RotateCcw,
+  SearchCheck,
   Send,
   Square,
   Sparkles,
   Trash2,
+  Wrench,
   X,
 } from '@lucide/vue'
 import {
@@ -28,6 +38,13 @@ import {
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import type { AiProvider, AiReasoningEffort, AiSettings } from '@/models/ai'
+import { resolveProviderCapabilities } from '@/models/providerCapabilities'
+import type { AgentRuntimeViewState } from '@/models/agentRuntime'
+import {
+  filterAgentSlashCommands,
+  resolveAgentSlashCommand,
+  type AgentSlashCommand,
+} from '@/models/agentSlashCommand'
 import type { KnowledgeSource } from '@/models/knowledgeRetrieval'
 import { parseInternalDocumentHref } from '@/models/documentLink'
 import type { AiChatMode, AiChatRole, AiChatStatus, AiSelectorOption } from '@/models/aiChatMode'
@@ -82,6 +99,7 @@ interface FloatingResizeState {
 const props = withDefaults(
   defineProps<{
     workspace: boolean
+    docked?: boolean
     mode: AiChatMode
     modeLabel: string
     modeOptions: Array<AiSelectorOption<AiChatMode>>
@@ -100,12 +118,18 @@ const props = withDefaults(
     error: string
     isRunning: boolean
     agentStep?: string
+    runtimeState: AgentRuntimeViewState
     renderMarkdownMessage: (markdown: string) => string
   }>(),
   {
     chatHistory: () => [],
     agentStep: '',
+    docked: false,
   },
+)
+
+const providerCapabilities = computed(() =>
+  resolveProviderCapabilities(props.settings.provider, props.settings.model),
 )
 
 const emit = defineEmits<{
@@ -138,15 +162,50 @@ const quickPrompts = [
   { label: '整理为提纲', prompt: '请将当前页面整理成层级清晰的 Markdown 提纲。' },
 ]
 const panelElement = ref<BrowserHTMLElement | null>(null)
+const composerElement = ref<BrowserTextAreaElement | null>(null)
 const messagesElement = ref<BrowserHTMLElement | null>(null)
+const runtimeClock = ref(Date.now())
+const slashSelectedIndex = ref(0)
+const slashMenuDismissed = ref(false)
 const floatingPosition = ref<{ x: number; y: number } | null>(null)
 const floatingSize = ref<{ width: number; height: number } | null>(null)
 let floatingDragState: FloatingDragState | null = null
 let floatingResizeState: FloatingResizeState | null = null
 let shouldKeepMessagesAtBottom = true
+let runtimeClockTimer: ReturnType<typeof globalThis.setInterval> | null = null
+
+const showRuntimeState = computed(
+  () =>
+    props.runtimeState.status !== 'idle' &&
+    (props.isRunning ||
+      props.runtimeState.toolCalls.length > 0 ||
+      props.runtimeState.status === 'failed' ||
+      props.runtimeState.status === 'cancelled'),
+)
+const slashCommands = computed(() =>
+  slashMenuDismissed.value ? [] : filterAgentSlashCommands(props.prompt),
+)
+const activeSlashCommand = computed(() => resolveAgentSlashCommand(props.prompt)?.command ?? null)
+
+const runtimeMeta = computed(() => {
+  const items = [runtimeStatusLabel(props.runtimeState.status)]
+  if (props.runtimeState.startedAt) {
+    items.push(
+      formatDuration(
+        props.runtimeState.startedAt,
+        props.runtimeState.completedAt ?? runtimeClock.value,
+      ),
+    )
+  }
+  if (props.runtimeState.rounds > 0) items.push(`${props.runtimeState.rounds} 轮`)
+  if (props.runtimeState.toolCalls.length > 0) {
+    items.push(`${props.runtimeState.toolCalls.length} 次工具调用`)
+  }
+  return items.join(' · ')
+})
 
 const floatingWindowStyle = computed(() => {
-  if (props.workspace) return undefined
+  if (props.workspace || props.docked) return undefined
 
   return {
     ...(floatingPosition.value
@@ -169,6 +228,8 @@ const floatingWindowStyle = computed(() => {
 function updatePrompt(event: InstanceType<typeof globalThis.Event>): void {
   const target = event.target as { value?: string } | null
   emit('update:prompt', target?.value ?? '')
+  slashMenuDismissed.value = false
+  slashSelectedIndex.value = 0
   resizeComposer(target as BrowserTextAreaElement | null)
 }
 
@@ -179,9 +240,55 @@ function resizeComposer(target: BrowserTextAreaElement | null): void {
 }
 
 function handleComposerKeydown(event: BrowserKeyboardEvent): void {
+  if (slashCommands.value.length > 0) {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const direction = event.key === 'ArrowDown' ? 1 : -1
+      slashSelectedIndex.value =
+        (slashSelectedIndex.value + direction + slashCommands.value.length) %
+        slashCommands.value.length
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      slashMenuDismissed.value = true
+      return
+    }
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault()
+      const command = slashCommands.value[slashSelectedIndex.value]
+      if (command) selectSlashCommand(command)
+      return
+    }
+  }
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
   event.preventDefault()
   if (!props.isRunning && props.prompt.trim()) emit('run')
+}
+
+function openSlashMenu(): void {
+  emit('update:prompt', '/')
+  slashMenuDismissed.value = false
+  slashSelectedIndex.value = 0
+  void nextTick(() => composerElement.value?.focus())
+}
+
+function selectSlashCommand(command: AgentSlashCommand): void {
+  emit('select-mode', command.mode)
+  emit('update:prompt', `/${command.name} `)
+  slashMenuDismissed.value = true
+  void nextTick(() => composerElement.value?.focus())
+}
+
+function slashCommandIcon(command: AgentSlashCommand) {
+  return (
+    {
+      plan: ListChecks,
+      create: FilePlus2,
+      interactive: MessageCircleQuestion,
+      research: SearchCheck,
+    }[command.name] ?? Bot
+  )
 }
 
 function useQuickPrompt(prompt: string): void {
@@ -201,6 +308,60 @@ function formatHistoryTime(timestamp: number): string {
   return `${date.getMonth() + 1}/${date.getDate()} ${time}`
 }
 
+function runtimeStatusLabel(status: AgentRuntimeViewState['status']): string {
+  if (status === 'running') return '运行中'
+  if (status === 'waiting_authorizer') return '等待授权人'
+  if (status === 'completed') return '已完成'
+  if (status === 'failed') return '失败'
+  if (status === 'cancelled') return '已停止'
+  return '待命'
+}
+
+function formatDuration(startedAt: number, completedAt: number): string {
+  const duration = Math.max(0, completedAt - startedAt)
+  if (duration < 1000) return `${duration} ms`
+  if (duration < 60_000) return `${(duration / 1000).toFixed(1)} 秒`
+  const minutes = Math.floor(duration / 60_000)
+  const seconds = Math.floor((duration % 60_000) / 1000)
+  return `${minutes} 分 ${seconds} 秒`
+}
+
+function formatToolDuration(startedAt: number, completedAt: number | null): string {
+  return formatDuration(startedAt, completedAt ?? runtimeClock.value)
+}
+
+function getToolLabel(toolName: string): string {
+  const labels: Record<string, string> = {
+    get_current_document: '读取当前页面',
+    get_selected_blocks: '读取选中块',
+    get_document_outline: '读取页面大纲',
+    search_documents: '搜索知识库',
+    read_document: '读取知识文档',
+    find_blocks_by_regex: '定位内容块',
+    read_skill_file: '读取技能资料',
+    request_authorizer_input: '询问授权人',
+    execute_shell: '执行只读命令',
+    inspect_environment_paths: '检查环境路径',
+    discover_local_tools: '发现本机工具',
+    get_system_info: '读取系统信息',
+    create_automation_draft: '创建自动化草稿',
+    create_skill_draft: '创建 Skill 草稿',
+  }
+  return labels[toolName] ?? toolName
+}
+
+function summarizeJson(value: string | null, maxLength = 220): string {
+  if (!value) return ''
+  let summary = value
+  try {
+    summary = JSON.stringify(JSON.parse(value))
+  } catch {
+    // Preserve non-JSON diagnostics as plain text.
+  }
+  summary = summary.replace(/\s+/g, ' ').trim()
+  return summary.length > maxLength ? `${summary.slice(0, maxLength)}...` : summary
+}
+
 function isAssistantMessage(chatMessage: AiChatMessage): boolean {
   return chatMessage.role === 'assistant'
 }
@@ -215,7 +376,7 @@ function showMessageActions(chatMessage: AiChatMessage): boolean {
 }
 
 function startWindowDrag(event: BrowserPointerEvent): void {
-  if (props.workspace || event.button !== 0) return
+  if (props.workspace || props.docked || event.button !== 0) return
   const target = event.target
   if (target instanceof globalThis.Element && target.closest('button, input, textarea, select')) {
     return
@@ -262,7 +423,7 @@ function stopWindowDrag(): void {
 }
 
 function startWindowResize(direction: ResizeDirection, event: BrowserPointerEvent): void {
-  if (props.workspace || event.button !== 0) return
+  if (props.workspace || props.docked || event.button !== 0) return
   const rect = panelElement.value?.getBoundingClientRect()
   if (!rect) return
 
@@ -383,13 +544,22 @@ watch(
   () => props.isRunning,
   (isRunning) => {
     if (isRunning) shouldKeepMessagesAtBottom = true
+    if (runtimeClockTimer) globalThis.clearInterval(runtimeClockTimer)
+    runtimeClock.value = Date.now()
+    runtimeClockTimer = isRunning
+      ? globalThis.setInterval(() => {
+          runtimeClock.value = Date.now()
+        }, 250)
+      : null
     scrollMessagesToLatest()
   },
+  { immediate: true },
 )
 
 onBeforeUnmount(() => {
   stopWindowDrag()
   stopWindowResize()
+  if (runtimeClockTimer) globalThis.clearInterval(runtimeClockTimer)
 })
 </script>
 
@@ -397,13 +567,16 @@ onBeforeUnmount(() => {
   <section
     ref="panelElement"
     class="ai-chat-popover"
-    :class="{ 'ai-chat-popover--workspace': workspace }"
+    :class="{
+      'ai-chat-popover--workspace': workspace,
+      'ai-chat-popover--docked': docked && !workspace,
+    }"
     :style="floatingWindowStyle"
     aria-label="AI 聊天"
   >
     <header
       class="ai-chat-popover__header"
-      :class="{ 'ai-chat-popover__header--draggable': !workspace }"
+      :class="{ 'ai-chat-popover__header--draggable': !workspace && !docked }"
       @pointerdown="startWindowDrag"
     >
       <div class="ai-chat-popover__heading">
@@ -455,7 +628,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="ai-chat-popover__icon-button"
-          :aria-label="workspace ? '还原悬浮 AI 聊天' : '在文档区打开 AI 聊天'"
+          :aria-label="workspace ? '还原为侧边 AI 面板' : '在文档区打开 AI 聊天'"
           @click="emit('toggle-workspace', !workspace)"
         >
           <Minimize2 v-if="workspace" :size="15" />
@@ -471,7 +644,7 @@ onBeforeUnmount(() => {
         </button>
       </div>
     </header>
-    <template v-if="!workspace">
+    <template v-if="!workspace && !docked">
       <span
         v-for="direction in resizeDirections"
         :key="direction"
@@ -488,16 +661,86 @@ onBeforeUnmount(() => {
       aria-live="polite"
       @scroll="handleMessagesScroll"
     >
-      <div v-if="isRunning" class="ai-agent-runbar" role="status">
-        <span class="ai-agent-runbar__pulse" aria-hidden="true"></span>
-        <div>
-          <strong>{{ agentStep || '正在分析上下文' }}</strong>
-          <small>{{ modeLabel }} · {{ settings.model }} · {{ knowledgeSourceCount }} 篇资料</small>
+      <section v-if="showRuntimeState" class="ai-agent-runbar" role="status">
+        <span
+          v-if="runtimeState.status === 'running' || runtimeState.status === 'waiting_authorizer'"
+          class="ai-agent-runbar__pulse"
+          aria-hidden="true"
+        ></span>
+        <CircleCheck
+          v-else-if="runtimeState.status === 'completed'"
+          class="ai-agent-runbar__state-icon ai-agent-runbar__state-icon--success"
+          :size="16"
+          aria-hidden="true"
+        />
+        <CircleX
+          v-else
+          class="ai-agent-runbar__state-icon ai-agent-runbar__state-icon--error"
+          :size="16"
+          aria-hidden="true"
+        />
+        <div class="ai-agent-runbar__summary">
+          <strong>{{ runtimeState.detail || agentStep || '正在分析上下文' }}</strong>
+          <small>{{ runtimeMeta }} · {{ providerLabel }} / {{ settings.model }}</small>
         </div>
-        <button type="button" aria-label="停止 Agent" title="停止 Agent" @click="emit('stop')">
+        <button
+          v-if="isRunning"
+          type="button"
+          aria-label="停止 Agent"
+          title="停止 Agent"
+          @click="emit('stop')"
+        >
           <Square :size="13" fill="currentColor" />
         </button>
-      </div>
+        <Activity v-else :size="16" class="ai-agent-runbar__activity" aria-hidden="true" />
+
+        <details
+          v-if="runtimeState.toolCalls.length > 0"
+          class="ai-agent-runbar__details"
+          :open="isRunning"
+        >
+          <summary>
+            <Wrench :size="13" />运行详情
+            <span>{{ runtimeState.toolCalls.length }} 次调用</span>
+          </summary>
+          <ol class="ai-agent-tool-list">
+            <li
+              v-for="toolCall in runtimeState.toolCalls"
+              :key="toolCall.id"
+              :class="`ai-agent-tool-list__item--${toolCall.status}`"
+            >
+              <LoaderCircle
+                v-if="toolCall.status === 'running'"
+                :size="14"
+                class="ai-agent-tool-list__spinner"
+                aria-hidden="true"
+              />
+              <CircleCheck
+                v-else-if="toolCall.status === 'completed'"
+                :size="14"
+                aria-hidden="true"
+              />
+              <CircleX v-else :size="14" aria-hidden="true" />
+              <div>
+                <header>
+                  <strong>{{ getToolLabel(toolCall.toolName) }}</strong>
+                  <code>{{ toolCall.toolName }}</code>
+                  <time>{{ formatToolDuration(toolCall.startedAt, toolCall.completedAt) }}</time>
+                </header>
+                <p v-if="summarizeJson(toolCall.argumentsJson)">
+                  输入：{{ summarizeJson(toolCall.argumentsJson) }}
+                </p>
+                <p v-if="toolCall.error" class="ai-agent-tool-list__error">
+                  {{ toolCall.error }}
+                </p>
+                <p v-else-if="summarizeJson(toolCall.resultJson)">
+                  结果：{{ summarizeJson(toolCall.resultJson) }}
+                </p>
+              </div>
+            </li>
+          </ol>
+        </details>
+      </section>
       <section v-if="messages.length === 0" class="ai-chat-welcome">
         <div class="ai-chat-welcome__mark"><Sparkles :size="21" /></div>
         <div class="ai-chat-welcome__copy">
@@ -633,10 +876,35 @@ onBeforeUnmount(() => {
 
     <form class="ai-chat-composer" @submit.prevent="emit('run')">
       <div class="ai-chat-input-shell">
+        <div
+          v-if="slashCommands.length"
+          class="ai-slash-menu"
+          role="listbox"
+          aria-label="Agent 功能"
+        >
+          <span class="ui-visually-hidden">使用上下方向键选择，Enter 确认</span>
+          <button
+            v-for="(command, index) in slashCommands"
+            :key="command.name"
+            type="button"
+            role="option"
+            :aria-selected="slashSelectedIndex === index"
+            :class="{ 'is-active': slashSelectedIndex === index }"
+            @mouseenter="slashSelectedIndex = index"
+            @click="selectSlashCommand(command)"
+          >
+            <span><component :is="slashCommandIcon(command)" :size="16" /></span>
+            <span
+              ><strong>/{{ command.name }} · {{ command.label }}</strong
+              ><small>{{ command.description }}</small></span
+            >
+          </button>
+        </div>
         <textarea
+          ref="composerElement"
           :value="prompt"
           rows="3"
-          :placeholder="promptPlaceholder"
+          :placeholder="activeSlashCommand?.placeholder || promptPlaceholder"
           aria-label="AI 输入"
           @input="updatePrompt"
           @keydown="handleComposerKeydown"
@@ -644,6 +912,15 @@ onBeforeUnmount(() => {
 
         <div class="ai-chat-composer__bar">
           <div class="ai-chat-composer__toolbar" aria-label="AI 输入选项">
+            <button
+              type="button"
+              class="ai-chat-selector ai-chat-selector--slash"
+              aria-label="打开 Agent 斜杠菜单"
+              title="Agent 斜杠菜单"
+              @click="openSlashMenu"
+            >
+              /
+            </button>
             <DropdownMenuRoot>
               <DropdownMenuTrigger as-child>
                 <button type="button" class="ai-chat-selector ai-chat-selector--primary">
@@ -725,7 +1002,7 @@ onBeforeUnmount(() => {
               </DropdownMenuPortal>
             </DropdownMenuRoot>
 
-            <DropdownMenuRoot>
+            <DropdownMenuRoot v-if="providerCapabilities.reasoningEffort">
               <DropdownMenuTrigger as-child>
                 <button type="button" class="ai-chat-selector">
                   <span>{{ reasoningLabel }}</span>
@@ -784,7 +1061,12 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <p class="ai-chat-composer__hint">
-          <Database :size="13" />已装载当前页面与 {{ knowledgeSourceCount }} 篇知识库资料
+          <span v-if="activeSlashCommand" class="ai-chat-composer__command">
+            /{{ activeSlashCommand.name }} · {{ activeSlashCommand.label }}
+          </span>
+          <span
+            ><Database :size="13" />已装载当前页面与 {{ knowledgeSourceCount }} 篇知识库资料</span
+          >
         </p>
       </div>
     </form>
