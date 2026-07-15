@@ -23,6 +23,7 @@ export interface AgentToolExecutionContext {
   selectedBlocks: SelectedBlock[]
   searchDocuments: (query: string, limit: number) => Promise<DocumentSummary[]>
   readDocument: (documentId: string) => Promise<DocumentRecord | null>
+  onDocumentRead?: (documentId: string, document: unknown) => Promise<void> | void
   executeNativeTool?: (
     name:
       | 'search_documents'
@@ -135,11 +136,13 @@ export async function executeAgentTool(
             request.callId,
             request.signal,
           )
+          if (document) await context.onDocumentRead?.(documentId, document)
           return document
             ? { ok: true, value: document }
             : { ok: false, error: `文档 ${documentId} 不存在或不可读取。` }
         }
         const document = await context.readDocument(documentId)
+        if (document) await context.onDocumentRead?.(documentId, document)
         return document
           ? {
               ok: true,

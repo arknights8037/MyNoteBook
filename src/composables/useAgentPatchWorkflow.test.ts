@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 
-import { useAgentPatchWorkflow } from './useAgentPatchWorkflow'
+import { useAgentPatchWorkflow, type AgentPatchDocumentSnapshot } from './useAgentPatchWorkflow'
 import type { AgentPatchSet, AgentTask, BlockPatch } from '@/models/agent'
 import type { DocumentRecord, TiptapDocumentJson } from '@/models/document'
 import { err, ok, type AppResult } from '@/models/result'
@@ -38,7 +38,10 @@ describe('useAgentPatchWorkflow', () => {
     await workflow.applyPendingAgentPatches()
 
     expect(repository.applyPatchSet).toHaveBeenCalledWith(
-      expect.objectContaining({ transactionId: 'transaction-1' }),
+      expect.objectContaining({
+        batchId: 'transaction-1',
+        documents: [expect.objectContaining({ documentId: 'doc-1' })],
+      }),
     )
     expect(applyDocument).toHaveBeenCalledWith(expect.objectContaining({ revision: 2 }))
     expect(workflow.pendingAgentPatchSet.value).toBeNull()
@@ -58,6 +61,56 @@ describe('useAgentPatchWorkflow', () => {
     expect(applyDocument).toHaveBeenLastCalledWith(expect.objectContaining({ revision: 1 }))
     expect(workflow.lastAppliedAgentTask.value).toBeNull()
     expect(notify.success).toHaveBeenLastCalledWith('已撤销最近一次 Agent 修改')
+  })
+
+  it('prepares all accepted document projections for one atomic repository batch', async () => {
+    const secondContent: TiptapDocumentJson = {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          attrs: { id: 'block-2' },
+          content: [{ type: 'text', text: '第二篇修改前' }],
+        },
+      ],
+    }
+    const { workflow, repository } = createWorkflow({
+      'doc-2': {
+        id: 'doc-2',
+        content: secondContent,
+        dirty: false,
+        revision: 4,
+        blocks: [{ id: 'block-2', type: 'paragraph', text: '第二篇修改前', index: 0 }],
+      },
+    })
+    workflow.pendingAgentTask.value = task()
+    workflow.pendingAgentPatchSet.value = {
+      ...patchSet(),
+      patches: [
+        patch(),
+        patch({
+          patchId: 'patch-2',
+          documentId: 'doc-2',
+          blockId: 'block-2',
+          targetBlockIds: ['block-2'],
+          expectedVersion: 4,
+          before: '第二篇修改前',
+          after: '第二篇修改后',
+        }),
+      ],
+    }
+
+    await workflow.applyPendingAgentPatches()
+
+    expect(repository.applyPatchSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchId: 'transaction-1',
+        documents: [
+          expect.objectContaining({ documentId: 'doc-1', transactionId: 'transaction-1' }),
+          expect.objectContaining({ documentId: 'doc-2', transactionId: 'transaction-1:1' }),
+        ],
+      }),
+    )
   })
 
   it('restores a pending proposal and recoverable transaction for the current document', async () => {
@@ -220,7 +273,7 @@ describe('useAgentPatchWorkflow', () => {
   })
 })
 
-function createWorkflow() {
+function createWorkflow(additionalSnapshots: Record<string, AgentPatchDocumentSnapshot> = {}) {
   const appliedDocument = documentRecord(2, '修改后')
   const rolledBackDocument = documentRecord(1, '修改前')
   const transaction = {
@@ -284,6 +337,14 @@ function createWorkflow() {
         revision: 1,
         blocks: [{ id: 'block-1', type: 'paragraph', text: '修改前', index: 0 }],
       }),
+      loadSnapshot: async (documentId) =>
+        additionalSnapshots[documentId] ?? {
+          id: 'doc-1',
+          content,
+          dirty: false,
+          revision: 1,
+          blocks: [{ id: 'block-1', type: 'paragraph', text: '修改前', index: 0 }],
+        },
       applyDocument,
       mergeDocument,
       removeDocument: vi.fn(),
@@ -373,7 +434,7 @@ function documentCreationPatchSet(): AgentPatchSet {
   }
 }
 
-function patch(): BlockPatch {
+function patch(overrides: Partial<BlockPatch> = {}): BlockPatch {
   return {
     patchId: 'patch-1',
     taskId: 'task-1',
@@ -386,6 +447,7 @@ function patch(): BlockPatch {
     after: '修改后',
     reason: '测试',
     accepted: true,
+    ...overrides,
   }
 }
 

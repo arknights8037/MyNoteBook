@@ -7,11 +7,18 @@ import type { ExecutionPolicy } from '@/models/executionPolicy'
 import type { AgentToolExecutionResult, AgentToolRequest } from './AgentToolExecutor'
 import { safeErrorMessage } from './SensitiveDataRedaction'
 import type { AgentOutputContract } from './AgentOutputContract'
+import type { AgentDocumentEditProposal } from './AgentEditProposalGuard'
 
 export interface AgentRuntimeResult {
   output: string
   rounds: number
   toolCalls: AgentToolCall[]
+  finishReason?: string
+  usage?: {
+    inputTokens?: number
+    outputTokens?: number
+    totalTokens?: number
+  }
 }
 
 export interface AgentProgressUpdate {
@@ -36,6 +43,7 @@ export interface AgentRuntimeInput {
   externalTools?: AgentExternalTool[]
   executionPolicy?: ExecutionPolicy
   outputContract?: AgentOutputContract<unknown>
+  validateDocumentEditProposal?: (proposal: AgentDocumentEditProposal) => void
   onDelta?: (delta: string, channel?: 'content' | 'reasoning') => void
   onProgress?: (update: AgentProgressUpdate) => void
 }

@@ -190,6 +190,7 @@ describe('AI SDK Agent runtime output', () => {
       JSON.stringify({
         patches: [
           {
+            documentId: 'doc-1',
             operation: 'replace',
             blockId: 'block-1',
             targetBlockIds: ['block-1'],
@@ -223,6 +224,7 @@ describe('AI SDK Agent runtime output', () => {
         commands: [{ type: 'replace_text_by_regex', pattern: '旧', replacement: '新' }],
         patches: [
           {
+            documentId: 'doc-1',
             operation: 'replace',
             blockId: 'block-1',
             targetBlockIds: ['block-1'],
@@ -243,6 +245,7 @@ describe('AI SDK Agent runtime output', () => {
         outcome: 'proposal',
         patches: [
           {
+            documentId: 'doc-1',
             operation: 'update',
             blockId: 'block-1',
             targetBlockIds: [],
@@ -267,6 +270,7 @@ describe('AI SDK Agent runtime output', () => {
         result: {
           changes: [
             {
+              documentId: 'doc-1',
               operation: 'update',
               block_id: 'block-2',
               target_block_ids: ['block-2'],
@@ -297,6 +301,7 @@ describe('AI SDK Agent runtime output', () => {
       JSON.stringify({
         patches: [
           {
+            documentId: 'doc-1',
             operation: 'replace',
             blockId: 'b1',
             targetBlockIds: ['b1'],
@@ -319,6 +324,7 @@ describe('AI SDK Agent runtime output', () => {
       JSON.stringify({
         patches: [
           {
+            documentId: 'doc-1',
             operation: 'replace',
             blockId: 'b1',
             targetBlockIds: ['b1'],
@@ -342,6 +348,7 @@ describe('AI SDK Agent runtime output', () => {
       JSON.stringify({
         patches: [
           {
+            documentId: 'doc-1',
             operation: 'replace',
             blockId: 'b1',
             targetBlockIds: ['b1'],
@@ -354,5 +361,61 @@ describe('AI SDK Agent runtime output', () => {
     const normalized = normalizeAgentOutputForTaskIntent(output, '整理内容', 'create')
     expect(normalized.commands).toEqual([])
     expect(normalized.patches).toHaveLength(1)
+  })
+
+  it('rejects overlapping targets before a structured patch batch can be accepted', () => {
+    const output = normalizeAgentOutputCandidate(
+      JSON.stringify({
+        outcome: 'proposal',
+        patches: [
+          {
+            documentId: 'doc-1',
+            operation: 'replace',
+            blockId: 'b1',
+            targetBlockIds: ['b1'],
+            after: '替换后的完整内容',
+            reason: '更新状态',
+          },
+          {
+            documentId: 'doc-1',
+            operation: 'insert_after',
+            blockId: 'b1',
+            targetBlockIds: ['b1'],
+            after: '补充说明',
+            reason: '增加约束',
+          },
+        ],
+      }),
+    )
+
+    expect(output).toBeNull()
+  })
+
+  it('accepts a patch batch spanning multiple existing documents', () => {
+    const output = normalizeAgentOutputCandidate(
+      JSON.stringify({
+        outcome: 'proposal',
+        patches: [
+          {
+            documentId: 'doc-1',
+            operation: 'replace',
+            blockId: 'b1',
+            targetBlockIds: ['b1'],
+            after: '文档一',
+            reason: '同步',
+          },
+          {
+            documentId: 'doc-2',
+            operation: 'replace',
+            blockId: 'b2',
+            targetBlockIds: ['b2'],
+            after: '文档二',
+            reason: '同步',
+          },
+        ],
+      }),
+    )
+
+    expect(output?.patches.map((patch) => patch.documentId)).toEqual(['doc-1', 'doc-2'])
   })
 })

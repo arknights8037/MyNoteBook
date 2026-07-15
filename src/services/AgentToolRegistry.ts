@@ -167,11 +167,11 @@ export const AGENT_TOOL_REGISTRY: readonly AgentToolDefinition[] = [
     tags: ['document.propose_write'],
   },
   {
-    name: 'propose_document_patches',
-    description: '提交一批复杂文档 Patch 到待确认队列。',
+    name: 'submit_document_edits',
+    description: '按文档分组提交一批修改到待确认队列。',
     risk: 'write',
     requiresConfirmation: true,
-    maxCallsPerTask: 1,
+    maxCallsPerTask: 2,
     tags: ['document.propose_write'],
   },
 ]
@@ -184,9 +184,21 @@ export function isAllowedAgentTool(name: string): boolean {
   return getAgentToolDefinition(name) !== null
 }
 
+export const MIN_AGENT_WRITE_OUTPUT_TOKENS = 16_384
+
 export function createDefaultAgentExecutionPolicy(tokenBudget: number): ExecutionPolicy {
   return createDefaultExecutionPolicy({
-    tokenBudget,
+    tokenBudget: Math.max(tokenBudget, MIN_AGENT_WRITE_OUTPUT_TOKENS),
     allowedTools: [...AGENT_TOOL_REGISTRY.map((tool) => tool.name), 'mcp:*'],
   })
+}
+
+export function resolveAgentOutputTokenLimit(
+  configuredMaxTokens: number,
+  policy: ExecutionPolicy,
+): number {
+  const requested = policy.allowWriteProposals
+    ? Math.max(configuredMaxTokens, MIN_AGENT_WRITE_OUTPUT_TOKENS)
+    : configuredMaxTokens
+  return Math.min(requested, policy.tokenBudget)
 }

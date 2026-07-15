@@ -175,6 +175,9 @@ describe('TauriAgentRepository recovery', () => {
 
     await repository.loadRecoveryState('doc-1', { markInterrupted: true })
 
+    expect(invoke).toHaveBeenCalledWith('cleanup_orphan_agent_tasks', {
+      input: expect.objectContaining({ cleanedAt: expect.any(Number) }),
+    })
     expect(sqlClient.executedSql.join('\n')).toContain("status = 'failed'")
     expect(sqlClient.executedSql.join('\n')).toContain("status IN ('pending', 'running')")
   })
@@ -211,6 +214,10 @@ describe('TauriAgentRepository recovery', () => {
       CREATE TABLE agent_document_creation_transactions (
         id TEXT PRIMARY KEY, task_id TEXT NOT NULL, document_id TEXT NOT NULL,
         status TEXT NOT NULL, created_at INTEGER NOT NULL, rolled_back_at INTEGER
+      );
+      CREATE TABLE agent_confirmations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, patch_id TEXT,
+        action TEXT NOT NULL, details_json TEXT NOT NULL, created_at INTEGER NOT NULL
       );
       INSERT INTO agent_tasks (
         id, session_id, document_id, status, user_instruction, context_scope,

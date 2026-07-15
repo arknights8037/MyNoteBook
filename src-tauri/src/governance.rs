@@ -813,12 +813,7 @@ mod tests {
 
         for (submission_type, key, request_hash, timestamp) in [
             ("result", "cli-smoke-result", "b".repeat(64), 20_i64),
-            (
-                "change_set",
-                "cli-smoke-change-set",
-                "c".repeat(64),
-                30_i64,
-            ),
+            ("change_set", "cli-smoke-change-set", "c".repeat(64), 30_i64),
         ] {
             let output_path = directory.join(format!("{submission_type}.json"));
             let status = tokio::process::Command::new("node")
@@ -830,10 +825,9 @@ mod tests {
                 .await
                 .expect("run CLI fixture");
             assert!(status.success());
-            let envelope: Value = serde_json::from_slice(
-                &std::fs::read(&output_path).expect("read CLI submission"),
-            )
-            .expect("parse CLI submission");
+            let envelope: Value =
+                serde_json::from_slice(&std::fs::read(&output_path).expect("read CLI submission"))
+                    .expect("parse CLI submission");
             assert_eq!(envelope["version"], 1);
             let input = SubmitExternalWorkInput {
                 data_directory: None,
@@ -950,12 +944,11 @@ mod tests {
                 .await
                 .expect("task status");
         assert_eq!(task_status, "waiting_approval");
-        let change_status: String = sqlx::query_scalar(
-            "SELECT status FROM change_sets WHERE id = 'cli-smoke-change-set'",
-        )
-        .fetch_one(pool.as_ref())
-        .await
-        .expect("change status");
+        let change_status: String =
+            sqlx::query_scalar("SELECT status FROM change_sets WHERE id = 'cli-smoke-change-set'")
+                .fetch_one(pool.as_ref())
+                .await
+                .expect("change status");
         assert_eq!(change_status, "approved");
         let event_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM domain_events")
             .fetch_one(pool.as_ref())

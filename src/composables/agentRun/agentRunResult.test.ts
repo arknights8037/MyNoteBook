@@ -36,6 +36,72 @@ describe('resolveAgentRunResult', () => {
     ).rejects.toThrow('新建文档或分组不能和其他修改混在同一批提案中')
   })
 
+  it('rejects multiple patches that target the same block', async () => {
+    await expect(
+      resolveAgentRunResult({
+        ...baseInput(),
+        output: JSON.stringify({
+          outcome: 'proposal',
+          patches: [
+            {
+              documentId: 'doc-1',
+              operation: 'replace',
+              blockId: 'b1',
+              targetBlockIds: ['b1'],
+              after: '第一次修改',
+              reason: '改写',
+            },
+            {
+              documentId: 'doc-1',
+              operation: 'insert_after',
+              blockId: 'b1',
+              targetBlockIds: ['b1'],
+              after: '第二次修改',
+              reason: '补充',
+            },
+          ],
+        }),
+      }),
+    ).rejects.toThrow('多个补丁不能修改同一个目标块')
+  })
+
+  it('accepts one proposal that synchronizes multiple read documents', async () => {
+    const result = await resolveAgentRunResult({
+      ...baseInput(),
+      readableDocuments: [
+        {
+          documentId: 'doc-2',
+          documentTitle: '第二篇文档',
+          expectedVersion: 1,
+          blocks: [{ id: 'b2', type: 'paragraph', text: '第二篇正文', index: 0 }],
+        },
+      ],
+      output: JSON.stringify({
+        outcome: 'proposal',
+        patches: [
+          {
+            documentId: 'doc-1',
+            operation: 'replace',
+            blockId: 'b1',
+            targetBlockIds: ['b1'],
+            after: '第一篇修改',
+            reason: '同步',
+          },
+          {
+            documentId: 'doc-2',
+            operation: 'replace',
+            blockId: 'b2',
+            targetBlockIds: ['b2'],
+            after: '第二篇修改',
+            reason: '同步',
+          },
+        ],
+      }),
+    })
+
+    expect(result.patchSet?.patches.map((patch) => patch.documentId)).toEqual(['doc-1', 'doc-2'])
+  })
+
   it('converts a create-group command with its initial document into one proposal', async () => {
     const result = await resolveAgentRunResult({
       ...baseInput(),

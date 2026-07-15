@@ -37,7 +37,7 @@ describe('agentRunSnapshot', () => {
     expect(snapshot.document.blocks[0]?.text).toBe('发布流程正文')
   })
 
-  it('infers a conservative target scope when no blocks are selected', () => {
+  it('keeps the current document writable in Agent mode when no blocks are selected', () => {
     const settings = createAiSettings('openai')
     settings.model = 'test-model'
     const snapshot = captureAgentRunSnapshot({
@@ -56,7 +56,7 @@ describe('agentRunSnapshot', () => {
 
     const plan = createAgentEditPlan({ snapshot, mode: 'agent', createId: () => 'task-1' })
 
-    expect(plan?.targetBlocks.map((block) => block.id)).toEqual(['release'])
+    expect(plan?.targetBlocks.map((block) => block.id)).toEqual(['release', 'meeting'])
     expect(plan?.foundTargetScope).toBe(true)
     expect(plan?.task.contextScope).toBe('current_document')
   })

@@ -100,6 +100,55 @@ describe('AgentCommandService', () => {
     ).rejects.toThrow('不在本次允许范围内')
   })
 
+  it('allows a block command only for a document read during the same run', async () => {
+    const patches = await createAgentCommandPatches({
+      command: {
+        tool: 'replace_block',
+        documentId: 'roadmap',
+        blockId: 'c15',
+        content: 'C1.5 已完成',
+      },
+      taskId: 'task',
+      documentId: 'current',
+      expectedVersion: 1,
+      blocks: [{ id: 'current-block', type: 'paragraph', text: '当前页', index: 0 }],
+      readableDocuments: [
+        {
+          documentId: 'roadmap',
+          expectedVersion: 7,
+          blocks: [{ id: 'c15', type: 'paragraph', text: 'C1.5 进行中', index: 3 }],
+        },
+      ],
+      createId: () => 'patch',
+    })
+
+    expect(patches[0]).toMatchObject({
+      documentId: 'roadmap',
+      blockId: 'c15',
+      expectedVersion: 7,
+      before: 'C1.5 进行中',
+      after: 'C1.5 已完成',
+    })
+  })
+
+  it('rejects an unread cross-document target', async () => {
+    await expect(
+      createAgentCommandPatches({
+        command: {
+          tool: 'replace_block',
+          documentId: 'unread',
+          blockId: 'b1',
+          content: '越权',
+        },
+        taskId: 'task',
+        documentId: 'current',
+        expectedVersion: 1,
+        blocks: [{ id: 'current-block', type: 'paragraph', text: '当前页', index: 0 }],
+        createId: () => 'patch',
+      }),
+    ).rejects.toThrow('未经本次任务读取')
+  })
+
   it('creates an isolated document proposal', async () => {
     let sequence = 0
     const patches = await createAgentCommandPatches({

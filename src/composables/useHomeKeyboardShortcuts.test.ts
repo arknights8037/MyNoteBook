@@ -7,6 +7,7 @@ import { createDefaultAppSettings } from '@/models/settings'
 describe('useHomeKeyboardShortcuts', () => {
   it('routes configured shortcuts to semantic actions', () => {
     const actions = {
+      openAgent: vi.fn(),
       search: vi.fn(),
       newDocument: vi.fn(),
       save: vi.fn(),
@@ -23,9 +24,29 @@ describe('useHomeKeyboardShortcuts', () => {
     expect(event.preventDefault).toHaveBeenCalledOnce()
   })
 
+  it('opens Agent with the stable global shortcut', () => {
+    const actions = {
+      openAgent: vi.fn(),
+      search: vi.fn(),
+      newDocument: vi.fn(),
+      save: vi.fn(),
+      openSettings: vi.fn(),
+      importDocument: vi.fn(),
+    }
+    const shortcuts = useHomeKeyboardShortcuts(ref(createDefaultAppSettings()), actions)
+    const event = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, shiftKey: true })
+    vi.spyOn(event, 'preventDefault')
+
+    shortcuts.handleGlobalKeydown(event)
+
+    expect(actions.openAgent).toHaveBeenCalledOnce()
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+  })
+
   it('blocks developer shortcuts when developer mode is disabled', () => {
     const settings = ref(createDefaultAppSettings())
     const shortcuts = useHomeKeyboardShortcuts(settings, {
+      openAgent: vi.fn(),
       search: vi.fn(),
       newDocument: vi.fn(),
       save: vi.fn(),

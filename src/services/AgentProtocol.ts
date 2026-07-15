@@ -8,6 +8,7 @@ import type {
 import type { AgentWriteCommand } from './AgentCommandService'
 
 interface ModelPatch {
+  documentId?: unknown
   operation?: unknown
   blockId?: unknown
   targetBlockIds?: unknown
@@ -53,6 +54,11 @@ export function parseAgentResponse(input: {
   documentId: string
   expectedRevision: number
   targetBlocks: SelectedBlock[]
+  readableDocuments?: Array<{
+    documentId: string
+    expectedVersion: number
+    blocks: SelectedBlock[]
+  }>
   contextSources: AgentPatchSet['contextSources']
   createId: () => string
   allowMarkdownFallback?: boolean
@@ -110,6 +116,8 @@ function parseRegexCommands(value: unknown): AgentWriteCommand[] {
       return [
         {
           tool: 'replace_block',
+          documentId:
+            typeof candidate.documentId === 'string' ? candidate.documentId : undefined,
           blockId: candidate.blockId,
           content: candidate.content,
           reason: typeof candidate.reason === 'string' ? candidate.reason : undefined,
@@ -127,6 +135,8 @@ function parseRegexCommands(value: unknown): AgentWriteCommand[] {
       return [
         {
           tool: 'insert_blocks',
+          documentId:
+            typeof candidate.documentId === 'string' ? candidate.documentId : undefined,
           anchorBlockId: candidate.anchorBlockId,
           position: candidate.position,
           content: candidate.content,
@@ -236,14 +246,34 @@ function createPatch(
   if (!value || typeof value !== 'object') return null
   const modelPatch = value as ModelPatch
   const operation = readOperation(modelPatch.operation)
-  const fallbackIds = input.targetBlocks.map((block) => block.id)
+  const requestedDocumentId =
+    typeof modelPatch.documentId === 'string' && modelPatch.documentId.trim()
+      ? modelPatch.documentId
+      : input.documentId
+  const scope =
+    input.readableDocuments?.find((document) => document.documentId === requestedDocumentId) ??
+    (requestedDocumentId === input.documentId
+      ? {
+          documentId: input.documentId,
+          expectedVersion: input.expectedRevision,
+          blocks: input.targetBlocks,
+        }
+      : undefined)
+  if (!scope) return null
+  const fallbackIds = scope.blocks.map((block) => block.id)
   const targetBlockIds = Array.isArray(modelPatch.targetBlockIds)
     ? modelPatch.targetBlockIds.filter(
         (id): id is string => typeof id === 'string' && Boolean(id.trim()),
       )
     : fallbackIds
-  const blockId = typeof modelPatch.blockId === 'string' ? modelPatch.blockId : targetBlockIds[0]
-  const before = input.targetBlocks
+  const requestedBlockId =
+    typeof modelPatch.blockId === 'string' ? modelPatch.blockId : targetBlockIds[0]
+  const blockId =
+    requestedBlockId && targetBlockIds.includes(requestedBlockId)
+      ? requestedBlockId
+      : targetBlockIds[0]
+  if (targetBlockIds.some((id) => !scope.blocks.some((block) => block.id === id))) return null
+  const before = scope.blocks
     .filter((block) => targetBlockIds.includes(block.id))
     .map((block) => block.text)
     .join('\n\n')
@@ -253,10 +283,10 @@ function createPatch(
     patchId: input.createId(),
     taskId: input.task.id,
     operation,
-    documentId: input.documentId,
+    documentId: scope.documentId,
     blockId,
     targetBlockIds,
-    expectedVersion: input.expectedRevision,
+    expectedVersion: scope.expectedVersion,
     before,
     after: modelPatch.after.trim(),
     reason:

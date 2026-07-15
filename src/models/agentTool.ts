@@ -25,7 +25,7 @@ export interface AgentToolDefinition {
     | 'insert_blocks'
     | 'create_document'
     | 'create_group'
-    | 'propose_document_patches'
+    | 'submit_document_edits'
   description: string
   risk: AgentToolRisk
   requiresConfirmation: boolean

@@ -15,6 +15,7 @@ use tokio::{process::Command, time::timeout};
 
 use crate::agent_cancellation::ToolCancellationGuard;
 use crate::database::{configured_data_directory, DATABASE_FILENAME};
+use crate::document_core::validate_and_project_tiptap;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -312,6 +313,16 @@ struct ReadDocumentResult {
     plain_text: String,
     revision: i64,
     tags: Vec<String>,
+    blocks: Vec<ReadDocumentBlock>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadDocumentBlock {
+    id: String,
+    block_type: String,
+    block_index: i64,
+    plain_text: String,
 }
 
 const DEFAULT_SHELL_TIMEOUT_MS: u64 = 10_000;
@@ -613,7 +624,7 @@ impl Tool for ReadDocumentTool {
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let mut connection = open_database(&self.database_path).await?;
         let row = sqlx::query(
-            "SELECT id, title, plain_text, revision FROM documents \
+            "SELECT id, title, content_json, revision FROM documents \
              WHERE id = ? AND document_kind = 'article' AND is_deleted = 0 LIMIT 1",
         )
         .bind(&args.document_id)
@@ -629,16 +640,28 @@ impl Tool for ReadDocumentTool {
         .fetch_all(&mut connection)
         .await
         .map_err(native_error)?;
-        let text: String = row.try_get("plain_text").map_err(native_error)?;
+        let content_json: String = row.try_get("content_json").map_err(native_error)?;
+        let projection =
+            validate_and_project_tiptap(&content_json, true).map_err(NativeToolError)?;
         Ok(Some(ReadDocumentResult {
             id: row.try_get("id").map_err(native_error)?,
             title: row.try_get("title").map_err(native_error)?,
-            plain_text: text.chars().take(12_000).collect(),
+            plain_text: projection.plain_text.chars().take(12_000).collect(),
             revision: row.try_get("revision").map_err(native_error)?,
             tags: tag_rows
                 .into_iter()
                 .map(|tag| tag.try_get("name").map_err(native_error))
                 .collect::<Result<Vec<_>, _>>()?,
+            blocks: projection
+                .blocks
+                .into_iter()
+                .map(|block| ReadDocumentBlock {
+                    id: block.id,
+                    block_type: block.block_type,
+                    block_index: block.block_index,
+                    plain_text: block.plain_text,
+                })
+                .collect(),
         }))
     }
 }

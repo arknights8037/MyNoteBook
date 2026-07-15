@@ -12,11 +12,14 @@ use rmcp::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone)]
 struct NotebookResourceServer {
     pool: SqlitePool,
+    agent_capability_token: Option<String>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -28,11 +31,39 @@ struct SearchKnowledgeRequest {
     limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SubmitAgentRequest {
+    /// A task-completion summary and instruction. Do not name target documents or blocks.
+    prompt: String,
+    /// Capability token configured by the local application operator.
+    capability_token: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct GetAgentRequest {
+    request_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct DecideAgentRequest {
+    request_id: String,
+    action: String,
+    capability_token: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ReviseAgentRequest {
+    request_id: String,
+    feedback: String,
+    capability_token: String,
+}
+
 #[tool_router]
 impl NotebookResourceServer {
-    fn new(pool: SqlitePool) -> Self {
+    fn new(pool: SqlitePool, agent_capability_token: Option<String>) -> Self {
         Self {
             pool,
+            agent_capability_token,
             tool_router: Self::tool_router(),
         }
     }
@@ -50,6 +81,134 @@ impl NotebookResourceServer {
             Ok(value) => value.to_string(),
             Err(error) => json!({ "error": error }).to_string(),
         }
+    }
+
+    /// Queue a task for the existing in-app Agent Runtime. This does not approve or apply patches.
+    #[tool(name = "submit_agent_request")]
+    async fn submit_agent_request(
+        &self,
+        Parameters(request): Parameters<SubmitAgentRequest>,
+    ) -> String {
+        if let Err(error) = self.authorize(&request.capability_token) {
+            return json!({ "error": error }).to_string();
+        }
+        let prompt = request.prompt.trim();
+        if prompt.is_empty() || prompt.chars().count() > 4_000 {
+            return json!({ "error": "prompt 必须为 1-4000 个字符。" }).to_string();
+        }
+        let now = now_ms();
+        let request_id = create_request_id(prompt, now);
+        match sqlx::query(
+            "INSERT INTO agent_requests (id, prompt, status, created_at, updated_at) \
+             VALUES (?, ?, 'queued', ?, ?)",
+        )
+        .bind(&request_id)
+        .bind(prompt)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        {
+            Ok(_) => json!({ "requestId": request_id, "status": "queued" }).to_string(),
+            Err(error) => json!({ "error": error.to_string() }).to_string(),
+        }
+    }
+
+    /// Read the request, its Agent task, and any proposed patches.
+    #[tool(
+        name = "get_agent_request",
+        annotations(title = "Get Agent request", read_only_hint = true)
+    )]
+    async fn get_agent_request(&self, Parameters(request): Parameters<GetAgentRequest>) -> String {
+        match read_agent_request(&self.pool, &request.request_id).await {
+            Ok(value) => value.to_string(),
+            Err(error) => json!({ "error": error }).to_string(),
+        }
+    }
+
+    /// Approve or reject a queued Agent patch after inspecting get_agent_request.
+    #[tool(name = "decide_agent_request")]
+    async fn decide_agent_request(
+        &self,
+        Parameters(request): Parameters<DecideAgentRequest>,
+    ) -> String {
+        if let Err(error) = self.authorize(&request.capability_token) {
+            return json!({ "error": error }).to_string();
+        }
+        let next_status = match request.action.as_str() {
+            "approve" => "approved",
+            "reject" => "rejected",
+            _ => return json!({ "error": "action 必须是 approve 或 reject。" }).to_string(),
+        };
+        let now = now_ms();
+        match sqlx::query(
+            "UPDATE agent_requests SET status = ?, updated_at = ? \
+             WHERE id = ? AND status = 'awaiting_review'",
+        )
+        .bind(next_status)
+        .bind(now)
+        .bind(&request.request_id)
+        .execute(&self.pool)
+        .await
+        {
+            Ok(result) if result.rows_affected() == 1 => {
+                json!({ "requestId": request.request_id, "status": next_status }).to_string()
+            }
+            Ok(_) => json!({ "error": "请求不存在或尚未进入待审阅状态。" }).to_string(),
+            Err(error) => json!({ "error": error.to_string() }).to_string(),
+        }
+    }
+
+    /// Request a revision of the current proposal without starting discovery from scratch.
+    #[tool(name = "revise_agent_request")]
+    async fn revise_agent_request(
+        &self,
+        Parameters(request): Parameters<ReviseAgentRequest>,
+    ) -> String {
+        if let Err(error) = self.authorize(&request.capability_token) {
+            return json!({ "error": error }).to_string();
+        }
+        let feedback = request.feedback.trim();
+        if feedback.is_empty() || feedback.chars().count() > 2_000 {
+            return json!({ "error": "feedback 必须为 1-2000 个字符。" }).to_string();
+        }
+        let now = now_ms();
+        match sqlx::query(
+            "UPDATE agent_requests SET status = 'queued', previous_task_id = task_id, \
+             task_id = NULL, revision_feedback = ?, revision_count = revision_count + 1, \
+             error = NULL, completed_at = NULL, updated_at = ? \
+             WHERE id = ? AND status = 'awaiting_review' AND task_id IS NOT NULL",
+        )
+        .bind(feedback)
+        .bind(now)
+        .bind(&request.request_id)
+        .execute(&self.pool)
+        .await
+        {
+            Ok(result) if result.rows_affected() == 1 => json!({
+                "requestId": request.request_id,
+                "status": "queued",
+                "revisionRequested": true
+            })
+            .to_string(),
+            Ok(_) => json!({ "error": "请求不存在或当前没有可修订的待审阅提案。" }).to_string(),
+            Err(error) => json!({ "error": error.to_string() }).to_string(),
+        }
+    }
+}
+
+impl NotebookResourceServer {
+    fn authorize(&self, provided: &str) -> Result<(), String> {
+        let expected = self
+            .agent_capability_token
+            .as_deref()
+            .ok_or_else(|| "服务未启用 Agent 写入通信能力。".to_string())?;
+        let expected_hash = Sha256::digest(expected.as_bytes());
+        let provided_hash = Sha256::digest(provided.as_bytes());
+        if expected_hash != provided_hash {
+            return Err("Agent capability token 无效。".to_string());
+        }
+        Ok(())
     }
 }
 
@@ -114,13 +273,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .max_connections(2)
         .connect(&database_url)
         .await?;
-    sqlx::query("PRAGMA query_only = ON").execute(&pool).await?;
-    NotebookResourceServer::new(pool)
+    let agent_capability_token = std::env::var("MYNOTEBOOK_AGENT_CAPABILITY_TOKEN")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    if agent_capability_token.is_none() {
+        sqlx::query("PRAGMA query_only = ON").execute(&pool).await?;
+    }
+    NotebookResourceServer::new(pool, agent_capability_token)
         .serve(stdio())
         .await?
         .waiting()
         .await?;
     Ok(())
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
+fn create_request_id(prompt: &str, now: i64) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(now.to_le_bytes());
+    hasher.update(std::process::id().to_le_bytes());
+    hasher.update(prompt.as_bytes());
+    format!(
+        "agent-request-{}",
+        &format!("{:x}", hasher.finalize())[..24]
+    )
 }
 
 fn parse_database_url() -> Result<String, String> {
@@ -193,6 +375,64 @@ async fn read_context(pool: &SqlitePool, id: &str) -> Result<Value, String> {
         "compiler": parse_json(row.get::<String, _>("compiler_json")),
         "snapshotHash": row.get::<String, _>("snapshot_hash"),
         "correlationId": row.get::<String, _>("correlation_id")
+    }))
+}
+
+async fn read_agent_request(pool: &SqlitePool, id: &str) -> Result<Value, String> {
+    let row = sqlx::query(
+        "SELECT id, prompt, status, task_id, error, result_json, previous_task_id, \
+         revision_feedback, revision_count, created_at, updated_at, completed_at \
+         FROM agent_requests WHERE id = ? LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| "Agent request 不存在。".to_string())?;
+    let task_id = row.get::<Option<String>, _>("task_id");
+    let patches = if let Some(task_id) = task_id.as_deref() {
+        sqlx::query(
+            "SELECT id, operation, document_id, block_id, target_block_ids_json, \
+             expected_version, before_text, after_text, reason, status \
+             FROM agent_patches WHERE task_id = ? ORDER BY created_at ASC",
+        )
+        .bind(task_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|patch| {
+            json!({
+                "id": patch.get::<String, _>("id"),
+                "operation": patch.get::<String, _>("operation"),
+                "documentId": patch.get::<String, _>("document_id"),
+                "blockId": patch.get::<String, _>("block_id"),
+                "targetBlockIds": parse_json(patch.get::<String, _>("target_block_ids_json")),
+                "expectedVersion": patch.get::<i64, _>("expected_version"),
+                "before": patch.get::<String, _>("before_text"),
+                "after": patch.get::<String, _>("after_text"),
+                "reason": patch.get::<String, _>("reason"),
+                "status": patch.get::<String, _>("status")
+            })
+        })
+        .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    Ok(json!({
+        "requestId": row.get::<String, _>("id"),
+        "prompt": row.get::<String, _>("prompt"),
+        "status": row.get::<String, _>("status"),
+        "taskId": task_id,
+        "error": row.get::<Option<String>, _>("error"),
+        "result": row.get::<Option<String>, _>("result_json").map(parse_json),
+        "previousTaskId": row.get::<Option<String>, _>("previous_task_id"),
+        "revisionFeedback": row.get::<Option<String>, _>("revision_feedback"),
+        "revisionCount": row.get::<i64, _>("revision_count"),
+        "createdAt": row.get::<i64, _>("created_at"),
+        "updatedAt": row.get::<i64, _>("updated_at"),
+        "completedAt": row.get::<Option<i64>, _>("completed_at"),
+        "patches": patches
     }))
 }
 

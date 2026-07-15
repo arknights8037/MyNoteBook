@@ -7,7 +7,7 @@ import {
   type AgentRuntimeViewState,
 } from '@/models/agentRuntime'
 import { resolveAgentSlashCommand } from '@/models/agentSlashCommand'
-import type { AgentProgressUpdate } from '@/services/AgentRuntime'
+import type { AgentProgressUpdate, AgentRuntimeResult } from '@/services/AgentRuntime'
 import { appendKnowledgeSources, type KnowledgeSource } from '@/models/knowledgeRetrieval'
 import {
   buildAiPrompt,
@@ -18,19 +18,23 @@ import { normalizeDocumentTitle } from '@/features/documents/documentPresentatio
 import { buildAgentRunContext } from './agentRun/agentRunContext'
 import { createPersistedAgentTask, persistAgentRunResult } from './agentRun/agentRunPersistence'
 import type { AgentRunOutcome } from './agentRun/agentRunResult'
+import type { AgentCommunicationResult } from '@/services/AgentCommunicationService'
 import {
   captureAgentRunSnapshot,
   createAgentEditPlan,
   type AgentEditPlan,
 } from './agentRun/agentRunSnapshot'
-import type { UseAgentRunOptions } from './agentRun/types'
+import type { AgentRunContinuation, UseAgentRunOptions } from './agentRun/types'
 import { compileContextBundle } from '@/models/contextBundle'
 import { auditConfiguredModelParameters } from '@/models/providerCapabilities'
+import { prepareAgentRunExecution } from '@/services/AgentRunExecution'
+import { resolveAgentOutputTokenLimit } from '@/services/AgentToolRegistry'
 
 export type {
   AgentRunDocumentAdapter,
   AgentRunDocumentSnapshot,
   AgentRunPatchWorkflow,
+  AgentRunContinuation,
   UseAgentRunOptions,
 } from './agentRun/types'
 
@@ -42,11 +46,26 @@ export function useAgentRun(options: UseAgentRunOptions) {
     reject: (error: Error) => void
   } | null = null
   const runtimeState = ref<AgentRuntimeViewState>(createIdleAgentRuntimeState())
+  const lastTaskId = ref<string | null>(null)
+  const lastRunIssue = ref('')
+  const lastRunReport = ref<AgentCommunicationResult | null>(null)
 
-  async function run(): Promise<void> {
-    if (options.isRunning.value || !options.prompt.value.trim()) return
+  async function run(promptOverride?: string, continuation?: AgentRunContinuation): Promise<void> {
+    const basePrompt = promptOverride?.trim() || options.prompt.value.trim()
+    const prompt = continuation ? buildContinuationPrompt(basePrompt, continuation) : basePrompt
+    if (options.isRunning.value) {
+      lastRunIssue.value = 'Agent Runtime 已有任务正在运行。'
+      return
+    }
+    if (!prompt) {
+      lastRunIssue.value = 'Agent 请求内容为空。'
+      return
+    }
+    lastTaskId.value = null
+    lastRunIssue.value = ''
+    lastRunReport.value = null
 
-    const originalPrompt = options.prompt.value.trim()
+    const originalPrompt = prompt
     const slashCommand = resolveAgentSlashCommand(originalPrompt)
     if (slashCommand) options.mode.value = slashCommand.command.mode
 
@@ -91,6 +110,19 @@ export function useAgentRun(options: UseAgentRunOptions) {
     let sources: KnowledgeSource[] = []
     let agentRounds = 0
     let agentToolCallCount = 0
+    let agentDiagnostics: Pick<AgentRuntimeResult, 'finishReason' | 'usage'> = {}
+    const readableDocuments = new Map<
+      string,
+      {
+        documentId: string
+        documentTitle: string
+        expectedVersion: number
+        blocks: Array<{ id: string; type: string; text: string; index: number }>
+      }
+    >()
+    const { parseReadDocumentProvenance, validateDocumentEditProvenance } = await import(
+      '@/services/AgentEditProposalGuard'
+    )
     const taskApprovedMcpServerIds = new Set<string>()
 
     if (snapshot.requestedMode === 'auto') {
@@ -109,11 +141,20 @@ export function useAgentRun(options: UseAgentRunOptions) {
         fail('当前文档还没有可修改的块或版本信息。')
         return
       }
+      if (continuation) {
+        editPlan.task.causationId = continuation.previousTaskId
+        editPlan.task.executionPolicy.allowedTools = ['submit_document_edits']
+        editPlan.task.executionPolicy.maxToolRounds = Math.min(
+          editPlan.task.executionPolicy.maxToolRounds,
+          6,
+        )
+      }
       const persistenceError = await createPersistedAgentTask(editPlan.task, options)
       if (persistenceError) {
         fail(persistenceError)
         return
       }
+      lastTaskId.value = editPlan.task.id
     }
 
     const assistantMessage = {
@@ -150,6 +191,23 @@ export function useAgentRun(options: UseAgentRunOptions) {
     }
 
     try {
+      if (continuation) {
+        for (const documentId of new Set(
+          continuation.patches.map((patch) => patch.documentId),
+        )) {
+          const toolResult = await executeRustAgentTool(
+            'read_document',
+            { documentId },
+            undefined,
+            abortController.signal,
+          )
+          const provenance = parseReadDocumentProvenance(toolResult, documentId)
+          if (!provenance) {
+            throw new Error(`无法恢复修订提案的 canonical provenance：${documentId}`)
+          }
+          readableDocuments.set(documentId, provenance)
+        }
+      }
       const context = await buildAgentRunContext({
         snapshot,
         mode,
@@ -241,9 +299,9 @@ export function useAgentRun(options: UseAgentRunOptions) {
             requested: parameterAudit.requested,
             actual: {
               ...actualParameters,
-              maxOutputTokens: Math.min(
+              maxOutputTokens: resolveAgentOutputTokenLimit(
                 snapshot.settings.maxTokens,
-                editPlan.task.executionPolicy.tokenBudget,
+                editPlan.task.executionPolicy,
               ),
               toolCalling: mode === 'agent',
             },
@@ -270,12 +328,29 @@ export function useAgentRun(options: UseAgentRunOptions) {
               })
               .catch(() => [])
           : []
-      const systemPrompt = buildAiSystemPrompt(
-        snapshot.settings.systemPrompt,
-        mode,
-        skillPrompt,
-        slashCommand?.command.systemInstruction,
-      )
+      const systemPrompt = [
+        buildAiSystemPrompt(
+          snapshot.settings.systemPrompt,
+          mode,
+          skillPrompt,
+          slashCommand?.command.systemInstruction,
+        ),
+        continuation
+          ? '这是现有提案的受控修订。canonical provenance 已由 Runtime 恢复；不得搜索、读取其他文档或重新执行发现流程。根据反馈保留正确 Patch、修正错误 Patch，并通过 submit_document_edits 一次提交完整替代提案。'
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n')
+      const runtimeExecution = editPlan
+        ? prepareAgentRunExecution({
+            prompt: snapshot.prompt,
+            context: context.text,
+            systemPrompt,
+            intent: agentIntent,
+            executionPolicy: editPlan.task.executionPolicy,
+            externalTools: mcpRuntimeTools,
+          })
+        : null
       const handleDelta = (delta: string, channel: 'content' | 'reasoning' = 'content') => {
         const currentMessage = options.messages.value[assistantIndex]
         if (!currentMessage) return
@@ -292,15 +367,12 @@ export function useAgentRun(options: UseAgentRunOptions) {
         mode === 'agent' && editPlan
           ? await runAgentToolLoop({
               taskId: editPlan.task.id,
-              prompt: snapshot.prompt,
-              context: context.text,
+              ...runtimeExecution!,
               settings: snapshot.settings,
-              systemPrompt,
-              intent: agentIntent,
-              externalTools: mcpRuntimeTools,
-              executionPolicy: editPlan.task.executionPolicy,
               signal: abortController?.signal,
               createId: options.createId,
+              validateDocumentEditProposal: (proposal) =>
+                validateDocumentEditProvenance(proposal, [...readableDocuments.values()]),
               onDelta: handleDelta,
               onProgress: (update) => {
                 if (!editPlan || editPlan.task.status !== 'running') return
@@ -360,6 +432,30 @@ export function useAgentRun(options: UseAgentRunOptions) {
                   selectedBlocks: editPlan.usesSelection ? editPlan.targetBlocks : [],
                   searchDocuments: options.document.searchDocuments,
                   readDocument: options.document.readDocument,
+                  onDocumentRead: async (documentId, toolResult) => {
+                    if (readableDocuments.has(documentId)) return
+                    const provenance = parseReadDocumentProvenance(toolResult, documentId)
+                    if (provenance) {
+                      readableDocuments.set(documentId, provenance)
+                      return
+                    }
+                    const [document, blocks] = await Promise.all([
+                      options.document.readDocument(documentId),
+                      options.document.listDocumentBlocks(documentId),
+                    ])
+                    if (!document) return
+                    readableDocuments.set(documentId, {
+                      documentId,
+                      documentTitle: normalizeDocumentTitle(document.title),
+                      expectedVersion: document.revision,
+                      blocks: blocks.map((block) => ({
+                        id: block.id,
+                        type: block.type,
+                        text: block.plainText,
+                        index: block.index,
+                      })),
+                    })
+                  },
                   executeNativeTool: executeRustAgentTool,
                   requestAuthorizerInput: (request) => waitForAuthorizerInput(request, editPlan),
                   createAutomationDraft: async (input) => {
@@ -383,6 +479,10 @@ export function useAgentRun(options: UseAgentRunOptions) {
             }).then((result) => {
               agentRounds = result.rounds
               agentToolCallCount = result.toolCalls.length
+              agentDiagnostics = {
+                finishReason: result.finishReason,
+                usage: result.usage,
+              }
               runtimeState.value.rounds = result.rounds
               runtimeState.value.toolCalls = result.toolCalls
               return result.output
@@ -408,6 +508,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
           snapshot,
           expectedRevision: editPlan.expectedRevision,
           targetBlocks: editPlan.targetBlocks,
+          readableDocuments: [...readableDocuments.values()],
           sources,
           usesSelection: editPlan.usesSelection,
           foundTargetScope: editPlan.foundTargetScope,
@@ -417,6 +518,22 @@ export function useAgentRun(options: UseAgentRunOptions) {
         patchSet = result.patchSet
         outcome = result.outcome
         summary = result.summary
+        lastRunReport.value = {
+          version: 1,
+          outcome,
+          summary:
+            summary ||
+            (outcome === 'proposal'
+              ? '已生成待确认修改提案。'
+              : outcome === 'blocked'
+                ? '现有信息不足，未生成修改。'
+                : '检查完成，无需修改。'),
+          patchCount: patchSet?.patches.length ?? 0,
+          targetDocumentIds: Array.from(
+            new Set(patchSet?.patches.map((patch) => patch.documentId) ?? []),
+          ),
+          ...agentDiagnostics,
+        }
       }
 
       const currentMessage = options.messages.value[assistantIndex]
@@ -436,12 +553,18 @@ export function useAgentRun(options: UseAgentRunOptions) {
         currentMessage.status = 'done'
       }
       if (editPlan) {
+        const patchTargetDocumentId = patchSet?.patches.find(
+          (patch) => patch.operation !== 'create_document' && patch.operation !== 'create_group',
+        )?.documentId
         await persistAgentRunResult({
           task: editPlan.task,
           patchSet,
           outcome,
           patches: options.patches,
         })
+        if (patchTargetDocumentId && patchTargetDocumentId !== snapshot.document.id) {
+          await options.document.openDocumentForReview(patchTargetDocumentId)
+        }
       }
       runtimeState.value.status = 'completed'
       runtimeState.value.phase = 'completed'
@@ -559,7 +682,39 @@ export function useAgentRun(options: UseAgentRunOptions) {
     runtimeState.value = createIdleAgentRuntimeState()
   }
 
-  return { run, stop, answerAuthorization, runtimeState, resetRuntime }
+  return {
+    run,
+    stop,
+    answerAuthorization,
+    runtimeState,
+    lastTaskId,
+    lastRunIssue,
+    lastRunReport,
+    resetRuntime,
+  }
+}
+
+function buildContinuationPrompt(basePrompt: string, continuation: AgentRunContinuation): string {
+  const previousProposal = continuation.patches.map((patch) => ({
+    documentId: patch.documentId,
+    operation: patch.operation,
+    blockId: patch.blockId,
+    targetBlockIds: patch.targetBlockIds,
+    before: patch.before,
+    after: patch.after,
+    reason: patch.reason,
+  }))
+  return [
+    basePrompt,
+    '',
+    '这是同一请求中现有提案的修订，不是新的发现任务。',
+    `授权人反馈：${continuation.feedback}`,
+    continuation.previousSummary ? `上一版 Agent 汇总：${continuation.previousSummary}` : '',
+    `上一版完整提案：${JSON.stringify(previousProposal)}`,
+    '保留未受反馈影响且仍然正确的 edit，只修正必要部分；最终必须一次提交完整替代提案。',
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 function projectKnowledgeForBundle(object: {

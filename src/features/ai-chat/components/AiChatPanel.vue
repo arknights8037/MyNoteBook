@@ -354,7 +354,7 @@ function getToolLabel(toolName: string): string {
     insert_blocks: '提交内容插入提案',
     create_document: '提交新文档提案',
     create_group: '提交新分组提案',
-    propose_document_patches: '提交复杂修改提案',
+    submit_document_edits: '提交多文档修改提案',
   }
   return labels[toolName] ?? toolName
 }

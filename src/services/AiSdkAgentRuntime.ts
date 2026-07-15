@@ -3,7 +3,11 @@ import { z } from 'zod'
 
 import type { AgentToolCall } from '@/models/agentTool'
 import { createAiSdkModel } from './AiSdkProvider'
-import { createDefaultAgentExecutionPolicy, getAgentToolDefinition } from './AgentToolRegistry'
+import {
+  createDefaultAgentExecutionPolicy,
+  getAgentToolDefinition,
+  resolveAgentOutputTokenLimit,
+} from './AgentToolRegistry'
 import type { AgentRuntimeInput, AgentRuntimeResult } from './AgentRuntime'
 import { normalizeExecutionPolicy } from '@/models/executionPolicy'
 import type { AiSettings } from '@/models/ai'
@@ -24,6 +28,7 @@ const regexCommandSchema = z.object({
 
 const replaceBlockCommandSchema = z.object({
   tool: z.literal('replace_block'),
+  documentId: z.string().min(1).optional(),
   blockId: z.string().min(1),
   content: z.string().min(1),
   reason: z.string().optional(),
@@ -31,6 +36,7 @@ const replaceBlockCommandSchema = z.object({
 
 const insertBlocksCommandSchema = z.object({
   tool: z.literal('insert_blocks'),
+  documentId: z.string().min(1).optional(),
   anchorBlockId: z.string().min(1),
   position: z.enum(['before', 'after', 'append']),
   content: z.string().min(1),
@@ -65,22 +71,157 @@ const commandSchema = z.discriminatedUnion('tool', [
   createGroupCommandSchema,
 ])
 
-const patchSchema = z.object({
-  operation: z.enum(['replace', 'insert_before', 'insert_after', 'append']),
-  blockId: z.string(),
-  targetBlockIds: z.array(z.string()).min(1),
-  after: z.string().min(1),
-  reason: z.string().min(1),
-})
+const patchSchema = z
+  .object({
+    documentId: z.string().trim().min(1),
+    operation: z.enum(['replace', 'insert_before', 'insert_after', 'append']),
+    blockId: z.string().trim().min(1),
+    targetBlockIds: z.array(z.string().trim().min(1)).min(1),
+    after: z.string().min(1),
+    reason: z.string().trim().min(1),
+  })
+  .superRefine((patch, context) => {
+    if (new Set(patch.targetBlockIds).size !== patch.targetBlockIds.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['targetBlockIds'],
+        message: '单个 Patch 的 targetBlockIds 不能包含重复块。',
+      })
+    }
+    if (!patch.targetBlockIds.includes(patch.blockId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['blockId'],
+        message: 'Patch 的 blockId 必须包含在 targetBlockIds 中。',
+      })
+    }
+    if (patch.operation !== 'replace' && patch.targetBlockIds.length !== 1) {
+      context.addIssue({
+        code: 'custom',
+        path: ['targetBlockIds'],
+        message: '插入 Patch 只能使用一个稳定锚点块。',
+      })
+    }
+  })
+
+const patchBatchSchema = z
+  .array(patchSchema)
+  .max(50)
+  .superRefine((patches, context) => {
+    const targets = new Set<string>()
+    for (const [patchIndex, patch] of patches.entries()) {
+      for (const blockId of patch.targetBlockIds) {
+        const key = `${patch.documentId}:${blockId}`
+        if (targets.has(key)) {
+          context.addIssue({
+            code: 'custom',
+            path: [patchIndex, 'targetBlockIds'],
+            message:
+              '同一批 Patch 不能重复修改同一个目标块；请把该块的替换与补充合并成一个 replace Patch。',
+          })
+        }
+        targets.add(key)
+      }
+    }
+  })
+
+const documentEditSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('replace'),
+    targetBlockIds: z.array(z.string().trim().min(1)).min(1),
+    content: z.string().min(1),
+    reason: z.string().trim().min(1),
+  }),
+  z.object({
+    kind: z.enum(['insert_before', 'insert_after', 'append']),
+    anchorBlockId: z.string().trim().min(1),
+    content: z.string().min(1),
+    reason: z.string().trim().min(1),
+  }),
+])
+
+const documentEditGroupSchema = z
+  .object({
+    documentId: z.string().trim().min(1),
+    edits: z.array(documentEditSchema).min(1).max(50),
+  })
+  .superRefine((group, context) => {
+    const targets = new Set<string>()
+    for (const [editIndex, edit] of group.edits.entries()) {
+      const blockIds = edit.kind === 'replace' ? edit.targetBlockIds : [edit.anchorBlockId]
+      if (new Set(blockIds).size !== blockIds.length) {
+        context.addIssue({
+          code: 'custom',
+          path: ['edits', editIndex],
+          message: '单个 replace edit 不能重复声明同一个目标块。',
+        })
+      }
+      for (const blockId of blockIds) {
+        if (targets.has(blockId)) {
+          context.addIssue({
+            code: 'custom',
+            path: ['edits', editIndex],
+            message: '同一文档内的 edits 不能重复修改或锚定同一个块；请合并成一个 replace edit。',
+          })
+        }
+        targets.add(blockId)
+      }
+    }
+  })
+
+const documentEditProposalSchema = z
+  .object({
+    documents: z.array(documentEditGroupSchema).min(1).max(20),
+    summary: z.string().trim().min(1),
+  })
+  .superRefine((proposal, context) => {
+    const documentIds = proposal.documents.map((document) => document.documentId)
+    if (new Set(documentIds).size !== documentIds.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['documents'],
+        message: '同一文档只能在 documents 中出现一次；请合并该文档的 edits。',
+      })
+    }
+  })
 
 type AgentCommand = z.infer<typeof commandSchema>
 type AgentPatch = z.infer<typeof patchSchema>
+
+function assertDisjointCommandTargets(commands: AgentCommand[]): void {
+  const blockCommands = commands.filter(
+    (
+      command,
+    ): command is
+      | z.infer<typeof replaceBlockCommandSchema>
+      | z.infer<typeof insertBlocksCommandSchema> =>
+      command.tool === 'replace_block' || command.tool === 'insert_blocks',
+  )
+  const regexCommands = commands.filter((command) => command.tool === 'replace_text_by_regex')
+  if (regexCommands.length > 1 || (regexCommands.length > 0 && blockCommands.length > 0)) {
+    throw new Error(
+      '正则替换不能与其他块修改混在同一批提案中；请改为一批 targetBlockIds 互不重叠的 Patch。',
+    )
+  }
+
+  const targets = new Set<string>()
+  for (const command of blockCommands) {
+    const blockId = command.tool === 'replace_block' ? command.blockId : command.anchorBlockId
+    const key = `${command.documentId ?? '__current__'}:${blockId}`
+    if (targets.has(key)) {
+      throw new Error(
+        '多个写命令不能修改或锚定同一个目标块；请合并为一个 replace_block，或提交一个合并后的复杂 Patch。',
+      )
+    }
+    targets.add(key)
+  }
+}
 
 const agentOutputSchema = z
   .object({
     outcome: z.enum(['proposal', 'no_change', 'blocked']).default('proposal'),
     commands: z.array(commandSchema).default([]),
-    patches: z.array(patchSchema).default([]),
+    patches: patchBatchSchema.default([]),
     finalAnswer: z.string().default(''),
   })
   .refine(
@@ -312,6 +453,7 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
     captureProposal(command.tool, command, () => {
       if (proposedPatches.length > 0) throw new Error('commands 和 patches 不能混合提交。')
       const candidate = [...proposedCommands, command]
+      assertDisjointCommandTargets(candidate)
       const validated = agentOutputSchema.safeParse({
         outcome: 'proposal',
         commands: candidate,
@@ -322,12 +464,26 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       proposedCommands.push(command)
     })
 
-  const capturePatchProposal = async (args: { patches: AgentPatch[] }): Promise<unknown> =>
-    captureProposal('propose_document_patches', args, () => {
+  const captureDocumentEdits = async (
+    args: z.infer<typeof documentEditProposalSchema>,
+  ): Promise<unknown> =>
+    captureProposal('submit_document_edits', args, () => {
       if (proposedCommands.length > 0 || proposedPatches.length > 0) {
         throw new Error('一个任务只能提交一批最终写入提案。')
       }
-      proposedPatches.push(...args.patches)
+      const proposal = documentEditProposalSchema.parse(args)
+      input.validateDocumentEditProposal?.(proposal)
+      const patches = proposal.documents.flatMap((document) =>
+        document.edits.map((edit) => ({
+          documentId: document.documentId,
+          operation: edit.kind,
+          blockId: edit.kind === 'replace' ? (edit.targetBlockIds[0] ?? '') : edit.anchorBlockId,
+          targetBlockIds: edit.kind === 'replace' ? edit.targetBlockIds : [edit.anchorBlockId],
+          after: edit.content,
+          reason: edit.reason,
+        })),
+      )
+      proposedPatches.push(...patches)
     })
 
   const tools: ToolSet = {
@@ -488,11 +644,11 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       inputSchema: createGroupCommandSchema.omit({ tool: true }),
       execute: (args) => captureCommand({ tool: 'create_group', ...args }),
     }),
-    propose_document_patches: tool({
+    submit_document_edits: tool({
       description:
-        '提交一批复杂文档 Patch 到用户确认队列，不会立即写入。仅使用本次读取到的稳定 blockId，且每项包含完整修改后内容和原因。',
-      inputSchema: z.object({ patches: z.array(patchSchema).min(1).max(50) }),
-      execute: capturePatchProposal,
+        '提交一个或多个文档的待确认修改，不会立即写入。每个文档只声明一次 documentId；replace 使用 targetBlockIds，插入使用 anchorBlockId。同一文档内一个块只能属于一个 edit，同一块的替换与补充必须合并成一个 replace edit。',
+      inputSchema: documentEditProposalSchema,
+      execute: captureDocumentEdits,
     }),
   }
 
@@ -523,7 +679,7 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
         : '',
       input.outputContract
         ? ''
-        : '写入建议通过 Runtime 暴露的原生提案工具提交：replace_text_by_regex、replace_block、insert_blocks、create_document、create_group、propose_document_patches。工具成功只表示提案已捕获并等待用户确认。',
+        : '写入建议通过 Runtime 暴露的原生提案工具提交：replace_text_by_regex、replace_block、insert_blocks、create_document、create_group、submit_document_edits。跨文档或复杂修改统一使用 submit_document_edits。工具成功只表示提案已捕获并等待用户确认。',
       input.outputContract
         ? ''
         : '最终回复使用简短自然语言。成功提交提案工具后不要再次输出 JSON、工具参数或重复正文；没有写入建议时直接回答、说明限制或提出必要问题。',
@@ -533,7 +689,7 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       .join('\n\n'),
     tools,
     stopWhen: stepCountIs(policy.maxToolRounds),
-    maxOutputTokens: Math.min(input.settings.maxTokens, policy.tokenBudget),
+    maxOutputTokens: resolveAgentOutputTokenLimit(input.settings.maxTokens, policy),
     ...samplingParameters(input.settings),
   })
   input.onProgress?.({ phase: 'planning', detail: '正在判断需要读取哪些资料' })
@@ -561,7 +717,13 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
   }
   if (input.outputContract) {
     const validated = validateAgentOutputContract(input.outputContract, result.text, reasoningText)
-    return { output: JSON.stringify(validated), rounds: result.steps.length, toolCalls: calls }
+    return {
+      output: JSON.stringify(validated),
+      rounds: result.steps.length,
+      toolCalls: calls,
+      finishReason: result.finishReason,
+      usage: projectLanguageModelUsage(result.usage),
+    }
   }
   input.onProgress?.({ phase: 'finalizing', detail: '正在整理可确认的修改' })
   let parsedOutput =
@@ -586,7 +748,13 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
     })
   }
   const output = JSON.stringify(parsedOutput)
-  return { output, rounds: result.steps.length, toolCalls: calls }
+  return {
+    output,
+    rounds: result.steps.length,
+    toolCalls: calls,
+    finishReason: result.finishReason,
+    usage: projectLanguageModelUsage(result.usage),
+  }
 }
 
 async function runToollessCompatibilityFallback(
@@ -611,7 +779,7 @@ async function runToollessCompatibilityFallback(
       .filter(Boolean)
       .join('\n\n'),
     ...samplingParameters(input.settings),
-    maxOutputTokens: Math.min(input.settings.maxTokens, policy.tokenBudget),
+    maxOutputTokens: resolveAgentOutputTokenLimit(input.settings.maxTokens, policy),
     abortSignal: input.signal,
     timeout: { totalMs: policy.maxDurationMs },
   })
@@ -632,6 +800,21 @@ async function runToollessCompatibilityFallback(
     output: JSON.stringify(normalizeAgentOutputForTaskIntent(parsed, input.prompt, input.intent)),
     rounds: 1,
     toolCalls: calls,
+    finishReason: result.finishReason,
+    usage: projectLanguageModelUsage(result.usage),
+  }
+}
+
+function projectLanguageModelUsage(usage?: {
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+}) {
+  if (!usage) return undefined
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    totalTokens: usage.totalTokens,
   }
 }
 
@@ -913,7 +1096,7 @@ function getToolProgressLabel(name: string, completed: boolean): string {
     insert_blocks: ['正在提交内容插入提案', '内容插入提案已就绪'],
     create_document: ['正在生成文档提案', '文档提案已就绪'],
     create_group: ['正在生成分组提案', '分组提案已就绪'],
-    propose_document_patches: ['正在提交复杂修改提案', '复杂修改提案已就绪'],
+    submit_document_edits: ['正在提交多文档修改提案', '多文档修改提案已就绪'],
   }
   return labels[name]?.[completed ? 1 : 0] ?? (completed ? '工具调用已完成' : '正在调用工具')
 }

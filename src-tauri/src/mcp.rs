@@ -768,8 +768,7 @@ mod tests {
 
     async fn spawn_http_fixture() -> (McpServerConfig, tokio::task::JoinHandle<()>) {
         use rmcp::transport::streamable_http_server::{
-            session::local::LocalSessionManager, StreamableHttpServerConfig,
-            StreamableHttpService,
+            session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
         };
 
         let service: StreamableHttpService<HttpFixtureServer, LocalSessionManager> =
@@ -779,9 +778,7 @@ mod tests {
                 StreamableHttpServerConfig::default().with_sse_keep_alive(None),
             );
         let router = axum::Router::new().nest_service("/mcp", service);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let handle = tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;
@@ -897,9 +894,7 @@ mod tests {
 
     #[tokio::test]
     async fn completes_streamable_http_handshake_tools_resources_and_cancellation() {
-        use crate::agent_cancellation::{
-            cancel_agent_tool_call, CancelAgentToolCallInput,
-        };
+        use crate::agent_cancellation::{cancel_agent_tool_call, CancelAgentToolCallInput};
 
         let (server, handle) = spawn_http_fixture().await;
         let tools = list_server_tools(&server).await.unwrap();
@@ -922,10 +917,8 @@ mod tests {
             .unwrap();
         assert!(resource.to_string().contains("rule-http-1"));
 
-        let directory = std::env::temp_dir().join(format!(
-            "mynotebook-http-cancel-{}",
-            std::process::id()
-        ));
+        let directory =
+            std::env::temp_dir().join(format!("mynotebook-http-cancel-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         save_store(
             directory.to_str().unwrap(),

@@ -102,6 +102,30 @@ describe('agent patch validation', () => {
         availableBlockIds: ['block-1'],
       }).ok,
     ).toBe(false)
+
+    expect(
+      validateBlockPatch(
+        createPatch({
+          operation: 'insert_after',
+          targetBlockIds: ['block-1', 'block-2'],
+        }),
+        {
+          documentId: 'doc-1',
+          expectedVersion: 3,
+          availableBlockIds: ['block-1', 'block-2'],
+        },
+      ).ok,
+    ).toBe(false)
+  })
+
+  it('rejects a replace patch that does not change canonical text', () => {
+    const result = validateBlockPatch(createPatch({ after: ' Before\r\n' }), {
+      documentId: 'doc-1',
+      expectedVersion: 3,
+      availableBlockIds: ['block-1'],
+    })
+
+    expect(result).toEqual({ ok: false, error: '补丁修改前后内容相同，无需写入。' })
   })
 
   it('rejects patches when the current block text no longer matches before', () => {

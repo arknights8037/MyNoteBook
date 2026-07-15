@@ -53,6 +53,70 @@ describe('AgentProtocol', () => {
     })
   })
 
+  it('targets a non-current document only when that document was read in this run', () => {
+    const output = JSON.stringify({
+      patches: [
+        {
+          documentId: 'doc-2',
+          operation: 'replace',
+          blockId: 'remote-1',
+          targetBlockIds: ['remote-1'],
+          after: '同步后的内容',
+          reason: '同步记录',
+        },
+      ],
+    })
+    const unread = parseAgentResponse({ ...baseInput, output })
+    const read = parseAgentResponse({
+      ...baseInput,
+      output,
+      readableDocuments: [
+        {
+          documentId: 'doc-2',
+          expectedVersion: 7,
+          blocks: [{ id: 'remote-1', type: 'paragraph', text: '旧内容', index: 0 }],
+        },
+      ],
+    })
+
+    expect(unread.patchSet).toBeNull()
+    expect(read.patchSet?.patches[0]).toMatchObject({
+      documentId: 'doc-2',
+      expectedVersion: 7,
+      before: '旧内容',
+    })
+  })
+
+  it('prefers an explicitly read canonical block snapshot for the current document', () => {
+    const response = parseAgentResponse({
+      ...baseInput,
+      targetBlocks: [{ id: 'table-1', type: 'tableBlock', text: '', index: 0 }],
+      readableDocuments: [
+        {
+          documentId: 'doc-1',
+          expectedVersion: 1,
+          blocks: [
+            { id: 'table-1', type: 'tableBlock', text: '字段\t说明', index: 0 },
+          ],
+        },
+      ],
+      output: JSON.stringify({
+        patches: [
+          {
+            documentId: 'doc-1',
+            operation: 'replace',
+            blockId: 'table-1',
+            targetBlockIds: ['table-1'],
+            after: '字段\t新说明',
+            reason: '更新表格',
+          },
+        ],
+      }),
+    })
+
+    expect(response.patchSet?.patches[0]?.before).toBe('字段\t说明')
+  })
+
   it('turns free-form Markdown into one explicitly marked fallback patch', () => {
     const response = parseAgentResponse({ ...baseInput, output: '# 不是 JSON' })
 

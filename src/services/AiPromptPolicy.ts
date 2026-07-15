@@ -46,7 +46,7 @@ export function buildAiPrompt(prompt: string, mode: Exclude<AiChatMode, 'auto'>)
 function structuredOutputInstruction(): string {
   return [
     '只输出 JSON，且必须符合 Runtime 的结构化输出 schema；不要 Markdown 围栏或额外文字。',
-    '格式：{"patches":[{"operation":"replace|insert_before|insert_after|append","blockId":"目标块 id","targetBlockIds":["目标块 id"],"after":"Markdown 内容","reason":"修改原因"}],"finalAnswer":"可选摘要"}。',
+    '格式：{"patches":[{"documentId":"目标文档 id","operation":"replace|insert_before|insert_after|append","blockId":"目标块 id","targetBlockIds":["目标块 id"],"after":"Markdown 内容","reason":"修改原因"}],"finalAnswer":"可选摘要"}。',
     '对确定性文本变换优先使用 commands：{"commands":[{"tool":"replace_text_by_regex","pattern":"正则","replacement":"替换文本","flags":"g","blockIds":["目标块 id"],"reason":"原因"}]}。',
     '写操作只可生成 Patch；不得执行写入。targetBlockIds 必须来自“本次需要修改的目标块”。',
     '需要读取资料时直接使用 Runtime 提供的原生工具，不要手写 toolCalls。',

@@ -39,10 +39,10 @@ export function createAgentEditPlan(input: {
     const inferredBlocks = findRelevantBlocksForInstruction(snapshot.prompt, document.blocks)
     foundTargetScope = inferredBlocks.length > 0
     targetBlocks =
-      inferredBlocks.length > 0
-        ? inferredBlocks
-        : mode === 'agent'
-          ? document.blocks
+      mode === 'agent'
+        ? document.blocks
+        : inferredBlocks.length > 0
+          ? inferredBlocks
           : document.blocks.slice(0, 1)
   }
   if (targetBlocks.length === 0 || document.revision === null) return null

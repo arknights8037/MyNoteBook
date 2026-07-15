@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { Sparkles } from '@lucide/vue'
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import {
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from 'vue'
 
 import NButton from '@/ui/NButton.vue'
 import NIcon from '@/ui/NIcon.vue'
@@ -8,7 +16,7 @@ import NTooltip from '@/ui/NTooltip.vue'
 import { useDialog, useMessage } from '@/ui/services'
 
 import { useAiConversation } from '@/composables/useAiConversation'
-import { useAgentRun } from '@/composables/useAgentRun'
+import { useAgentRun, type AgentRunContinuation } from '@/composables/useAgentRun'
 import { useAgentPatchWorkflow } from '@/composables/useAgentPatchWorkflow'
 import { useDocumentWorkspace } from '@/composables/useDocumentWorkspace'
 import { useSensitiveAuthorization } from '@/composables/useSensitiveAuthorization'
@@ -36,6 +44,10 @@ import type { AutomationService } from '@/services/AutomationService'
 import type { KnowledgeControlService } from '@/services/KnowledgeControlService'
 import type { AuditRepository } from '@/repositories/AuditRepository'
 import type { RegexReplaceExecutor } from '@/services/AgentCommandService'
+import {
+  AgentCommunicationService,
+  type AgentCommunicationRequest,
+} from '@/services/AgentCommunicationService'
 import { renderAiMarkdown } from '@/services/AiMarkdownRenderer'
 import { applyTheme, setThemePreference, subscribeToSystemTheme } from '@/services/theme'
 import DocumentSidebar, {
@@ -306,8 +318,37 @@ const {
       content: editorContent.value,
       dirty: autosave.dirty.value,
       revision: autosave.revision.value,
-      blocks: editorShell.value?.getCurrentDocumentBlocks() ?? [],
+      blocks: editorShell.value?.getCurrentDocumentBlocks?.() ?? [],
     }),
+    loadSnapshot: async (documentId) => {
+      if (documentId === currentDocumentId.value && autosave.dirty.value) {
+        return {
+          id: currentDocumentId.value,
+          content: editorContent.value,
+          dirty: true,
+          revision: autosave.revision.value,
+          blocks: editorShell.value?.getCurrentDocumentBlocks?.() ?? [],
+        }
+      }
+      const service = requireDocumentService()
+      const [documentResult, blocksResult] = await Promise.all([
+        service.getDocument(documentId),
+        service.listDocumentBlocks(documentId),
+      ])
+      if (!documentResult.ok || !documentResult.value || !blocksResult.ok) return null
+      return {
+        id: documentId,
+        content: ensureTopLevelBlockIds(parseEditorContentJson(documentResult.value.contentJson)),
+        dirty: false,
+        revision: documentResult.value.revision,
+        blocks: blocksResult.value.map((block) => ({
+          id: block.id,
+          type: block.type,
+          text: block.plainText,
+          index: block.index,
+        })),
+      }
+    },
     applyDocument: (document) => {
       editorContent.value = ensureTopLevelBlockIds(parseEditorContentJson(document.contentJson))
       plainText.value = document.plainText
@@ -351,11 +392,11 @@ const agentRun = useAgentRun({
       tags: [...(currentDocument.value?.tags ?? [])],
       sourceUrl: currentDocument.value?.sourceUrl ?? '',
       author: currentDocument.value?.author ?? '',
-      text: editorShell.value?.getText() || plainText.value,
+      text: editorShell.value?.getText?.() || plainText.value,
       revision: autosave.revision.value,
-      blocks: editorShell.value?.getCurrentDocumentBlocks() ?? [],
-      selectedBlocks: editorShell.value?.getSelectedBlocks() ?? [],
-      hasBlockSelection: editorShell.value?.hasBlockSelection() ?? false,
+      blocks: editorShell.value?.getCurrentDocumentBlocks?.() ?? [],
+      selectedBlocks: editorShell.value?.getSelectedBlocks?.() ?? [],
+      hasBlockSelection: editorShell.value?.hasBlockSelection?.() ?? false,
       documents: documents.value,
     }),
     flushBeforeEdit: async () => {
@@ -375,6 +416,9 @@ const agentRun = useAgentRun({
       const result = await requireDocumentService().listDocumentBlocks(documentId)
       return result.ok ? result.value : []
     },
+    openDocumentForReview: async (documentId) => {
+      await selectDocument(documentId)
+    },
   },
   patches: {
     pendingTask: pendingAgentTask,
@@ -384,6 +428,9 @@ const agentRun = useAgentRun({
     updateTaskPersistence: updateAgentTaskPersistence,
   },
 })
+const agentCommunication = new AgentCommunicationService()
+let agentCommunicationTimer: ReturnType<typeof globalThis.setInterval> | null = null
+let isPollingAgentCommunication = false
 const agentRuntimeState = agentRun.runtimeState
 let unsubscribeSystemTheme: (() => void) | null = null
 const {
@@ -471,18 +518,6 @@ const {
     sidebarView.value = 'documents'
   },
 })
-const { handleGlobalKeydown, handleDeveloperToolKeydown } = useHomeKeyboardShortcuts(appSettings, {
-  search: openSearch,
-  newDocument: () => {
-    const parentId =
-      appSettings.value.newDocumentLocation === 'current' ? currentDocumentId.value : null
-    void createAndOpenDocument(parentId)
-  },
-  save: () => void autosave.flush(),
-  openSettings: openSettingsSurface,
-  importDocument: importDocumentFile,
-})
-
 const saveStatusText = computed(() => {
   if (isLoadingDocument.value) return '正在加载'
   if (loadError.value) return '加载失败'
@@ -514,11 +549,14 @@ onMounted(async () => {
   }
   void restoreAgentStateForDocument(currentDocumentId.value, { markInterrupted: true })
   void initializeDefaultDataDirectory()
+  void pollAgentCommunication()
+  agentCommunicationTimer = globalThis.setInterval(() => void pollAgentCommunication(), 1_000)
 })
 
 onBeforeUnmount(() => {
   globalThis.removeEventListener('keydown', handleDeveloperToolKeydown, true)
   globalThis.removeEventListener('keydown', handleGlobalKeydown)
+  if (agentCommunicationTimer !== null) globalThis.clearInterval(agentCommunicationTimer)
   unsubscribeSystemTheme?.()
 })
 
@@ -597,9 +635,185 @@ const {
   notify: message,
 })
 
+const { handleGlobalKeydown, handleDeveloperToolKeydown } = useHomeKeyboardShortcuts(appSettings, {
+  openAgent: openAiChat,
+  search: openSearch,
+  newDocument: () => {
+    const parentId =
+      appSettings.value.newDocumentLocation === 'current' ? currentDocumentId.value : null
+    void createAndOpenDocument(parentId)
+  },
+  save: () => void autosave.flush(),
+  openSettings: openSettingsSurface,
+  importDocument: importDocumentFile,
+})
+
 function clearAiChat(): void {
   agentRun.resetRuntime()
   aiConversation.clear()
+}
+
+async function pollAgentCommunication(): Promise<void> {
+  if (isPollingAgentCommunication || aiIsRunning.value || isApplyingAgentPatches.value) return
+  isPollingAgentCommunication = true
+  let claimedRequest: AgentCommunicationRequest | null = null
+  let continuation: AgentRunContinuation | undefined
+  try {
+    const decision = await agentCommunication.findDecision()
+    if (decision) {
+      if (!pendingAgentTask.value || pendingAgentTask.value.id !== decision.taskId) {
+        await agentCommunication.markCompleted(decision.id, decision.taskId)
+        return
+      }
+      if (decision.status === 'approved') {
+        await ensurePendingPatchDocument()
+        await acceptAllPendingAgentPatches()
+        if (pendingAgentTask.value?.id === decision.taskId) {
+          const failure = aiError.value || 'Patch 应用未完成。'
+          await agentCommunication.markFailed(decision.id, decision.taskId, failure)
+          await rejectPendingAgentPatches()
+          return
+        }
+        await agentCommunication.markCompleted(decision.id, decision.taskId)
+      } else {
+        await rejectPendingAgentPatches()
+        await agentCommunication.markCompleted(decision.id, decision.taskId)
+      }
+      return
+    }
+    if (pendingAgentTask.value && pendingAgentPatchSet.value) {
+      const revisionRequest = await agentCommunication.claimRevisionForTask(
+        pendingAgentTask.value.id,
+      )
+      if (revisionRequest) {
+        continuation = {
+          previousTaskId: pendingAgentTask.value.id,
+          feedback: revisionRequest.revisionFeedback ?? '请修订现有提案。',
+          previousSummary: revisionRequest.result?.summary ?? '',
+          patches: pendingAgentPatchSet.value.patches.map((patch) => ({ ...patch })),
+        }
+        claimedRequest = revisionRequest
+        await rejectPendingAgentPatches()
+      }
+    }
+    if (pendingAgentTask.value) {
+      const failedRequest = await agentCommunication.findFailedForTask(pendingAgentTask.value.id)
+      if (failedRequest) {
+        await rejectPendingAgentPatches()
+        return
+      }
+    }
+    if (!claimedRequest && (showAgentPatchModal.value || pendingAgentTask.value)) return
+    const request = claimedRequest ?? (await agentCommunication.claimNext())
+    if (!request) return
+    claimedRequest = request
+
+    aiChatMode.value = 'agent'
+    aiPrompt.value = request.prompt
+    await ensureAgentSeedDocument()
+    const runPromise = agentRun.run(request.prompt, continuation)
+    openAgentWorkspace()
+    await runPromise
+    const taskId = agentRun.lastTaskId.value
+    const result = agentRun.lastRunReport.value
+
+    if (pendingAgentTask.value) {
+      await agentCommunication.markAwaitingReview(
+        request.id,
+        pendingAgentTask.value.id,
+        result ?? {
+          version: 1,
+          outcome: 'proposal',
+          summary: '已生成待确认修改提案。',
+          patchCount: pendingAgentPatchSet.value?.patches.length ?? 0,
+          targetDocumentIds: Array.from(
+            new Set(pendingAgentPatchSet.value?.patches.map((patch) => patch.documentId) ?? []),
+          ),
+        },
+      )
+      showAgentPatchModal.value = false
+    } else if (
+      agentRuntimeState.value.status === 'failed' ||
+      agentRuntimeState.value.status === 'cancelled'
+    ) {
+      await agentCommunication.markFailed(
+        request.id,
+        taskId,
+        agentRuntimeState.value.detail ||
+          (agentRuntimeState.value.status === 'cancelled' ? 'Agent 任务已取消。' : 'Agent 任务失败。'),
+      )
+    } else if (!taskId) {
+      await agentCommunication.markFailed(
+        request.id,
+        null,
+        aiError.value || agentRun.lastRunIssue.value || 'Agent 请求未创建可追溯任务。',
+      )
+    } else if (result) {
+      await agentCommunication.markCompleted(request.id, taskId, result)
+    } else {
+      await agentCommunication.markFailed(
+        request.id,
+        taskId,
+        'Agent 任务结束但没有返回标准 result。',
+      )
+    }
+  } catch (error) {
+    if (claimedRequest) {
+      await agentCommunication.markFailed(
+        claimedRequest.id,
+        pendingAgentTask.value?.id ?? null,
+        error instanceof Error ? error.message : String(error),
+      )
+    }
+    message.error(error instanceof Error ? error.message : String(error))
+  } finally {
+    isPollingAgentCommunication = false
+  }
+}
+
+async function waitForEditorShell(): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await nextTick()
+    if (typeof editorShell.value?.getCurrentDocumentBlocks === 'function') return
+    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 25))
+  }
+}
+
+async function ensureAgentSeedDocument(): Promise<void> {
+  openDocumentSurface()
+  if (await waitForEditorBlocks()) return
+
+  for (const document of documents.value) {
+    if (
+      document.documentKind !== 'article' ||
+      document.isDeleted ||
+      document.id === currentDocumentId.value
+    ) {
+      continue
+    }
+    await selectDocument(document.id)
+    openDocumentSurface()
+    if (await waitForEditorBlocks()) return
+  }
+}
+
+async function ensurePendingPatchDocument(): Promise<void> {
+  const targetDocumentId = pendingAgentPatchSet.value?.patches[0]?.documentId
+  if (targetDocumentId && targetDocumentId !== currentDocumentId.value) {
+    await selectDocument(targetDocumentId)
+  }
+  openDocumentSurface()
+  await waitForEditorBlocks()
+}
+
+async function waitForEditorBlocks(): Promise<boolean> {
+  await waitForEditorShell()
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    await nextTick()
+    if ((editorShell.value?.getCurrentDocumentBlocks?.() ?? []).length > 0) return true
+    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 50))
+  }
+  return false
 }
 const forkAiChatAtMessage = aiConversation.forkAtMessage
 const editAiChatMessage = aiConversation.editMessage

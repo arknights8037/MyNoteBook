@@ -11,6 +11,7 @@ export interface RegexReplaceCommand {
 
 export interface ReplaceBlockCommand {
   tool: 'replace_block'
+  documentId?: string
   blockId: string
   content: string
   reason?: string
@@ -18,6 +19,7 @@ export interface ReplaceBlockCommand {
 
 export interface InsertBlocksCommand {
   tool: 'insert_blocks'
+  documentId?: string
   anchorBlockId: string
   position: 'before' | 'after' | 'append'
   content: string
@@ -55,6 +57,11 @@ export async function createAgentCommandPatches(input: {
   documentId: string
   expectedVersion: number
   blocks: SelectedBlock[]
+  readableDocuments?: Array<{
+    documentId: string
+    expectedVersion: number
+    blocks: SelectedBlock[]
+  }>
   allowedParentDocumentIds?: string[]
   replaceBlocksByRegex?: RegexReplaceExecutor
   createId: () => string
@@ -125,9 +132,19 @@ export async function createAgentCommandPatches(input: {
     ]
   }
 
+  const requestedDocumentId =
+    input.command.tool === 'replace_block' || input.command.tool === 'insert_blocks'
+      ? input.command.documentId ?? input.documentId
+      : input.documentId
+  const scope =
+    input.readableDocuments?.find((document) => document.documentId === requestedDocumentId) ??
+    (requestedDocumentId === input.documentId
+      ? { documentId: input.documentId, expectedVersion: input.expectedVersion, blocks: input.blocks }
+      : undefined)
+  if (!scope) throw new Error(`写命令目标文档 ${requestedDocumentId} 未经本次任务读取。`)
   const targetId =
     input.command.tool === 'replace_block' ? input.command.blockId : input.command.anchorBlockId
-  const target = input.blocks.find((block) => block.id === targetId)
+  const target = scope.blocks.find((block) => block.id === targetId)
   if (!target) throw new Error(`写命令目标块 ${targetId} 不在本次允许范围内。`)
   const content = input.command.content.trim()
   if (!content) throw new Error('写命令内容不能为空。')
@@ -145,10 +162,10 @@ export async function createAgentCommandPatches(input: {
       patchId: input.createId(),
       taskId: input.taskId,
       operation,
-      documentId: input.documentId,
+      documentId: scope.documentId,
       blockId: target.id,
       targetBlockIds: [target.id],
-      expectedVersion: input.expectedVersion,
+      expectedVersion: scope.expectedVersion,
       before: target.text,
       after: content,
       reason:

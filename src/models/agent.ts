@@ -144,6 +144,10 @@ export function validateBlockPatch(
     return { ok: false, error: '补丁主目标块不在目标块列表中。' }
   }
 
+  if (patch.operation !== 'replace' && patch.targetBlockIds.length !== 1) {
+    return { ok: false, error: '插入补丁只能使用一个稳定锚点块。' }
+  }
+
   if (options.currentBlocks) {
     const currentBlocksById = new Map(options.currentBlocks.map((block) => [block.id, block]))
     const currentBefore = patch.targetBlockIds
@@ -156,6 +160,13 @@ export function validateBlockPatch(
 
   if (!patch.after.trim()) {
     return { ok: false, error: '补丁内容为空，已阻止写入。' }
+  }
+
+  if (
+    patch.operation === 'replace' &&
+    normalizePatchText(patch.before) === normalizePatchText(patch.after)
+  ) {
+    return { ok: false, error: '补丁修改前后内容相同，无需写入。' }
   }
 
   return { ok: true, error: null }

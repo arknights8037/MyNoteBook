@@ -200,6 +200,170 @@ describe('AI SDK Agent tool lifecycle', () => {
     expect(records.at(-1)?.resultJson).not.toContain('provider-result-secret')
   })
 
+  it('rejects overlapping complex patches inside the proposal tool', async () => {
+    let proposalResult: unknown
+    agentHarness.run = async (tools) => {
+      proposalResult = await tools.submit_document_edits?.execute({
+        documents: [
+          {
+            documentId: 'doc-1',
+            edits: [
+              {
+                kind: 'replace',
+                targetBlockIds: ['block-1'],
+                content: '替换后的完整内容',
+                reason: '更新状态',
+              },
+              {
+                kind: 'insert_after',
+                anchorBlockId: 'block-1',
+                content: '补充说明',
+                reason: '增加约束',
+              },
+            ],
+          },
+        ],
+        summary: '同步更新',
+      })
+    }
+    const records: AgentToolCall[] = []
+
+    const result = await runAiSdkAgent({
+      taskId: 'task-overlapping-patches',
+      prompt: '更新同一块并补充说明',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      createId: () => 'call-overlapping-patches',
+      executeTool: async () => ({ ok: true }),
+      recordToolCall: async (call) => {
+        records.push({ ...call })
+      },
+    })
+
+    expect(proposalResult).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('同一文档内'),
+    })
+    expect(records.at(-1)).toMatchObject({
+      toolName: 'submit_document_edits',
+      status: 'failed',
+      error: expect.stringContaining('合并成一个 replace edit'),
+    })
+    expect(JSON.parse(result.output)).toMatchObject({ outcome: 'no_change', patches: [] })
+  })
+
+  it('captures grouped edits for multiple documents as one proposal', async () => {
+    const validateDocumentEditProposal = vi.fn()
+    agentHarness.run = async (tools) => {
+      await tools.submit_document_edits?.execute({
+        documents: [
+          {
+            documentId: 'doc-1',
+            edits: [
+              {
+                kind: 'replace',
+                targetBlockIds: ['block-1'],
+                content: '文档一更新',
+                reason: '同步事实',
+              },
+            ],
+          },
+          {
+            documentId: 'doc-2',
+            edits: [
+              {
+                kind: 'insert_after',
+                anchorBlockId: 'block-2',
+                content: '文档二补充',
+                reason: '同步事实',
+              },
+            ],
+          },
+        ],
+        summary: '同步两个文档中的同一事实',
+      })
+    }
+
+    const result = await runAiSdkAgent({
+      taskId: 'task-multi-document-edits',
+      prompt: '同步多个文档',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      createId: () => 'call-multi-document-edits',
+      executeTool: async () => ({ ok: true }),
+      recordToolCall: async () => undefined,
+      validateDocumentEditProposal,
+    })
+
+    expect(validateDocumentEditProposal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documents: [
+          expect.objectContaining({ documentId: 'doc-1' }),
+          expect.objectContaining({ documentId: 'doc-2' }),
+        ],
+      }),
+    )
+    expect(JSON.parse(result.output).patches).toMatchObject([
+      {
+        documentId: 'doc-1',
+        operation: 'replace',
+        blockId: 'block-1',
+        targetBlockIds: ['block-1'],
+      },
+      {
+        documentId: 'doc-2',
+        operation: 'insert_after',
+        blockId: 'block-2',
+        targetBlockIds: ['block-2'],
+      },
+    ])
+  })
+
+  it('rejects repeated command targets before they reach result persistence', async () => {
+    const commandResults: unknown[] = []
+    agentHarness.run = async (tools) => {
+      commandResults.push(
+        await tools.replace_block?.execute({ blockId: 'block-1', content: '更新状态' }),
+      )
+      commandResults.push(
+        await tools.insert_blocks?.execute({
+          anchorBlockId: 'block-1',
+          position: 'after',
+          content: '补充约束',
+        }),
+      )
+    }
+    const records: AgentToolCall[] = []
+
+    await runAiSdkAgent({
+      taskId: 'task-overlapping-commands',
+      prompt: '更新同一块并补充说明',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      createId: (() => {
+        let index = 0
+        return () => `call-overlapping-command-${++index}`
+      })(),
+      executeTool: async () => ({ ok: true }),
+      recordToolCall: async (call) => {
+        records.push({ ...call })
+      },
+    })
+
+    expect(commandResults[0]).toMatchObject({ proposalCaptured: true })
+    expect(commandResults[1]).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('同一个目标块'),
+    })
+    expect(records.at(-1)).toMatchObject({
+      toolName: 'insert_blocks',
+      status: 'failed',
+    })
+  })
+
   it('runs the same tool loop with an injected cognitive output contract', async () => {
     agentHarness.run = async () => undefined
     agentHarness.resultText = '{"summary":"认知结果","items":[{"kind":"claim","text":"结论"}]}'

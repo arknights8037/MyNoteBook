@@ -23,6 +23,12 @@ export async function resolveAgentRunResult(input: {
   snapshot: AgentRunSnapshot
   expectedRevision: number
   targetBlocks: SelectedBlock[]
+  readableDocuments?: Array<{
+    documentId: string
+    documentTitle: string
+    expectedVersion: number
+    blocks: SelectedBlock[]
+  }>
   sources: KnowledgeSource[]
   usesSelection: boolean
   foundTargetScope: boolean
@@ -42,6 +48,13 @@ export async function resolveAgentRunResult(input: {
         documentTitle: source.documentTitle,
         blockIds: source.blockId ? [source.blockId] : [],
       })),
+    ...(input.readableDocuments ?? [])
+      .filter((source) => source.documentId !== input.snapshot.document.id)
+      .map((source) => ({
+        documentId: source.documentId,
+        documentTitle: source.documentTitle,
+        blockIds: source.blocks.map((block) => block.id),
+      })),
   ]
   const parsed = parseAgentResponse({
     output: input.output,
@@ -49,6 +62,7 @@ export async function resolveAgentRunResult(input: {
     documentId: input.snapshot.document.id,
     expectedRevision: input.expectedRevision,
     targetBlocks: input.targetBlocks,
+    readableDocuments: input.readableDocuments,
     contextSources,
     createId: input.createId,
     allowMarkdownFallback: input.mode === 'edit' || input.usesSelection || input.foundTargetScope,
@@ -72,6 +86,7 @@ export async function resolveAgentRunResult(input: {
             documentId: input.snapshot.document.id,
             expectedVersion: input.expectedRevision,
             blocks: input.targetBlocks,
+            readableDocuments: input.readableDocuments,
             allowedParentDocumentIds: input.snapshot.document.documents
               .filter((document) => document.documentKind === 'group' && !document.isDeleted)
               .map((document) => document.id),
@@ -94,7 +109,31 @@ export async function resolveAgentRunResult(input: {
   if (!patchSet && parsed.outcome === 'proposal') {
     throw new Error('Agent 未返回有效的结构化 Patch。')
   }
+  if (patchSet) assertDisjointPatchTargets(patchSet)
   return { patchSet, summary: parsed.finalAnswer, outcome: parsed.outcome }
+}
+
+function assertDisjointPatchTargets(patchSet: AgentPatchSet): void {
+  const targetedBlocks = new Set<string>()
+  for (const patch of patchSet.patches) {
+    if (patch.operation === 'create_document' || patch.operation === 'create_group') continue
+    if (new Set(patch.targetBlockIds).size !== patch.targetBlockIds.length) {
+      throw new Error('单个补丁不能重复声明同一个目标块。')
+    }
+    if (!patch.targetBlockIds.includes(patch.blockId)) {
+      throw new Error('补丁锚点块必须包含在目标块列表中。')
+    }
+    if (patch.operation !== 'replace' && patch.targetBlockIds.length !== 1) {
+      throw new Error('插入补丁只能使用一个稳定锚点块。')
+    }
+    for (const blockId of patch.targetBlockIds) {
+      const key = `${patch.documentId}:${blockId}`
+      if (targetedBlocks.has(key)) {
+        throw new Error('多个补丁不能修改同一个目标块；请合并为一个补丁后重试。')
+      }
+      targetedBlocks.add(key)
+    }
+  }
 }
 
 export function formatAgentRunSummary(input: {

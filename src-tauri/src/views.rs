@@ -456,9 +456,7 @@ mod tests {
         .expect("restored preview");
         assert_eq!(preview.try_get::<String, _>("status").unwrap(), "preview");
         assert_eq!(
-            preview
-                .try_get::<i64, _>("protected_by_override")
-                .unwrap(),
+            preview.try_get::<i64, _>("protected_by_override").unwrap(),
             1
         );
         let validation_count: i64 = sqlx::query_scalar(

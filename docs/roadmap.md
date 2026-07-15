@@ -7,6 +7,7 @@
 ```text
 G0 现有架构稳定性门禁
   -> C1 最小认知内核
+  -> C1.5 Runtime 接线与自托管修改门禁
   -> C2 Research 完整闭环
   -> C3 Review
   -> C4 Learning
@@ -123,6 +124,56 @@ cargo build --release --manifest-path src-tauri/Cargo.toml --bin my-notebook
 - `cargo build --release --manifest-path src-tauri/Cargo.toml --bin my-notebook`：通过；当前 release 可执行文件已启动并读取 v14 原数据目录。
 - 指定 `MYNOTEBOOK_SMOKE_SOURCE_DB` 单独运行 Windows copied-database smoke：通过。
 - `git diff --check`：通过；仅显示仓库既有的 LF → CRLF 工作树提示。
+
+## C1.5：Runtime 接线与自托管修改门禁
+
+状态：**完成（2026-07-15）**。外部调用方已只通过受控通信接口提交“已完成什么，请同步相关知识”，没有指定文档或块；同一 Agent Runtime 自主检索、读取、选择、修订并生成待确认修改，最终通过 MCP 批准多文档原子写入。全过程没有使用桌面点击、Playwright 或直接数据库正文写入。
+
+### 工作
+
+- 为一次 Agent 运行集中编译可追溯的 Runtime 输入，避免 UI 编排分别传递 Prompt、ExecutionPolicy、工具和输出契约后产生漂移。
+- 保持写入只能由现有 command/Patch 提案、审阅选择、revision 校验和 Rust transaction 完成；模型、Cognitive Output Contract 和工具 observation 均不能直接写文档。
+- 增加启动后可重复的自托管 smoke：使用项目内置 Agent 能力读取隔离测试页面、提交最小修改提案、在审阅面板确认，并验证数据库 revision、transaction、audit 与撤销边界。
+- 将 smoke 使用的页面和修改限定为固定非敏感内容，不读取或修改项目知识文档。
+- 增加带 capability token 的本地 Agent 通信队列与 stdio MCP 提交、查询、批准/拒绝工具；请求仍由前端既有 `useAgentRun` 和同一 `ToolLoopAgent` 消费，不创建旁路 Runtime。
+- 允许 Agent 在同一次运行中对所有已通过 `read_document` 读取的目标文档生成 Patch；读取结果包含稳定 block ID、顺序和 revision，Rust 持久化边界要求每个目标文档都出现在该任务的 context source 中。
+
+### 验收
+
+- 先把本次任务的真实完成内容写入跟踪记录，再通过项目通信接口或 MCP 提交一段任务完成摘要；调用方不得指定要更新的文件、页面、块或位置。
+- Agent 必须自行搜索和读取相关知识文档，基于真实 revision 与 block provenance 选择目标，生成可审阅 Patch；通信入口不得创建第二套模型循环，也不得绕过 ExecutionPolicy、Patch/Diff、确认和 Rust transaction。
+- 启动当前项目后，可以仅通过项目提供的 Agent、工具、Patch 审阅和确认事务提交一次文档修改。
+- 提交前数据库正文与 revision 不变化；确认后只修改目标块且 revision 递增一次。
+- Agent Task、Patch Set、Tool Call、Confirmation 和 Document Transaction 可追溯，应用重启后结果仍可读取。
+- 拒绝提案或 revision 冲突时不写入；已确认修改仍可通过现有撤销能力恢复。
+- 前端全量测试、类型检查、lint、生产构建和 Rust 测试通过。
+
+### 实际执行记录（2026-07-15）
+
+- 新增 `prepareAgentRunExecution()`，把 Prompt、Context、System Prompt、Intent、ExecutionPolicy、外部工具与可选 Output Contract 编译为单一冻结输入；结构化认知 contract 与写入提案权限同时出现时会在进入模型循环前拒绝。
+- 启动 `pnpm tauri dev` 后，通过项目内置 Agent 在固定隔离页“新文档”提交最小修改。真实 DeepSeek 工具循环完成读取页面大纲、读取当前页和提交修改提案，审阅面板只显示 1 个目标块；用户确认写入正常，数据库 revision 从 7 增至 8，Patch 状态为 `accepted`，正文为“状态：已提交（C1.5）”。
+- 首次纵向运行发现并修复权限范围漂移：Agent 无显式选区时，启发式相关块只能帮助定位，不能把 `current_document` 写入白名单缩窄到单块；显式选区仍保持最小范围。修复后同一真实任务成功进入 Patch 审阅与确认事务。
+- 增加 `Ctrl/Cmd+Shift+A` 稳定 Agent 入口并补测试；同时修复快捷键接线首次实现造成的 `openAiChat` 初始化顺序错误，冷启动重新验证通过。
+- 已增加 migration `0015` 的 `agent_requests` 通信队列、前端轮询消费者和 `mynotebook-agent` MCP 客户端。能力令牌仅从环境变量读取；提交只进入队列，批准/拒绝必须在查询 Patch 后单独调用，最终仍由既有确认与 Rust transaction 应用。
+- migration `0016` 为通信请求增加版本化 `result_json`。同一次 Agent Runtime 在完成分析或生成待审阅 Patch 时回传 `outcome`、自然语言 `summary`、Patch 数量和目标文档 ID；MCP `get_agent_request` 将其作为标准 `result` 信封返回并在批准/拒绝后保留，调用方不再自行检查知识库或从 UI 推断执行结果。
+- 已扩展 `read_document` 返回块级 provenance，并将运行内成功读取的文档登记为只限该 revision 的可写候选；未读取的跨文档命令、版本不符或不在 task source 中的目标都会被拒绝。
+- 通过 stdio MCP 开发接口复现并定位重复目标缺陷：历史任务 `a0785080-c1a1-49d8-8233-d34a44dbbb00` 的一次 `propose_document_patches` 同时提交了同一块的 `replace` 与 `insert_after`，工具审计错误标为 `completed`，直到结果持久化或批准阶段才被后置门禁拒绝。根因是复杂提案工具只有单项 schema，没有批级互斥约束。
+- 已将模型可见的复杂提案工具收敛为 `submit_document_edits`：顶层 `documents` 可包含多个目标，每个 documentId 只声明一次；`replace` 只使用 `targetBlockIds`，插入只使用 `anchorBlockId`，Runtime 再编译为既有内部 Patch。每个文档内 targets 必须互斥，同一块的替换与补充必须合并；不同文档可以在同一提案中同步维护重复事实。非法提案返回可修正的工具错误，并仅允许重新规划一次完整提案。
+- 多文档批准不再依赖单个当前编辑器快照。前端按目标文档加载各自 canonical content、blocks 与 revision，生成独立投影后一次提交；Rust 在同一个 SQLite transaction 中校验全部 Patch、更新全部目标、写入逐文档 transaction 与统一 batch confirmation。任一文档 revision、before、after 或写入失败都会回滚整批；撤销同样按 batch 原子恢复全部文档。
+- 工具重构后通过真实 stdio MCP 请求 `agent-request-b0ec8958060a8a5633f1474b` 验证模型链路。Agent 自主执行多次搜索、读取两个候选文档，最终调用 `submit_document_edits` 并生成同一文档内两个互不重叠的 edit；没有继续调用已移除的旧提案工具。该诊断提案已通过 MCP 拒绝，请求完成且对应 Document Transaction 数量为 0。此次知识库现状只需要修改一个文档，因此真实多文档原子批准仍需隔离 fixture 纵向 smoke；代码级多文档分组、批量投影、仓储输入与恢复映射回归已通过，Rust 批量事务实现通过编译和全量既有测试。
+- 修复后再次通过通信接口提交不指定文档或块的自然语言同步请求 `agent-request-fb25b1f79f80ef6b6bc97707`。Agent 自主检索并选择目标，最终只生成一个合并后的 `replace` Patch，未出现目标重叠；该诊断提案已通过 MCP 拒绝，文档未写入。另一次诊断发现模型可因反复改写检索词耗尽轮次后以 no-change 结束，Prompt 已增加检索收敛和 blocked 语义约束，仍需后续纵向观察。
+- 此前针对性验证：6 个关键前端测试文件共 49 项通过，覆盖新工具分组、跨文档解析、批量投影、恢复与拒绝；Rust Patch 集合约束 2 项通过。当时的真实通信测试只查询并拒绝提案，因此尚不能完成 C1.5；该历史阻塞已由下述正式多文档批准与 revision continuation 纵向验收解除。
+- C2 未开始；`/research` 仍未绑定认知运行与候选确认 UI。
+- 最终门禁：`pnpm test:run` 105 个测试文件通过、2 个跳过，377 项通过、5 项跳过；`pnpm typecheck`、`pnpm lint`、`pnpm build` 均通过；Rust 49 项通过、3 项显式忽略。生产构建仅保留既有 chunk size 与动态/静态 import 提示。
+- 上述“固定隔离页 + 明确目标内容”的旧纵向 smoke 单独看只证明当前页写入闭环；C1.5 的最终完成依据是下述不指定文档/块的正式 MCP 自主同步、修订和多文档批准记录。
+- 2026-07-15 通用 Agent 生命周期差异审计已写入 `docs/agent-runtime.md`。确认 AI SDK 会维护同一次 ToolLoopAgent 内的 tool messages，但旧 MCP reject → submit 会创建全新 task，不携带上一版 summary、Patch、canonical provenance 或反馈；因此微小修订会错误重跑完整发现循环。migration `0018` 与 stdio MCP `revise_agent_request` 现让同一 request 保存 previous task、feedback 和 revision count。
+- revision continuation 会由 Runtime 重新加载上一提案目标的 canonical provenance，把上一版 summary、完整 Patch 和授权人反馈编译为紧凑修订输入；ExecutionPolicy 只允许 `submit_document_edits`，最多 6 轮，不允许重新搜索或扩大文档范围。若反馈需要新资料，必须拒绝当前提案并创建新的完整 request。
+- 写提案 Runtime 的最低 output token 预算由 2048 提高为 16384，并同时提高 task tokenBudget；标准 result 现在保存 provider `finishReason` 与聚合 input/output/total usage。通信消费者不再把 cancelled 或缺少 result 的任务标为 completed。
+- `read_document` 改为直接从 canonical `content_json` 生成 revision、plain text 与 blocks；`submit_document_edits` 在工具调用当下验证文档已读取、目标 block 来自该次读取、同文档目标互斥且 replace 非 no-op。旧的“工具成功、结果阶段才过滤全部 Patch”路径已消除。
+- 启动恢复通过 Rust transaction 自动拒绝未绑定任何通信 request、且已被更新任务取代的孤立 `waiting_confirmation` 提案；Patch、task 和 confirmation 审计同步更新。手动 MCP orphan 清理入口已移除，脏状态不再转嫁给外部调用方。
+- 真实 stdio MCP 纵向验收使用 request `agent-request-adeff126b29459a708aec22a`。首次 task 自主检索并生成 2 文档/4 Patch 提案，`finishReason=stop`，input 84076、output 7412、total 91488 tokens，证明输出不再受 2048 限制。随后同一 request 通过 `revise_agent_request` 仅统一一处术语；revision task `53231b62-4560-4526-b89a-eb135636f8eb` 只调用一次 `submit_document_edits`，没有 `search_documents`/`read_document`，result 报告 input 18519、output 2400、total 20919 tokens。
+- 修订版依据 Agent 标准 result.summary 批准，没有由外部调用方读取知识正文复核。最终 request 为 `completed`、4 个 Patch 均 accepted；Agent 汇总为 2 篇知识内容、4 处 edit、无新增未处理项。Rust batch 生成 2 条 applied `agent_document_transactions`，覆盖 2 个不同 document，验证 migration `0017` 的 `UNIQUE(task_id, document_id)` 与多文档原子批准路径。
+- 本轮最终门禁：`pnpm test:run` 107 个测试文件通过、2 个跳过，398 项通过、5 项跳过；`pnpm typecheck`、`pnpm lint`、`pnpm build` 均通过。Rust 全量测试 52 项通过、3 项显式忽略；迁移失败恢复测试首次并发运行在 Windows 临时目录清理时遇到 error 32，业务断言已通过，增加 10 次 × 20ms 有界文件锁重试后单测与默认并发全量均通过。`git diff --check` 通过，仅有既有 LF → CRLF 工作树提示。
 
 ## C2：Research 完整闭环
 

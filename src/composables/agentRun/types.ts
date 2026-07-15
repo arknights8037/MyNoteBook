@@ -28,6 +28,7 @@ export interface AgentRunDocumentAdapter {
   searchDocuments: (query: string, limit: number) => Promise<DocumentSummary[]>
   readDocument: (documentId: string) => Promise<DocumentRecord | null>
   listDocumentBlocks: (documentId: string) => Promise<DocumentBlock[]>
+  openDocumentForReview: (documentId: string) => Promise<void>
 }
 
 export interface AgentRunPatchWorkflow {
@@ -52,6 +53,13 @@ export interface UseAgentRunOptions {
   notify: { success: (message: string) => void; error: (message: string) => void }
   document: AgentRunDocumentAdapter
   patches: AgentRunPatchWorkflow
+}
+
+export interface AgentRunContinuation {
+  previousTaskId: string
+  feedback: string
+  previousSummary: string
+  patches: BlockPatch[]
 }
 
 export interface AgentRunSnapshot {

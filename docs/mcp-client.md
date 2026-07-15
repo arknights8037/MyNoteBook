@@ -60,6 +60,18 @@ MyNoteBook 可以作为 MCP Client 连接用户显式导入并启用的外部服
 - 不保持跨 Agent 任务的长连接；有状态 MCP 服务应自行持久化状态。
 - 某个已启用服务连接失败时，本次 Agent 运行不会加载 MCP 工具，但知识库内置工具仍可继续使用。
 
-## MyNoteBook 只读 MCP Server
+## MyNoteBook MCP Server 与 Agent 通信
 
-`src-tauri/src/bin/mynotebook-mcp.rs` 是独立 stdio Server，以 SQLite `query_only` 模式公开当前有效 Rule、Decision、开放 TaskRun 和指定 Context Bundle。它不提供写工具；Artifact/Evidence/Result/ChangeSet 必须通过带 capability token 的 Delegation Gateway 提交。
+`src-tauri/src/bin/mynotebook-mcp.rs` 是独立 stdio Server。未配置 `MYNOTEBOOK_AGENT_CAPABILITY_TOKEN` 时，它以 SQLite `query_only` 模式公开当前有效 Rule、Decision、开放 TaskRun、指定 Context Bundle 和知识搜索。
+
+配置 capability token 后，Server 额外开放受控 Agent 通信工具：
+
+- `submit_agent_request`：把通用任务说明加入本地队列，不运行第二套模型循环，也不批准或应用 Patch。
+- `get_agent_request`：查询请求状态、AgentTask 和候选 Patch，属于只读操作。
+- `decide_agent_request`：在请求已经进入 `awaiting_review` 后批准或拒绝；批准后由桌面应用通过既有确认与 Rust transaction 应用。
+
+`mynotebook-agent` 是对应的 stdio MCP 客户端，可执行 `submit`、`get`、`approve` 和 `reject`。数据库 URL 可由 `--database-url` 或 `MYNOTEBOOK_DATABASE_URL` 提供；能力令牌只从 `MYNOTEBOOK_AGENT_CAPABILITY_TOKEN` 读取，避免出现在命令行参数中。该接口用于启动后的本地受控集成与验收，不允许调用方用它绕过 ExecutionPolicy、Patch/Diff、revision 校验或确认记录。
+
+`get_agent_request` 还返回 Runtime 写入的版本化 `result` 信封：`version`、`outcome`、`summary`、`patchCount` 和 `targetDocumentIds`。这是 Agent 向调用方回传执行汇总的标准通道；调用方不需要通过数据库、界面或重新解析对话消息猜测 Agent 做了什么。进入 `awaiting_review` 时信封与 Patch 同时持久化，批准或拒绝后继续保留。
+
+通信请求生成的修改在进入 `awaiting_review` 前必须通过 Runtime 批级约束：一次提案可以包含多个已读取文档，但每个文档只分组一次，且该文档内的 edit targets 必须互不重叠。`get_agent_request` 只暴露已编译并通过约束的内部 Patch；`decide_agent_request` 不承担修复或排序歧义 Patch 的职责。批准多文档提案时，Rust 在同一个 SQLite transaction 中校验并写入全部目标，任一失败都会回滚整批。

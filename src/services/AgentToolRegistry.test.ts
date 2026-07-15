@@ -7,6 +7,9 @@ import {
   AGENT_TOOL_REGISTRY,
   getAgentToolDefinition,
   isAllowedAgentTool,
+  MIN_AGENT_WRITE_OUTPUT_TOKENS,
+  createDefaultAgentExecutionPolicy,
+  resolveAgentOutputTokenLimit,
 } from './AgentToolRegistry'
 
 describe('AgentToolRegistry', () => {
@@ -41,6 +44,11 @@ describe('AgentToolRegistry', () => {
       risk: 'write',
       requiresConfirmation: true,
     })
+    expect(getAgentToolDefinition('submit_document_edits')).toMatchObject({
+      risk: 'write',
+      requiresConfirmation: true,
+      maxCallsPerTask: 2,
+    })
     expect(getAgentToolDefinition('create_automation_draft')).toMatchObject({
       risk: 'draft',
       requiresConfirmation: true,
@@ -58,5 +66,12 @@ describe('AgentToolRegistry', () => {
     expect(AGENT_MAX_TOOL_ROUNDS).toBe(32)
     expect(AGENT_MAX_TOOL_FAILURES).toBe(6)
     expect(AGENT_MAX_TASK_DURATION_MS).toBe(10 * 60 * 1000)
+  })
+
+  it('reserves a large output budget for write proposals', () => {
+    const policy = createDefaultAgentExecutionPolicy(2_048)
+    expect(MIN_AGENT_WRITE_OUTPUT_TOKENS).toBe(16_384)
+    expect(policy.tokenBudget).toBe(16_384)
+    expect(resolveAgentOutputTokenLimit(2_048, policy)).toBe(16_384)
   })
 })

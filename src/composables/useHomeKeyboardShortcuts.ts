@@ -5,6 +5,7 @@ import { matchesShortcut, type AppSettings } from '@/models/settings'
 type BrowserKeyboardEvent = InstanceType<typeof globalThis.KeyboardEvent>
 
 interface HomeShortcutActions {
+  openAgent: () => void
   search: () => void
   newDocument: () => void
   save: () => void
@@ -17,6 +18,12 @@ export function useHomeKeyboardShortcuts(
   actions: HomeShortcutActions,
 ) {
   function handleGlobalKeydown(event: BrowserKeyboardEvent): void {
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'a') {
+      event.preventDefault()
+      actions.openAgent()
+      return
+    }
+
     const shortcuts = settings.value.shortcuts
     const match = (
       action: keyof HomeShortcutActions,

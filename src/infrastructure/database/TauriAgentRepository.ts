@@ -28,6 +28,12 @@ interface AgentTransactionCommandResult {
   childDocumentId?: string | null
 }
 
+interface AgentPatchBatchCommandResult {
+  id: string
+  taskId: string
+  transactions: AgentTransactionCommandResult[]
+}
+
 interface AgentTaskRow extends Record<string, unknown> {
   id: string
   session_id: string
@@ -134,6 +140,12 @@ export class TauriAgentRepository implements AgentRepository {
     try {
       if (options.markInterrupted) {
         const interruptedAt = Date.now()
+        await invoke<number>('cleanup_orphan_agent_tasks', {
+          input: {
+            dataDirectory: loadAppSettings().dataDirectory,
+            cleanedAt: interruptedAt,
+          },
+        })
         await this.sqlClient.execute(
           `UPDATE agent_tasks
            SET status = 'failed', current_step = '任务因应用中断而停止',
@@ -147,10 +159,13 @@ export class TauriAgentRepository implements AgentRepository {
                 current_step, error, created_at, completed_at, correlation_id, causation_id,
                 execution_policy_json, context_bundle_id, provider, task_run_id
          FROM agent_tasks
-         WHERE document_id = ?
+         WHERE document_id = ? OR EXISTS (
+           SELECT 1 FROM agent_patches patch
+           WHERE patch.task_id = agent_tasks.id AND patch.document_id = ?
+         )
          ORDER BY created_at DESC
          LIMIT 50`,
-        [documentId],
+        [documentId, documentId],
       )
       const tasks = taskRows.map(mapTaskRow)
       const pendingTask = tasks.find((task) => task.status === 'waiting_confirmation') ?? null
@@ -160,13 +175,20 @@ export class TauriAgentRepository implements AgentRepository {
         `SELECT transaction_id AS id, task_id, target_document_id AS document_id,
                 before_revision, resulting_revision, status, created_at, rolled_back_at
          FROM (
-           SELECT tx.id AS transaction_id, tx.task_id, tx.document_id AS target_document_id,
+           SELECT COALESCE((
+                    SELECT json_extract(confirmation.details_json, '$.batchId')
+                    FROM agent_confirmations confirmation
+                    WHERE confirmation.task_id = tx.task_id AND confirmation.action = 'applied'
+                      AND confirmation.created_at = tx.created_at
+                    ORDER BY confirmation.id DESC LIMIT 1
+                  ), tx.id) AS transaction_id,
+                  tx.task_id, tx.document_id AS target_document_id,
                   tx.before_revision, tx.resulting_revision, tx.status, tx.created_at,
                   tx.rolled_back_at
            FROM agent_document_transactions tx
            INNER JOIN agent_tasks task ON task.id = tx.task_id
            INNER JOIN documents document ON document.id = tx.document_id
-           WHERE task.document_id = ? AND tx.status = 'applied'
+           WHERE tx.document_id = ? AND tx.status = 'applied'
              AND document.is_deleted = 0 AND document.revision = tx.resulting_revision
            UNION ALL
            SELECT creation.id AS transaction_id, creation.task_id,
@@ -179,7 +201,7 @@ export class TauriAgentRepository implements AgentRepository {
            WHERE task.document_id = ? AND creation.status = 'applied'
              AND document.is_deleted = 0 AND document.revision = 1
          )
-         ORDER BY created_at DESC
+         ORDER BY created_at DESC, id ASC
          LIMIT 1`,
         [documentId, documentId],
       )
@@ -357,22 +379,23 @@ export class TauriAgentRepository implements AgentRepository {
   }
 
   async applyPatchSet(input: ApplyAgentPatchSetInput): Promise<AppResult<AppliedAgentPatchSet>> {
-    const expectedRevision = input.acceptedPatches[0]?.expectedVersion
-    if (expectedRevision === undefined) {
+    if (input.documents.length === 0) {
       return err({ code: 'not-found', message: '目标补丁不存在。' })
     }
     const now = Date.now()
     try {
       const acceptedIds = new Set(input.acceptedPatches.map((patch) => patch.patchId))
-      const result = await invoke<AgentTransactionCommandResult>('apply_agent_patch_set', {
+      const result = await invoke<AgentPatchBatchCommandResult>('apply_agent_patch_set', {
         input: {
           dataDirectory: loadAppSettings().dataDirectory,
           taskId: input.task.id,
-          documentId: input.task.sessionId,
-          expectedRevision,
-          contentJson: input.contentJson,
-          plainText: input.plainText,
-          transactionId: input.transactionId,
+          batchId: input.batchId,
+          documents: input.documents.map((document) => ({
+            documentId: document.documentId,
+            expectedRevision: document.expectedRevision,
+            contentJson: document.contentJson,
+            transactionId: document.transactionId,
+          })),
           patches: input.patchSet.patches.map((patch) => ({
             id: patch.patchId,
             afterText: patch.after,
@@ -381,9 +404,25 @@ export class TauriAgentRepository implements AgentRepository {
           createdAt: now,
         },
       })
-      const saved = await this.documentRepository.findById(input.task.sessionId)
-      if (!saved.ok) return saved
-      return ok({ document: saved.value, transaction: mapTransaction(result, 'applied', null) })
+      const transactions = result.transactions.map((transaction) =>
+        mapTransaction(transaction, 'applied', null),
+      )
+      const documents: NonNullable<AppliedAgentPatchSet['documents']> = []
+      for (const mutation of input.documents) {
+        const saved = await this.documentRepository.findById(mutation.documentId)
+        if (!saved.ok) return saved
+        if (saved.value) documents.push(saved.value)
+      }
+      const firstTransaction = transactions[0]
+      if (!firstTransaction) {
+        return err({ code: 'not-found', message: 'Agent 写入事务未生成。' })
+      }
+      return ok({
+        document: documents[0] ?? null,
+        documents,
+        transaction: { ...firstTransaction, id: result.id },
+        transactions,
+      })
     } catch (error) {
       return err(normalizeError(error, 'Agent 修改写入失败，数据库未发生变更。'))
     }
@@ -471,6 +510,11 @@ export class TauriAgentRepository implements AgentRepository {
   async rollbackTransaction(transactionId: string): Promise<AppResult<AppliedAgentPatchSet>> {
     const now = Date.now()
     try {
+      const batchRows = await this.sqlClient.select<{ document_id: string }>(
+        `SELECT document_id FROM agent_document_transactions
+         WHERE id = ? OR id LIKE ? ORDER BY id ASC`,
+        [transactionId, `${transactionId}:%`],
+      )
       const result = await invoke<AgentTransactionCommandResult>('rollback_agent_transaction', {
         input: {
           dataDirectory: loadAppSettings().dataDirectory,
@@ -487,9 +531,22 @@ export class TauriAgentRepository implements AgentRepository {
           transaction: mapTransaction(result, 'rolled_back', now),
         })
       }
-      const saved = await this.documentRepository.findById(result.documentId)
-      if (!saved.ok) return saved
-      return ok({ document: saved.value, transaction: mapTransaction(result, 'rolled_back', now) })
+      const documents: NonNullable<AppliedAgentPatchSet['documents']> = []
+      for (const row of batchRows) {
+        const saved = await this.documentRepository.findById(row.document_id)
+        if (!saved.ok) return saved
+        if (saved.value) documents.push(saved.value)
+      }
+      if (documents.length === 0) {
+        const saved = await this.documentRepository.findById(result.documentId)
+        if (!saved.ok) return saved
+        if (saved.value) documents.push(saved.value)
+      }
+      return ok({
+        document: documents[0] ?? null,
+        documents,
+        transaction: { ...mapTransaction(result, 'rolled_back', now), id: transactionId },
+      })
     } catch (error) {
       return err(normalizeError(error, '无法撤销 Agent 修改。'))
     }

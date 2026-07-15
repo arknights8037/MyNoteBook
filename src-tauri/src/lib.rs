@@ -103,6 +103,30 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0014_add_cognitive_core.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 15,
+            description: "add_agent_communication",
+            sql: include_str!("../migrations/0015_add_agent_communication.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 16,
+            description: "add_agent_request_result",
+            sql: include_str!("../migrations/0016_add_agent_request_result.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 17,
+            description: "allow_multi_document_agent_transactions",
+            sql: include_str!("../migrations/0017_allow_multi_document_agent_transactions.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 18,
+            description: "add_agent_request_revision",
+            sql: include_str!("../migrations/0018_add_agent_request_revision.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -146,6 +170,7 @@ pub fn run() {
             agent_repository::apply_agent_document_creation,
             agent_repository::apply_agent_group_creation,
             agent_repository::reject_agent_patch_set,
+            agent_repository::cleanup_orphan_agent_tasks,
             agent_repository::rollback_agent_transaction,
             secret_store::get_ai_api_key,
             secret_store::set_ai_api_key,

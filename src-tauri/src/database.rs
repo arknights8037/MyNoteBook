@@ -482,6 +482,60 @@ mod tests {
                 .await
                 .expect("asset cascade");
         assert_eq!(asset_count, 0);
+        for document_id in ["agent-doc-1", "agent-doc-2"] {
+            sqlx::query(
+                "INSERT INTO documents (id, title, content_json, created_at, updated_at) \
+                 VALUES (?, ?, '{\"type\":\"doc\",\"content\":[]}', 1, 1)",
+            )
+            .bind(document_id)
+            .bind(document_id)
+            .execute(pool.as_ref())
+            .await
+            .expect("agent transaction document");
+        }
+        sqlx::query(
+            "INSERT INTO agent_tasks (id, session_id, document_id, status, user_instruction, \
+             context_scope, model, current_step, created_at) \
+             VALUES ('multi-document-task', 'session', 'agent-doc-1', 'running', 'sync', \
+             'workspace', 'test', 'running', 1)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("agent task");
+        for (transaction_id, document_id) in [
+            ("agent-transaction-1", "agent-doc-1"),
+            ("agent-transaction-2", "agent-doc-2"),
+        ] {
+            sqlx::query(
+                "INSERT INTO agent_document_transactions (id, task_id, document_id, \
+                 before_revision, resulting_revision, before_content_json, before_plain_text, \
+                 after_content_json, after_plain_text, created_at) \
+                 VALUES (?, 'multi-document-task', ?, 1, 2, '{}', '', '{}', '', 2)",
+            )
+            .bind(transaction_id)
+            .bind(document_id)
+            .execute(pool.as_ref())
+            .await
+            .expect("multi-document agent transaction");
+        }
+        let transaction_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM agent_document_transactions \
+             WHERE task_id = 'multi-document-task'",
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("multi-document transaction count");
+        assert_eq!(transaction_count, 2);
+        assert!(sqlx::query(
+            "INSERT INTO agent_document_transactions (id, task_id, document_id, \
+             before_revision, resulting_revision, before_content_json, before_plain_text, \
+             after_content_json, after_plain_text, created_at) \
+             VALUES ('agent-transaction-duplicate', 'multi-document-task', 'agent-doc-1', \
+             1, 2, '{}', '', '{}', '', 3)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .is_err());
         sqlx::query(
             "INSERT INTO automation_tasks (id, name, instruction, trigger_type, created_at, updated_at) \
              VALUES ('guard-auto', 'Guard', 'Run', 'manual', 1, 1)",
@@ -684,7 +738,23 @@ mod tests {
                 .file_name()
                 .to_string_lossy()
                 .starts_with("editor-pre-migration-")));
-        fs::remove_dir_all(&root).expect("cleanup");
+        let mut cleanup_error = None;
+        for _ in 0..10 {
+            match fs::remove_dir_all(&root) {
+                Ok(()) => {
+                    cleanup_error = None;
+                    break;
+                }
+                Err(error) if error.raw_os_error() == Some(32) => {
+                    cleanup_error = Some(error);
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) => panic!("cleanup: {error}"),
+            }
+        }
+        if let Some(error) = cleanup_error {
+            panic!("cleanup after Windows file-lock retries: {error}");
+        }
     }
 
     #[tokio::test]
@@ -741,7 +811,7 @@ mod tests {
             .fetch_all(upgraded.as_ref())
             .await
             .expect("foreign key check");
-        assert_eq!(current_version, 14);
+        assert_eq!(current_version, 15);
         assert_eq!(document_count_after, document_count_before);
         assert_eq!(integrity, "ok");
         assert!(foreign_key_errors.is_empty());

@@ -20,14 +20,21 @@ export interface ApplyAgentPatchSetInput {
   task: AgentTask
   patchSet: AgentPatchSet
   acceptedPatches: BlockPatch[]
-  contentJson: string
-  plainText: string
-  transactionId: string
+  batchId: string
+  documents: Array<{
+    documentId: DocumentId
+    expectedRevision: number
+    contentJson: string
+    plainText: string
+    transactionId: string
+  }>
 }
 
 export interface AppliedAgentPatchSet {
   document: DocumentRecord | null
   transaction: AgentDocumentTransaction
+  documents?: DocumentRecord[]
+  transactions?: AgentDocumentTransaction[]
   createdDocuments?: DocumentRecord[]
   removedDocumentIds?: DocumentId[]
 }

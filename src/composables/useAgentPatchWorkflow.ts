@@ -4,6 +4,7 @@ import {
   validateBlockPatch,
   type AgentPatchSet,
   type AgentTask,
+  type BlockPatch,
   type SelectedBlock,
 } from '@/models/agent'
 import type { DocumentId, DocumentRecord, TiptapDocumentJson } from '@/models/document'
@@ -20,6 +21,7 @@ export interface AgentPatchDocumentSnapshot {
 
 export interface AgentPatchDocumentAdapter {
   getSnapshot: () => AgentPatchDocumentSnapshot
+  loadSnapshot: (documentId: DocumentId) => Promise<AgentPatchDocumentSnapshot | null>
   applyDocument: (document: DocumentRecord) => void
   mergeDocument: (document: DocumentRecord) => void
   removeDocument: (documentId: DocumentId) => void
@@ -151,26 +153,6 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
       return
     }
 
-    const snapshot = options.document.getSnapshot()
-    if (snapshot.dirty) {
-      await reportPendingAgentError('文档已有未保存改动，请保存后重新生成 Agent 修改。')
-      return
-    }
-
-    const availableBlockIds = snapshot.blocks.map((block) => block.id)
-    for (const patch of acceptedPatches) {
-      const validation = validateBlockPatch(patch, {
-        documentId: snapshot.id,
-        expectedVersion: snapshot.revision,
-        availableBlockIds,
-        currentBlocks: snapshot.blocks,
-      })
-      if (!validation.ok) {
-        await reportPendingAgentError(validation.error ?? '补丁校验失败。')
-        return
-      }
-    }
-
     const creationPatches = acceptedPatches.filter(
       (patch) => patch.operation === 'create_document' || patch.operation === 'create_group',
     )
@@ -181,6 +163,17 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
       }
       const creationPatch = creationPatches[0]
       if (!creationPatch) return
+      const snapshot = options.document.getSnapshot()
+      const validation = validateBlockPatch(creationPatch, {
+        documentId: snapshot.id,
+        expectedVersion: snapshot.revision,
+        availableBlockIds: snapshot.blocks.map((block) => block.id),
+        currentBlocks: snapshot.blocks,
+      })
+      if (!validation.ok) {
+        await reportPendingAgentError(validation.error ?? '创建提案校验失败。')
+        return
+      }
       const { parseMarkdownDocument } = await import('@/editor/markdownImport')
       const repository = await getAgentRepository()
       const applied =
@@ -238,11 +231,54 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
       return
     }
 
+    const patchesByDocument = new Map<DocumentId, BlockPatch[]>()
+    for (const patch of acceptedPatches) {
+      const documentPatches = patchesByDocument.get(patch.documentId) ?? []
+      documentPatches.push(patch)
+      patchesByDocument.set(patch.documentId, documentPatches)
+    }
+
     const { applyAgentBlockPatches } = await import('@/editor/agentBlockPatch')
-    const nextContent = applyAgentBlockPatches(snapshot.content, acceptedPatches)
-    if (!nextContent.ok || !nextContent.content || nextContent.plainText === undefined) {
-      await reportPendingAgentError(nextContent.error ?? '无法生成 Agent 修改后的文档内容。')
-      return
+    const batchId = createTransactionId()
+    const documentMutations = []
+    for (const [documentId, documentPatches] of patchesByDocument) {
+      const snapshot = await options.document.loadSnapshot(documentId)
+      if (!snapshot || snapshot.revision === null) {
+        await reportPendingAgentError(`无法加载目标文档 ${documentId} 的确认快照。`)
+        return
+      }
+      if (snapshot.dirty) {
+        await reportPendingAgentError(
+          `文档 ${documentId} 已有未保存改动，请保存后重新生成 Agent 修改。`,
+        )
+        return
+      }
+      const availableBlockIds = snapshot.blocks.map((block) => block.id)
+      for (const patch of documentPatches) {
+        const validation = validateBlockPatch(patch, {
+          documentId,
+          expectedVersion: snapshot.revision,
+          availableBlockIds,
+          currentBlocks: snapshot.blocks,
+        })
+        if (!validation.ok) {
+          await reportPendingAgentError(validation.error ?? '补丁校验失败。')
+          return
+        }
+      }
+      const nextContent = applyAgentBlockPatches(snapshot.content, documentPatches)
+      if (!nextContent.ok || !nextContent.content || nextContent.plainText === undefined) {
+        await reportPendingAgentError(nextContent.error ?? '无法生成 Agent 修改后的文档内容。')
+        return
+      }
+      documentMutations.push({
+        documentId,
+        expectedRevision: snapshot.revision,
+        contentJson: JSON.stringify(nextContent.content),
+        plainText: nextContent.plainText,
+        transactionId:
+          documentMutations.length === 0 ? batchId : `${batchId}:${documentMutations.length}`,
+      })
     }
 
     const repository = await getAgentRepository()
@@ -250,9 +286,8 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
       task,
       patchSet,
       acceptedPatches,
-      contentJson: JSON.stringify(nextContent.content),
-      plainText: nextContent.plainText,
-      transactionId: createTransactionId(),
+      batchId,
+      documents: documentMutations,
     })
     if (!applied.ok || !applied.value.document) {
       await reportPendingAgentError(
@@ -260,7 +295,12 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
       )
       return
     }
-    options.document.applyDocument(applied.value.document)
+    const currentDocumentId = options.document.getSnapshot().id
+    for (const document of applied.value.documents ?? [applied.value.document]) {
+      if (!document) continue
+      if (document.id === currentDocumentId) options.document.applyDocument(document)
+      else options.document.mergeDocument(document)
+    }
     completeTask(task, patchSet, applied.value.transaction.id, applied.value.transaction.createdAt)
     options.notify.success('Agent 修改已写入，可用撤销恢复')
   }
@@ -311,10 +351,6 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
     const patchSet = lastAppliedPatchSet.value
     const transactionId = lastAppliedAgentTransactionId.value
     if (!task || !patchSet || !transactionId) return
-    if (task.sessionId !== options.document.getSnapshot().id) {
-      options.notify.error('请先打开 Agent 修改所在的文档，再执行撤销。')
-      return
-    }
     const repository = await getAgentRepository()
     const rolledBack = await repository.rollbackTransaction(transactionId)
     if (!rolledBack.ok) {
@@ -322,7 +358,11 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
       return
     }
     if (rolledBack.value.document) {
-      options.document.applyDocument(rolledBack.value.document)
+      const currentDocumentId = options.document.getSnapshot().id
+      for (const document of rolledBack.value.documents ?? [rolledBack.value.document]) {
+        if (document.id === currentDocumentId) options.document.applyDocument(document)
+        else options.document.mergeDocument(document)
+      }
     } else {
       for (const documentId of rolledBack.value.removedDocumentIds ?? [
         rolledBack.value.transaction.documentId,
