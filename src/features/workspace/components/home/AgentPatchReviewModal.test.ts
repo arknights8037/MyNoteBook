@@ -46,7 +46,7 @@ function createPatchSet(patches: BlockPatch[]): AgentPatchSet {
 }
 
 describe('AgentPatchReviewModal', () => {
-  it('renders as a non-modal review region and can collapse without discarding it', async () => {
+  it('renders an opaque workspace review surface and can collapse without discarding it', async () => {
     const patches = [createPatch()]
     const wrapper = mount(AgentPatchReviewModal, {
       props: {
@@ -55,9 +55,11 @@ describe('AgentPatchReviewModal', () => {
         patchSet: createPatchSet(patches),
         patches,
         acceptedCount: 1,
+        workspace: true,
       },
     })
 
+    expect(wrapper.find('.agent-patch-backdrop').exists()).toBe(true)
     expect(wrapper.find('.ui-dialog-overlay').exists()).toBe(false)
     expect(wrapper.get('aside[aria-label="Agent 修改审阅"]').text()).toContain('修改尚未写入')
 
@@ -85,5 +87,66 @@ describe('AgentPatchReviewModal', () => {
 
     expect(wrapper.emitted('update-accepted')).toEqual([['patch-1', false]])
     expect(wrapper.emitted('apply')).toEqual([[]])
+  })
+
+  it('uses a dedicated full-content preview for document creation proposals', () => {
+    const patches = [createPatch(true)]
+    patches[0] = {
+      ...patches[0],
+      operation: 'create_document',
+      documentId: 'new-document',
+      documentTitle: '应用概览',
+      blockId: '',
+      targetBlockIds: [],
+      expectedVersion: 0,
+      before: '',
+      after: '# 应用概览\n\n完整正文',
+    }
+    const wrapper = mount(AgentPatchReviewModal, {
+      props: {
+        show: true,
+        task: createTask(),
+        patchSet: createPatchSet(patches),
+        patches,
+        acceptedCount: 1,
+      },
+    })
+
+    expect(wrapper.get('.agent-patch-panel__header').text()).toContain('确认 Agent 创建内容')
+    expect(wrapper.get('.agent-creation-preview').text()).toContain('应用概览')
+    expect(wrapper.get('textarea[aria-label="编辑待创建的文档正文"]').element.value).toContain(
+      '完整正文',
+    )
+    expect(wrapper.get('.agent-patch-panel__footer .ui-button--primary').text()).toContain(
+      '确认创建',
+    )
+  })
+
+  it('disables creation confirmation while the write is in flight', () => {
+    const patches = [
+      {
+        ...createPatch(),
+        operation: 'create_document' as const,
+        documentId: 'new-document',
+        documentTitle: '应用概览',
+        blockId: '',
+        targetBlockIds: [],
+        expectedVersion: 0,
+      },
+    ]
+    const wrapper = mount(AgentPatchReviewModal, {
+      props: {
+        show: true,
+        task: createTask(),
+        patchSet: createPatchSet(patches),
+        patches,
+        acceptedCount: 1,
+        applying: true,
+      },
+    })
+
+    const confirm = wrapper.get('.agent-patch-panel__footer .ui-button--primary')
+    expect(confirm.attributes('disabled')).toBeDefined()
+    expect(confirm.text()).toContain('创建中')
   })
 })

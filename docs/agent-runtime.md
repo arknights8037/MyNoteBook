@@ -1,146 +1,160 @@
-# Agent Runtime
+# Agent Runtime 与工具协议
 
-## 设计目标
+MyNoteBook 的 Agent 是受控的本地知识协作者。它可以读取许可范围内的文档、知识和外部工具结果，生成回答或结构化修改提案；它不能绕过本地权限、确认与可信写入边界。
 
-MyNoteBook 的 Agent 是一个受控的本地知识库协作者，不是拥有任意系统权限的自动化程序。它的职责是理解意图、读取许可范围内的文档上下文、提出可解释的结构化修改，并把最终写入权交给用户。
+## 1. 入口与执行流程
+
+`useAgentRun` 负责一次交互式运行的前端编排，`runAgentToolLoop` 将 Agent 模式交给 `AiSdkAgentRuntime` 的 AI SDK `ToolLoopAgent`。
 
 ```text
-用户意图
-  -> 确定性工作流门禁（显式知识库任务必须检索并阅读）
-  -> 候选块定位
-  -> 系统提示词与来源上下文
-  -> AI SDK ToolLoopAgent 原生 function calling
-  -> 白名单只读工具执行 + SQLite 审计
-  -> 工具结果回传模型（最多 6 轮）
-  -> JSON response format + Zod 终态（commands、patches 或安全停止）
-  -> 本地校验和 Diff
-  -> 用户确认
-  -> SQLite 原子写入 + 审计
-  -> 受版本保护的撤销
+用户输入 / Slash Command
+  -> 冻结文档、选区、Provider 和模式
+  -> 创建 AgentTask
+  -> 编译 Skill 摘要、Context Bundle 和 ExecutionPolicy
+  -> ToolLoopAgent：模型 -> Tool -> Observation -> 下一轮
+  -> 本地校验最终结构化输出
+  -> 回答，或 command/Patch 提案
+  -> Diff / 用户确认 / Rust transaction
 ```
 
-## 不需要选区的修改
+Ask 使用普通流式 Markdown 请求；Edit 生成受控 Patch；Agent 使用真实工具循环。Slash Command 只选择 intent 和策略，不包含独立业务 Runtime。
 
-用户不必手动选择内容。写入模式会先判断是否存在真实选区；没有选区时，根据指令中的关键词从当前文档定位候选块。例如“将 P0 事项标记为完成”会优先把包含 `P0` 的块作为作用范围。模型只能操作候选块及其稳定 `blockId`。
+## 2. ExecutionPolicy
 
-候选定位没有把握时，系统不会把非结构化 Markdown 降级为整篇替换。它会要求模型给出安全的结构化 Patch。
+每次 AgentTask 保存一份 `ExecutionPolicy v1`：
 
-## 系统提示词
+- `maxToolRounds`
+- `maxDurationMs`
+- `maxToolFailures`
+- `tokenBudget`
+- `allowedTools`
+- `riskLevel`
+- `allowUserInput`
+- `allowWriteProposals`
+- `maxRetries`
 
-系统提示词由两层组成：
+当前通用默认值为最多 32 轮、10 分钟、6 次工具失败和 2 次重试；标准化边界允许 1–64 轮、1 秒–30 分钟和 0–12 次工具失败。具体任务、intent 或 Cognitive Mode 可以收紧这些值，但不能绕过 Runtime 检查。
 
-1. 用户在设置页提供的基础角色提示词。
-2. 运行时追加的模式契约。
+内置和 MCP 工具带有代码级 tags。Cognitive Run 编译时把 tags 解析成稳定工具名，并与基础 `allowedTools` 取交集；denied tags 优先。Runtime 热路径不解释 tags，Mode、Template 与 Skill 都不能重新加入基础策略未授权的工具。
 
-Ask 模式是只读回答。Edit 和 Agent 模式明确告诉模型候选块、允许的命令、Patch schema、禁止操作和“只能提案、不得直接写入”的边界。
+只读 intent 会关闭写入提案。MCP 工具通过运行时名称加入 `allowedTools`；`mcp:*` 只代表策略允许进入外部工具检查，不代表免除授权。
 
-## 输出协议
+## 3. Context Bundle
 
-写入模式必须返回一个 JSON 对象。Runtime 通过 AI SDK `Output.object` 请求 JSON response format，并在本地用 Zod 再次校验。模型可选择确定性命令或生成式 Patch：
+模型调用前，`compileContextBundle()` 生成不可变 `Context Bundle v1`，保存：
 
-```json
-{
-  "outcome": "proposal",
-  "commands": [
-    {
-      "tool": "replace_text_by_regex",
-      "pattern": "\\[ \\]",
-      "replacement": "[x]",
-      "flags": "g",
-      "blockIds": ["stable-block-id"],
-      "reason": "将待办标记为完成"
-    }
-  ],
-  "patches": [],
-  "finalAnswer": "已生成待确认修改。"
-}
+- 当前 document、context scope 和 revision。
+- document/block 来源及内容 SHA-256。
+- 本地用户权限快照。
+- 当前有效 Rule、Decision 和冲突槽位。
+- Provider、模型、token budget 与完整 ExecutionPolicy。
+- correlation/causation ID 和整体 snapshot hash。
+
+Knowledge Repository 已经落地。Agent 运行会查询当前文档可见的有效 Rule/Decision，并写入 Bundle；没有有效对象时保存空数组，不伪造上下文。
+
+Context Bundle 是本次运行使用过什么上下文的 provenance，不是可变会话状态，也不是长期记忆。
+
+## 4. Prompt 与结构化输出
+
+当前 Prompt 由以下部分组成：
+
+```text
+基础安全与写入政策
++ 当前 Ask/Edit/Agent 模式
++ 已启用 Skill 摘要
++ Slash intent 指令
++ 当前任务与编译后的上下文
 ```
 
-`outcome` 可为 `proposal`、`no_change` 或 `blocked`。后两种结果不得携带写操作，界面会把它们作为正常、可解释的任务结果，而不是协议错误。
+Skill 正文不会全部预注入。模型先看到 Skill ID、描述和入口摘要，需要时使用 `read_skill_file` 读取已启用 Skill 目录中的文本资料。
 
-`commands` 和 `patches` 应二选一。DeepSeek 的 JSON mode 只能保证语法，不保证字段严格匹配 schema，因此 Runtime 仅规范化可证明等价的常见偏差（`update -> replace`、`value -> after`、由 `blockId` 补全空目标数组、有效 Patch 存在时移除冗余 command），随后仍必须通过完整 Zod 校验。其他偏差进入一次受控修复，修复失败则安全终止，不生成写入。
+Agent 终态使用本地 Zod schema 校验为：
 
-## 工具循环
+- `outcome`: `proposal | no_change | blocked`
+- `commands`: 确定性写入命令
+- `patches`: 复杂块 Patch
+- `finalAnswer`: 面向用户的最终说明
 
-每次受控 Agent 运行会冻结一份 `ExecutionPolicy v1`，记录最大工具轮次、最大运行时间、失败预算、Token 预算、允许工具、风险等级、是否允许请求用户输入、是否允许提出写入和重试上限。原有 6 轮/5 分钟现在只是默认策略，不再是 Runtime 内不可追溯的硬编码行为。
+写入提案工具成功只代表提案被 Runtime 捕获，并不代表文档已经修改。兼容模型若无法在工具调用后可靠使用 provider structured output，Runtime 会要求最终 JSON 并执行本地严格解析；结构不合法时不产生写入。
 
-模型调用前，`compileContextBundle()` 会把 scope、文档/块/revision、检索来源、权限快照、编译策略、目标 Provider/模型和 ExecutionPolicy 编译为不可变 `Context Bundle v1`，计算 SHA-256 snapshot hash，并通过 Rust transaction 关联到 `agent_tasks.context_bundle_id`。当前 Knowledge Object 尚未落地，因此 active rules、decisions 和 conflicts 保存为空数组，而不是伪造规则数据。
+旧运行默认使用文档 command/Patch 契约。Runtime 也可注入版本化 `AgentOutputContract<T>`：Prompt 加入 contract 指令，终态从正文或 reasoning 通道提取 JSON 并在本地严格校验；无效结构不会进入候选或写入。当前测试认知 contract 与旧协议共用同一 `ToolLoopAgent`，没有第二套模型循环。
 
-Agent 模式由 Vercel AI SDK `ToolLoopAgent` 执行真实的多轮循环。Provider 原生接收类型化工具 schema，AI SDK 负责保存工具消息、执行工具并把结果送入下一轮；最终输出在本地使用 Zod schema 校验为结构化 command/Patch。DeepSeek 当前不稳定支持“工具调用后再生成 `Output.object`”，因此最后一轮由 `prepareStep` 禁用工具并要求 JSON 终态，再做本地严格校验。
+## 5. 工具生命周期与取消
 
-当用户自然语言明确要求“查知识库”“检索”“翻翻资料”等跨文档任务时，Runtime 不依赖模型自行遵守提示词：状态机会强制先调用 `search_documents`，有命中时再调用 `read_document`，之后才能进入终态生成。模型仍自主生成查询词、选择命中文档和提出修改。
+每次工具调用使用稳定 call ID，并遵循写前审计：
 
-- 原生工具调用：运行时校验工具白名单、Zod 参数、单工具调用次数和风险等级，执行后由 AI SDK 自动把结构化结果送回下一轮。
-- `commands` / `patches`：结束工具循环，进入本地校验、Diff 和用户确认。
+```text
+构造 running AgentToolCall
+  -> 写入 agent_tool_calls
+  -> 审计成功后执行工具
+  -> 更新同一 call ID 为 completed/failed
+  -> Observation 返回模型
+```
 
-只读工具可以在循环中立即执行。写工具即使已注册，也不能在循环中直接改变编辑器或数据库；模型必须把写入意图转换成最终 command/Patch。循环最多 6 轮，最多容忍 2 次工具失败，单任务最长 5 分钟。每次调用无论成功或失败都会写入 `agent_tool_calls`。
+如果 `running` 审计写入失败，工具不会执行，避免外部副作用先于审计事实发生。
 
-如果模型在工具返回后只用自然语言声称“已完成”，运行时不会结束任务或写入文档，而是把协议错误反馈给模型并要求在剩余轮次内修复为结构化 JSON。
+停止任务时，前端 AbortSignal 会携带 call ID 调用 Rust 取消注册表。`execute_rig_tool` 和 MCP future 通过 `tokio::select!` 退出；白名单命令设置 `kill_on_drop`，future 被丢弃时终止子进程。Runtime 等待已经开始的工具写入终态后才结束任务，不把后台仍在运行的调用伪装成已取消。
 
-运行过程通过统一进度事件向界面报告“正在检索知识库”“正在阅读相关资料”“正在整理可确认的修改”等用户可理解的阶段。失败消息保留原任务并支持重试；重试会重新读取当前 revision 和上下文，不复用旧 Patch。
+等待授权的请求会同步取消。资源草稿等不可安全中断的短事务会在写完审计后结束，不在中间留下未记录副作用。
 
-运行条实时展示当前阶段、累计耗时和停止入口。工具开始时立即加入展开式调用列表，结束后以同一调用 ID 更新成功或失败状态，并展示工具名称、参数摘要、结果摘要、错误和单次耗时；最近一次 Agent 完成后保留该轨迹，清空对话时一并清除。模型推理原文不作为运行审计展示。
+## 6. 内置工具
 
-`search_documents`、`read_document` 和 `execute_shell` 由 Rust Rig `ToolSet` 注册并通过 Tauri 调用；当前编辑器、选区、大纲和正则定位保留在 TS 进程内，因为这些数据只存在于 Tiptap 会话。两端共享同一工具名称和数据库审计记录，不运行第二套模型循环。
+| 工具                        | 风险           | 行为                               |
+| --------------------------- | -------------- | ---------------------------------- |
+| `get_current_document`      | read           | 当前文档、revision 和稳定块        |
+| `get_selected_blocks`       | read           | 用户真实选中的块                   |
+| `get_document_outline`      | read           | 标题大纲与 block ID                |
+| `search_documents`          | read           | SQLite FTS5 检索                   |
+| `list_document_groups`      | read           | 获取真实分组 ID 与子项数量         |
+| `read_document`             | read           | 按 ID 读取正文、标签和 revision    |
+| `find_blocks_by_regex`      | read           | Rust 线性时间正则定位块            |
+| `read_skill_file`           | read           | 读取已启用 Skill 内的受限相对路径  |
+| `request_authorizer_input`  | read           | 暂停并等待授权人选择或文本         |
+| `execute_shell`             | read           | 白名单 Windows/本机只读命令        |
+| `inspect_environment_paths` | read           | 有界读取 PATH/PATHEXT/PSModulePath |
+| `discover_local_tools`      | read           | 发现安全名称的本机工具             |
+| `get_system_info`           | read           | 系统、架构、CPU 和工作目录         |
+| `create_automation_draft`   | draft          | 授权后创建停用自动化草稿           |
+| `create_skill_draft`        | draft          | 授权后创建停用 Skill 草稿          |
+| `replace_text_by_regex`     | write proposal | Rust 正则生成逐块替换提案          |
+| `replace_block`             | write proposal | 完整替换允许范围内的块             |
+| `insert_blocks`             | write proposal | 在稳定锚点附近插入内容             |
+| `create_document`           | write proposal | 创建新文档提案                     |
+| `create_group`              | write proposal | 创建分组及可选初始文档提案         |
+| `propose_document_patches`  | write proposal | 提交一批复杂 Patch                 |
 
-## 已接入工具
+Rust 正则引擎限制 pattern、flags、块数量、replacement 和编译内存，保证线性时间；不支持回溯引用或 look-around。查找和替换都不在 WebView 主线程构造模型提供的 JavaScript `RegExp`。
 
-| 工具                        | 权限     | 行为                                                           |
-| --------------------------- | -------- | -------------------------------------------------------------- |
-| `get_current_document`      | 只读     | 读取当前文档、revision 和稳定块。                              |
-| `get_selected_blocks`       | 只读     | 读取真实选区；没有选区时返回空数组。                           |
-| `get_document_outline`      | 只读     | 返回当前文档标题块及其 block id。                              |
-| `search_documents`          | 只读     | 通过 SQLite FTS5 搜索知识库，返回文档 ID、标题和片段。         |
-| `read_document`             | 只读     | 按文档 ID 读取正文、标签和 revision，并限制返回长度。          |
-| `find_blocks_by_regex`      | 只读     | 用受限正则定位当前文档块。                                     |
-| `execute_shell`             | 只读     | 执行白名单内的 Windows 查询或本机工具只读子命令。              |
-| `inspect_environment_paths` | 只读     | 拆分 PATH、PATHEXT、PSModulePath 并检查路径是否存在。          |
-| `discover_local_tools`      | 只读     | 在 PATH 中发现常见或指定工具，不执行程序。                     |
-| `get_system_info`           | 只读     | 读取操作系统、架构、CPU 数和当前工作目录。                     |
-| `replace_text_by_regex`     | 写入提案 | 在候选块中本地执行受限正则，展开为逐块 Patch，进入 Diff 确认。 |
-| `replace_block`             | 写入提案 | 将允许范围内的单个稳定块展开为 replace Patch。                 |
-| `insert_blocks`             | 写入提案 | 在允许范围内的锚点块前后生成插入 Patch。                       |
-| `create_document`           | 写入提案 | 生成独立的新文档提案，经确认后由 Rust 原子事务创建。           |
+`execute_shell` 不接收脚本文本，只允许结构化白名单：PowerShell 查询、Git 只读子命令、`rg` 当前工作区搜索、`where.exe` 和开发工具版本查询。Rust 再次校验参数、路径、超时和输出上限。
 
-正则限制为最多 240 个字符，只接受 `g`、`i`、`m` flags；无效表达式、过长替换内容和无命中目标都会失败，不产生写入。
+## 7. MCP、Skills 与外部边界
 
-`execute_shell` 不接受 PowerShell 脚本文本。PowerShell 仅开放 `Get-Process`、`Get-Service`、`Get-Command` 和 `Get-Date` 的结构化查询；本机工具仅开放 `git` 的只读子命令、`rg` 当前工作目录搜索、`where.exe` 定位，以及 Node、pnpm、npm、Python、Cargo、rustc 的版本查询。Agent 可按任务指定 `timeoutMs`（1–30 秒）和 `maxOutputChars`（4,096–65,536），默认分别为 10 秒和 32,768 字符。Rust 端再次校验命令和参数，拒绝绝对路径与父目录跳转，所有调用都会记录到 `agent_tool_calls`。
+Agent 运行开始时对已启用 MCP Server 执行 `tools/list`，将 JSON Schema 转换成 provider-safe 的 `mcp__...` 工具。服务只有同时满足“本地标记 trusted”和工具声明 `readOnlyHint: true` 才免逐次授权；其他工具在调用前等待授权人确认。
 
-环境工具不会返回完整环境变量表，避免把 API Key、Token 等敏感值送入模型。`inspect_environment_paths` 只公开 PATH、PATHEXT 和 PSModulePath；`discover_local_tools` 只用安全工具名扫描 PATH，最多返回每个工具的三个命中路径，并且不会执行发现的程序。
+MCP 返回值只作为不可信 Observation。它不能绕过 Patch/Diff，也不能直接更新 Knowledge Object。Tools、Resources、只读 MCP Server 与 Delegation 的完整边界见 [MCP Client](mcp-client.md)。
 
-三个结构化写命令都由 `AgentCommandService` 在本地展开。块命令只能引用本次候选范围内的 block id；`create_document` 必须独占一批提案，只能创建在当前文档下或知识库根目录。模型不能在工具循环中直接执行这些写操作。
+## 8. Patch、确认与撤销
 
-### 外部 MCP 工具
+command 先由本地 `AgentCommandService` 展开为 Patch。每个 Patch 保存 task、document、block、target blocks、expected revision、before/after、operation 和 reason。
 
-Agent 运行开始时会连接用户已启用的 MCP 服务并读取 `tools/list`。每个外部工具根据服务 ID 和工具名生成 provider-safe 的 `mcp__...` 运行时名称，输入 schema 直接采用 MCP 返回的 JSON Schema，并与内置工具一起交给 AI SDK 原生 function calling。
+用户可逐项接受、编辑 `after`、拒绝或接受全部。Rust apply 边界重新校验：
 
-MCP annotations 明确声明 `readOnlyHint: true` 的工具按只读工具执行；其他或未声明风险的工具默认视为可能产生外部副作用，每次调用前通过 `request_authorizer_input` 等待授权人确认。MCP 调用结果只作为模型观察值，不会绕过本地 Patch/Diff 写入门禁。具体导入格式和传输边界见 [MCP Client](mcp-client.md)。
+- task 和 Patch set 状态正确。
+- Patch 属于目标 task/document。
+- revision、block、before 和目标范围未变化。
+- 接受决策覆盖整套提案。
+- 结果 Tiptap JSON 可验证，投影包含接受后的可见文本。
 
-## Patch 与确认
+最终 `plain_text`、`blocks` 和 FTS 由 Rust Document Core 重新生成。撤销只有在 resulting revision 仍未被后续人工编辑改变时执行；新文档只有仍为 revision 1 时才可由 Agent 撤销删除。
 
-每个 Patch 包含文档 ID、块 ID、目标块、预期 revision、修改前后内容、操作和原因。应用前会校验：
+## 9. 运行状态与已知限制
 
-- 文档与 Patch 的 revision 一致；
-- 目标块仍存在，且当前文本与 `before` 一致；
-- 目标不重复、替换范围连续；
-- 内容非空且操作受支持。
+界面把 Agent loop 嵌入当前 assistant 消息，按时间显示工具、参数摘要、结果预览、耗时和当前阶段。完整参数/结果可展开，运行中可停止。
 
-用户可以逐项接受、编辑 `after`、全部拒绝或接受全部。Patch 草案保存、确认写入、拒绝和撤销都由 Rust 端在单个 SQLx 连接事务中完成，避免连接池把 `BEGIN` 与后续语句分配到不同连接。模型流式输出从不直接修改编辑器或数据库。
+当前限制：
 
-Rust apply 边界会再次校验 task 必须处于 `waiting_confirmation`、目标文档与任务一致、决策覆盖整套 proposed Patch、revision 匹配、目标块仍存在且 `before` 未变化，并检查接受后的可见文本确实存在于结果 Tiptap 投影。最终 `plain_text` 和 `blocks` 均由 Rust 从结果 JSON 重新生成，不信任前端传入的派生文本。
-
-## Skill 与运行 provenance
-
-系统提示词只注入已启用 Skill 的 ID、描述和入口摘要，不再全量拼接所有 `SKILL.md`。Agent 判断任务匹配后使用 `read_skill_file` 按需读取正文。运行记录保存当时启用的 Skill ID/版本、Provider、实际模型参数和被忽略参数。
-
-新文档提案使用独立的创建事务。撤销时仅当新文档仍为 revision 1 才允许删除；用户后续编辑过的新文档不会被撤销覆盖。
-
-来源链接可以携带稳定 `blockId`。页面切换完成后，编辑器通过公开的 `revealBlock` 命令滚动并短暂高亮来源块；旧的文档级链接保持兼容。
-
-## 审计与撤销
-
-`agent_tasks`、`agent_patches`、`agent_task_sources`、`agent_confirmations`、`agent_document_transactions` 和 `agent_tool_calls` 保存任务生命周期、来源、确认事件和写入快照。
-
-撤销只会在文档 revision 仍等于该 Agent 事务产生的 revision 时执行。若其后已有人工保存，撤销会拒绝，避免覆盖用户的新内容。
-
-应用启动和页面切换时会从审计表恢复待确认 Patch 与最近一笔仍满足 revision 条件的事务。上次退出时尚处于 `pending` 或 `running` 的任务会在启动恢复阶段标记为中断失败；`waiting_confirmation` 提案保持可审阅，避免异常退出后丢失用户尚未处理的 Diff。
+- Tool trace 只保留最近一次 Runtime 状态，尚未绑定和持久化到每条历史消息。
+- `/research`、`/review` 仍只是 intent 策略；Cognitive Session 和结构化 contract 已落地，但绑定命令、结果 UI 与候选确认属于后续阶段。
+- 自动化有定义和运行队列，但没有后台无人值守模型调度器。
+- MCP Prompts、Roots、Sampling、OAuth、旧 SSE 和跨任务长连接尚未开放。
+- 真实 DeepSeek Provider、stdio/Streamable HTTP MCP、真实 CLI 外部进程和隔离数据恢复已通过 G0 smoke；Windows 干净安装包仍属于发布流程检查。

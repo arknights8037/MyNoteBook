@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke }))
+
 import { TauriAgentRepository } from './TauriAgentRepository'
+import type { AgentPatchSet, AgentTask, BlockPatch } from '@/models/agent'
 import type { SqlClient, SqlExecuteResult } from '@/repositories/SqlClient'
 import type { SqlValue } from '@/repositories/SqlClient'
 
@@ -98,6 +102,45 @@ class SqliteRecoveryClient implements SqlClient {
 function toSqliteValue(value: SqlValue): string | number | null {
   return typeof value === 'boolean' ? Number(value) : value
 }
+
+class CreationSqlClient implements SqlClient {
+  async execute(): Promise<SqlExecuteResult> {
+    return { rowsAffected: 1 }
+  }
+
+  async select<T extends Record<string, unknown>>(
+    sql: string,
+    bindValues: SqlValue[] = [],
+  ): Promise<T[]> {
+    if (sql.includes('FROM documents')) {
+      const id = String(bindValues[0])
+      return [
+        {
+          id,
+          parent_id: id === 'child-1' ? 'group-1' : null,
+          document_kind: id === 'group-1' ? 'group' : 'article',
+          title: id === 'group-1' ? '资料分组' : '新文档',
+          source_url: '',
+          author: '',
+          description: '',
+          content_json: '{"type":"doc","content":[]}',
+          plain_text: id === 'group-1' ? '' : '正文',
+          schema_version: 2,
+          revision: 1,
+          sort_order: 0,
+          is_deleted: 0,
+          created_at: 1,
+          updated_at: 1,
+        } as T,
+      ]
+    }
+    return []
+  }
+}
+
+beforeEach(() => {
+  invoke.mockReset()
+})
 
 describe('TauriAgentRepository recovery', () => {
   it('maps persisted tasks, patches, sources and the latest safe transaction', async () => {
@@ -196,3 +239,107 @@ describe('TauriAgentRepository recovery', () => {
     expect(stale.ok && stale.value.lastAppliedTransaction).toBeNull()
   })
 })
+
+describe('TauriAgentRepository creation confirmation', () => {
+  it('sends the exact confirmed Markdown for document and group creation audit', async () => {
+    const repository = new TauriAgentRepository(new CreationSqlClient())
+    const creationTask = task()
+    const documentPatch = patch({
+      patchId: 'document-patch',
+      operation: 'create_document',
+      documentId: 'document-1',
+      documentTitle: '新文档',
+      after: '| 列一 | 列二 |\n| --- | --- |\n| A | B |',
+    })
+    const groupPatch = patch({
+      patchId: 'group-patch',
+      operation: 'create_group',
+      documentId: 'group-1',
+      documentTitle: '资料分组',
+      blockId: 'child-1',
+      before: '初始文档',
+      after: '# 初始文档\n\n正文',
+    })
+    invoke
+      .mockResolvedValueOnce(transactionResult('document-1'))
+      .mockResolvedValueOnce({ ...transactionResult('group-1'), childDocumentId: 'child-1' })
+
+    await repository.applyDocumentCreation({
+      task: creationTask,
+      patchSet: patchSet(documentPatch),
+      patch: documentPatch,
+      contentJson: '{"type":"doc","content":[{"type":"paragraph"}]}',
+      plainText: '列一 列二 A B',
+      transactionId: 'document-transaction',
+    })
+    await repository.applyGroupCreation({
+      task: creationTask,
+      patchSet: patchSet(groupPatch),
+      patch: groupPatch,
+      childContentJson: '{"type":"doc","content":[{"type":"paragraph"}]}',
+      childPlainText: '初始文档 正文',
+      transactionId: 'group-transaction',
+    })
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'apply_agent_document_creation', {
+      input: expect.objectContaining({ acceptedAfterText: documentPatch.after }),
+    })
+    expect(invoke).toHaveBeenNthCalledWith(2, 'apply_agent_group_creation', {
+      input: expect.objectContaining({ childAfterText: groupPatch.after }),
+    })
+  })
+})
+
+function task(): AgentTask {
+  return {
+    id: 'task-1',
+    sessionId: 'doc-1',
+    status: 'waiting_confirmation',
+    userInstruction: '创建内容',
+    contextScope: 'current_document',
+    model: 'test-model',
+    currentStep: '等待确认',
+    createdAt: 1,
+    completedAt: null,
+    error: null,
+  }
+}
+
+function patch(overrides: Partial<BlockPatch>): BlockPatch {
+  return {
+    patchId: 'patch-1',
+    taskId: 'task-1',
+    operation: 'create_document',
+    documentId: 'document-1',
+    blockId: '',
+    targetBlockIds: [],
+    expectedVersion: 0,
+    before: '',
+    after: '# 新文档\n\n正文',
+    reason: '创建内容',
+    accepted: true,
+    parentDocumentId: null,
+    ...overrides,
+  }
+}
+
+function patchSet(creationPatch: BlockPatch): AgentPatchSet {
+  return {
+    taskId: 'task-1',
+    patches: [creationPatch],
+    model: 'test-model',
+    contextSources: [],
+    createdAt: 1,
+  }
+}
+
+function transactionResult(documentId: string) {
+  return {
+    id: 'transaction-1',
+    taskId: 'task-1',
+    documentId,
+    beforeRevision: 0,
+    resultingRevision: 1,
+    createdAt: 1,
+  }
+}

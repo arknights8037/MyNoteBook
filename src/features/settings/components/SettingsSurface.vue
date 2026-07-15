@@ -75,6 +75,7 @@ const emit = defineEmits<{
 }>()
 
 const activeSection = ref('general')
+const settingsBody = ref<BrowserHTMLElement | null>(null)
 const recordingShortcut = ref<ShortcutAction | null>(null)
 const systemFonts = ref<string[]>([])
 const sensitivePasswordDraft = ref('')
@@ -91,9 +92,6 @@ const navigation = [
   { id: 'data', label: '数据', description: '本地存储位置', icon: Database },
   { id: 'shortcuts', label: '快捷键', description: '常用操作按键', icon: Keyboard },
 ]
-const activeNavigation = computed(
-  () => navigation.find((item) => item.id === activeSection.value) ?? navigation[0],
-)
 const widthOptions = [
   { label: '紧凑（720px）', value: 'compact' },
   { label: '标准（850px）', value: 'standard' },
@@ -352,9 +350,26 @@ function recordShortcut(action: ShortcutAction, event: BrowserKeyboardEvent): vo
   recordingShortcut.value = null
 }
 
-function scrollToSection(sectionId: string): void {
+async function scrollToSection(sectionId: string): Promise<void> {
   activeSection.value = sectionId
   if (sectionId === 'ai') emit('aiSectionOpen')
+  await nextTick()
+
+  const body = settingsBody.value
+  const section = globalThis.document?.getElementById(`settings-${sectionId}`)
+  if (!body || !section) return
+
+  const bodyRect = body.getBoundingClientRect()
+  const sectionRect = section.getBoundingClientRect()
+  const top = body.scrollTop + sectionRect.top - bodyRect.top
+  if (typeof body.scrollTo === 'function') {
+    body.scrollTo({
+      top,
+      behavior: props.settings.reduceMotion ? 'auto' : 'smooth',
+    })
+  } else {
+    body.scrollTop = top
+  }
 }
 
 function prioritizeFonts(fonts: string[], preferredFonts: string[]): string[] {
@@ -491,25 +506,20 @@ onMounted(async () => {
         <p class="settings-nav__hint">所有更改自动保存</p>
       </nav>
 
-      <div class="settings-page__body">
-        <aside class="surface-guide settings-page__guide">
-          <component :is="activeNavigation.icon" :size="18" />
-          <div><strong>{{ activeNavigation.label }}设置</strong><p>{{ activeNavigation.description }}。修改后会立即保存并应用。</p></div>
-        </aside>
+      <div ref="settingsBody" class="settings-page__body">
+        <GeneralSettingsSection />
 
-        <GeneralSettingsSection v-if="activeSection === 'general'" />
+        <SecuritySettingsSection />
 
-        <SecuritySettingsSection v-else-if="activeSection === 'security'" />
+        <AppearanceSettingsSection />
 
-        <AppearanceSettingsSection v-else-if="activeSection === 'appearance'" />
+        <EditorSettingsSection />
 
-        <EditorSettingsSection v-else-if="activeSection === 'editor'" />
+        <DataSettingsSection />
 
-        <DataSettingsSection v-else-if="activeSection === 'data'" />
+        <AiSettingsSection />
 
-        <AiSettingsSection v-else-if="activeSection === 'ai'" />
-
-        <ShortcutSettingsSection v-else />
+        <ShortcutSettingsSection />
 
         <aside class="settings-note">
           <Settings :size="17" /><span>设置保存在本机，并立即应用到整个应用。</span>

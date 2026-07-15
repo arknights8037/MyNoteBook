@@ -16,13 +16,39 @@
   width: min(460px, 46vw);
   min-width: 160px;
   border: 0;
-  padding: 0;
+  padding: 0 8px;
   color: #1f1f1f;
   background: transparent;
   font-size: 16px;
   font-weight: 600;
   line-height: 1.15;
   outline: none;
+}
+
+.topbar-title-display {
+  width: min(460px, 46vw);
+  min-width: 160px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 5px;
+  padding: 6px 8px;
+  color: var(--color-text-primary, #1f1f1f);
+  background: transparent;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.15;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+
+.topbar-title-display:hover:not(:disabled) {
+  background: var(--color-bg-hover, #f0f0ee);
+}
+
+.topbar-title-display:disabled {
+  cursor: default;
 }
 
 .topbar-title-input .n-input__input-el {

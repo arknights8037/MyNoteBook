@@ -1,5 +1,6 @@
 use tauri_plugin_sql::{Migration, MigrationKind};
 
+mod agent_cancellation;
 mod agent_repository;
 mod agent_tools;
 mod ai_models;
@@ -10,6 +11,7 @@ mod domain_events;
 mod governance;
 mod mcp;
 mod secret_store;
+mod sensitive_data;
 mod skills;
 mod storage;
 mod views;
@@ -83,6 +85,24 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0011_add_p2_external_governance_generated_views.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 12,
+            description: "add_agent_group_creation",
+            sql: include_str!("../migrations/0012_add_agent_group_creation.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 13,
+            description: "harden_database_operations",
+            sql: include_str!("../migrations/0013_harden_database_operations.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 14,
+            description: "add_cognitive_core",
+            sql: include_str!("../migrations/0014_add_cognitive_core.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -100,6 +120,7 @@ pub fn run() {
             storage::store_asset_data_url,
             storage::get_asset_data_url,
             storage::resolve_asset_path,
+            storage::remove_asset_file,
             storage::write_text_file,
             skills::list_installed_skills,
             skills::import_skill_directory,
@@ -111,6 +132,7 @@ pub fn run() {
             skills::get_skills_directory,
             mcp::list_mcp_servers,
             mcp::import_mcp_config,
+            mcp::import_mcp_config_text,
             mcp::set_mcp_server_enabled,
             mcp::set_mcp_server_trusted,
             mcp::remove_mcp_server,
@@ -122,12 +144,14 @@ pub fn run() {
             agent_repository::save_agent_context_bundle,
             agent_repository::apply_agent_patch_set,
             agent_repository::apply_agent_document_creation,
+            agent_repository::apply_agent_group_creation,
             agent_repository::reject_agent_patch_set,
             agent_repository::rollback_agent_transaction,
             secret_store::get_ai_api_key,
             secret_store::set_ai_api_key,
             ai_models::fetch_ai_models,
             ai_proxy::proxy_ai_request,
+            agent_cancellation::cancel_agent_tool_call,
             agent_tools::execute_rig_tool,
             work::commit_result_verification,
             work::decide_change_set,
@@ -138,7 +162,20 @@ pub fn run() {
             governance::claim_outbox_messages,
             governance::settle_outbox_message
         ])
-        .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(tauri_plugin_log::log::LevelFilter::Info)
+                .format(|out, message, record| {
+                    let safe_message = sensitive_data::redact_sensitive_text(&message.to_string());
+                    out.finish(format_args!(
+                        "[{}][{}] {}",
+                        record.target(),
+                        record.level(),
+                        safe_message
+                    ));
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())

@@ -6,6 +6,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::time::Duration;
 
+use crate::sensitive_data::redact_sensitive_text;
+
 const MODEL_LIST_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Deserialize)]
@@ -40,7 +42,7 @@ pub async fn fetch_ai_models(input: FetchAiModelsInput) -> Result<Value, String>
     if !status.is_success() {
         return Err(format!(
             "获取模型失败：{status} {}",
-            truncate_error_body(&body)
+            redact_sensitive_text(truncate_error_body(&body))
         ));
     }
 
@@ -123,5 +125,13 @@ mod tests {
     fn truncates_error_bodies_at_a_character_boundary() {
         let body = "中".repeat(1001);
         assert_eq!(truncate_error_body(&body).chars().count(), 1000);
+    }
+
+    #[test]
+    fn redacts_credentials_from_model_error_bodies() {
+        let body = r#"{"api_key":"sk-provider-secret","authorization":"Bearer abc.def.secret"}"#;
+        let redacted = redact_sensitive_text(truncate_error_body(body));
+        assert!(!redacted.contains("sk-provider-secret"));
+        assert!(!redacted.contains("abc.def.secret"));
     }
 }

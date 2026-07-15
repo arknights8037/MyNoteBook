@@ -29,5 +29,9 @@ automation_tasks
 - Agent 工具调用
 - Patch 确认事件
 - 自动化运行
+- 统一 TaskRun
+- Knowledge Object 与 Result Verification
+- ChangeSet、Approval 与 View 刷新
+- Delegation、Domain Event 与 Outbox
 
 审计详情按需展开。页面当前查询最近 300 条记录；跨时间范围分页、导出和清理策略留待后续。

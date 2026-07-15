@@ -3,7 +3,7 @@ import { AlertCircle, ImagePlus, RefreshCw, Trash2 } from '@lucide/vue'
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/vue-3'
 import { computed, ref, watch } from 'vue'
 
-import { readImageFileAsDataUrl, validateImageFile } from './imageFile'
+import { validateImageFile } from './imageFile'
 import { assetService, getAssetUrl } from '@/infrastructure/assets/AssetService'
 import { parseAssetUrl } from '@/models/asset'
 
@@ -55,13 +55,8 @@ async function useFile(file: BrowserFile | undefined): Promise<void> {
   errorMessage.value = ''
 
   try {
-    let src = ''
-    try {
-      const asset = await assetService.storeFile(file)
-      src = getAssetUrl(asset.id)
-    } catch {
-      src = await readImageFileAsDataUrl(file)
-    }
+    const asset = await assetService.storeFile(file)
+    const src = getAssetUrl(asset.id)
     props.updateAttributes({
       src,
       alt: file.name,

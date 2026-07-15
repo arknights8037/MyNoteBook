@@ -26,7 +26,9 @@ describe('agent patch validation', () => {
       { id: 'p1', type: 'paragraph', text: 'P1 工具调用循环。', index: 1 },
     ]
 
-    expect(findRelevantBlocksForInstruction('将 P0 事项标记为完成', blocks).map((block) => block.id)).toEqual(['p0'])
+    expect(
+      findRelevantBlocksForInstruction('将 P0 事项标记为完成', blocks).map((block) => block.id),
+    ).toEqual(['p0'])
   })
   it('accepts a patch that targets the current document and revision', () => {
     expect(

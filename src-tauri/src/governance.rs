@@ -81,6 +81,14 @@ pub struct SettleOutboxInput {
 
 #[tauri::command]
 pub async fn create_delegation(app: AppHandle, input: CreateDelegationInput) -> Result<(), String> {
+    let pool = open_database(&app, input.data_directory.clone()).await?;
+    create_delegation_in_pool(pool.as_ref(), &input).await
+}
+
+async fn create_delegation_in_pool(
+    pool: &sqlx::SqlitePool,
+    input: &CreateDelegationInput,
+) -> Result<(), String> {
     validate_hash(&input.capability_token_hash, "Capability token hash")?;
     if !matches!(input.delegate_type.as_str(), "mcp" | "cli") {
         return Err("Delegation 类型无效。".to_string());
@@ -93,7 +101,6 @@ pub async fn create_delegation(app: AppHandle, input: CreateDelegationInput) -> 
     }
     let allowed = normalize_operations(&input.allowed_operations)?;
     let allowed_json = serde_json::to_string(&allowed).map_err(|error| error.to_string())?;
-    let pool = open_database(&app, input.data_directory).await?;
     let mut transaction = pool.begin().await.map_err(database_error)?;
     sqlx::query(
         "INSERT INTO delegations (id, task_run_id, delegate_type, external_actor_id, status, \
@@ -147,6 +154,14 @@ pub async fn submit_external_work(
     app: AppHandle,
     input: SubmitExternalWorkInput,
 ) -> Result<ExternalSubmissionResult, String> {
+    let pool = open_database(&app, input.data_directory.clone()).await?;
+    submit_external_work_in_pool(pool.as_ref(), &input).await
+}
+
+async fn submit_external_work_in_pool(
+    pool: &sqlx::SqlitePool,
+    input: &SubmitExternalWorkInput,
+) -> Result<ExternalSubmissionResult, String> {
     validate_hash(&input.capability_token_hash, "Capability token hash")?;
     validate_hash(&input.request_hash, "Request hash")?;
     if input.idempotency_key.trim().is_empty() || input.idempotency_key.len() > 160 {
@@ -159,7 +174,6 @@ pub async fn submit_external_work(
         .and_then(Value::as_str)
         .ok_or_else(|| "外部提交缺少 type。".to_string())?;
     let entity_id = required_string(&submission, "entityId")?;
-    let pool = open_database(&app, input.data_directory).await?;
     let mut transaction = pool.begin().await.map_err(database_error)?;
     let row = sqlx::query(
         "SELECT task_run_id, external_actor_id, status, capability_token_hash, \
@@ -308,46 +322,59 @@ pub async fn claim_outbox_messages(
     if input.worker_id.trim().is_empty() {
         return Err("Outbox worker ID 不能为空。".to_string());
     }
-    let limit = input.limit.clamp(1, 100);
-    let lease_until = input.now + input.lease_ms.clamp(1_000, 300_000);
     let pool = open_database(&app, input.data_directory).await?;
-    let mut transaction = pool.begin().await.map_err(database_error)?;
-    let ids = sqlx::query(
-        "SELECT id FROM outbox_messages WHERE available_at <= ? AND \
-         ((status IN ('pending', 'failed')) OR (status = 'processing' AND lease_until <= ?)) \
-         ORDER BY created_at ASC LIMIT ?",
+    claim_outbox_from_pool(
+        pool.as_ref(),
+        &input.worker_id,
+        input.now,
+        input.lease_ms,
+        input.limit,
     )
-    .bind(input.now)
-    .bind(input.now)
+    .await
+}
+
+async fn claim_outbox_from_pool(
+    pool: &sqlx::SqlitePool,
+    worker_id: &str,
+    now: i64,
+    lease_ms: i64,
+    limit: i64,
+) -> Result<Vec<ClaimedOutboxMessage>, String> {
+    let limit = limit.clamp(1, 100);
+    let lease_until = now + lease_ms.clamp(1_000, 300_000);
+    let mut transaction = pool.begin().await.map_err(database_error)?;
+    let claimed_rows = sqlx::query(
+        "WITH candidates AS (\
+           SELECT id FROM outbox_messages WHERE available_at <= ? AND \
+             ((status IN ('pending', 'failed')) OR (status = 'processing' AND lease_until <= ?)) \
+           ORDER BY created_at ASC LIMIT ?\
+         ) \
+         UPDATE outbox_messages SET status = 'processing', attempt_count = attempt_count + 1, \
+           lease_until = ?, lease_owner = ? \
+         WHERE id IN (SELECT id FROM candidates) AND \
+           ((status IN ('pending', 'failed')) OR (status = 'processing' AND lease_until <= ?)) \
+         RETURNING id, event_id, topic, payload_json, attempt_count, created_at",
+    )
+    .bind(now)
+    .bind(now)
     .bind(limit)
+    .bind(lease_until)
+    .bind(worker_id)
+    .bind(now)
     .fetch_all(&mut *transaction)
     .await
     .map_err(database_error)?;
-    let mut messages = Vec::new();
-    for row in ids {
-        let id: String = row.try_get("id").map_err(database_error)?;
-        let updated = sqlx::query(
-            "UPDATE outbox_messages SET status = 'processing', attempt_count = attempt_count + 1, \
-             lease_until = ?, lease_owner = ? WHERE id = ? AND \
-             ((status IN ('pending', 'failed')) OR (status = 'processing' AND lease_until <= ?))",
-        )
-        .bind(lease_until)
-        .bind(&input.worker_id)
-        .bind(&id)
-        .bind(input.now)
-        .execute(&mut *transaction)
-        .await
-        .map_err(database_error)?;
-        if updated.rows_affected() != 1 {
-            continue;
-        }
-        let claimed = sqlx::query(
-            "SELECT event_id, topic, payload_json, attempt_count FROM outbox_messages WHERE id = ?",
-        )
-        .bind(&id)
-        .fetch_one(&mut *transaction)
-        .await
-        .map_err(database_error)?;
+    let mut claimed_rows = claimed_rows
+        .into_iter()
+        .map(|row| {
+            let created_at: i64 = row.try_get("created_at").map_err(database_error)?;
+            Ok((created_at, row))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    claimed_rows.sort_by_key(|(created_at, _)| *created_at);
+    let mut messages = Vec::with_capacity(claimed_rows.len());
+    for (_, claimed) in claimed_rows {
+        let id: String = claimed.try_get("id").map_err(database_error)?;
         let payload_json: String = claimed.try_get("payload_json").map_err(database_error)?;
         messages.push(ClaimedOutboxMessage {
             id,
@@ -365,10 +392,31 @@ pub async fn claim_outbox_messages(
 #[tauri::command]
 pub async fn settle_outbox_message(app: AppHandle, input: SettleOutboxInput) -> Result<(), String> {
     let pool = open_database(&app, input.data_directory).await?;
-    let (status, available_at, published_at) = if input.published {
-        ("published", input.now, Some(input.now))
+    settle_outbox_in_pool(
+        pool.as_ref(),
+        &input.id,
+        &input.worker_id,
+        input.published,
+        input.error.as_deref(),
+        input.now,
+        input.retry_at,
+    )
+    .await
+}
+
+async fn settle_outbox_in_pool(
+    pool: &sqlx::SqlitePool,
+    id: &str,
+    worker_id: &str,
+    published: bool,
+    error: Option<&str>,
+    now: i64,
+    retry_at: Option<i64>,
+) -> Result<(), String> {
+    let (status, available_at, published_at) = if published {
+        ("published", now, Some(now))
     } else {
-        ("failed", input.retry_at.unwrap_or(input.now + 30_000), None)
+        ("failed", retry_at.unwrap_or(now + 30_000), None)
     };
     let updated = sqlx::query(
         "UPDATE outbox_messages SET status = ?, available_at = ?, lease_until = NULL, \
@@ -377,11 +425,11 @@ pub async fn settle_outbox_message(app: AppHandle, input: SettleOutboxInput) -> 
     )
     .bind(status)
     .bind(available_at)
-    .bind(&input.error)
+    .bind(error)
     .bind(published_at)
-    .bind(&input.id)
-    .bind(&input.worker_id)
-    .execute(&*pool)
+    .bind(id)
+    .bind(worker_id)
+    .execute(pool)
     .await
     .map_err(database_error)?;
     if updated.rows_affected() != 1 {
@@ -568,5 +616,376 @@ mod tests {
         assert!(validate_hash("secret", "hash").is_err());
         assert!(constant_time_eq(&"a".repeat(64), &"a".repeat(64)));
         assert!(!constant_time_eq(&"a".repeat(64), &"b".repeat(64)));
+    }
+
+    #[tokio::test]
+    async fn expired_outbox_lease_is_reclaimed_without_stealing_an_active_lease() {
+        let path = std::env::temp_dir().join(format!(
+            "my-notebook-outbox-lease-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let pool = crate::database::get_pool_for_path(&path, true)
+            .await
+            .expect("open database");
+        sqlx::query(
+            "CREATE TABLE outbox_messages (id TEXT PRIMARY KEY, event_id TEXT NOT NULL UNIQUE, \
+             topic TEXT NOT NULL, payload_json TEXT NOT NULL, status TEXT NOT NULL, \
+             attempt_count INTEGER NOT NULL DEFAULT 0, available_at INTEGER NOT NULL, \
+             lease_until INTEGER, lease_owner TEXT, last_error TEXT, published_at INTEGER, \
+             created_at INTEGER NOT NULL)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("outbox table");
+        for (id, status, attempts, lease_until, owner, created_at) in [
+            ("pending", "pending", 0, None, None, 1),
+            (
+                "expired",
+                "processing",
+                1,
+                Some(9_000),
+                Some("dead-worker"),
+                2,
+            ),
+            (
+                "active",
+                "processing",
+                1,
+                Some(11_000),
+                Some("live-worker"),
+                3,
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO outbox_messages (id, event_id, topic, payload_json, status, \
+                 attempt_count, available_at, lease_until, lease_owner, created_at) \
+                 VALUES (?, ?, 'test', '{}', ?, ?, 1, ?, ?, ?)",
+            )
+            .bind(id)
+            .bind(format!("event-{id}"))
+            .bind(status)
+            .bind(attempts)
+            .bind(lease_until)
+            .bind(owner)
+            .bind(created_at)
+            .execute(pool.as_ref())
+            .await
+            .expect("outbox row");
+        }
+
+        let claimed = claim_outbox_from_pool(pool.as_ref(), "new-worker", 10_000, 2_000, 10)
+            .await
+            .expect("claim messages");
+        assert_eq!(
+            claimed
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["pending", "expired"]
+        );
+        assert_eq!(claimed[0].attempt_count, 1);
+        assert_eq!(claimed[1].attempt_count, 2);
+        let active_owner: String =
+            sqlx::query_scalar("SELECT lease_owner FROM outbox_messages WHERE id = 'active'")
+                .fetch_one(pool.as_ref())
+                .await
+                .expect("active owner");
+        assert_eq!(active_owner, "live-worker");
+        assert!(settle_outbox_in_pool(
+            pool.as_ref(),
+            "expired",
+            "wrong-worker",
+            true,
+            None,
+            10_100,
+            None,
+        )
+        .await
+        .is_err());
+        settle_outbox_in_pool(
+            pool.as_ref(),
+            "expired",
+            "new-worker",
+            true,
+            None,
+            10_100,
+            None,
+        )
+        .await
+        .expect("settle reclaimed lease");
+
+        drop(pool);
+        crate::database::close_pool(&path)
+            .await
+            .expect("close database");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[tokio::test]
+    async fn real_cli_process_submits_idempotent_result_change_set_and_reaches_approval() {
+        let directory = std::env::temp_dir().join(format!(
+            "my-notebook-cli-smoke-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        crate::database::prepare_database_path(&directory, &crate::database::DATABASE_MIGRATOR)
+            .await
+            .expect("prepare smoke database");
+        let database_path = directory.join(crate::database::DATABASE_FILENAME);
+        let pool = crate::database::get_pool_for_path(&database_path, false)
+            .await
+            .expect("open smoke database");
+        sqlx::query(
+            "INSERT INTO task_runs (id, status, frozen_input_json, acceptance_criteria_json, \
+             correlation_id, queued_at, started_at) \
+             VALUES ('cli-smoke-run', 'running', '{\"task\":\"isolated\"}', \
+             '{\"requiresApproval\":true}', 'cli-smoke-correlation', 1, 2)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("task run");
+
+        let capability_hash = "a".repeat(64);
+        let delegation = CreateDelegationInput {
+            data_directory: None,
+            id: "cli-smoke-delegation".to_string(),
+            task_run_id: "cli-smoke-run".to_string(),
+            delegate_type: "cli".to_string(),
+            external_actor_id: "node-cli-fixture".to_string(),
+            context_bundle_id: None,
+            capability_token_hash: capability_hash.clone(),
+            allowed_operations: vec![
+                "read_context".to_string(),
+                "read_task".to_string(),
+                "submit_artifact".to_string(),
+                "submit_evidence".to_string(),
+                "submit_result".to_string(),
+                "propose_change_set".to_string(),
+            ],
+            expires_at: 10_000,
+            correlation_id: "cli-smoke-correlation".to_string(),
+            causation_id: None,
+            event_id: "cli-smoke-delegation-event".to_string(),
+            outbox_id: "cli-smoke-delegation-outbox".to_string(),
+            created_at: 10,
+        };
+        create_delegation_in_pool(pool.as_ref(), &delegation)
+            .await
+            .expect("create delegation");
+
+        let input_path = directory.join("delegation.json");
+        std::fs::write(
+            &input_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "version": 1,
+                "delegation": {
+                    "id": delegation.id,
+                    "taskRunId": delegation.task_run_id,
+                    "allowedOperations": delegation.allowed_operations,
+                },
+                "capabilityToken": "fixture-token",
+                "taskRun": { "id": "cli-smoke-run", "status": "running" },
+                "contextBundle": {
+                    "version": 1,
+                    "snapshotHash": "cli-smoke-context-hash",
+                    "sources": [{ "type": "isolated-smoke", "content": "G0" }]
+                },
+                "submissionContract": {
+                    "idempotencyKey": "stable key required",
+                    "allowedTypes": ["result", "change_set"]
+                }
+            }))
+            .expect("serialize envelope"),
+        )
+        .expect("write envelope");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test-fixtures")
+            .join("cli-agent.mjs");
+
+        for (submission_type, key, request_hash, timestamp) in [
+            ("result", "cli-smoke-result", "b".repeat(64), 20_i64),
+            (
+                "change_set",
+                "cli-smoke-change-set",
+                "c".repeat(64),
+                30_i64,
+            ),
+        ] {
+            let output_path = directory.join(format!("{submission_type}.json"));
+            let status = tokio::process::Command::new("node")
+                .arg(&fixture)
+                .arg(&input_path)
+                .arg(&output_path)
+                .arg(submission_type)
+                .status()
+                .await
+                .expect("run CLI fixture");
+            assert!(status.success());
+            let envelope: Value = serde_json::from_slice(
+                &std::fs::read(&output_path).expect("read CLI submission"),
+            )
+            .expect("parse CLI submission");
+            assert_eq!(envelope["version"], 1);
+            let input = SubmitExternalWorkInput {
+                data_directory: None,
+                delegation_id: "cli-smoke-delegation".to_string(),
+                capability_token_hash: capability_hash.clone(),
+                idempotency_key: envelope["idempotencyKey"]
+                    .as_str()
+                    .expect("idempotency key")
+                    .to_string(),
+                request_hash,
+                submission_json: envelope["submission"].to_string(),
+                event_id: format!("{key}-event"),
+                outbox_id: format!("{key}-outbox"),
+                submitted_at: timestamp,
+            };
+            let first = submit_external_work_in_pool(pool.as_ref(), &input)
+                .await
+                .expect("submit CLI work");
+            assert!(!first.replayed);
+            let replay = submit_external_work_in_pool(pool.as_ref(), &input)
+                .await
+                .expect("replay CLI work");
+            assert!(replay.replayed);
+        }
+
+        for (submission, key, request_hash, timestamp) in [
+            (
+                serde_json::json!({
+                    "type": "artifact",
+                    "entityId": "cli-smoke-artifact",
+                    "artifactType": "report",
+                    "name": "Isolated CLI report",
+                    "content": { "summary": "isolated" }
+                }),
+                "cli-smoke-artifact",
+                "d".repeat(64),
+                31_i64,
+            ),
+            (
+                serde_json::json!({
+                    "type": "evidence",
+                    "entityId": "cli-smoke-evidence",
+                    "evidenceType": "process-output",
+                    "status": "valid",
+                    "artifactId": "cli-smoke-artifact",
+                    "claim": "The real CLI child process produced the isolated result.",
+                    "details": { "isolated": true }
+                }),
+                "cli-smoke-evidence",
+                "e".repeat(64),
+                32_i64,
+            ),
+        ] {
+            submit_external_work_in_pool(
+                pool.as_ref(),
+                &SubmitExternalWorkInput {
+                    data_directory: None,
+                    delegation_id: "cli-smoke-delegation".to_string(),
+                    capability_token_hash: capability_hash.clone(),
+                    idempotency_key: key.to_string(),
+                    request_hash,
+                    submission_json: submission.to_string(),
+                    event_id: format!("{key}-event"),
+                    outbox_id: format!("{key}-outbox"),
+                    submitted_at: timestamp,
+                },
+            )
+            .await
+            .expect("submit CLI artifact or evidence");
+        }
+
+        crate::work::commit_result_verification_in_pool(
+            pool.as_ref(),
+            &crate::work::CommitVerificationInput {
+                data_directory: None,
+                id: "cli-smoke-verification".to_string(),
+                task_run_id: "cli-smoke-run".to_string(),
+                verdict: "needs_approval".to_string(),
+                checks_json: "[{\"id\":\"cli-output\",\"passed\":true}]".to_string(),
+                summary: "CLI result validated; proposed change still requires approval."
+                    .to_string(),
+                proposed_change_set: None,
+                correlation_id: "cli-smoke-correlation".to_string(),
+                event_id: "cli-smoke-verification-event".to_string(),
+                outbox_id: "cli-smoke-verification-outbox".to_string(),
+                created_at: 40,
+                expected_status: "blocked".to_string(),
+                next_status: "waiting_approval".to_string(),
+                completed_at: None,
+                error: None,
+            },
+        )
+        .await
+        .expect("verify CLI result");
+        crate::work::decide_change_set_in_pool(
+            pool.as_ref(),
+            &crate::work::DecideChangeSetInput {
+                data_directory: None,
+                change_set_id: "cli-smoke-change-set".to_string(),
+                decision: "approved".to_string(),
+                approval_id: "cli-smoke-approval".to_string(),
+                correlation_id: "cli-smoke-correlation".to_string(),
+                event_id: "cli-smoke-approval-event".to_string(),
+                outbox_id: "cli-smoke-approval-outbox".to_string(),
+                created_at: 50,
+            },
+        )
+        .await
+        .expect("approve CLI change set");
+
+        let task_status: String =
+            sqlx::query_scalar("SELECT status FROM task_runs WHERE id = 'cli-smoke-run'")
+                .fetch_one(pool.as_ref())
+                .await
+                .expect("task status");
+        assert_eq!(task_status, "waiting_approval");
+        let change_status: String = sqlx::query_scalar(
+            "SELECT status FROM change_sets WHERE id = 'cli-smoke-change-set'",
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("change status");
+        assert_eq!(change_status, "approved");
+        let event_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM domain_events")
+            .fetch_one(pool.as_ref())
+            .await
+            .expect("event count");
+        let outbox_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM outbox_messages")
+            .fetch_one(pool.as_ref())
+            .await
+            .expect("outbox count");
+        let artifact_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM work_artifacts WHERE task_run_id = 'cli-smoke-run'",
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("artifact count");
+        let evidence_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM work_evidence WHERE task_run_id = 'cli-smoke-run'",
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("evidence count");
+        assert_eq!(artifact_count, 1);
+        assert_eq!(evidence_count, 1);
+        assert_eq!(event_count, 7);
+        assert_eq!(outbox_count, 7);
+
+        drop(pool);
+        crate::database::close_pool(&database_path)
+            .await
+            .expect("close smoke database");
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

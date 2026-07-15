@@ -35,9 +35,12 @@ import type { DocumentTransferService } from '@/services/DocumentTransferService
 import type { AutomationService } from '@/services/AutomationService'
 import type { KnowledgeControlService } from '@/services/KnowledgeControlService'
 import type { AuditRepository } from '@/repositories/AuditRepository'
+import type { RegexReplaceExecutor } from '@/services/AgentCommandService'
 import { renderAiMarkdown } from '@/services/AiMarkdownRenderer'
 import { applyTheme, setThemePreference, subscribeToSystemTheme } from '@/services/theme'
-import DocumentSidebar, { type SidebarView } from '@/features/documents/components/DocumentSidebar.vue'
+import DocumentSidebar, {
+  type SidebarView,
+} from '@/features/documents/components/DocumentSidebar.vue'
 import AgentAuthorizationModal from './home/AgentAuthorizationModal.vue'
 import {
   displayDocumentTitle,
@@ -93,6 +96,7 @@ const dependencies = defineProps<{
   getAuditRepository: () => Promise<AuditRepository>
   getAutomationService: () => Promise<AutomationService>
   getKnowledgeControlService: () => Promise<KnowledgeControlService>
+  replaceBlocksByRegex: RegexReplaceExecutor
 }>()
 
 function defineLazySurface(loader: () => Promise<unknown>) {
@@ -140,6 +144,11 @@ const {
   setAiChatWorkspace,
 } = useWorkspaceSurface()
 const appSettings = ref<AppSettings>(loadAppSettings())
+const editorSettings = computed<AppSettings>(() =>
+  showAiChat.value && !aiChatFullscreen.value && appSettings.value.jumpAid === 'outline'
+    ? { ...appSettings.value, jumpAid: 'anchors' }
+    : appSettings.value,
+)
 const {
   showSensitiveAuthModal,
   sensitiveAuthTitle,
@@ -273,6 +282,7 @@ const {
   pendingAgentPatches,
   pendingAgentAcceptedPatches,
   showAgentPatchModal,
+  isApplyingAgentPatches,
   lastAppliedAgentTask,
   lastAppliedPatchSet,
   restoreForDocument: restoreAgentStateForDocument,
@@ -332,6 +342,7 @@ const agentRun = useAgentRun({
   tasks: agentTasks,
   ensureSecretLoaded: ensureAiSecretLoaded,
   createId: createDocumentId,
+  replaceBlocksByRegex: dependencies.replaceBlocksByRegex,
   notify: message,
   document: {
     captureSnapshot: () => ({
@@ -847,7 +858,7 @@ function documentCharacterCount(document: DocumentSummary): number {
               ref="editorShell"
               :model-value="editorContent"
               :readonly="isLoadingDocument || Boolean(loadError)"
-              :settings="appSettings"
+              :settings="editorSettings"
               :internal-documents="internalDocuments"
               :document-id="currentDocumentId"
               @update:model-value="handleEditorContentUpdate"
@@ -939,6 +950,7 @@ function documentCharacterCount(document: DocumentSummary): number {
         :patch-set="pendingAgentPatchSet"
         :patches="pendingAgentPatches"
         :accepted-count="pendingAgentAcceptedPatches.length"
+        :applying="isApplyingAgentPatches"
         @update-accepted="toggleAgentPatchAccepted"
         @update-after="updateAgentPatchAfter"
         @select-none="setAllPendingAgentPatchesAccepted(false)"

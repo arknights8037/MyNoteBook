@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { useDocumentAutosave, type DocumentAutosaveService } from './useDocumentAutosave'
-import { DOCUMENT_SCHEMA_VERSION, EMPTY_TIPTAP_DOCUMENT, type DocumentRecord } from '@/models/document'
+import {
+  DOCUMENT_SCHEMA_VERSION,
+  EMPTY_TIPTAP_DOCUMENT,
+  type DocumentRecord,
+} from '@/models/document'
 import { err, ok, type AppResult } from '@/models/result'
 
 function createDocument(revision: number): DocumentRecord {
@@ -144,7 +148,7 @@ describe('useDocumentAutosave', () => {
     expect(autosave.dirty.value).toBe(true)
   })
 
-  it('does not let an older async save mark newer edits as saved', async () => {
+  it('persists edits that arrive while an async save is in flight', async () => {
     vi.useFakeTimers()
     let resolveSave: ((result: AppResult<DocumentRecord>) => void) | null = null
     const service: DocumentAutosaveService = {
@@ -172,13 +176,18 @@ describe('useDocumentAutosave', () => {
     autosave.markDirty()
 
     resolveSave?.(ok(createDocument(2)))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(service.saveDocument).toHaveBeenCalledTimes(2)
+    resolveSave?.(ok(createDocument(3)))
     await flushPromise
 
-    expect(autosave.status.value).toBe('dirty')
-    expect(autosave.dirty.value).toBe(true)
+    expect(autosave.status.value).toBe('saved')
+    expect(autosave.dirty.value).toBe(false)
+    expect(autosave.revision.value).toBe(3)
   })
 
-  it('ignores an older save result after a newer flush has started', async () => {
+  it('serializes overlapping flushes and carries the committed revision forward', async () => {
     const pendingSaves: Array<(result: AppResult<DocumentRecord>) => void> = []
     const service: DocumentAutosaveService = {
       saveDocument: vi.fn(
@@ -205,14 +214,14 @@ describe('useDocumentAutosave', () => {
     autosave.markDirty()
     const secondFlush = autosave.flush()
 
-    pendingSaves[1]?.(ok(createDocument(3)))
-    await secondFlush
-
-    expect(autosave.revision.value).toBe(3)
-    expect(autosave.status.value).toBe('saved')
-
     pendingSaves[0]?.(ok(createDocument(2)))
-    await firstFlush
+    await vi.waitFor(() => expect(service.saveDocument).toHaveBeenCalledTimes(2))
+    expect(service.saveDocument).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ expectedRevision: 2 }),
+    )
+    pendingSaves[1]?.(ok(createDocument(3)))
+    await Promise.all([firstFlush, secondFlush])
 
     expect(autosave.revision.value).toBe(3)
     expect(autosave.status.value).toBe('saved')

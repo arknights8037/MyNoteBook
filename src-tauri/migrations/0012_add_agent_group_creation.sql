@@ -1,0 +1,1 @@
+ALTER TABLE agent_document_creation_transactions ADD COLUMN child_document_id TEXT;

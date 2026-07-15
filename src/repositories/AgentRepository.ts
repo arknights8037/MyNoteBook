@@ -13,6 +13,7 @@ export interface AgentDocumentTransaction {
   status: 'applied' | 'rolled_back'
   createdAt: number
   rolledBackAt: number | null
+  childDocumentId?: DocumentId | null
 }
 
 export interface ApplyAgentPatchSetInput {
@@ -27,6 +28,8 @@ export interface ApplyAgentPatchSetInput {
 export interface AppliedAgentPatchSet {
   document: DocumentRecord | null
   transaction: AgentDocumentTransaction
+  createdDocuments?: DocumentRecord[]
+  removedDocumentIds?: DocumentId[]
 }
 
 export interface AgentRecoveryState {
@@ -44,6 +47,15 @@ export interface ApplyAgentDocumentCreationInput {
   patch: BlockPatch
   contentJson: string
   plainText: string
+  transactionId: string
+}
+
+export interface ApplyAgentGroupCreationInput {
+  task: AgentTask
+  patchSet: AgentPatchSet
+  patch: BlockPatch
+  childContentJson?: string
+  childPlainText?: string
   transactionId: string
 }
 
@@ -70,5 +82,6 @@ export interface AgentRepository {
   applyDocumentCreation(
     input: ApplyAgentDocumentCreationInput,
   ): Promise<AppResult<AppliedAgentPatchSet>>
+  applyGroupCreation(input: ApplyAgentGroupCreationInput): Promise<AppResult<AppliedAgentPatchSet>>
   rollbackTransaction(transactionId: string): Promise<AppResult<AppliedAgentPatchSet>>
 }

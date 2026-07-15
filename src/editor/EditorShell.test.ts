@@ -1,11 +1,23 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import type { Editor } from '@tiptap/vue-3'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 
 import EditorShell from './EditorShell.vue'
 import type { TiptapDocumentJson } from '@/models/document'
 import { DEFAULT_APP_SETTINGS } from '@/models/settings'
+
+const { storeFile } = vi.hoisted(() => ({ storeFile: vi.fn() }))
+vi.mock('@/infrastructure/assets/AssetService', () => ({
+  assetService: {
+    storeFile,
+    findAsset: vi.fn(async () => null),
+    resolveAssetUrl: vi.fn(async (value: string) => value),
+    openAsset: vi.fn(),
+  },
+  getAssetUrl: (id: string) => `asset://${id}`,
+  getAssetDisplayName: () => '附件',
+}))
 
 interface EditorShellExpose {
   editor?: Editor
@@ -19,6 +31,9 @@ interface EditorShellExpose {
 }
 
 describe('EditorShell', () => {
+  beforeEach(() => {
+    storeFile.mockResolvedValue({ id: 'asset-image-1', originalName: '图片.png' })
+  })
   afterEach(() => {
     document.body.replaceChildren()
     globalThis.localStorage.clear()
@@ -223,7 +238,7 @@ describe('EditorShell', () => {
       alt: '示例.png',
       originalName: '示例.png',
     })
-    expect(imageNode?.attrs?.src).toMatch(/^data:image\/png;base64,/)
+    expect(imageNode?.attrs?.src).toBe('asset://asset-image-1')
     expect(wrapper.find('.image-figure__caption').attributes('data-placeholder')).toBe(
       '添加题注（可选）',
     )
@@ -737,11 +752,16 @@ describe('EditorShell', () => {
     wrapper.unmount()
   })
 
-  it('renders anchor jump aid only for the primary heading level', async () => {
+  it('renders anchor jump aid only for the configured heading level', async () => {
     const wrapper = mount(EditorShell, {
       attachTo: document.body,
       props: {
-        settings: { ...DEFAULT_APP_SETTINGS, jumpAid: 'anchors', jumpAidPosition: 'left' },
+        settings: {
+          ...DEFAULT_APP_SETTINGS,
+          jumpAid: 'anchors',
+          jumpAidPosition: 'left',
+          jumpAidMaxLevel: 2,
+        },
         modelValue: {
           type: 'doc',
           content: [
@@ -767,7 +787,7 @@ describe('EditorShell', () => {
     expect(wrapper.find('.editor-jump-aid--left').exists()).toBe(true)
     expect(wrapper.findAll('.editor-jump-aid__item')).toHaveLength(1)
     expect(wrapper.find('.editor-jump-aid__item').classes()).toContain(
-      'editor-jump-aid__item--level-1',
+      'editor-jump-aid__item--level-2',
     )
     wrapper.unmount()
   })

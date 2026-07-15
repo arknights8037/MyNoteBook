@@ -14,7 +14,7 @@ const { settings, dataBusy, currentDataDirectory, chooseDataDirectory, restoreDa
       <span><Database :size="18" /></span>
       <div>
         <h2>数据存储</h2>
-        <p>知识库保存在本机 SQLite 文件中。</p>
+        <p>知识库数据库和受管文件均保存在本机。</p>
       </div>
     </header>
     <div class="settings-card">
@@ -24,7 +24,7 @@ const { settings, dataBusy, currentDataDirectory, chooseDataDirectory, restoreDa
           ><small class="settings-path" :title="currentDataDirectory">{{
             currentDataDirectory
           }}</small
-          ><em>切换时会先备份目标数据库，再复制当前知识库。</em></span
+          ><em>切换会迁移数据库、附件、技能、MCP 配置与受管交付文件，并整体备份目标原有数据。</em></span
         >
         <div class="settings-row__actions">
           <NButton secondary :loading="dataBusy" @click="chooseDataDirectory"

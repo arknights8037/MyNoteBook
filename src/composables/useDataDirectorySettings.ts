@@ -42,7 +42,7 @@ export function useDataDirectorySettings(options: UseDataDirectorySettingsOption
   async function chooseDataDirectory(): Promise<void> {
     const authorized = await options.requestAuthorization(
       '更改数据位置',
-      '此操作会迁移本机知识库数据库和附件目录。',
+      '此操作会迁移本机知识库数据库、附件、技能、MCP 配置及受管交付文件；目标目录原有数据会先整体备份。',
     )
     if (!authorized) return
 
@@ -62,7 +62,7 @@ export function useDataDirectorySettings(options: UseDataDirectorySettingsOption
     if (!options.settings.value.dataDirectory) return
     const authorized = await options.requestAuthorization(
       '恢复默认数据位置',
-      '此操作会把当前知识库迁回应用默认数据目录。',
+      '此操作会把当前知识库数据库及全部受管文件迁回应用默认数据目录。',
     )
     if (!authorized) return
 
@@ -90,10 +90,15 @@ export function useDataDirectorySettings(options: UseDataDirectorySettingsOption
       saveAppSettings(options.settings.value)
       options.documentService.value = null
       await options.initializeDocuments()
+      const migrationSummary = `已迁移 ${change.migratedFileCount} 个文件${
+        change.rewrittenMetadataCount > 0
+          ? `，并重写 ${change.rewrittenMetadataCount} 条路径元数据`
+          : ''
+      }`
       options.message.success(
         change.backupPath
-          ? '数据位置已切换，目标目录中的旧数据库已自动备份'
-          : '数据位置已切换',
+          ? `数据位置已切换；${migrationSummary}；目标目录原有数据已整体备份`
+          : `数据位置已切换；${migrationSummary}`,
       )
     } catch (error) {
       options.settings.value = previousSettings

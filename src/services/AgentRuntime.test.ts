@@ -1,14 +1,190 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  createCompatibleAgentTextOutput,
+  createCapturedProposalOutput,
+  createNaturalAgentTextOutput,
   normalizeAgentOutputCandidate,
   normalizeAgentOutputForTaskIntent,
   parseAiSdkAgentOutput,
-  requiresKnowledgeRetrieval,
+  resolveAgentOutputChannels,
 } from './AiSdkAgentRuntime'
 
 describe('AI SDK Agent runtime output', () => {
+  it('wraps an ordinary natural-language completion without a JSON repair round', () => {
+    expect(createNaturalAgentTextOutput('没有需要写入的修改，以下是分析结论。')).toEqual({
+      outcome: 'no_change',
+      commands: [],
+      patches: [],
+      finalAnswer: '没有需要写入的修改，以下是分析结论。',
+    })
+  })
+
+  it('does not expose a truncated protocol payload as the final reply', () => {
+    const output = createNaturalAgentTextOutput(
+      '{"outcome":"proposal","commands":[{"tool":"create_document","content":"截断',
+    )
+    expect(output).toEqual({
+      outcome: 'blocked',
+      commands: [],
+      patches: [],
+      finalAnswer: '模型没有完成本次结构化提案；未执行任何写入，请重试。',
+    })
+  })
+
+  it('builds the final proposal from a captured native tool call even when text is truncated', () => {
+    const output = createCapturedProposalOutput({
+      commands: [
+        {
+          tool: 'create_document',
+          title: '知识库概念简介',
+          parentDocumentId: 'group-agent-mvp',
+          content: '# 知识库概念简介\n\n完整正文不会依赖最终文本再次序列化。',
+        },
+      ],
+      patches: [],
+      text: '{"outcome":"proposal","commands":[{"tool":"create_document","content":"截断',
+    })
+
+    expect(output.commands[0]).toMatchObject({
+      tool: 'create_document',
+      title: '知识库概念简介',
+      parentDocumentId: 'group-agent-mvp',
+    })
+    expect(output.finalAnswer).toBe('已生成创建提案，等待确认后写入。')
+  })
+
+  it('uses a create_document proposal emitted through the reasoning channel', () => {
+    const channels = resolveAgentOutputChannels(
+      '',
+      JSON.stringify({
+        outcome: 'proposal',
+        commands: [
+          {
+            tool: 'create_document',
+            title: '知识库软件简介',
+            content: '# 知识库软件简介\n\n正文',
+          },
+        ],
+        patches: [],
+        finalAnswer: '已生成新文档提案。',
+      }),
+    )
+
+    expect(channels.output?.commands[0]).toMatchObject({
+      tool: 'create_document',
+      title: '知识库软件简介',
+    })
+    expect(channels.reasoningForDisplay).toBe('')
+  })
+
+  it('extracts the first valid proposal when reasoning continues with prose and JSON examples', () => {
+    const proposal = JSON.stringify({
+      outcome: 'proposal',
+      commands: [
+        {
+          tool: 'create_document',
+          title: '知识库软件简介',
+          content: '# 知识库软件简介\n\n正文包含 {花括号} 和 \\"引号\\"。',
+        },
+      ],
+      patches: [],
+      finalAnswer: '已生成新文档提案。',
+    })
+    const channels = resolveAgentOutputChannels(
+      '',
+      `${proposal}\n\n后续解释不属于最终输出。\n示例：{"tool":"create_document","title":"示例"}`,
+    )
+
+    expect(channels.output?.commands[0]).toMatchObject({
+      tool: 'create_document',
+      title: '知识库软件简介',
+    })
+    expect(channels.reasoningForDisplay).toBe('')
+  })
+
+  it('skips unrelated JSON objects before the structured Agent result', () => {
+    const output = normalizeAgentOutputCandidate(
+      [
+        '调试信息 {"tool":"create_document","title":"不完整示例","content":"示例正文"}',
+        JSON.stringify({
+          outcome: 'proposal',
+          commands: [
+            {
+              tool: 'create_group',
+              title: '资料',
+              initialDocument: { title: '索引', content: '# 索引' },
+            },
+          ],
+          patches: [],
+          finalAnswer: '已生成提案。',
+        }),
+      ].join('\n'),
+    )
+
+    expect(output?.commands[0]).toMatchObject({ tool: 'create_group', title: '资料' })
+  })
+
+  it('uses the latest complete Agent result instead of an earlier reasoning draft', () => {
+    const draft = JSON.stringify({
+      outcome: 'proposal',
+      commands: [{ tool: 'create_document', title: '应用概览', content: '（文档内容）' }],
+      patches: [],
+      finalAnswer: '草稿。',
+    })
+    const final = JSON.stringify({
+      outcome: 'proposal',
+      commands: [
+        {
+          tool: 'create_document',
+          title: '应用概览',
+          content: '# 应用概览\n\n这是 Agent 完成推理后生成的实际正文。',
+        },
+      ],
+      patches: [],
+      finalAnswer: '已生成完整提案。',
+    })
+
+    const output = normalizeAgentOutputCandidate(`${draft}\n继续推理并完善内容……\n${final}`)
+
+    expect(output?.commands[0]).toMatchObject({
+      tool: 'create_document',
+      content: '# 应用概览\n\n这是 Agent 完成推理后生成的实际正文。',
+    })
+    expect(output?.finalAnswer).toBe('已生成完整提案。')
+  })
+
+  it('keeps ordinary reasoning visible when it is not a structured proposal', () => {
+    const channels = resolveAgentOutputChannels(
+      JSON.stringify({ outcome: 'no_change', commands: [], patches: [], finalAnswer: '完成' }),
+      '先确认任务目标，再组织答案。',
+    )
+
+    expect(channels.output?.outcome).toBe('no_change')
+    expect(channels.reasoningForDisplay).toBe('先确认任务目标，再组织答案。')
+  })
+
+  it('accepts an atomic create_group proposal with an initial document', () => {
+    const output = normalizeAgentOutputCandidate(
+      JSON.stringify({
+        outcome: 'proposal',
+        commands: [
+          {
+            tool: 'create_group',
+            title: '知识库软件',
+            initialDocument: { title: '功能与用途', content: '# 功能与用途\n\n正文' },
+          },
+        ],
+        patches: [],
+        finalAnswer: '已生成分组和初始文档提案。',
+      }),
+    )
+
+    expect(output?.commands[0]).toMatchObject({
+      tool: 'create_group',
+      title: '知识库软件',
+    })
+  })
+
   it('validates a final structured patch', () => {
     const output = parseAiSdkAgentOutput(
       JSON.stringify({
@@ -116,30 +292,7 @@ describe('AI SDK Agent runtime output', () => {
     })
   })
 
-  it('shows ordinary model text safely without treating it as a write', () => {
-    expect(createCompatibleAgentTextOutput('这是当前模型的普通文本回答。')).toEqual({
-      outcome: 'blocked',
-      commands: [],
-      patches: [],
-      finalAnswer: '这是当前模型的普通文本回答。',
-    })
-  })
-
-  it('keeps ordinary plan output as a read-only response', () => {
-    expect(createCompatibleAgentTextOutput('1. 分析现状\n2. 实施修改', 'plan')).toEqual({
-      outcome: 'no_change',
-      commands: [],
-      patches: [],
-      finalAnswer: '1. 分析现状\n2. 实施修改',
-    })
-  })
-
-  it('requires retrieval only when the user actually asks for external knowledge', () => {
-    expect(requiresKnowledgeRetrieval('把这条待办标成完成')).toBe(false)
-    expect(requiresKnowledgeRetrieval('你翻翻知识库里的差旅规定，帮我补清楚')).toBe(true)
-  })
-
-  it('promotes a patch to a document proposal for explicit creation tasks', () => {
+  it('does not rewrite the Agent proposal based on prompt wording', () => {
     const output = parseAiSdkAgentOutput(
       JSON.stringify({
         patches: [
@@ -157,11 +310,8 @@ describe('AI SDK Agent runtime output', () => {
       output,
       '在当前页面下新建一篇《发布检查清单》',
     )
-    expect(normalized.patches).toEqual([])
-    expect(normalized.commands[0]).toMatchObject({
-      tool: 'create_document',
-      title: '发布检查清单',
-    })
+    expect(normalized.commands).toEqual([])
+    expect(normalized.patches).toHaveLength(1)
   })
 
   it('enforces read-only plan output even if the model proposes a patch', () => {
@@ -187,7 +337,7 @@ describe('AI SDK Agent runtime output', () => {
     })
   })
 
-  it('forces create mode patches into a single create_document command', () => {
+  it('keeps the Agent-selected operation in create mode', () => {
     const output = parseAiSdkAgentOutput(
       JSON.stringify({
         patches: [
@@ -202,8 +352,7 @@ describe('AI SDK Agent runtime output', () => {
       }),
     )
     const normalized = normalizeAgentOutputForTaskIntent(output, '整理内容', 'create')
-    expect(normalized.commands).toHaveLength(1)
-    expect(normalized.commands[0]).toMatchObject({ tool: 'create_document', title: '新页面' })
-    expect(normalized.patches).toEqual([])
+    expect(normalized.commands).toEqual([])
+    expect(normalized.patches).toHaveLength(1)
   })
 })

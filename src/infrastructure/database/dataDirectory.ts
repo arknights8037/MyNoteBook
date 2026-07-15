@@ -3,6 +3,8 @@ import { invoke } from '@tauri-apps/api/core'
 export interface DataDirectoryChange {
   databasePath: string
   backupPath: string | null
+  migratedFileCount: number
+  rewrittenMetadataCount: number
 }
 
 export async function getDefaultDataDirectory(): Promise<string> {

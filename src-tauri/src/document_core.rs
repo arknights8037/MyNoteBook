@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -380,6 +380,40 @@ fn project_node_text(node: &Value) -> String {
     if node_type == "hardBreak" {
         return "\n".to_string();
     }
+    if node_type == "tableBlock" {
+        return object
+            .get("attrs")
+            .and_then(Value::as_object)
+            .and_then(|attrs| attrs.get("rows"))
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(Value::as_array)
+                    .map(|cells| {
+                        cells
+                            .iter()
+                            .map(|cell| {
+                                cell.as_str()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| cell.to_string())
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\t")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
+    }
+    if node_type == "attachmentBlock" {
+        return object
+            .get("attrs")
+            .and_then(Value::as_object)
+            .and_then(|attrs| attrs.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+    }
     if let Some(latex) = object
         .get("attrs")
         .and_then(Value::as_object)
@@ -395,7 +429,7 @@ fn project_node_text(node: &Value) -> String {
         "tableRow" => "\t",
         _ => "",
     };
-    object
+    let child_text = object
         .get("content")
         .and_then(Value::as_array)
         .map(|children| {
@@ -406,7 +440,29 @@ fn project_node_text(node: &Value) -> String {
                 .collect::<Vec<_>>()
                 .join(separator)
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if matches!(node_type, "imageFigure" | "collapsibleBlock") {
+        let attribute_text = object
+            .get("attrs")
+            .and_then(Value::as_object)
+            .and_then(|attrs| {
+                let key = if node_type == "imageFigure" {
+                    "alt"
+                } else {
+                    "title"
+                };
+                attrs.get(key)
+            })
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        return [attribute_text, child_text.trim()]
+            .into_iter()
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    child_text
 }
 
 pub async fn replace_block_projection(
@@ -452,11 +508,6 @@ pub async fn sync_document_tags(
     tags: &[String],
     created_at: i64,
 ) -> Result<(), String> {
-    sqlx::query("DELETE FROM document_tags WHERE document_id = ?")
-        .bind(document_id)
-        .execute(&mut **transaction)
-        .await
-        .map_err(database_error)?;
     let mut normalized = Vec::new();
     for tag in tags {
         let value: String = tag.trim().chars().take(40).collect();
@@ -467,7 +518,50 @@ pub async fn sync_document_tags(
             break;
         }
     }
+    let current_rows = sqlx::query(
+        "SELECT tags.id, tags.name FROM document_tags \
+         INNER JOIN tags ON tags.id = document_tags.tag_id WHERE document_tags.document_id = ?",
+    )
+    .bind(document_id)
+    .fetch_all(&mut **transaction)
+    .await
+    .map_err(database_error)?;
+    let current = current_rows
+        .into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get::<String, _>("name").map_err(database_error)?,
+                row.try_get::<String, _>("id").map_err(database_error)?,
+            ))
+        })
+        .collect::<Result<HashMap<_, _>, String>>()?;
+    let desired = normalized.iter().cloned().collect::<HashSet<_>>();
+
+    for (name, tag_id) in &current {
+        if desired.contains(name) {
+            continue;
+        }
+        sqlx::query("DELETE FROM document_tags WHERE document_id = ? AND tag_id = ?")
+            .bind(document_id)
+            .bind(tag_id)
+            .execute(&mut **transaction)
+            .await
+            .map_err(database_error)?;
+        sqlx::query(
+            "DELETE FROM tags WHERE id = ? AND NOT EXISTS \
+             (SELECT 1 FROM document_tags WHERE tag_id = ?)",
+        )
+        .bind(tag_id)
+        .bind(tag_id)
+        .execute(&mut **transaction)
+        .await
+        .map_err(database_error)?;
+    }
+
     for tag in normalized {
+        if current.contains_key(&tag) {
+            continue;
+        }
         sqlx::query(
             "INSERT INTO tags (id, name, created_at) \
              VALUES ('tag-' || lower(hex(randomblob(16))), ?, ?) \
@@ -506,6 +600,17 @@ mod tests {
         assert_eq!(projected.plain_text, "标题\n甲\t乙\nx^2");
         assert_eq!(projected.blocks.len(), 3);
         assert_eq!(projected.blocks[1].plain_text, "甲\t乙");
+    }
+
+    #[test]
+    fn projects_editor_native_table_and_attachment_attributes() {
+        let projected = validate_and_project_tiptap(
+            r#"{"type":"doc","content":[{"type":"tableBlock","attrs":{"id":"t1","rows":[["字段","说明"],["名称","文档标题"]]}},{"type":"attachmentBlock","attrs":{"id":"a1","name":"需求.pdf"}}]}"#,
+            true,
+        )
+        .unwrap();
+        assert_eq!(projected.plain_text, "字段\t说明\n名称\t文档标题\n需求.pdf");
+        assert_eq!(projected.blocks[0].plain_text, "字段\t说明\n名称\t文档标题");
     }
 
     #[test]

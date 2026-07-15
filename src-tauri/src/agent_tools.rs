@@ -13,12 +13,14 @@ use std::{
 use tauri::AppHandle;
 use tokio::{process::Command, time::timeout};
 
+use crate::agent_cancellation::ToolCancellationGuard;
 use crate::database::{configured_data_directory, DATABASE_FILENAME};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExecuteRigToolInput {
     data_directory: Option<String>,
+    call_id: Option<String>,
     name: String,
     arguments_json: String,
 }
@@ -52,6 +54,191 @@ struct SearchDocumentResult {
     title: String,
     snippet: String,
     revision: i64,
+}
+
+#[derive(Clone)]
+struct FindBlocksByRegexTool;
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RegexBlock {
+    id: String,
+    #[serde(rename = "type")]
+    block_type: String,
+    text: String,
+    index: usize,
+}
+
+#[derive(Deserialize)]
+struct FindBlocksByRegexArgs {
+    pattern: String,
+    #[serde(default)]
+    flags: String,
+    blocks: Vec<RegexBlock>,
+}
+
+#[derive(Clone)]
+struct ReplaceBlocksByRegexTool;
+
+#[derive(Deserialize)]
+struct ReplaceBlocksByRegexArgs {
+    pattern: String,
+    replacement: String,
+    #[serde(default)]
+    flags: String,
+    blocks: Vec<RegexBlock>,
+}
+
+impl Tool for ReplaceBlocksByRegexTool {
+    const NAME: &'static str = "replace_blocks_by_regex";
+    type Error = NativeToolError;
+    type Args = ReplaceBlocksByRegexArgs;
+    type Output = Vec<RegexBlock>;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "使用线性时间正则引擎生成块文本替换结果。".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "minLength": 1, "maxLength": 240 },
+                    "replacement": { "type": "string", "maxLength": 4000 },
+                    "flags": { "type": "string" },
+                    "blocks": { "type": "array", "maxItems": 10000 }
+                },
+                "required": ["pattern", "replacement", "blocks"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let expression = build_block_regex(&args.pattern, &args.flags, args.blocks.len())?;
+        if args.replacement.chars().count() > 4_000 {
+            return Err(NativeToolError(
+                "正则替换文本不得超过 4000 个字符。".to_string(),
+            ));
+        }
+        if args.replacement.contains("$`") || args.replacement.contains("$'") {
+            return Err(NativeToolError(
+                "正则替换不支持 $` 或 $' 上下文引用。".to_string(),
+            ));
+        }
+        let replacement = args.replacement.replace("$&", "$0");
+        Ok(args
+            .blocks
+            .into_iter()
+            .filter_map(|mut block| {
+                let replaced = if args.flags.contains('g') {
+                    expression.replace_all(&block.text, replacement.as_str())
+                } else {
+                    expression.replace(&block.text, replacement.as_str())
+                };
+                if replaced == block.text {
+                    return None;
+                }
+                block.text = replaced.into_owned();
+                Some(block)
+            })
+            .collect())
+    }
+}
+
+impl Tool for FindBlocksByRegexTool {
+    const NAME: &'static str = "find_blocks_by_regex";
+    type Error = NativeToolError;
+    type Args = FindBlocksByRegexArgs;
+    type Output = Vec<RegexBlock>;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "使用线性时间正则引擎匹配当前文档块。".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "minLength": 1, "maxLength": 240 },
+                    "flags": { "type": "string" },
+                    "blocks": { "type": "array", "maxItems": 10000 }
+                },
+                "required": ["pattern", "blocks"]
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let expression = build_block_regex(&args.pattern, &args.flags, args.blocks.len())?;
+        Ok(args
+            .blocks
+            .into_iter()
+            .filter(|block| expression.is_match(&block.text))
+            .collect())
+    }
+}
+
+#[derive(Clone)]
+struct ListDocumentGroupsTool {
+    database_path: PathBuf,
+}
+
+#[derive(Deserialize)]
+struct ListDocumentGroupsArgs {
+    query: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DocumentGroupResult {
+    id: String,
+    title: String,
+    child_count: i64,
+}
+
+impl Tool for ListDocumentGroupsTool {
+    const NAME: &'static str = "list_document_groups";
+    type Error = NativeToolError;
+    type Args = ListDocumentGroupsArgs;
+    type Output = Vec<DocumentGroupResult>;
+
+    async fn definition(&self, _prompt: String) -> ToolDefinition {
+        ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: "列出或按名称筛选知识库分组，返回可用于创建文档的真实父级 ID。"
+                .to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": { "query": { "type": "string" } }
+            }),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let query = args.query.unwrap_or_default().trim().to_string();
+        let mut connection = open_database(&self.database_path).await?;
+        let rows = sqlx::query(
+            "SELECT groups.id, groups.title, COUNT(children.id) AS child_count \
+             FROM documents groups LEFT JOIN documents children \
+               ON children.parent_id = groups.id AND children.is_deleted = 0 \
+             WHERE groups.document_kind = 'group' AND groups.is_deleted = 0 \
+               AND (? = '' OR instr(lower(groups.title), lower(?)) > 0) \
+             GROUP BY groups.id, groups.title \
+             ORDER BY groups.sort_order ASC, groups.title COLLATE NOCASE ASC LIMIT 100",
+        )
+        .bind(&query)
+        .bind(&query)
+        .fetch_all(&mut connection)
+        .await
+        .map_err(native_error)?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(DocumentGroupResult {
+                    id: row.try_get("id").map_err(native_error)?,
+                    title: row.try_get("title").map_err(native_error)?,
+                    child_count: row.try_get("child_count").map_err(native_error)?,
+                })
+            })
+            .collect()
+    }
 }
 
 impl Tool for SearchDocumentsTool {
@@ -468,16 +655,54 @@ pub(crate) async fn execute_rig_tool(
         .static_tool(SearchDocumentsTool {
             database_path: database_path.clone(),
         })
+        .static_tool(ListDocumentGroupsTool {
+            database_path: database_path.clone(),
+        })
         .static_tool(ReadDocumentTool { database_path })
+        .static_tool(FindBlocksByRegexTool)
+        .static_tool(ReplaceBlocksByRegexTool)
         .static_tool(ExecuteShellTool)
         .static_tool(InspectEnvironmentPathsTool)
         .static_tool(DiscoverLocalToolsTool)
         .static_tool(GetSystemInfoTool)
         .build();
-    toolset
-        .call(&input.name, input.arguments_json)
-        .await
-        .map_err(|error| error.to_string())
+    let execution = toolset.call(&input.name, input.arguments_json);
+    if let Some(call_id) = input.call_id {
+        let cancellation = ToolCancellationGuard::register(call_id)?;
+        tokio::select! {
+            result = execution => result.map_err(|error| error.to_string()),
+            _ = cancellation.cancelled() => Err("Agent 工具调用已取消。".to_string()),
+        }
+    } else {
+        execution.await.map_err(|error| error.to_string())
+    }
+}
+
+fn build_block_regex(
+    pattern: &str,
+    flags: &str,
+    block_count: usize,
+) -> Result<regex::Regex, NativeToolError> {
+    if pattern.is_empty() || pattern.chars().count() > 240 {
+        return Err(NativeToolError(
+            "正则表达式长度必须在 1 到 240 个字符之间。".to_string(),
+        ));
+    }
+    if block_count > 10_000 {
+        return Err(NativeToolError("正则匹配的块数量超过上限。".to_string()));
+    }
+    if flags.chars().any(|flag| !matches!(flag, 'g' | 'i' | 'm')) {
+        return Err(NativeToolError(
+            "正则表达式仅支持 g、i、m 标志。".to_string(),
+        ));
+    }
+    regex::RegexBuilder::new(pattern)
+        .case_insensitive(flags.contains('i'))
+        .multi_line(flags.contains('m'))
+        .size_limit(2 * 1024 * 1024)
+        .dfa_size_limit(2 * 1024 * 1024)
+        .build()
+        .map_err(|error| NativeToolError(format!("正则表达式无效或不受支持：{error}")))
 }
 
 async fn open_database(path: &PathBuf) -> Result<SqliteConnection, NativeToolError> {
@@ -840,8 +1065,10 @@ fn native_error(error: impl fmt::Display) -> NativeToolError {
 mod tests {
     use super::{
         build_fts_query, build_shell_command, discover_local_tools, is_safe_tool_name,
-        resolve_shell_limits,
+        resolve_shell_limits, FindBlocksByRegexArgs, FindBlocksByRegexTool, RegexBlock,
+        ReplaceBlocksByRegexArgs, ReplaceBlocksByRegexTool,
     };
+    use rig_core::tool::Tool;
 
     #[test]
     fn fts_query_is_bounded_and_quoted() {
@@ -886,5 +1113,55 @@ mod tests {
         assert!(resolve_shell_limits(Some(999), None).is_err());
         assert!(resolve_shell_limits(Some(30_001), None).is_err());
         assert!(resolve_shell_limits(None, Some(70_000)).is_err());
+    }
+
+    #[tokio::test]
+    async fn block_regex_uses_linear_time_engine() {
+        let blocks = vec![RegexBlock {
+            id: "block-1".to_string(),
+            block_type: "paragraph".to_string(),
+            text: format!("{}!", "a".repeat(100_000)),
+            index: 0,
+        }];
+        let result = FindBlocksByRegexTool
+            .call(FindBlocksByRegexArgs {
+                pattern: "^(a+)+$".to_string(),
+                flags: String::new(),
+                blocks,
+            })
+            .await
+            .unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn block_regex_rejects_unsupported_backreferences() {
+        let result = FindBlocksByRegexTool
+            .call(FindBlocksByRegexArgs {
+                pattern: r"(a)\1".to_string(),
+                flags: String::new(),
+                blocks: Vec::new(),
+            })
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn block_regex_replacement_supports_global_captures() {
+        let result = ReplaceBlocksByRegexTool
+            .call(ReplaceBlocksByRegexArgs {
+                pattern: r"\[([^]]+)\]".to_string(),
+                replacement: "<$1>".to_string(),
+                flags: "g".to_string(),
+                blocks: vec![RegexBlock {
+                    id: "block-1".to_string(),
+                    block_type: "paragraph".to_string(),
+                    text: "[P0] 与 [P1]".to_string(),
+                    index: 0,
+                }],
+            })
+            .await
+            .unwrap();
+        assert_eq!(result[0].text, "<P0> 与 <P1>");
     }
 }

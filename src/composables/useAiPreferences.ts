@@ -23,7 +23,7 @@ const AI_REASONING_OPTIONS: Array<AiSelectorOption<AiReasoningEffort>> = [
 
 export function useAiPreferences(error: Ref<string>) {
   const aiSettings = ref(loadAiSettings())
-  const aiChatMode = ref<AiChatMode>('ask')
+  const aiChatMode = ref<AiChatMode>('agent')
   const aiSecret = useAiSecret(aiSettings, (message) => {
     error.value = message
   })

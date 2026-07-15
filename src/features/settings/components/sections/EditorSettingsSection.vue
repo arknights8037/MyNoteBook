@@ -122,7 +122,7 @@ const {
       <div class="settings-row">
         <span
           ><strong>目录显示级别</strong
-          ><small>只影响文档大纲；锚点会自动只显示当前文档的主标题层级。</small></span
+          ><small>大纲显示到所选层级；锚点只显示所选层级的标题。</small></span
         ><NSelect
           :value="String(settings.jumpAidMaxLevel)"
           :options="jumpAidMaxLevelOptions"

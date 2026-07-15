@@ -5,11 +5,20 @@ import { auditConfiguredModelParameters, resolveProviderCapabilities } from './p
 describe('Provider Capability Matrix', () => {
   it('disables sampling and enables reasoning for OpenAI reasoning models', () => {
     const capabilities = resolveProviderCapabilities('openai', 'gpt-5-mini')
-    expect(capabilities).toMatchObject({ temperature: false, topP: false, reasoningEffort: true, structuredOutput: true })
+    expect(capabilities).toMatchObject({
+      temperature: false,
+      topP: false,
+      reasoningEffort: true,
+      structuredOutput: true,
+    })
   })
 
   it('records requested, actual and ignored parameters separately', () => {
-    const settings = { ...createAiSettings('openai'), model: 'gpt-5', reasoningEffort: 'high' as const }
+    const settings = {
+      ...createAiSettings('openai'),
+      model: 'gpt-5',
+      reasoningEffort: 'high' as const,
+    }
     const audit = auditConfiguredModelParameters(settings)
     expect(audit.requested).toHaveProperty('temperature')
     expect(audit.actual).toMatchObject({ reasoningEffort: 'high', streaming: true })
@@ -18,5 +27,13 @@ describe('Provider Capability Matrix', () => {
 
   it('is conservative for unknown OpenAI-compatible endpoints', () => {
     expect(resolveProviderCapabilities('openai-compatible', 'custom').toolChoice).toBe(false)
+  })
+
+  it('allows automatic tools for DeepSeek V4 Pro without forcing tool choice', () => {
+    expect(resolveProviderCapabilities('deepseek', 'DeepSeek V4 Pro')).toMatchObject({
+      reasoningEffort: true,
+      reasoningContent: true,
+      toolChoice: true,
+    })
   })
 })

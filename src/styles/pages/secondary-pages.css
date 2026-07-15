@@ -282,6 +282,101 @@
   text-align: left;
 }
 
+.mcp-panel__empty-actions,
+.mcp-add-tabs,
+.mcp-add-modal__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-panel__empty-actions {
+  margin-top: 6px;
+}
+
+.mcp-add-modal {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.mcp-add-tabs {
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--color-bg-subtle);
+}
+
+.mcp-add-tabs__item {
+  display: inline-flex;
+  height: 34px;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mcp-add-tabs__item--active {
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 1px 3px color-mix(in srgb, #000 10%, transparent);
+}
+
+.mcp-add-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.mcp-add-form > p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.mcp-add-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.mcp-add-form label > span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mcp-add-form textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--color-border-default);
+  border-radius: 7px;
+  outline: none;
+  padding: 9px 11px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.mcp-add-form textarea:focus {
+  border-color: var(--color-accent-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-focus-ring) 22%, transparent);
+}
+
+.mcp-add-form__json {
+  font-family: var(--font-family-monospace, Consolas, monospace) !important;
+}
+
+.mcp-add-modal__actions {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
 .skill-library {
   display: grid;
   min-width: 0;
@@ -922,9 +1017,8 @@
 
 .create-view-option {
   display: grid;
-  min-height: 92px;
   grid-template-columns: 38px minmax(0, 1fr);
-  align-items: start;
+  align-items: center;
   gap: 11px;
   border: 1px solid var(--color-border-default);
   border-radius: 7px;
@@ -956,6 +1050,7 @@
 }
 
 .create-view-option__copy strong {
+  color: var(--color-text-primary);
   font-size: 14px;
 }
 

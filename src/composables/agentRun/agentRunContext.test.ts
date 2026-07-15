@@ -11,9 +11,17 @@ describe('buildAgentRunContext', () => {
     const snapshot = createSnapshot([related])
     const adapter = createAdapter({
       searchDocuments: vi.fn().mockRejectedValue(new Error('search unavailable')),
-      listDocumentBlocks: vi.fn().mockResolvedValue([
-        { id: 'release-block', documentId: 'doc-2', blockType: 'paragraph', blockIndex: 0, plainText: related.plainText },
-      ]),
+      listDocumentBlocks: vi
+        .fn()
+        .mockResolvedValue([
+          {
+            id: 'release-block',
+            documentId: 'doc-2',
+            blockType: 'paragraph',
+            blockIndex: 0,
+            plainText: related.plainText,
+          },
+        ]),
     })
 
     const context = await buildAgentRunContext({ snapshot, mode: 'ask', document: adapter })
@@ -40,6 +48,27 @@ describe('buildAgentRunContext', () => {
 
     expect(context.text).toContain('本次需要修改的目标块')
     expect(adapter.searchDocuments).not.toHaveBeenCalled()
+  })
+
+  it('starts agent runs without preloading or searching documents', async () => {
+    const snapshot = createSnapshot([
+      documentSummary('doc-2', '相关文档', '不应自动注入的相关正文'),
+    ])
+    const adapter = createAdapter()
+
+    const context = await buildAgentRunContext({
+      snapshot,
+      mode: 'agent',
+      targetBlocks: snapshot.document.blocks,
+      document: adapter,
+    })
+
+    expect(context.sources).toEqual([])
+    expect(context.text).toContain('未预载当前文档或知识库正文')
+    expect(context.text).not.toContain(snapshot.document.text)
+    expect(context.text).not.toContain('不应自动注入的相关正文')
+    expect(adapter.searchDocuments).not.toHaveBeenCalled()
+    expect(adapter.listDocumentBlocks).not.toHaveBeenCalled()
   })
 })
 

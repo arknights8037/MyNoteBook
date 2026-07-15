@@ -78,7 +78,7 @@ export function useAiConversation(options: AiConversationOptions) {
     messages.value = historyItem.messages.map((message) => ({ ...message }))
     prompt.value = ''
     options.error.value = ''
-    options.mode.value = messages.value.at(-1)?.mode ?? 'ask'
+    options.mode.value = messages.value.at(-1)?.mode ?? 'agent'
     return true
   }
 

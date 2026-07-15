@@ -3,12 +3,7 @@ import { openPath } from '@tauri-apps/plugin-opener'
 
 import { getDatabase } from '@/infrastructure/database/connection'
 import { loadAppSettings } from '@/models/settings'
-import {
-  ASSET_URL_PREFIX,
-  createAssetUrl,
-  parseAssetUrl,
-  type AssetRecord,
-} from '@/models/asset'
+import { ASSET_URL_PREFIX, createAssetUrl, parseAssetUrl, type AssetRecord } from '@/models/asset'
 import type { DocumentId } from '@/models/document'
 
 interface AssetRow extends Record<string, unknown> {
@@ -67,8 +62,9 @@ export class TauriAssetService implements AssetService {
     }
 
     const database = await getDatabase()
-    await database.execute(
-      `INSERT INTO assets (
+    try {
+      await database.execute(
+        `INSERT INTO assets (
         id,
         document_id,
         relative_path,
@@ -91,20 +87,27 @@ export class TauriAssetService implements AssetService {
         width = excluded.width,
         height = excluded.height,
         updated_at = excluded.updated_at`,
-      [
-        record.id,
-        record.documentId,
-        record.relativePath,
-        record.originalName,
-        record.mimeType,
-        record.sizeBytes,
-        record.contentHash,
-        record.width,
-        record.height,
-        record.createdAt,
-        record.updatedAt,
-      ],
-    )
+        [
+          record.id,
+          record.documentId,
+          record.relativePath,
+          record.originalName,
+          record.mimeType,
+          record.sizeBytes,
+          record.contentHash,
+          record.width,
+          record.height,
+          record.createdAt,
+          record.updatedAt,
+        ],
+      )
+    } catch (error) {
+      await invoke('remove_asset_file', {
+        dataDirectory: settings.dataDirectory,
+        relativePath: stored.relativePath,
+      }).catch(() => undefined)
+      throw error
+    }
 
     return record
   }
@@ -146,7 +149,9 @@ export class TauriAssetService implements AssetService {
 
 export const assetService = new TauriAssetService()
 
-export function getAssetDisplayName(asset: Pick<AssetRecord, 'originalName' | 'id'> | null): string {
+export function getAssetDisplayName(
+  asset: Pick<AssetRecord, 'originalName' | 'id'> | null,
+): string {
   return asset?.originalName?.trim() || asset?.id || '附件'
 }
 

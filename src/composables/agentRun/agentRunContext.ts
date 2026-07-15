@@ -17,6 +17,15 @@ export async function buildAgentRunContext(input: {
   const { snapshot, mode } = input
   const document = snapshot.document
   const targetBlocks = input.targetBlocks ?? []
+  if (mode === 'agent') {
+    return {
+      text: [
+        '本次 Agent 任务未预载当前文档或知识库正文。',
+        '需要页面内容、选中块、文档大纲或知识库资料时，请按任务需要调用对应的只读工具。',
+      ].join('\n'),
+      sources: [],
+    }
+  }
   const lines = [
     '标题：' + normalizeDocumentTitle(document.title),
     '标签：' + (document.tags.join('、') || '无'),
@@ -37,7 +46,7 @@ export async function buildAgentRunContext(input: {
   }
 
   let retrieval = null
-  if (mode === 'ask' || mode === 'agent') {
+  if (mode === 'ask') {
     let searched
     try {
       searched = await input.document.searchDocuments(snapshot.prompt, 5)
@@ -56,7 +65,11 @@ export async function buildAgentRunContext(input: {
       const blocksByDocumentId = new Map()
       blocksByDocumentId.set(
         document.id,
-        document.blocks.map((block) => ({ id: block.id, index: block.index, plainText: block.text })),
+        document.blocks.map((block) => ({
+          id: block.id,
+          index: block.index,
+          plainText: block.text,
+        })),
       )
       await Promise.all(
         retrieval.sources

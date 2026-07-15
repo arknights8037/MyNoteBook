@@ -10,7 +10,11 @@ export function resolveAiExecutionMode(
   if (/(全面|多步|调研|检索|知识库|对比|规划|方案|梳理.*资料|整合.*资料)/.test(normalizedPrompt)) {
     return 'agent'
   }
-  if (/(改写|重写|润色|修改|补全|扩写|精简|生成.*(?:文档|大纲|提纲|总结)|整理.*(?:页面|文档|内容))/.test(normalizedPrompt)) {
+  if (
+    /(改写|重写|润色|修改|补全|扩写|精简|生成.*(?:文档|大纲|提纲|总结)|整理.*(?:页面|文档|内容))/.test(
+      normalizedPrompt,
+    )
+  ) {
     return 'edit'
   }
   return 'ask'
@@ -28,18 +32,15 @@ export function buildAiPrompt(prompt: string, mode: Exclude<AiChatMode, 'auto'>)
   if (mode === 'ask') return prompt
   if (mode === 'agent') {
     return [
-      '你是知识库 Agent。请先结合当前页面和检索到的资料完成分析，再执行用户的任务。',
+      '你是知识库 Agent。默认没有引用任何文档；仅在任务需要时调用只读工具获取当前页面、选中块、大纲或知识库资料。',
       structuredOutputInstruction(),
       '用户要求：',
       prompt,
     ].join('\n')
   }
-  return [
-    '请根据用户要求改写目标块。',
-    structuredOutputInstruction(),
-    '用户要求：',
-    prompt,
-  ].join('\n')
+  return ['请根据用户要求改写目标块。', structuredOutputInstruction(), '用户要求：', prompt].join(
+    '\n',
+  )
 }
 
 function structuredOutputInstruction(): string {

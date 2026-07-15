@@ -1,3 +1,5 @@
+import type { AgentToolTag } from './cognitive'
+
 export type McpTransport = 'stdio' | 'http'
 
 export interface McpServerConfig {
@@ -40,6 +42,7 @@ export interface AgentExternalTool extends McpToolDescriptor {
   runtimeName: string
   requiresConfirmation: boolean
   maxCallsPerTask: number
+  tags: AgentToolTag[]
 }
 
 export function createMcpRuntimeTools(tools: McpToolDescriptor[]): AgentExternalTool[] {
@@ -53,8 +56,9 @@ export function createMcpRuntimeTools(tools: McpToolDescriptor[]): AgentExternal
     return {
       ...tool,
       runtimeName,
-      requiresConfirmation: !tool.readOnly || !tool.serverTrusted,
-      maxCallsPerTask: 4,
+      requiresConfirmation: !tool.serverTrusted,
+      maxCallsPerTask: 24,
+      tags: [tool.readOnly ? 'external.read' : 'external.may_write'],
     }
   })
 }

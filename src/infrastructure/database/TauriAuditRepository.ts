@@ -20,6 +20,8 @@ export class TauriAuditRepository implements AuditRepository {
 
   async listEntries(query: AuditQuery = {}): Promise<AppResult<AuditEntry[]>> {
     const limit = Math.max(1, Math.min(query.limit ?? 200, 500))
+    const category = query.category ?? 'all'
+    const search = query.search?.trim().toLocaleLowerCase() ?? ''
     try {
       const rows = await this.sqlClient.select<AuditRow>(
         `SELECT * FROM (
@@ -48,7 +50,12 @@ export class TauriAuditRepository implements AuditRepository {
                  json_object('correlationId', correlation_id, 'causationId', causation_id,
                    'contextBundleId', context_bundle_id),
                  queued_at, completed_at
-          FROM task_runs
+           FROM task_runs
+           WHERE id NOT IN (
+             SELECT task_run_id FROM agent_tasks WHERE task_run_id IS NOT NULL
+             UNION
+             SELECT task_run_id FROM automation_runs WHERE task_run_id IS NOT NULL
+           )
           UNION ALL
           SELECT id, 'knowledge', id, object_type || ': ' || title,
                  authority_level, status,
@@ -87,23 +94,13 @@ export class TauriAuditRepository implements AuditRepository {
           SELECT id, 'outbox', event_id, topic, COALESCE(last_error, '事件投递'), status,
                  payload_json, created_at, published_at
           FROM outbox_messages
-        ) ORDER BY created_at DESC LIMIT ?`,
-        [limit],
+        )
+        WHERE (? = 'all' OR category = ?)
+          AND (? = '' OR instr(lower(title || char(10) || summary || char(10) || status), ?) > 0)
+        ORDER BY created_at DESC LIMIT ?`,
+        [category, category, search, search, limit],
       )
-      const category = query.category ?? 'all'
-      const search = query.search?.trim().toLocaleLowerCase() ?? ''
-      return ok(
-        rows
-          .map(mapAuditRow)
-          .filter((entry) => category === 'all' || entry.category === category)
-          .filter(
-            (entry) =>
-              !search ||
-              `${entry.title}\n${entry.summary}\n${entry.status}`
-                .toLocaleLowerCase()
-                .includes(search),
-          ),
-      )
+      return ok(rows.map(mapAuditRow))
     } catch (error) {
       return err(normalizeError(error, '无法读取审计记录。'))
     }
@@ -144,7 +141,32 @@ function mapAuditRow(row: AuditRow): AuditEntry {
 
 function severityForStatus(status: string): AuditSeverity {
   if (['failed', 'error', 'rejected', 'invalid'].includes(status)) return 'error'
-  if (['completed', 'accepted', 'approved', 'applied', 'rolled_back', 'passed', 'fresh', 'active', 'published', 'recorded'].includes(status)) return 'success'
-  if (['running', 'queued', 'waiting_confirmation', 'waiting_approval', 'needs_approval', 'stale', 'blocked'].includes(status)) return 'warning'
+  if (
+    [
+      'completed',
+      'accepted',
+      'approved',
+      'applied',
+      'rolled_back',
+      'passed',
+      'fresh',
+      'active',
+      'published',
+      'recorded',
+    ].includes(status)
+  )
+    return 'success'
+  if (
+    [
+      'running',
+      'queued',
+      'waiting_confirmation',
+      'waiting_approval',
+      'needs_approval',
+      'stale',
+      'blocked',
+    ].includes(status)
+  )
+    return 'warning'
   return 'info'
 }

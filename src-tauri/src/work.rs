@@ -8,50 +8,58 @@ use crate::domain_events::{record_with_outbox, NewDomainEvent};
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangeSetDraft {
-    id: String,
-    task_run_id: String,
-    title: String,
-    description: String,
-    created_at: i64,
+    pub(crate) id: String,
+    pub(crate) task_run_id: String,
+    pub(crate) title: String,
+    pub(crate) description: String,
+    pub(crate) created_at: i64,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitVerificationInput {
-    data_directory: Option<String>,
-    id: String,
-    task_run_id: String,
-    verdict: String,
-    checks_json: String,
-    summary: String,
-    proposed_change_set: Option<ChangeSetDraft>,
-    correlation_id: String,
-    event_id: String,
-    outbox_id: String,
-    created_at: i64,
-    expected_status: String,
-    next_status: String,
-    completed_at: Option<i64>,
-    error: Option<String>,
+    pub(crate) data_directory: Option<String>,
+    pub(crate) id: String,
+    pub(crate) task_run_id: String,
+    pub(crate) verdict: String,
+    pub(crate) checks_json: String,
+    pub(crate) summary: String,
+    pub(crate) proposed_change_set: Option<ChangeSetDraft>,
+    pub(crate) correlation_id: String,
+    pub(crate) event_id: String,
+    pub(crate) outbox_id: String,
+    pub(crate) created_at: i64,
+    pub(crate) expected_status: String,
+    pub(crate) next_status: String,
+    pub(crate) completed_at: Option<i64>,
+    pub(crate) error: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DecideChangeSetInput {
-    data_directory: Option<String>,
-    change_set_id: String,
-    decision: String,
-    approval_id: String,
-    correlation_id: String,
-    event_id: String,
-    outbox_id: String,
-    created_at: i64,
+    pub(crate) data_directory: Option<String>,
+    pub(crate) change_set_id: String,
+    pub(crate) decision: String,
+    pub(crate) approval_id: String,
+    pub(crate) correlation_id: String,
+    pub(crate) event_id: String,
+    pub(crate) outbox_id: String,
+    pub(crate) created_at: i64,
 }
 
 #[tauri::command]
 pub async fn commit_result_verification(
     app: AppHandle,
     input: CommitVerificationInput,
+) -> Result<(), String> {
+    let pool = open_database(&app, input.data_directory.clone()).await?;
+    commit_result_verification_in_pool(pool.as_ref(), &input).await
+}
+
+pub(crate) async fn commit_result_verification_in_pool(
+    pool: &sqlx::SqlitePool,
+    input: &CommitVerificationInput,
 ) -> Result<(), String> {
     if !matches!(
         input.verdict.as_str(),
@@ -70,7 +78,6 @@ pub async fn commit_result_verification(
     }
     serde_json::from_str::<serde_json::Value>(&input.checks_json)
         .map_err(|error| format!("Verifier checks JSON 无效：{error}"))?;
-    let pool = open_database(&app, input.data_directory).await?;
     let mut transaction = pool.begin().await.map_err(database_error)?;
     let proposed_change_set_id = input
         .proposed_change_set
@@ -151,10 +158,17 @@ pub async fn commit_result_verification(
 
 #[tauri::command]
 pub async fn decide_change_set(app: AppHandle, input: DecideChangeSetInput) -> Result<(), String> {
+    let pool = open_database(&app, input.data_directory.clone()).await?;
+    decide_change_set_in_pool(pool.as_ref(), &input).await
+}
+
+pub(crate) async fn decide_change_set_in_pool(
+    pool: &sqlx::SqlitePool,
+    input: &DecideChangeSetInput,
+) -> Result<(), String> {
     if input.decision != "approved" && input.decision != "rejected" {
         return Err("ChangeSet 审批决定无效。".to_string());
     }
-    let pool = open_database(&app, input.data_directory).await?;
     let mut transaction = pool.begin().await.map_err(database_error)?;
     let row = sqlx::query("SELECT status FROM change_sets WHERE id = ? LIMIT 1")
         .bind(&input.change_set_id)

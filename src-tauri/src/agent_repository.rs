@@ -71,6 +71,23 @@ pub struct ApplyAgentDocumentCreationInput {
     parent_document_id: Option<String>,
     title: String,
     content_json: String,
+    accepted_after_text: String,
+    transaction_id: String,
+    created_at: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyAgentGroupCreationInput {
+    data_directory: Option<String>,
+    task_id: String,
+    patch_id: String,
+    group_document_id: String,
+    group_title: String,
+    child_document_id: Option<String>,
+    child_title: Option<String>,
+    child_content_json: Option<String>,
+    child_after_text: Option<String>,
     transaction_id: String,
     created_at: i64,
 }
@@ -126,6 +143,7 @@ pub struct AgentTransactionResult {
     before_revision: i64,
     resulting_revision: i64,
     created_at: i64,
+    child_document_id: Option<String>,
 }
 
 #[tauri::command]
@@ -296,7 +314,10 @@ pub async fn apply_agent_document_creation(
     input: ApplyAgentDocumentCreationInput,
 ) -> Result<AgentTransactionResult, String> {
     let projection = validate_and_project_tiptap(&input.content_json, true)?;
-    if input.title.trim().is_empty() || projection.plain_text.trim().is_empty() {
+    if input.title.trim().is_empty()
+        || input.accepted_after_text.trim().is_empty()
+        || projection.plain_text.trim().is_empty()
+    {
         return Err("新文档标题和内容不能为空。".to_string());
     }
     let connection = open_database(&app, input.data_directory).await?;
@@ -312,16 +333,24 @@ pub async fn apply_agent_document_creation(
     if task_status != "waiting_confirmation" {
         return Err("Agent 任务不在等待确认状态。".to_string());
     }
-    if input
-        .parent_document_id
-        .as_deref()
-        .is_some_and(|parent| parent != task_document_id)
-    {
-        return Err("新文档父级超出当前 Agent 任务范围。".to_string());
+    if let Some(parent_id) = input.parent_document_id.as_deref() {
+        if parent_id != task_document_id {
+            let group_exists: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM documents WHERE id = ? AND document_kind = 'group' \
+                 AND is_deleted = 0",
+            )
+            .bind(parent_id)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(database_error)?;
+            if group_exists != 1 {
+                return Err("新文档父级不是有效的知识库分组。".to_string());
+            }
+        }
     }
     let patch = sqlx::query(
-        "SELECT operation, status, after_text FROM agent_patches \
-         WHERE id = ? AND task_id = ? LIMIT 1",
+        "SELECT operation, status, document_id, document_title, parent_document_id \
+         FROM agent_patches WHERE id = ? AND task_id = ? LIMIT 1",
     )
     .bind(&input.patch_id)
     .bind(&input.task_id)
@@ -331,11 +360,24 @@ pub async fn apply_agent_document_creation(
     .ok_or_else(|| "找不到新文档提案。".to_string())?;
     let operation: String = patch.try_get("operation").map_err(database_error)?;
     let status: String = patch.try_get("status").map_err(database_error)?;
-    let proposed_after: String = patch.try_get("after_text").map_err(database_error)?;
+    let proposed_document_id: String = patch.try_get("document_id").map_err(database_error)?;
+    let proposed_title: Option<String> = patch.try_get("document_title").map_err(database_error)?;
+    let proposed_parent_id: Option<String> = patch
+        .try_get("parent_document_id")
+        .map_err(database_error)?;
     if operation != "create_document" || status != "proposed" {
         return Err("新文档提案状态无效。".to_string());
     }
-    validate_patch_after(&projection, &proposed_after, &input.patch_id)?;
+    let parent_matches = proposed_parent_id == input.parent_document_id
+        || (proposed_parent_id.is_none()
+            && input.parent_document_id.as_deref() == Some(task_document_id.as_str()));
+    if proposed_document_id != input.document_id
+        || proposed_title.as_deref() != Some(input.title.trim())
+        || !parent_matches
+    {
+        return Err("新文档提案与确认目标不一致。".to_string());
+    }
+    validate_patch_after(&projection, &input.accepted_after_text, &input.patch_id)?;
     sqlx::query(
         "INSERT INTO documents (id, parent_id, document_kind, title, content_json, plain_text, \
          schema_version, revision, sort_order, is_deleted, created_at, updated_at) \
@@ -361,12 +403,15 @@ pub async fn apply_agent_document_creation(
         &projection,
     )
     .await?;
-    sqlx::query("UPDATE agent_patches SET status = 'accepted', updated_at = ? WHERE id = ?")
-        .bind(input.created_at)
-        .bind(&input.patch_id)
-        .execute(&mut *transaction)
-        .await
-        .map_err(database_error)?;
+    sqlx::query(
+        "UPDATE agent_patches SET after_text = ?, status = 'accepted', updated_at = ? WHERE id = ?",
+    )
+    .bind(input.accepted_after_text.trim())
+    .bind(input.created_at)
+    .bind(&input.patch_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(database_error)?;
     sqlx::query(
         "INSERT INTO agent_document_creation_transactions \
          (id, task_id, document_id, status, created_at, rolled_back_at) \
@@ -407,6 +452,205 @@ pub async fn apply_agent_document_creation(
         before_revision: 0,
         resulting_revision: 1,
         created_at: input.created_at,
+        child_document_id: None,
+    })
+}
+
+#[tauri::command]
+pub async fn apply_agent_group_creation(
+    app: AppHandle,
+    input: ApplyAgentGroupCreationInput,
+) -> Result<AgentTransactionResult, String> {
+    if input.group_title.trim().is_empty() {
+        return Err("新分组名称不能为空。".to_string());
+    }
+    let has_child = input.child_document_id.is_some()
+        || input.child_title.is_some()
+        || input.child_content_json.is_some()
+        || input.child_after_text.is_some();
+    if has_child
+        && (input
+            .child_document_id
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+            || input
+                .child_title
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            || input.child_content_json.is_none())
+    {
+        return Err("分组的初始文档参数不完整。".to_string());
+    }
+    let child_projection = input
+        .child_content_json
+        .as_deref()
+        .map(|content| validate_and_project_tiptap(content, true))
+        .transpose()?;
+    if child_projection
+        .as_ref()
+        .is_some_and(|projection| projection.plain_text.trim().is_empty())
+    {
+        return Err("分组的初始文档内容不能为空。".to_string());
+    }
+    if has_child
+        && input
+            .child_after_text
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+    {
+        return Err("分组的初始文档确认内容不能为空。".to_string());
+    }
+
+    let connection = open_database(&app, input.data_directory).await?;
+    let mut transaction = connection.begin().await.map_err(database_error)?;
+    let task_status: String =
+        sqlx::query_scalar("SELECT status FROM agent_tasks WHERE id = ? LIMIT 1")
+            .bind(&input.task_id)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| "找不到 Agent 任务。".to_string())?;
+    if task_status != "waiting_confirmation" {
+        return Err("Agent 任务不在等待确认状态。".to_string());
+    }
+    let patch = sqlx::query(
+        "SELECT operation, status, document_id, block_id, before_text, document_title, \
+         parent_document_id FROM agent_patches WHERE id = ? AND task_id = ? LIMIT 1",
+    )
+    .bind(&input.patch_id)
+    .bind(&input.task_id)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(database_error)?
+    .ok_or_else(|| "找不到新分组提案。".to_string())?;
+    let operation: String = patch.try_get("operation").map_err(database_error)?;
+    let status: String = patch.try_get("status").map_err(database_error)?;
+    let proposed_group_id: String = patch.try_get("document_id").map_err(database_error)?;
+    let proposed_child_id: String = patch.try_get("block_id").map_err(database_error)?;
+    let proposed_child_title: String = patch.try_get("before_text").map_err(database_error)?;
+    let proposed_group_title: Option<String> =
+        patch.try_get("document_title").map_err(database_error)?;
+    let proposed_parent_id: Option<String> = patch
+        .try_get("parent_document_id")
+        .map_err(database_error)?;
+    if operation != "create_group" || status != "proposed" || proposed_parent_id.is_some() {
+        return Err("新分组提案状态无效。".to_string());
+    }
+    if proposed_group_id != input.group_document_id
+        || proposed_group_title.as_deref() != Some(input.group_title.trim())
+        || proposed_child_id != input.child_document_id.as_deref().unwrap_or("")
+        || proposed_child_title != input.child_title.as_deref().unwrap_or("")
+    {
+        return Err("新分组提案与确认内容不一致。".to_string());
+    }
+    if let (Some(projection), Some(accepted_after)) =
+        (child_projection.as_ref(), input.child_after_text.as_deref())
+    {
+        validate_patch_after(projection, accepted_after, &input.patch_id)?;
+    }
+
+    sqlx::query(
+        "INSERT INTO documents (id, parent_id, document_kind, title, content_json, plain_text, \
+         schema_version, revision, sort_order, is_deleted, created_at, updated_at) \
+         VALUES (?, NULL, 'group', ?, '{\"type\":\"doc\",\"content\":[]}', '', 2, 1, 0, 0, ?, ?)",
+    )
+    .bind(&input.group_document_id)
+    .bind(input.group_title.trim())
+    .bind(input.created_at)
+    .bind(input.created_at)
+    .execute(&mut *transaction)
+    .await
+    .map_err(database_error)?;
+
+    if let (Some(child_id), Some(child_title), Some(projection)) = (
+        input.child_document_id.as_deref(),
+        input.child_title.as_deref(),
+        child_projection.as_ref(),
+    ) {
+        sqlx::query(
+            "INSERT INTO documents (id, parent_id, document_kind, title, content_json, plain_text, \
+             schema_version, revision, sort_order, is_deleted, created_at, updated_at) \
+             VALUES (?, ?, 'article', ?, ?, ?, 2, 1, 0, 0, ?, ?)",
+        )
+        .bind(child_id)
+        .bind(&input.group_document_id)
+        .bind(child_title.trim())
+        .bind(&projection.content_json)
+        .bind(&projection.plain_text)
+        .bind(input.created_at)
+        .bind(input.created_at)
+        .execute(&mut *transaction)
+        .await
+        .map_err(database_error)?;
+        replace_block_projection(
+            &mut transaction,
+            child_id,
+            1,
+            input.created_at,
+            "article",
+            false,
+            projection,
+        )
+        .await?;
+    }
+
+    sqlx::query(
+        "UPDATE agent_patches SET after_text = ?, status = 'accepted', updated_at = ? WHERE id = ?",
+    )
+    .bind(input.child_after_text.as_deref().unwrap_or("").trim())
+    .bind(input.created_at)
+    .bind(&input.patch_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(database_error)?;
+    sqlx::query(
+        "INSERT INTO agent_document_creation_transactions \
+         (id, task_id, document_id, child_document_id, status, created_at, rolled_back_at) \
+         VALUES (?, ?, ?, ?, 'applied', ?, NULL)",
+    )
+    .bind(&input.transaction_id)
+    .bind(&input.task_id)
+    .bind(&input.group_document_id)
+    .bind(&input.child_document_id)
+    .bind(input.created_at)
+    .execute(&mut *transaction)
+    .await
+    .map_err(database_error)?;
+    sqlx::query(
+        "INSERT INTO agent_confirmations (task_id, patch_id, action, details_json, created_at) \
+         VALUES (?, ?, 'accepted', ?, ?)",
+    )
+    .bind(&input.task_id)
+    .bind(&input.patch_id)
+    .bind(
+        serde_json::json!({
+            "transactionId": &input.transaction_id,
+            "childDocumentId": &input.child_document_id,
+        })
+        .to_string(),
+    )
+    .bind(input.created_at)
+    .execute(&mut *transaction)
+    .await
+    .map_err(database_error)?;
+    sqlx::query(
+        "UPDATE agent_tasks SET status = 'completed', current_step = '新分组已创建', \
+         error = NULL, completed_at = ? WHERE id = ?",
+    )
+    .bind(input.created_at)
+    .bind(&input.task_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(database_error)?;
+    transaction.commit().await.map_err(database_error)?;
+    Ok(AgentTransactionResult {
+        id: input.transaction_id,
+        task_id: input.task_id,
+        document_id: input.group_document_id,
+        before_revision: 0,
+        resulting_revision: 1,
+        created_at: input.created_at,
+        child_document_id: input.child_document_id,
     })
 }
 
@@ -595,6 +839,7 @@ pub async fn apply_agent_patch_set(
         before_revision: input.expected_revision,
         resulting_revision,
         created_at: input.created_at,
+        child_document_id: None,
     })
 }
 
@@ -654,7 +899,22 @@ pub async fn rollback_agent_transaction(
         }
         let task_id: String = creation.try_get("task_id").map_err(database_error)?;
         let document_id: String = creation.try_get("document_id").map_err(database_error)?;
+        let child_document_id: Option<String> = creation
+            .try_get("child_document_id")
+            .map_err(database_error)?;
         let created_at: i64 = creation.try_get("created_at").map_err(database_error)?;
+        if let Some(child_id) = child_document_id.as_deref() {
+            let child_result = sqlx::query(
+                "DELETE FROM documents WHERE id = ? AND revision = 1 AND is_deleted = 0",
+            )
+            .bind(child_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(database_error)?;
+            if child_result.rows_affected() != 1 {
+                return Err("初始文档创建后已被修改，不能安全撤销分组。".to_string());
+            }
+        }
         let result =
             sqlx::query("DELETE FROM documents WHERE id = ? AND revision = 1 AND is_deleted = 0")
                 .bind(&document_id)
@@ -692,6 +952,7 @@ pub async fn rollback_agent_transaction(
             before_revision: 0,
             resulting_revision: 1,
             created_at,
+            child_document_id,
         });
     };
     let status: String = row.try_get("status").map_err(database_error)?;
@@ -736,6 +997,7 @@ pub async fn rollback_agent_transaction(
         before_revision,
         resulting_revision,
         created_at,
+        child_document_id: None,
     })
 }
 
@@ -788,41 +1050,48 @@ fn validate_patch_after(
 }
 
 fn normalize_visible_markdown(value: &str) -> String {
-    let chars = value.chars().collect::<Vec<_>>();
     let mut visible = String::with_capacity(value.len());
-    let mut index = 0;
-    while index < chars.len() {
-        if chars[index] == '[' {
-            if let Some(label_end) = chars[index + 1..].iter().position(|value| *value == ']') {
-                let label_end = index + 1 + label_end;
-                if chars.get(label_end + 1) == Some(&'(') {
-                    if let Some(url_end) = chars[label_end + 2..]
-                        .iter()
-                        .position(|value| *value == ')')
-                    {
-                        visible.extend(chars[index + 1..label_end].iter());
-                        index = label_end + 2 + url_end + 1;
-                        continue;
-                    }
-                }
+    let table_delimiter = regex::Regex::new(r"^\s*\|?\s*:?-{3,}:?(?:\s*\|\s*:?-{3,}:?)+\s*\|?\s*$")
+        .expect("table delimiter regex");
+    let list_prefix = regex::Regex::new(r"^\s*(?:[-*+]\s+(?:\[[ xX]\]\s+)?|\d+\.\s+)")
+        .expect("list prefix regex");
+    let link = regex::Regex::new(r"\[([^\]]+)\]\([^)]+\)").expect("link regex");
+    let mut in_fenced_code = false;
+
+    for line in value.replace("\r\n", "\n").replace('\r', "\n").lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_fenced_code = !in_fenced_code;
+            continue;
+        }
+        if matches!(trimmed, "$$" | "\\[" | "\\]") || table_delimiter.is_match(trimmed) {
+            continue;
+        }
+        if !in_fenced_code && matches!(trimmed, "---" | "***" | "___") {
+            continue;
+        }
+
+        let line_without_prefix = if in_fenced_code {
+            trimmed.to_string()
+        } else {
+            let heading = trimmed.trim_start_matches('#').trim_start();
+            let quote = heading.trim_start_matches('>').trim_start();
+            list_prefix.replace(quote, "").into_owned()
+        };
+        let linked = link.replace_all(&line_without_prefix, "$1");
+        for character in linked.chars() {
+            if matches!(
+                character,
+                '#' | '*' | '_' | '~' | '`' | '|' | '[' | ']' | '$' | '\\'
+            ) {
+                visible.push(' ');
+            } else {
+                visible.push(character);
             }
         }
-        let character = chars[index];
-        if matches!(
-            character,
-            '#' | '*' | '_' | '~' | '`' | '>' | '|' | '[' | ']'
-        ) {
-            visible.push(' ');
-        } else {
-            visible.push(character);
-        }
-        index += 1;
+        visible.push(' ');
     }
-    visible
-        .split_whitespace()
-        .filter(|value| !matches!(*value, "-" | "+" | "x" | "X"))
-        .collect::<Vec<_>>()
-        .join(" ")
+    visible.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[cfg(test)]
@@ -857,5 +1126,21 @@ mod tests {
         assert!(validate_patch_after(&projection, "无关内容", "patch-1")
             .unwrap_err()
             .contains("不一致"));
+    }
+
+    #[test]
+    fn patch_after_validation_accepts_structured_markdown_semantics() {
+        let projection = validate_and_project_tiptap(
+            r#"{"type":"doc","content":[{"type":"tableBlock","attrs":{"id":"table-1","rows":[["字段","说明"],["名称","文档标题"]]}},{"type":"taskList","attrs":{"id":"tasks"},"content":[{"type":"taskItem","attrs":{"checked":true},"content":[{"type":"paragraph","content":[{"type":"text","text":"已完成"}]}]}]}]}"#,
+            true,
+        )
+        .unwrap();
+        validate_patch_after(
+            &projection,
+            "| 字段 | 说明 |\n| --- | --- |\n| 名称 | 文档标题 |",
+            "table-patch",
+        )
+        .unwrap();
+        validate_patch_after(&projection, "- [x] 已完成", "task-patch").unwrap();
     }
 }

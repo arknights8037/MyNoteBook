@@ -1,7 +1,10 @@
 import type { AgentPatchSet, AgentTask, SelectedBlock } from '@/models/agent'
 import type { KnowledgeSource } from '@/models/knowledgeRetrieval'
 import type { AiChatMode } from '@/models/aiChatMode'
-import { createAgentCommandPatches } from '@/services/AgentCommandService'
+import {
+  createAgentCommandPatches,
+  type RegexReplaceExecutor,
+} from '@/services/AgentCommandService'
 import { parseAgentResponse } from '@/services/AgentProtocol'
 import { normalizeDocumentTitle } from '@/features/documents/documentPresentation'
 import type { AgentRunSnapshot } from './types'
@@ -13,7 +16,7 @@ export interface AgentRunResult {
   summary: string
   outcome: AgentRunOutcome
 }
-export function resolveAgentRunResult(input: {
+export async function resolveAgentRunResult(input: {
   output: string
   mode: Extract<AiChatMode, 'edit' | 'agent'>
   task: AgentTask
@@ -23,8 +26,9 @@ export function resolveAgentRunResult(input: {
   sources: KnowledgeSource[]
   usesSelection: boolean
   foundTargetScope: boolean
+  replaceBlocksByRegex: RegexReplaceExecutor
   createId: () => string
-}): AgentRunResult {
+}): Promise<AgentRunResult> {
   const contextSources = [
     {
       documentId: input.snapshot.document.id,
@@ -52,21 +56,31 @@ export function resolveAgentRunResult(input: {
   let patchSet = parsed.patchSet
   if (parsed.commands.length > 0) {
     if (
-      parsed.commands.some((command) => command.tool === 'create_document') &&
+      parsed.commands.some(
+        (command) => command.tool === 'create_document' || command.tool === 'create_group',
+      ) &&
       (parsed.commands.length > 1 || parsed.patchSet)
     ) {
-      throw new Error('新建文档不能和其他修改混在同一批提案中。')
+      throw new Error('新建文档或分组不能和其他修改混在同一批提案中。')
     }
-    const commandPatches = parsed.commands.flatMap((command) =>
-      createAgentCommandPatches({
-        command,
-        taskId: input.task.id,
-        documentId: input.snapshot.document.id,
-        expectedVersion: input.expectedRevision,
-        blocks: input.targetBlocks,
-        createId: input.createId,
-      }),
-    )
+    const commandPatches = (
+      await Promise.all(
+        parsed.commands.map((command) =>
+          createAgentCommandPatches({
+            command,
+            taskId: input.task.id,
+            documentId: input.snapshot.document.id,
+            expectedVersion: input.expectedRevision,
+            blocks: input.targetBlocks,
+            allowedParentDocumentIds: input.snapshot.document.documents
+              .filter((document) => document.documentKind === 'group' && !document.isDeleted)
+              .map((document) => document.id),
+            replaceBlocksByRegex: input.replaceBlocksByRegex,
+            createId: input.createId,
+          }),
+        ),
+      )
+    ).flat()
     patchSet = commandPatches.length
       ? {
           taskId: input.task.id,

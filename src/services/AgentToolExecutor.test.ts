@@ -20,9 +20,23 @@ const context: AgentToolExecutionContext = {
 
 describe('AgentToolExecutor', () => {
   it('executes whitelisted read tools', async () => {
+    const executeNativeTool = vi.fn(async (_name, args) =>
+      (args.blocks as AgentToolExecutionContext['currentDocument']['blocks']).filter((block) =>
+        block.text.includes('P0'),
+      ),
+    )
     await expect(
-      executeAgentTool({ name: 'find_blocks_by_regex', arguments: { pattern: 'P0' } }, context),
+      executeAgentTool(
+        { name: 'find_blocks_by_regex', arguments: { pattern: 'P0' } },
+        { ...context, executeNativeTool },
+      ),
     ).resolves.toMatchObject({ ok: true, value: [{ id: 'p0' }] })
+    expect(executeNativeTool).toHaveBeenCalledWith(
+      'find_blocks_by_regex',
+      expect.objectContaining({ pattern: 'P0', blocks: context.currentDocument.blocks }),
+      undefined,
+      undefined,
+    )
   })
 
   it('does not execute write tools inside the loop', async () => {
@@ -30,8 +44,50 @@ describe('AgentToolExecutor', () => {
       executeAgentTool({ name: 'replace_text_by_regex', arguments: {} }, context),
     ).resolves.toMatchObject({
       ok: false,
-      error: expect.stringContaining('不能在 loop 中直接执行'),
+      error: expect.stringContaining('应由 Agent Runtime 捕获'),
     })
+  })
+
+  it('lists document groups through the native read tool', async () => {
+    const executeNativeTool = vi.fn(async () => [
+      { id: 'group-agent-mvp', title: 'agent mvp', childCount: 3 },
+    ])
+    await expect(
+      executeAgentTool(
+        { name: 'list_document_groups', arguments: { query: 'agent mvp' } },
+        { ...context, executeNativeTool },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: [{ id: 'group-agent-mvp', title: 'agent mvp' }],
+    })
+    expect(executeNativeTool).toHaveBeenCalledWith(
+      'list_document_groups',
+      {
+        query: 'agent mvp',
+      },
+      undefined,
+      undefined,
+    )
+  })
+
+  it('does not start a native tool after cancellation', async () => {
+    const controller = new AbortController()
+    const executeNativeTool = vi.fn(async () => [])
+    controller.abort()
+
+    await expect(
+      executeAgentTool(
+        {
+          callId: 'call-cancelled',
+          name: 'find_blocks_by_regex',
+          arguments: { pattern: 'P0' },
+          signal: controller.signal,
+        },
+        { ...context, executeNativeTool },
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(executeNativeTool).not.toHaveBeenCalled()
   })
 
   it('delegates the shell tool to the native allowlisted executor', async () => {

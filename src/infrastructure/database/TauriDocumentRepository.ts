@@ -273,8 +273,7 @@ export class TauriDocumentRepository implements DocumentRepository {
 
   async save(input: SaveDocumentInput): Promise<AppResult<DocumentRecord>> {
     const now = Date.now()
-    const existingResult =
-      input.expectedRevision === null ? null : await this.findById(input.id)
+    const existingResult = input.expectedRevision === null ? null : await this.findById(input.id)
     if (existingResult && !existingResult.ok) return existingResult
     const existing = existingResult?.value
     return this.persistThroughDocumentCore(
@@ -331,6 +330,10 @@ export class TauriDocumentRepository implements DocumentRepository {
     }
 
     try {
+      const assets = await this.sqlClient.select<{ relative_path: string }>(
+        'SELECT relative_path FROM assets WHERE document_id = ?',
+        [id],
+      )
       const result = await this.sqlClient.execute(
         `DELETE FROM documents
          WHERE id = ? AND revision = ? AND is_deleted = 1`,
@@ -343,6 +346,15 @@ export class TauriDocumentRepository implements DocumentRepository {
           message: `Document "${id}" was changed before deletion completed.`,
         })
       }
+
+      await Promise.allSettled(
+        assets.map((asset) =>
+          invoke('remove_asset_file', {
+            dataDirectory: loadAppSettings().dataDirectory,
+            relativePath: asset.relative_path,
+          }),
+        ),
+      )
 
       return ok(existing)
     } catch (error) {
@@ -459,7 +471,6 @@ export class TauriDocumentRepository implements DocumentRepository {
     )
     return rows.map((row) => row.name)
   }
-
 }
 
 async function persistDocumentThroughTauri(

@@ -1,5 +1,26 @@
-export type KnowledgeObjectType = 'decision' | 'rule' | 'goal' | 'task' | 'evidence' | 'change_set'
-export type KnowledgeObjectStatus = 'draft' | 'candidate' | 'approved' | 'active' | 'deprecated'
+import type { CognitiveModeId } from './cognitive'
+
+export type KnowledgeObjectType =
+  | 'decision'
+  | 'rule'
+  | 'goal'
+  | 'task'
+  | 'evidence'
+  | 'change_set'
+  | 'fact'
+  | 'claim'
+  | 'inference'
+  | 'assumption'
+  | 'concept'
+  | 'question'
+  | 'limitation'
+export type KnowledgeObjectStatus =
+  | 'draft'
+  | 'candidate'
+  | 'approved'
+  | 'active'
+  | 'deprecated'
+  | 'rejected'
 export type KnowledgeRelationType =
   | 'supersedes'
   | 'conflicts_with'
@@ -12,6 +33,12 @@ export interface KnowledgeObject {
   objectType: KnowledgeObjectType
   status: KnowledgeObjectStatus
   title: string
+  content: string
+  structuredData: Record<string, unknown>
+  generatedRunId: string | null
+  cognitiveMode: CognitiveModeId | null
+  templateId: string | null
+  templateVersion: number | null
   ownerId: string | null
   scope: Record<string, unknown>
   documentId: string | null
@@ -40,6 +67,12 @@ export interface CreateKnowledgeObjectInput {
   objectType: KnowledgeObjectType
   status?: KnowledgeObjectStatus
   title: string
+  content?: string
+  structuredData?: Record<string, unknown>
+  generatedRunId?: string | null
+  cognitiveMode?: CognitiveModeId | null
+  templateId?: string | null
+  templateVersion?: number | null
   ownerId?: string | null
   scope?: Record<string, unknown>
   documentId?: string | null
@@ -51,6 +84,32 @@ export interface CreateKnowledgeObjectInput {
   validUntil?: number | null
   verifiedAt?: number | null
   createdAt?: number
+}
+
+export interface KnowledgeObjectSource {
+  id: string
+  knowledgeObjectId: string
+  documentId: string
+  blockId: string | null
+  revision: number
+  quote: string | null
+  startOffset: number | null
+  endOffset: number | null
+  createdAt: number
+}
+
+export type KnowledgeValidationVerdict = 'passed' | 'failed' | 'warning' | 'unverifiable'
+export type KnowledgeValidationSeverity = 'info' | 'warning' | 'error'
+
+export interface KnowledgeValidation {
+  id: string
+  knowledgeObjectId: string
+  ruleId: string
+  verdict: KnowledgeValidationVerdict
+  severity: KnowledgeValidationSeverity
+  message: string
+  source: Record<string, unknown>
+  validatedAt: number
 }
 
 export function isKnowledgeObjectEffective(object: KnowledgeObject, at = Date.now()): boolean {

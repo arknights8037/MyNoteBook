@@ -8,12 +8,18 @@ import type { AgentRepository } from '@/repositories/AgentRepository'
 
 const completion = vi.hoisted(() => vi.fn())
 const agentLoop = vi.hoisted(() => vi.fn())
+const listMcpTools = vi.hoisted(() => vi.fn())
+const callMcpTool = vi.hoisted(() => vi.fn())
 
 vi.mock('@/services/AiMarkdownService', () => ({
   runAiMarkdownCompletion: completion,
 }))
 vi.mock('@/services/AgentRuntime', () => ({
   runAgentToolLoop: agentLoop,
+}))
+vi.mock('@/services/McpService', () => ({
+  listMcpTools,
+  callMcpTool,
 }))
 
 describe('useAgentRun', () => {
@@ -24,6 +30,10 @@ describe('useAgentRun', () => {
       return '冻结上下文回答'
     })
     agentLoop.mockReset()
+    listMcpTools.mockReset()
+    listMcpTools.mockResolvedValue([])
+    callMcpTool.mockReset()
+    callMcpTool.mockResolvedValue({ ok: true })
   })
 
   it('freezes document and model context before the first asynchronous boundary', async () => {
@@ -198,7 +208,78 @@ describe('useAgentRun', () => {
       authorizationRequest: null,
     })
   })
+
+  it('approves an untrusted MCP server once for the rest of the current task', async () => {
+    listMcpTools.mockResolvedValue([mcpTool(false)])
+    agentLoop.mockImplementation(async (input) => {
+      const toolName = input.externalTools[0].runtimeName
+      await input.executeTool({ name: toolName, arguments: { query: '第一次' } })
+      await input.executeTool({ name: toolName, arguments: { query: '第二次' } })
+      return noChangeAgentResult(3)
+    })
+    const settings = ref(createAiSettings('openai'))
+    settings.value.model = 'test-model'
+    const run = createRun(settings, snapshot(), async () => true, 'agent', '搜索两次并总结')
+
+    const promise = run.workflow.run()
+    await vi.waitFor(() =>
+      expect(run.workflow.runtimeState.value.status).toBe('waiting_authorizer'),
+    )
+    const request = run.workflow.runtimeState.value.authorizationRequest
+    expect(request?.options).toContain('允许本次任务')
+    expect(run.workflow.answerAuthorization(request?.id ?? '', '允许本次任务')).toBe(true)
+    await promise
+
+    expect(callMcpTool).toHaveBeenCalledTimes(2)
+    expect(run.workflow.runtimeState.value.status).toBe('completed')
+    expect(run.workflow.runtimeState.value.authorizationRequest).toBeNull()
+  })
+
+  it('auto-approves every tool from a trusted MCP server', async () => {
+    listMcpTools.mockResolvedValue([mcpTool(true, false)])
+    agentLoop.mockImplementation(async (input) => {
+      await input.executeTool({
+        name: input.externalTools[0].runtimeName,
+        arguments: { action: 'trusted-operation' },
+      })
+      return noChangeAgentResult(2)
+    })
+    const settings = ref(createAiSettings('openai'))
+    settings.value.model = 'test-model'
+    const run = createRun(settings, snapshot(), async () => true, 'agent', '调用可信服务')
+
+    await run.workflow.run()
+
+    expect(callMcpTool).toHaveBeenCalledOnce()
+    expect(run.workflow.runtimeState.value.status).toBe('completed')
+    expect(run.workflow.runtimeState.value.authorizationRequest).toBeNull()
+  })
 })
+
+function mcpTool(serverTrusted: boolean, readOnly = true) {
+  return {
+    serverId: 'search-server',
+    serverName: 'Search Server',
+    name: 'search',
+    description: 'Search the web',
+    inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
+    readOnly,
+    serverTrusted,
+  }
+}
+
+function noChangeAgentResult(rounds: number) {
+  return {
+    output: JSON.stringify({
+      outcome: 'no_change',
+      commands: [],
+      patches: [],
+      finalAnswer: '任务完成。',
+    }),
+    rounds,
+    toolCalls: [],
+  }
+}
 
 function createRun(
   settings: Ref<AiSettings>,
@@ -222,6 +303,7 @@ function createRun(
       let index = 0
       return () => `id-${++index}`
     })(),
+    replaceBlocksByRegex: async ({ blocks }) => blocks,
     notify: { success: vi.fn(), error: vi.fn() },
     document: {
       captureSnapshot: () => currentSnapshot,

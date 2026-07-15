@@ -42,7 +42,10 @@
 
 .settings-page__body {
   width: min(760px, calc(100% - 48px));
+  height: 100%;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   margin: 0 auto;
   padding: 40px 0 72px;
 }

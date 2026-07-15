@@ -91,6 +91,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
     let sources: KnowledgeSource[] = []
     let agentRounds = 0
     let agentToolCallCount = 0
+    const taskApprovedMcpServerIds = new Set<string>()
 
     if (snapshot.requestedMode === 'auto') {
       options.notify.success(`Auto 已选择 ${getModeLabel(mode)} 处理本次任务`)
@@ -140,7 +141,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
     runtimeState.value = {
       status: 'running',
       phase: 'preparing',
-      detail: '正在准备文档上下文',
+      detail: mode === 'agent' ? '正在准备 Agent 任务' : '正在准备文档上下文',
       startedAt: Date.now(),
       completedAt: null,
       rounds: 0,
@@ -188,22 +189,21 @@ export function useAgentRun(options: UseAgentRunOptions) {
         ].join('\n')
       }
       if (editPlan) {
-        const bundleSources = sources.some(
-          (source) => source.documentId === snapshot.document.id,
-        )
-          ? sources
-          : [
-              {
-                id: 'S1',
-                documentId: snapshot.document.id,
-                documentTitle: normalizeDocumentTitle(snapshot.document.title),
-                contentSnippet: snapshot.document.text,
-                score: Number.MAX_SAFE_INTEGER,
-                isCurrentDocument: true,
-                revision: snapshot.document.revision ?? editPlan.expectedRevision,
-              },
-              ...sources,
-            ]
+        const bundleSources =
+          mode === 'agent' || sources.some((source) => source.documentId === snapshot.document.id)
+            ? sources
+            : [
+                {
+                  id: 'S1',
+                  documentId: snapshot.document.id,
+                  documentTitle: normalizeDocumentTitle(snapshot.document.title),
+                  contentSnippet: snapshot.document.text,
+                  score: Number.MAX_SAFE_INTEGER,
+                  isCurrentDocument: true,
+                  revision: snapshot.document.revision ?? editPlan.expectedRevision,
+                },
+                ...sources,
+              ]
         const contextBundle = await compileContextBundle({
           id: options.createId(),
           taskId: editPlan.task.id,
@@ -248,12 +248,14 @@ export function useAgentRun(options: UseAgentRunOptions) {
               toolCalling: mode === 'agent',
             },
           },
-          ignoredParameters: Array.from(new Set([
-            ...parameterAudit.ignored,
-            ...(mode === 'agent' && snapshot.settings.reasoningEffort !== 'auto'
-              ? ['reasoningEffort']
-              : []),
-          ])),
+          ignoredParameters: Array.from(
+            new Set([
+              ...parameterAudit.ignored,
+              ...(mode === 'agent' && snapshot.settings.reasoningEffort !== 'auto'
+                ? ['reasoningEffort']
+                : []),
+            ]),
+          ),
           skillVersions: skillPrompt.skills ?? [],
         })
         if (!savedBundle.ok) throw new Error(savedBundle.error.message)
@@ -310,17 +312,22 @@ export function useAgentRun(options: UseAgentRunOptions) {
                   (tool) => tool.runtimeName === request.name,
                 )
                 if (externalTool) {
-                  if (externalTool.requiresConfirmation) {
+                  if (
+                    externalTool.requiresConfirmation &&
+                    !taskApprovedMcpServerIds.has(externalTool.serverId)
+                  ) {
                     const answer = await waitForAuthorizerInput(
                       {
                         question: `允许调用 MCP 工具“${externalTool.title || externalTool.name}”吗？`,
-                        context: `外部服务：${externalTool.serverName}\n参数：${JSON.stringify(request.arguments).slice(0, 1_000)}`,
-                        options: ['允许本次调用', '拒绝'],
+                        context: `外部服务：${externalTool.serverName}\n选择“允许本次任务”后，该服务在当前 Agent 任务中的后续调用将自动批准。\n参数：${JSON.stringify(request.arguments).slice(0, 1_000)}`,
+                        options: ['允许本次任务', '仅允许本次调用', '拒绝'],
                         allowFreeText: false,
                       },
                       editPlan,
                     )
-                    if (answer !== '允许本次调用') {
+                    if (answer === '允许本次任务') {
+                      taskApprovedMcpServerIds.add(externalTool.serverId)
+                    } else if (answer !== '仅允许本次调用') {
                       return { ok: false, error: '授权人拒绝了 MCP 工具调用。' }
                     }
                   }
@@ -332,6 +339,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
                         externalTool.serverId,
                         externalTool.name,
                         request.arguments,
+                        { callId: request.callId, signal: request.signal },
                       ),
                     }
                   } catch (mcpError) {
@@ -393,7 +401,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
       let outcome: AgentRunOutcome = 'proposal'
       let summary = ''
       if ((mode === 'edit' || mode === 'agent') && editPlan) {
-        const result = resolveAgentRunResult({
+        const result = await resolveAgentRunResult({
           output,
           mode,
           task: editPlan.task,
@@ -403,6 +411,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
           sources,
           usesSelection: editPlan.usesSelection,
           foundTargetScope: editPlan.foundTargetScope,
+          replaceBlocksByRegex: options.replaceBlocksByRegex,
           createId: options.createId,
         })
         patchSet = result.patchSet

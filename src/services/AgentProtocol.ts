@@ -135,6 +135,31 @@ function parseRegexCommands(value: unknown): AgentWriteCommand[] {
       ]
     }
     if (
+      candidate.tool === 'create_group' &&
+      typeof candidate.title === 'string' &&
+      (candidate.initialDocument === undefined || isRecord(candidate.initialDocument))
+    ) {
+      const initialDocument = isRecord(candidate.initialDocument)
+        ? candidate.initialDocument
+        : undefined
+      if (
+        initialDocument &&
+        (typeof initialDocument.title !== 'string' || typeof initialDocument.content !== 'string')
+      ) {
+        return []
+      }
+      return [
+        {
+          tool: 'create_group',
+          title: candidate.title,
+          initialDocument: initialDocument
+            ? { title: initialDocument.title as string, content: initialDocument.content as string }
+            : undefined,
+          reason: typeof candidate.reason === 'string' ? candidate.reason : undefined,
+        },
+      ]
+    }
+    if (
       candidate.tool === 'create_document' &&
       typeof candidate.title === 'string' &&
       typeof candidate.content === 'string'

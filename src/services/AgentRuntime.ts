@@ -5,6 +5,8 @@ import type { AgentRunIntent } from '@/models/agentSlashCommand'
 import type { AgentExternalTool } from '@/models/mcp'
 import type { ExecutionPolicy } from '@/models/executionPolicy'
 import type { AgentToolExecutionResult, AgentToolRequest } from './AgentToolExecutor'
+import { safeErrorMessage } from './SensitiveDataRedaction'
+import type { AgentOutputContract } from './AgentOutputContract'
 
 export interface AgentRuntimeResult {
   output: string
@@ -33,6 +35,7 @@ export interface AgentRuntimeInput {
   requestAuthorizerInput?: (request: Omit<AgentAuthorizationRequest, 'id'>) => Promise<string>
   externalTools?: AgentExternalTool[]
   executionPolicy?: ExecutionPolicy
+  outputContract?: AgentOutputContract<unknown>
   onDelta?: (delta: string, channel?: 'content' | 'reasoning') => void
   onProgress?: (update: AgentProgressUpdate) => void
 }
@@ -40,5 +43,12 @@ export interface AgentRuntimeInput {
 /** Production Agent runtime. Model/tool orchestration is owned exclusively by AI SDK. */
 export async function runAgentToolLoop(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
   const { runAiSdkAgent } = await import('./AiSdkAgentRuntime')
-  return runAiSdkAgent(input)
+  try {
+    return await runAiSdkAgent(input)
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error
+    const sanitized = new Error(safeErrorMessage(error))
+    sanitized.name = error instanceof Error ? error.name : 'Error'
+    throw sanitized
+  }
 }

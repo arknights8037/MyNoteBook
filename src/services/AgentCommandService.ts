@@ -32,21 +32,64 @@ export interface CreateDocumentCommand {
   reason?: string
 }
 
+export interface CreateGroupCommand {
+  tool: 'create_group'
+  title: string
+  initialDocument?: {
+    title: string
+    content: string
+  }
+  reason?: string
+}
+
 export type AgentWriteCommand =
   | RegexReplaceCommand
   | ReplaceBlockCommand
   | InsertBlocksCommand
   | CreateDocumentCommand
+  | CreateGroupCommand
 
-export function createAgentCommandPatches(input: {
+export async function createAgentCommandPatches(input: {
   command: AgentWriteCommand
   taskId: string
   documentId: string
   expectedVersion: number
   blocks: SelectedBlock[]
+  allowedParentDocumentIds?: string[]
+  replaceBlocksByRegex?: RegexReplaceExecutor
   createId: () => string
-}): BlockPatch[] {
+}): Promise<BlockPatch[]> {
   if (input.command.tool === 'replace_text_by_regex') return createRegexReplacePatches(input)
+  if (input.command.tool === 'create_group') {
+    const title = input.command.title.trim().slice(0, 160)
+    const initialTitle = input.command.initialDocument?.title.trim().slice(0, 160) ?? ''
+    const initialContent = input.command.initialDocument?.content.trim() ?? ''
+    if (!title) throw new Error('新分组名称不能为空。')
+    if (input.command.initialDocument && (!initialTitle || !initialContent)) {
+      throw new Error('分组的初始文档标题和内容不能为空。')
+    }
+    if (initialContent.length > 80_000) throw new Error('初始文档内容过长。')
+    const patchId = input.createId()
+    const groupId = input.createId()
+    const childDocumentId = input.command.initialDocument ? input.createId() : ''
+    return [
+      {
+        patchId,
+        taskId: input.taskId,
+        operation: 'create_group',
+        documentId: groupId,
+        blockId: childDocumentId,
+        targetBlockIds: [],
+        expectedVersion: 0,
+        before: initialTitle,
+        after: initialContent,
+        reason: input.command.reason?.trim() || '创建新的知识库分组。',
+        accepted: true,
+        documentTitle: title,
+        parentDocumentId: null,
+      },
+    ]
+  }
   if (input.command.tool === 'create_document') {
     const title = input.command.title.trim().slice(0, 160)
     const content = input.command.content.trim()
@@ -55,9 +98,10 @@ export function createAgentCommandPatches(input: {
     if (
       input.command.parentDocumentId !== undefined &&
       input.command.parentDocumentId !== null &&
-      input.command.parentDocumentId !== input.documentId
+      input.command.parentDocumentId !== input.documentId &&
+      !input.allowedParentDocumentIds?.includes(input.command.parentDocumentId)
     ) {
-      throw new Error('新文档只能创建在当前文档下或知识库根目录。')
+      throw new Error('新文档父级必须是本次任务读取到的真实分组或当前文档。')
     }
     return [
       {
@@ -115,38 +159,48 @@ export function createAgentCommandPatches(input: {
   ]
 }
 
-export function createRegexReplacePatches(input: {
+export type RegexReplaceExecutor = (input: {
+  pattern: string
+  replacement: string
+  flags: string
+  blocks: SelectedBlock[]
+}) => Promise<SelectedBlock[]>
+
+export async function createRegexReplacePatches(input: {
   command: RegexReplaceCommand
   taskId: string
   documentId: string
   expectedVersion: number
   blocks: SelectedBlock[]
+  replaceBlocksByRegex?: RegexReplaceExecutor
   createId: () => string
-}): BlockPatch[] {
+}): Promise<BlockPatch[]> {
   const command = input.command
   if (command.pattern.length === 0 || command.pattern.length > 240) {
     throw new Error('正则表达式不能为空且不得超过 240 个字符。')
   }
   if (command.replacement.length > 4000) throw new Error('替换文本过长。')
   const flags = normalizeRegexFlags(command.flags)
-  let expression: RegExp
-  try {
-    expression = new RegExp(command.pattern, flags)
-  } catch {
-    throw new Error('正则表达式无效。')
-  }
   const targetIds = new Set(
     command.blockIds?.filter(Boolean) ?? input.blocks.map((block) => block.id),
   )
   const targets = input.blocks.filter((block) => targetIds.has(block.id))
   if (targets.length === 0) throw new Error('正则工具没有找到可操作的目标块。')
+  if (!input.replaceBlocksByRegex) {
+    throw new Error('当前组合未提供安全正则替换器。')
+  }
+  const replaceBlocks = input.replaceBlocksByRegex
+  const replacements = await replaceBlocks({
+    pattern: command.pattern,
+    replacement: command.replacement,
+    flags,
+    blocks: targets,
+  })
+  const replacementsById = new Map(replacements.map((block) => [block.id, block.text]))
 
   return targets.flatMap((block) => {
-    expression.lastIndex = 0
-    if (!expression.test(block.text)) return []
-    expression.lastIndex = 0
-    const after = block.text.replace(expression, command.replacement)
-    if (after === block.text) return []
+    const after = replacementsById.get(block.id)
+    if (after === undefined || after === block.text) return []
     return [
       {
         patchId: input.createId(),

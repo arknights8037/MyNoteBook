@@ -15,6 +15,7 @@ export type AgentPatchOperation =
   | 'insert_after'
   | 'append'
   | 'create_document'
+  | 'create_group'
 
 export interface SelectedBlock {
   id: string
@@ -95,6 +96,27 @@ export function validateBlockPatch(
     return { ok: true, error: null }
   }
 
+  if (patch.operation === 'create_group') {
+    if (!patch.documentId.trim() || !patch.documentTitle?.trim()) {
+      return { ok: false, error: '新分组提案缺少分组 ID 或名称。' }
+    }
+    if (
+      patch.expectedVersion !== 0 ||
+      patch.targetBlockIds.length > 0 ||
+      patch.parentDocumentId !== null
+    ) {
+      return { ok: false, error: '新分组提案包含了无效的层级或版本信息。' }
+    }
+    const hasInitialDocument = Boolean(patch.blockId || patch.before || patch.after)
+    if (
+      hasInitialDocument &&
+      (!patch.blockId.trim() || !patch.before.trim() || !patch.after.trim())
+    ) {
+      return { ok: false, error: '分组的初始文档提案不完整。' }
+    }
+    return { ok: true, error: null }
+  }
+
   if (patch.documentId !== options.documentId) {
     return { ok: false, error: '补丁目标文档与当前文档不一致。' }
   }
@@ -164,7 +186,8 @@ export function createAgentTask(input: {
     correlationId: input.correlationId ?? input.id,
     causationId: input.causationId ?? null,
     executionPolicy:
-      input.executionPolicy ?? createDefaultExecutionPolicy({ tokenBudget: 2048, allowedTools: [] }),
+      input.executionPolicy ??
+      createDefaultExecutionPolicy({ tokenBudget: 2048, allowedTools: [] }),
     contextBundleId: null,
     provider: input.provider ?? 'openai',
     taskRunId: null,

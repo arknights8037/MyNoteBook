@@ -62,7 +62,6 @@ import {
   type RegisteredBlockType,
 } from './blockTypeRegistry'
 import { isSameEditorContent, normalizeEditorContent } from './editorContent'
-import { readImageFileAsDataUrl } from './imageFile'
 import { parseMarkdownDocument } from './markdownImport'
 import {
   HIGHLIGHT_COLOR_SWATCHES,
@@ -613,13 +612,8 @@ async function insertImageFile(
   if (!activeEditor || !activeEditor.isEditable) return
 
   try {
-    let src = ''
-    try {
-      const asset = await assetService.storeFile(file, props.documentId || null)
-      src = getAssetUrl(asset.id)
-    } catch {
-      src = await readImageFileAsDataUrl(file)
-    }
+    const asset = await assetService.storeFile(file, props.documentId || null)
+    const src = getAssetUrl(asset.id)
     const position = Math.max(
       0,
       Math.min(

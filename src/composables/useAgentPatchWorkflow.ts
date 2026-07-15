@@ -43,6 +43,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
   const pendingAgentTask = ref<AgentTask | null>(null)
   const pendingAgentPatchSet = ref<AgentPatchSet | null>(null)
   const showAgentPatchModal = ref(false)
+  const isApplyingAgentPatches = ref(false)
   const lastAppliedAgentTask = ref<AgentTask | null>(null)
   const lastAppliedPatchSet = ref<AgentPatchSet | null>(null)
   const lastAppliedAgentTransactionId = ref<string | null>(null)
@@ -130,6 +131,16 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
   }
 
   async function applyPendingAgentPatches(): Promise<void> {
+    if (isApplyingAgentPatches.value) return
+    isApplyingAgentPatches.value = true
+    try {
+      await performApplyPendingAgentPatches()
+    } finally {
+      isApplyingAgentPatches.value = false
+    }
+  }
+
+  async function performApplyPendingAgentPatches(): Promise<void> {
     const task = pendingAgentTask.value
     const patchSet = pendingAgentPatchSet.value
     if (!task || !patchSet) return
@@ -142,7 +153,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
 
     const snapshot = options.document.getSnapshot()
     if (snapshot.dirty) {
-      await failPendingAgentTask('文档已有未保存改动，请保存后重新生成 Agent 修改。')
+      await reportPendingAgentError('文档已有未保存改动，请保存后重新生成 Agent 修改。')
       return
     }
 
@@ -155,52 +166,82 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
         currentBlocks: snapshot.blocks,
       })
       if (!validation.ok) {
-        await failPendingAgentTask(validation.error ?? '补丁校验失败。')
+        await reportPendingAgentError(validation.error ?? '补丁校验失败。')
         return
       }
     }
 
-    const creationPatches = acceptedPatches.filter((patch) => patch.operation === 'create_document')
+    const creationPatches = acceptedPatches.filter(
+      (patch) => patch.operation === 'create_document' || patch.operation === 'create_group',
+    )
     if (creationPatches.length > 0) {
       if (creationPatches.length !== 1 || acceptedPatches.length !== 1) {
-        await failPendingAgentTask('新建文档必须作为独立提案确认。')
+        await reportPendingAgentError('新建文档或分组必须作为独立提案确认。')
         return
       }
       const creationPatch = creationPatches[0]
       if (!creationPatch) return
       const { parseMarkdownDocument } = await import('@/editor/markdownImport')
-      const imported = parseMarkdownDocument(
-        creationPatch.after,
-        creationPatch.documentTitle || 'Agent 新建文档',
-      )
       const repository = await getAgentRepository()
-      const applied = await repository.applyDocumentCreation({
-        task,
-        patchSet,
-        patch: creationPatch,
-        contentJson: JSON.stringify(imported.content),
-        plainText: imported.plainText,
-        transactionId: createTransactionId(),
-      })
+      const applied =
+        creationPatch.operation === 'create_group'
+          ? await repository.applyGroupCreation({
+              task,
+              patchSet,
+              patch: creationPatch,
+              ...(creationPatch.blockId
+                ? (() => {
+                    const imported = parseMarkdownDocument(
+                      creationPatch.after,
+                      creationPatch.before || 'Agent 新建文档',
+                    )
+                    return {
+                      childContentJson: JSON.stringify(imported.content),
+                      childPlainText: imported.plainText,
+                    }
+                  })()
+                : {}),
+              transactionId: createTransactionId(),
+            })
+          : await (() => {
+              const imported = parseMarkdownDocument(
+                creationPatch.after,
+                creationPatch.documentTitle || 'Agent 新建文档',
+              )
+              return repository.applyDocumentCreation({
+                task,
+                patchSet,
+                patch: creationPatch,
+                contentJson: JSON.stringify(imported.content),
+                plainText: imported.plainText,
+                transactionId: createTransactionId(),
+              })
+            })()
       if (!applied.ok || !applied.value.document) {
-        await failPendingAgentTask(applied.ok ? '新文档创建后无法读取。' : applied.error.message)
+        await reportPendingAgentError(applied.ok ? '新文档创建后无法读取。' : applied.error.message)
         return
       }
-      options.document.mergeDocument(applied.value.document)
+      for (const document of applied.value.createdDocuments ?? [applied.value.document]) {
+        if (document) options.document.mergeDocument(document)
+      }
       completeTask(
         task,
         patchSet,
         applied.value.transaction.id,
         applied.value.transaction.createdAt,
       )
-      options.notify.success('Agent 新文档已创建，可用撤销恢复')
+      options.notify.success(
+        creationPatch.operation === 'create_group'
+          ? 'Agent 分组已创建，可用撤销恢复'
+          : 'Agent 新文档已创建，可用撤销恢复',
+      )
       return
     }
 
     const { applyAgentBlockPatches } = await import('@/editor/agentBlockPatch')
     const nextContent = applyAgentBlockPatches(snapshot.content, acceptedPatches)
     if (!nextContent.ok || !nextContent.content || nextContent.plainText === undefined) {
-      await failPendingAgentTask(nextContent.error ?? '无法生成 Agent 修改后的文档内容。')
+      await reportPendingAgentError(nextContent.error ?? '无法生成 Agent 修改后的文档内容。')
       return
     }
 
@@ -214,7 +255,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
       transactionId: createTransactionId(),
     })
     if (!applied.ok || !applied.value.document) {
-      await failPendingAgentTask(
+      await reportPendingAgentError(
         applied.ok ? 'Agent 修改完成后无法读取目标文档。' : applied.error.message,
       )
       return
@@ -231,10 +272,14 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
     completedAt: number,
   ): void {
     task.status = 'completed'
-    task.currentStep = patchSet.patches.some((patch) => patch.operation === 'create_document')
-      ? '新文档已创建'
-      : '修改已写入文档'
+    task.currentStep = patchSet.patches.some((patch) => patch.operation === 'create_group')
+      ? '新分组已创建'
+      : patchSet.patches.some((patch) => patch.operation === 'create_document')
+        ? '新文档已创建'
+        : '修改已写入文档'
     task.completedAt = completedAt
+    task.error = null
+    options.error.value = ''
     lastAppliedAgentTask.value = task
     lastAppliedPatchSet.value = patchSet
     lastAppliedAgentTransactionId.value = transactionId
@@ -243,11 +288,11 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
     showAgentPatchModal.value = false
   }
 
-  async function failPendingAgentTask(error: string): Promise<void> {
+  async function reportPendingAgentError(error: string): Promise<void> {
     if (pendingAgentTask.value) {
-      pendingAgentTask.value.status = 'failed'
-      pendingAgentTask.value.currentStep = '补丁校验失败'
-      pendingAgentTask.value.completedAt = Date.now()
+      pendingAgentTask.value.status = 'waiting_confirmation'
+      pendingAgentTask.value.currentStep = '写入未完成，可检查后重试'
+      pendingAgentTask.value.completedAt = null
       pendingAgentTask.value.error = error
       try {
         await updateAgentTaskPersistence(pendingAgentTask.value)
@@ -279,7 +324,11 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
     if (rolledBack.value.document) {
       options.document.applyDocument(rolledBack.value.document)
     } else {
-      options.document.removeDocument(rolledBack.value.transaction.documentId)
+      for (const documentId of rolledBack.value.removedDocumentIds ?? [
+        rolledBack.value.transaction.documentId,
+      ]) {
+        options.document.removeDocument(documentId)
+      }
     }
     lastAppliedAgentTask.value = null
     lastAppliedPatchSet.value = null
@@ -299,6 +348,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
     pendingAgentPatches,
     pendingAgentAcceptedPatches,
     showAgentPatchModal,
+    isApplyingAgentPatches,
     lastAppliedAgentTask,
     lastAppliedPatchSet,
     lastAppliedAgentTransactionId,
@@ -309,7 +359,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
     acceptAllPendingAgentPatches,
     rejectPendingAgentPatches,
     applyPendingAgentPatches,
-    failPendingAgentTask,
+    reportPendingAgentError,
     rollbackLastAgentTask,
     getAgentRepository,
     updateAgentTaskPersistence,

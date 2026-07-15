@@ -1,6 +1,7 @@
 import type { AiRunInput } from '@/models/ai'
 import { proxyAiFetch } from './AiHttpService'
 import { resolveProviderCapabilities } from '@/models/providerCapabilities'
+import { redactSensitiveText } from './SensitiveDataRedaction'
 
 interface ChatCompletionChunk {
   choices?: Array<{
@@ -66,7 +67,7 @@ async function runChatCompletions(input: AiRunInput): Promise<string> {
   })
 
   if (!response.ok) {
-    throw new Error('AI 请求失败：' + response.status + ' ' + (await response.text()))
+    throw new Error(formatProviderError(response.status, await response.text()))
   }
 
   if (!isStreamingResponse(response)) {
@@ -125,7 +126,7 @@ async function runAnthropicMessagesCompletion(input: AiRunInput): Promise<string
   })
 
   if (!response.ok) {
-    throw new Error('AI 请求失败：' + response.status + ' ' + (await response.text()))
+    throw new Error(formatProviderError(response.status, await response.text()))
   }
 
   if (!isStreamingResponse(response)) {
@@ -287,7 +288,9 @@ function parseStreamingDataLine(
 }
 
 function isStreamingResponse(response: Response): boolean {
-  return Boolean(response.body) && response.headers.get('content-type')?.includes('text/event-stream')
+  return (
+    Boolean(response.body) && response.headers.get('content-type')?.includes('text/event-stream')
+  )
 }
 
 function parseAnthropicDelta(payload: string): AiStreamDelta {
@@ -311,4 +314,9 @@ function parseAnthropicDelta(payload: string): AiStreamDelta {
   } catch {
     return { content: '', reasoning: '' }
   }
+}
+
+function formatProviderError(status: number, body: string): string {
+  const safeBody = redactSensitiveText(body)
+  return `AI 请求失败：${status} ${safeBody.slice(0, 4_000)}`
 }

@@ -217,6 +217,10 @@ class MemorySqlClient implements SqlClient {
     this.selectedSql.push(normalizedSql)
     const rows = [...this.documents.values()]
 
+    if (normalizedSql.includes('from assets where document_id = ?')) {
+      return []
+    }
+
     if (normalizedSql.includes('where id = ?')) {
       const id = String(bindValues[0])
       const document = this.documents.get(id)

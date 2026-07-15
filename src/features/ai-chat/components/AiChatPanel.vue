@@ -25,7 +25,6 @@ import {
   Square,
   Sparkles,
   Trash2,
-  Wrench,
   X,
 } from '@lucide/vue'
 import {
@@ -182,6 +181,9 @@ const showRuntimeState = computed(
       props.runtimeState.status === 'failed' ||
       props.runtimeState.status === 'cancelled'),
 )
+const runtimeMessageId = computed(
+  () => [...props.messages].reverse().find((message) => message.role === 'assistant')?.id ?? null,
+)
 const slashCommands = computed(() =>
   slashMenuDismissed.value ? [] : filterAgentSlashCommands(props.prompt),
 )
@@ -336,6 +338,7 @@ function getToolLabel(toolName: string): string {
     get_selected_blocks: '读取选中块',
     get_document_outline: '读取页面大纲',
     search_documents: '搜索知识库',
+    list_document_groups: '查找文档分组',
     read_document: '读取知识文档',
     find_blocks_by_regex: '定位内容块',
     read_skill_file: '读取技能资料',
@@ -346,24 +349,129 @@ function getToolLabel(toolName: string): string {
     get_system_info: '读取系统信息',
     create_automation_draft: '创建自动化草稿',
     create_skill_draft: '创建 Skill 草稿',
+    replace_text_by_regex: '提交文本替换提案',
+    replace_block: '提交块修改提案',
+    insert_blocks: '提交内容插入提案',
+    create_document: '提交新文档提案',
+    create_group: '提交新分组提案',
+    propose_document_patches: '提交复杂修改提案',
   }
   return labels[toolName] ?? toolName
 }
 
-function summarizeJson(value: string | null, maxLength = 220): string {
-  if (!value) return ''
-  let summary = value
+type RuntimeToolCall = AgentRuntimeViewState['toolCalls'][number]
+
+function parseToolPayload(value: string | null): unknown {
+  if (!value) return null
   try {
-    summary = JSON.stringify(JSON.parse(value))
+    const parsed: unknown = JSON.parse(value)
+    if (isRecord(parsed) && Array.isArray(parsed.content)) {
+      const textBlocks = parsed.content
+        .map((item) => (isRecord(item) && typeof item.text === 'string' ? item.text : ''))
+        .filter(Boolean)
+      if (textBlocks.length === 1) {
+        try {
+          return JSON.parse(textBlocks[0] ?? '') as unknown
+        } catch {
+          return textBlocks[0]
+        }
+      }
+      if (textBlocks.length > 1) return textBlocks
+    }
+    return parsed
   } catch {
-    // Preserve non-JSON diagnostics as plain text.
+    return value
   }
-  summary = summary.replace(/\s+/g, ' ').trim()
-  return summary.length > maxLength ? `${summary.slice(0, maxLength)}...` : summary
+}
+
+function formatToolDetail(value: string | null, maxLength = 8_000): string {
+  const payload = parseToolPayload(value)
+  if (payload === null) return ''
+  const formatted = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)
+  return formatted.length > maxLength ? `${formatted.slice(0, maxLength)}\n… 已截断` : formatted
+}
+
+function summarizeToolArguments(value: string): string {
+  const payload = parseToolPayload(value)
+  if (!isRecord(payload)) return ''
+  const preferredKeys = ['query', 'documentId', 'uri', 'url', 'command', 'pattern', 'name']
+  const key = preferredKeys.find((candidate) => payload[candidate] !== undefined)
+  if (!key) {
+    const count = Object.keys(payload).length
+    return count > 0 ? `${count} 个参数` : '无参数'
+  }
+  const rawValue = payload[key]
+  const text = typeof rawValue === 'string' ? rawValue : JSON.stringify(rawValue)
+  return `${key}: ${text.length > 88 ? `${text.slice(0, 88)}…` : text}`
+}
+
+function summarizeToolResult(toolCall: RuntimeToolCall): string {
+  if (toolCall.status === 'running') return '执行中'
+  if (toolCall.error) {
+    return toolCall.error.length > 100 ? `${toolCall.error.slice(0, 100)}…` : toolCall.error
+  }
+  const payload = parseToolPayload(toolCall.resultJson)
+  if (Array.isArray(payload)) return `完成 · 返回 ${payload.length} 项`
+  if (isRecord(payload)) {
+    const collection = ['results', 'items', 'documents', 'tools', 'resources'].find((key) =>
+      Array.isArray(payload[key]),
+    )
+    if (collection) return `完成 · 返回 ${(payload[collection] as unknown[]).length} 项`
+    if (payload.ok === false) return '完成 · 工具返回未成功状态'
+  }
+  return '已完成'
+}
+
+function getToolResultPreview(toolCall: RuntimeToolCall): string {
+  if (toolCall.status !== 'completed') return ''
+  const payload = parseToolPayload(toolCall.resultJson)
+  const preview = extractToolPreview(payload)
+  if (!preview) return ''
+  const normalized = preview.replace(/\s+/g, ' ').trim()
+  return normalized.length > 320 ? `${normalized.slice(0, 320)}…` : normalized
+}
+
+function extractToolPreview(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) {
+    const labels = value
+      .slice(0, 4)
+      .map((item) => extractItemLabel(item))
+      .filter(Boolean)
+    return labels.join(' · ')
+  }
+  if (!isRecord(value)) return ''
+
+  for (const key of ['results', 'items', 'documents', 'groups', 'tools', 'resources']) {
+    if (Array.isArray(value[key])) return extractToolPreview(value[key])
+  }
+  for (const key of ['stdout', 'output', 'text', 'content', 'message', 'title', 'name']) {
+    if (typeof value[key] === 'string') return value[key]
+  }
+  if (value.proposalCaptured === true) return '修改提案已进入确认队列'
+  return ''
+}
+
+function extractItemLabel(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (!isRecord(value)) return ''
+  for (const key of ['title', 'documentTitle', 'name', 'label', 'path', 'contentSnippet']) {
+    if (typeof value[key] === 'string') return value[key]
+  }
+  return ''
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function isAssistantMessage(chatMessage: AiChatMessage): boolean {
   return chatMessage.role === 'assistant'
+}
+
+function isRuntimeHostMessage(chatMessage: AiChatMessage): boolean {
+  return showRuntimeState.value && chatMessage.id === runtimeMessageId.value
 }
 
 function hasMessageOutput(chatMessage: AiChatMessage): boolean {
@@ -661,86 +769,6 @@ onBeforeUnmount(() => {
       aria-live="polite"
       @scroll="handleMessagesScroll"
     >
-      <section v-if="showRuntimeState" class="ai-agent-runbar" role="status">
-        <span
-          v-if="runtimeState.status === 'running' || runtimeState.status === 'waiting_authorizer'"
-          class="ai-agent-runbar__pulse"
-          aria-hidden="true"
-        ></span>
-        <CircleCheck
-          v-else-if="runtimeState.status === 'completed'"
-          class="ai-agent-runbar__state-icon ai-agent-runbar__state-icon--success"
-          :size="16"
-          aria-hidden="true"
-        />
-        <CircleX
-          v-else
-          class="ai-agent-runbar__state-icon ai-agent-runbar__state-icon--error"
-          :size="16"
-          aria-hidden="true"
-        />
-        <div class="ai-agent-runbar__summary">
-          <strong>{{ runtimeState.detail || agentStep || '正在分析上下文' }}</strong>
-          <small>{{ runtimeMeta }} · {{ providerLabel }} / {{ settings.model }}</small>
-        </div>
-        <button
-          v-if="isRunning"
-          type="button"
-          aria-label="停止 Agent"
-          title="停止 Agent"
-          @click="emit('stop')"
-        >
-          <Square :size="13" fill="currentColor" />
-        </button>
-        <Activity v-else :size="16" class="ai-agent-runbar__activity" aria-hidden="true" />
-
-        <details
-          v-if="runtimeState.toolCalls.length > 0"
-          class="ai-agent-runbar__details"
-          :open="isRunning"
-        >
-          <summary>
-            <Wrench :size="13" />运行详情
-            <span>{{ runtimeState.toolCalls.length }} 次调用</span>
-          </summary>
-          <ol class="ai-agent-tool-list">
-            <li
-              v-for="toolCall in runtimeState.toolCalls"
-              :key="toolCall.id"
-              :class="`ai-agent-tool-list__item--${toolCall.status}`"
-            >
-              <LoaderCircle
-                v-if="toolCall.status === 'running'"
-                :size="14"
-                class="ai-agent-tool-list__spinner"
-                aria-hidden="true"
-              />
-              <CircleCheck
-                v-else-if="toolCall.status === 'completed'"
-                :size="14"
-                aria-hidden="true"
-              />
-              <CircleX v-else :size="14" aria-hidden="true" />
-              <div>
-                <header>
-                  <strong>{{ getToolLabel(toolCall.toolName) }}</strong>
-                  <code>{{ toolCall.toolName }}</code>
-                  <time>{{ formatToolDuration(toolCall.startedAt, toolCall.completedAt) }}</time>
-                </header>
-                <p v-if="summarizeJson(toolCall.argumentsJson)">
-                  输入：{{ summarizeJson(toolCall.argumentsJson) }}
-                </p>
-                <p v-if="toolCall.error" class="ai-agent-tool-list__error">
-                  {{ toolCall.error }}
-                </p>
-                <p v-else-if="summarizeJson(toolCall.resultJson)">
-                  结果：{{ summarizeJson(toolCall.resultJson) }}
-                </p>
-              </div>
-            </li>
-          </ol>
-        </details>
-      </section>
       <section v-if="messages.length === 0" class="ai-chat-welcome">
         <div class="ai-chat-welcome__mark"><Sparkles :size="21" /></div>
         <div class="ai-chat-welcome__copy">
@@ -784,6 +812,95 @@ onBeforeUnmount(() => {
           <span>{{ chatMessage.role === 'user' ? '你' : 'AI' }}</span>
           <em>{{ chatMessage.mode }}</em>
         </header>
+        <section
+          v-if="isRuntimeHostMessage(chatMessage)"
+          class="ai-agent-loop"
+          :class="`ai-agent-loop--${runtimeState.status}`"
+          role="status"
+          aria-label="Agent 运行轨迹"
+        >
+          <header class="ai-agent-loop__header">
+            <span class="ai-agent-loop__identity"><Activity :size="14" /> Agent loop</span>
+            <small>{{ runtimeMeta }} · {{ providerLabel }} / {{ settings.model }}</small>
+            <button
+              v-if="isRunning"
+              type="button"
+              aria-label="停止 Agent"
+              title="停止 Agent"
+              @click="emit('stop')"
+            >
+              <Square :size="12" fill="currentColor" />
+            </button>
+          </header>
+
+          <ol v-if="runtimeState.toolCalls.length > 0" class="ai-agent-tool-list">
+            <li
+              v-for="toolCall in runtimeState.toolCalls"
+              :key="toolCall.id"
+              :class="`ai-agent-tool-list__item--${toolCall.status}`"
+            >
+              <details class="ai-agent-tool-step" :open="toolCall.status === 'failed'">
+                <summary>
+                  <span class="ai-agent-tool-step__marker" aria-hidden="true">
+                    <LoaderCircle
+                      v-if="toolCall.status === 'running'"
+                      :size="13"
+                      class="ai-agent-tool-list__spinner"
+                    />
+                    <CircleCheck v-else-if="toolCall.status === 'completed'" :size="13" />
+                    <CircleX v-else :size="13" />
+                  </span>
+                  <span class="ai-agent-tool-step__copy">
+                    <strong>{{ getToolLabel(toolCall.toolName) }}</strong>
+                    <small>{{ summarizeToolArguments(toolCall.argumentsJson) }}</small>
+                  </span>
+                  <span class="ai-agent-tool-step__status">{{
+                    summarizeToolResult(toolCall)
+                  }}</span>
+                  <time>{{ formatToolDuration(toolCall.startedAt, toolCall.completedAt) }}</time>
+                  <ChevronDown :size="13" class="ai-agent-tool-step__chevron" aria-hidden="true" />
+                </summary>
+                <div class="ai-agent-tool-step__details">
+                  <span>工具</span>
+                  <code>{{ toolCall.toolName }}</code>
+                  <template v-if="formatToolDetail(toolCall.argumentsJson)">
+                    <span>输入</span>
+                    <pre>{{ formatToolDetail(toolCall.argumentsJson) }}</pre>
+                  </template>
+                  <template v-if="toolCall.error">
+                    <span>错误</span>
+                    <pre class="ai-agent-tool-list__error">{{ toolCall.error }}</pre>
+                  </template>
+                  <template v-else-if="formatToolDetail(toolCall.resultJson)">
+                    <span>结果</span>
+                    <pre>{{ formatToolDetail(toolCall.resultJson) }}</pre>
+                  </template>
+                </div>
+              </details>
+              <p v-if="getToolResultPreview(toolCall)" class="ai-agent-tool-step__preview">
+                {{ getToolResultPreview(toolCall) }}
+              </p>
+            </li>
+          </ol>
+
+          <div class="ai-agent-loop__phase">
+            <span
+              v-if="
+                runtimeState.status === 'running' || runtimeState.status === 'waiting_authorizer'
+              "
+              class="ai-agent-runbar__pulse"
+              aria-hidden="true"
+            ></span>
+            <CircleCheck
+              v-else-if="runtimeState.status === 'completed'"
+              :size="14"
+              class="ai-agent-loop__success"
+              aria-hidden="true"
+            />
+            <CircleX v-else :size="14" class="ai-agent-loop__error" aria-hidden="true" />
+            <strong>{{ runtimeState.detail || agentStep || '正在分析上下文' }}</strong>
+          </div>
+        </section>
         <details
           v-if="chatMessage.reasoningContent?.trim()"
           class="ai-chat-message__reasoning"
@@ -792,12 +909,15 @@ onBeforeUnmount(() => {
           <summary>{{ chatMessage.status === 'streaming' ? '思考中' : '思考内容' }}</summary>
           <pre>{{ chatMessage.reasoningContent }}</pre>
         </details>
+        <!-- renderAiMarkdown emits only allowlisted tags and escapes text, attributes and URLs. -->
+        <!-- eslint-disable vue/no-v-html -->
         <div
           v-if="chatMessage.content.trim()"
           class="markdown-preview"
           @click="handleMarkdownClick"
           v-html="renderMarkdownMessage(chatMessage.content)"
         ></div>
+        <!-- eslint-enable vue/no-v-html -->
         <div
           v-if="chatMessage.sources?.length"
           class="ai-chat-message__sources"
@@ -814,7 +934,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <div
-          v-else-if="chatMessage.status === 'streaming'"
+          v-else-if="chatMessage.status === 'streaming' && !isRuntimeHostMessage(chatMessage)"
           class="ai-chat-message__waiting"
           role="status"
         >

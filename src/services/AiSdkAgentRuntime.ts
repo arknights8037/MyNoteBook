@@ -3,14 +3,15 @@ import { z } from 'zod'
 
 import type { AgentToolCall } from '@/models/agentTool'
 import { createAiSdkModel } from './AiSdkProvider'
-import {
-  createDefaultAgentExecutionPolicy,
-  getAgentToolDefinition,
-} from './AgentToolRegistry'
+import { createDefaultAgentExecutionPolicy, getAgentToolDefinition } from './AgentToolRegistry'
 import type { AgentRuntimeInput, AgentRuntimeResult } from './AgentRuntime'
 import { normalizeExecutionPolicy } from '@/models/executionPolicy'
 import type { AiSettings } from '@/models/ai'
 import { resolveProviderCapabilities } from '@/models/providerCapabilities'
+import { throwIfAgentToolAborted } from './AgentToolCancellation'
+import type { AgentToolExecutionResult } from './AgentToolExecutor'
+import { redactSensitiveText, redactSensitiveValue, safeAuditJson } from './SensitiveDataRedaction'
+import { validateAgentOutputContract } from './AgentOutputContract'
 
 const regexCommandSchema = z.object({
   tool: z.literal('replace_text_by_regex'),
@@ -21,28 +22,47 @@ const regexCommandSchema = z.object({
   reason: z.string().optional(),
 })
 
+const replaceBlockCommandSchema = z.object({
+  tool: z.literal('replace_block'),
+  blockId: z.string().min(1),
+  content: z.string().min(1),
+  reason: z.string().optional(),
+})
+
+const insertBlocksCommandSchema = z.object({
+  tool: z.literal('insert_blocks'),
+  anchorBlockId: z.string().min(1),
+  position: z.enum(['before', 'after', 'append']),
+  content: z.string().min(1),
+  reason: z.string().optional(),
+})
+
+const createDocumentCommandSchema = z.object({
+  tool: z.literal('create_document'),
+  title: z.string().min(1),
+  content: z.string().min(1),
+  parentDocumentId: z.string().nullable().optional(),
+  reason: z.string().optional(),
+})
+
+const createGroupCommandSchema = z.object({
+  tool: z.literal('create_group'),
+  title: z.string().min(1),
+  initialDocument: z
+    .object({
+      title: z.string().min(1),
+      content: z.string().min(1),
+    })
+    .optional(),
+  reason: z.string().optional(),
+})
+
 const commandSchema = z.discriminatedUnion('tool', [
   regexCommandSchema,
-  z.object({
-    tool: z.literal('replace_block'),
-    blockId: z.string().min(1),
-    content: z.string().min(1),
-    reason: z.string().optional(),
-  }),
-  z.object({
-    tool: z.literal('insert_blocks'),
-    anchorBlockId: z.string().min(1),
-    position: z.enum(['before', 'after', 'append']),
-    content: z.string().min(1),
-    reason: z.string().optional(),
-  }),
-  z.object({
-    tool: z.literal('create_document'),
-    title: z.string().min(1),
-    content: z.string().min(1),
-    parentDocumentId: z.string().nullable().optional(),
-    reason: z.string().optional(),
-  }),
+  replaceBlockCommandSchema,
+  insertBlocksCommandSchema,
+  createDocumentCommandSchema,
+  createGroupCommandSchema,
 ])
 
 const patchSchema = z.object({
@@ -52,6 +72,9 @@ const patchSchema = z.object({
   after: z.string().min(1),
   reason: z.string().min(1),
 })
+
+type AgentCommand = z.infer<typeof commandSchema>
+type AgentPatch = z.infer<typeof patchSchema>
 
 const agentOutputSchema = z
   .object({
@@ -77,21 +100,15 @@ const agentOutputSchema = z
   .refine(
     (value) => {
       const creationCount = value.commands.filter(
-        (command) => command.tool === 'create_document',
+        (command) => command.tool === 'create_document' || command.tool === 'create_group',
       ).length
       return (
         creationCount === 0 ||
         (creationCount === 1 && value.commands.length === 1 && value.patches.length === 0)
       )
     },
-    { message: 'create_document 必须作为唯一的写入提案。' },
+    { message: 'create_document 或 create_group 必须作为唯一的写入提案。' },
   )
-
-const AGENT_TEXT_OUTPUT_PROTOCOL = [
-  '最终响应使用普通文本输出一个 JSON 对象，不要使用 Markdown 围栏，也不要依赖 response_format 或 JSON Schema。',
-  '对象字段固定为 outcome、commands、patches、finalAnswer。outcome 只能是 proposal、no_change、blocked。',
-  'commands 和 patches 没有内容时必须输出空数组；finalAnswer 必须是面向用户的完整结论。',
-].join('\n')
 
 export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
   const policy = normalizeExecutionPolicy(
@@ -99,39 +116,50 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
   )
   const calls: AgentToolCall[] = []
   if (!resolveProviderCapabilities(input.settings.provider, input.settings.model).toolChoice) {
-    input.onProgress?.({ phase: 'finalizing', detail: 'Capability Matrix 标记当前模型不支持工具调用，使用只读兼容模式' })
+    input.onProgress?.({
+      phase: 'finalizing',
+      detail: 'Capability Matrix 标记当前模型不支持工具调用，使用只读兼容模式',
+    })
     return runToollessCompatibilityFallback(input, calls)
   }
   const callCounts = new Map<string, number>()
   const externalTools = new Map(
     (input.externalTools ?? []).map((definition) => [definition.runtimeName, definition]),
   )
+  const proposedCommands: AgentCommand[] = []
+  const proposedPatches: AgentPatch[] = []
+  const inFlightTools = new Set<Promise<unknown>>()
   let failures = 0
 
-  const execute = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
+  const executeTracked = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
+    throwIfAgentToolAborted(input.signal)
     const startedAt = Date.now()
     const callId = input.createId()
+    const runningCall: AgentToolCall = {
+      id: callId,
+      taskId: input.taskId,
+      toolName: name,
+      argumentsJson: safeAuditJson(args),
+      resultJson: null,
+      status: 'running',
+      startedAt,
+      completedAt: null,
+      error: null,
+    }
     input.onProgress?.({
       phase: 'tool_running',
       toolName: name,
       detail: getToolProgressLabel(name, false),
-      toolCall: {
-        id: callId,
-        taskId: input.taskId,
-        toolName: name,
-        argumentsJson: JSON.stringify(args),
-        resultJson: null,
-        status: 'running',
-        startedAt,
-        completedAt: null,
-        error: null,
-      },
+      toolCall: runningCall,
     })
+    await input.recordToolCall(runningCall)
+    throwIfAgentToolAborted(input.signal)
     const definition = getAgentToolDefinition(name)
     const externalDefinition = externalTools.get(name)
     const nextCount = (callCounts.get(name) ?? 0) + 1
     callCounts.set(name, nextCount)
-    let execution
+    let execution: AgentToolExecutionResult
+    let executionWasAborted = false
     const policyAllowsTool =
       policy.allowedTools.includes(name) ||
       (name.startsWith('mcp__') && policy.allowedTools.includes('mcp:*'))
@@ -146,18 +174,37 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
     ) {
       execution = { ok: false, error: `工具 ${name} 超过单任务调用上限。` }
     } else {
-      execution = await input.executeTool({ name, arguments: args })
+      try {
+        execution = await input.executeTool({
+          callId,
+          name,
+          arguments: args,
+          signal: input.signal,
+        })
+      } catch (error) {
+        executionWasAborted = input.signal?.aborted === true || isAbortError(error)
+        execution = {
+          ok: false,
+          error: executionWasAborted
+            ? 'Agent 工具调用已取消。'
+            : error instanceof Error
+              ? error.message
+              : String(error),
+        }
+      }
     }
+    const safeValue = execution.ok ? redactSensitiveValue(execution.value) : undefined
+    const safeExecutionError = execution.error ? redactSensitiveText(execution.error) : null
     const call: AgentToolCall = {
       id: callId,
       taskId: input.taskId,
       toolName: name,
-      argumentsJson: JSON.stringify(args),
-      resultJson: execution.ok ? safeJson(execution.value) : null,
+      argumentsJson: safeAuditJson(args),
+      resultJson: execution.ok ? safeAuditJson(safeValue) : null,
       status: execution.ok ? 'completed' : 'failed',
       startedAt,
       completedAt: Date.now(),
-      error: execution.error ?? null,
+      error: safeExecutionError,
     }
     calls.push(call)
     input.onProgress?.({
@@ -167,13 +214,121 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       toolCall: call,
     })
     await input.recordToolCall(call)
+    if (input.signal?.aborted) throwIfAgentToolAborted(input.signal)
+    if (executionWasAborted) {
+      throw Object.assign(new Error('Agent 工具调用已取消。'), { name: 'AbortError' })
+    }
     if (!execution.ok) {
       failures += 1
       if (failures > policy.maxToolFailures) throw new Error('Agent 工具失败次数超过上限。')
-      return { ok: false, error: execution.error }
+      return { ok: false, error: safeExecutionError }
     }
-    return execution.value
+    return safeValue
   }
+
+  const execute = (name: string, args: Record<string, unknown>): Promise<unknown> => {
+    const lifecycle = executeTracked(name, args)
+    inFlightTools.add(lifecycle)
+    void lifecycle.finally(() => inFlightTools.delete(lifecycle)).catch(() => undefined)
+    return lifecycle
+  }
+
+  const captureProposal = async (
+    name: string,
+    args: Record<string, unknown>,
+    capture: () => void,
+  ): Promise<unknown> => {
+    const startedAt = Date.now()
+    const callId = input.createId()
+    const runningCall: AgentToolCall = {
+      id: callId,
+      taskId: input.taskId,
+      toolName: name,
+      argumentsJson: safeAuditJson(args),
+      resultJson: null,
+      status: 'running',
+      startedAt,
+      completedAt: null,
+      error: null,
+    }
+    input.onProgress?.({
+      phase: 'tool_running',
+      toolName: name,
+      detail: getToolProgressLabel(name, false),
+      toolCall: runningCall,
+    })
+    await input.recordToolCall(runningCall)
+    throwIfAgentToolAborted(input.signal)
+    const definition = getAgentToolDefinition(name)
+    const nextCount = (callCounts.get(name) ?? 0) + 1
+    callCounts.set(name, nextCount)
+    let error: string | null = null
+    if (!policy.allowWriteProposals) {
+      error = 'ExecutionPolicy 不允许提出写入修改。'
+    } else if (!policy.allowedTools.includes(name)) {
+      error = `ExecutionPolicy 不允许工具 ${name}。`
+    } else if (!definition || definition.risk !== 'write') {
+      error = `工具 ${name} 不是已注册的写入提案工具。`
+    } else if (nextCount > definition.maxCallsPerTask) {
+      error = `工具 ${name} 超过单任务调用上限。`
+    } else {
+      try {
+        capture()
+      } catch (captureError) {
+        error = captureError instanceof Error ? captureError.message : String(captureError)
+      }
+    }
+    const value = error
+      ? null
+      : { proposalCaptured: true, requiresConfirmation: true, message: '提案已进入确认队列。' }
+    const call: AgentToolCall = {
+      id: callId,
+      taskId: input.taskId,
+      toolName: name,
+      argumentsJson: safeAuditJson(args),
+      resultJson: value ? safeAuditJson(value) : null,
+      status: error ? 'failed' : 'completed',
+      startedAt,
+      completedAt: Date.now(),
+      error,
+    }
+    calls.push(call)
+    input.onProgress?.({
+      phase: 'tool_completed',
+      toolName: name,
+      detail: error ? getToolFailureProgressLabel(name) : getToolProgressLabel(name, true),
+      toolCall: call,
+    })
+    await input.recordToolCall(call)
+    if (error) {
+      failures += 1
+      if (failures > policy.maxToolFailures) throw new Error('Agent 工具失败次数超过上限。')
+      return { ok: false, error }
+    }
+    return value
+  }
+
+  const captureCommand = async (command: AgentCommand): Promise<unknown> =>
+    captureProposal(command.tool, command, () => {
+      if (proposedPatches.length > 0) throw new Error('commands 和 patches 不能混合提交。')
+      const candidate = [...proposedCommands, command]
+      const validated = agentOutputSchema.safeParse({
+        outcome: 'proposal',
+        commands: candidate,
+        patches: [],
+        finalAnswer: '',
+      })
+      if (!validated.success) throw new Error(validated.error.issues[0]?.message ?? '提案无效。')
+      proposedCommands.push(command)
+    })
+
+  const capturePatchProposal = async (args: { patches: AgentPatch[] }): Promise<unknown> =>
+    captureProposal('propose_document_patches', args, () => {
+      if (proposedCommands.length > 0 || proposedPatches.length > 0) {
+        throw new Error('一个任务只能提交一批最终写入提案。')
+      }
+      proposedPatches.push(...args.patches)
+    })
 
   const tools: ToolSet = {
     get_current_document: tool({
@@ -198,6 +353,12 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
         limit: z.number().int().min(1).max(10).optional(),
       }),
       execute: (args) => execute('search_documents', args),
+    }),
+    list_document_groups: tool({
+      description:
+        '列出或按名称筛选知识库分组，返回真实 group id、标题和子项数量。需要把文档创建到指定分组时先调用本工具，不要猜测父级字段或 ID。',
+      inputSchema: z.object({ query: z.string().max(160).optional() }),
+      execute: (args) => execute('list_document_groups', args),
     }),
     read_document: tool({
       description: '按文档 ID 读取知识库文档正文、标签和 revision。',
@@ -297,6 +458,42 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       }),
       execute: (args) => execute('create_skill_draft', args),
     }),
+    replace_text_by_regex: tool({
+      description:
+        '提交一个正则文本替换提案，进入用户确认队列；不会立即写入。仅在已经读取并确认目标范围后调用。',
+      inputSchema: regexCommandSchema.omit({ tool: true }),
+      execute: (args) => captureCommand({ tool: 'replace_text_by_regex', ...args }),
+    }),
+    replace_block: tool({
+      description:
+        '提交一个完整块替换提案，进入用户确认队列；不会立即写入。blockId 必须来自本次读取结果。',
+      inputSchema: replaceBlockCommandSchema.omit({ tool: true }),
+      execute: (args) => captureCommand({ tool: 'replace_block', ...args }),
+    }),
+    insert_blocks: tool({
+      description:
+        '提交一个块插入提案，进入用户确认队列；不会立即写入。anchorBlockId 必须来自本次读取结果。',
+      inputSchema: insertBlocksCommandSchema.omit({ tool: true }),
+      execute: (args) => captureCommand({ tool: 'insert_blocks', ...args }),
+    }),
+    create_document: tool({
+      description:
+        '提交一篇完整新文档的待确认提案，不会立即写入。若要指定父级，只能使用已经通过工具读取到的真实 parentDocumentId；未知时先读取或询问，不得猜测字段。',
+      inputSchema: createDocumentCommandSchema.omit({ tool: true }),
+      execute: (args) => captureCommand({ tool: 'create_document', ...args }),
+    }),
+    create_group: tool({
+      description:
+        '提交新分组提案，可通过 initialDocument 同时提交首篇完整文档；进入用户确认队列，不会立即写入。',
+      inputSchema: createGroupCommandSchema.omit({ tool: true }),
+      execute: (args) => captureCommand({ tool: 'create_group', ...args }),
+    }),
+    propose_document_patches: tool({
+      description:
+        '提交一批复杂文档 Patch 到用户确认队列，不会立即写入。仅使用本次读取到的稳定 blockId，且每项包含完整修改后内容和原因。',
+      inputSchema: z.object({ patches: z.array(patchSchema).min(1).max(50) }),
+      execute: capturePatchProposal,
+    }),
   }
 
   for (const definition of externalTools.values()) {
@@ -306,7 +503,9 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
         definition.description,
         definition.requiresConfirmation
           ? '该工具调用前需要授权人确认。'
-          : '服务将该工具标记为只读。',
+          : definition.serverTrusted
+            ? '该服务已被授权人标记为可信，调用由 Runtime 自动批准。'
+            : '该工具可在当前策略下直接调用。',
       ]
         .filter(Boolean)
         .join(' '),
@@ -319,41 +518,21 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
     model: createAiSdkModel(input.settings),
     instructions: [
       input.systemPrompt,
-      input.intent === 'create'
-        ? '本次任务要求创建独立页面或文档。最终提案应使用 create_document；如果先生成 patches，运行时会将其归并为单个创建提案。'
+      !input.outputContract && input.intent === 'create'
+        ? '本次任务要求创建独立页面或文档。请在完成必要判断后主动调用 create_document 提案工具。'
         : '',
-      AGENT_TEXT_OUTPUT_PROTOCOL,
-      '复杂改写的唯一合法格式：{"outcome":"proposal","commands":[],"patches":[{"operation":"replace","blockId":"已有块 id","targetBlockIds":["已有块 id"],"after":"修改后的完整内容","reason":"修改原因"}],"finalAnswer":"已生成待确认的修改建议"}。',
-      '合法 commands 包括 replace_text_by_regex、replace_block、insert_blocks、create_document；字段名和参数必须严格使用系统契约，不能改写为 type、value 或 update。',
-    ].join('\n\n'),
+      input.outputContract
+        ? ''
+        : '写入建议通过 Runtime 暴露的原生提案工具提交：replace_text_by_regex、replace_block、insert_blocks、create_document、create_group、propose_document_patches。工具成功只表示提案已捕获并等待用户确认。',
+      input.outputContract
+        ? ''
+        : '最终回复使用简短自然语言。成功提交提案工具后不要再次输出 JSON、工具参数或重复正文；没有写入建议时直接回答、说明限制或提出必要问题。',
+      input.outputContract?.systemInstruction ?? '',
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
     tools,
     stopWhen: stepCountIs(policy.maxToolRounds),
-    prepareStep: ({ stepNumber }) => {
-      if (stepNumber >= policy.maxToolRounds - 1) return { toolChoice: 'none' as const }
-      if (
-        input.intent === 'interactive' &&
-        !calls.some((call) => call.toolName === 'request_authorizer_input')
-      ) {
-        return {
-          toolChoice: { type: 'tool' as const, toolName: 'request_authorizer_input' as const },
-        }
-      }
-      if (input.intent === 'research' || requiresKnowledgeRetrieval(input.prompt)) {
-        const searchCall = calls.find(
-          (call) => call.toolName === 'search_documents' && call.status === 'completed',
-        )
-        const readCall = calls.find(
-          (call) => call.toolName === 'read_document' && call.status === 'completed',
-        )
-        if (!searchCall) {
-          return { toolChoice: { type: 'tool' as const, toolName: 'search_documents' as const } }
-        }
-        if (!readCall && searchCall.resultJson !== '[]') {
-          return { toolChoice: { type: 'tool' as const, toolName: 'read_document' as const } }
-        }
-      }
-      return {}
-    },
     maxOutputTokens: Math.min(input.settings.maxTokens, policy.tokenBudget),
     ...samplingParameters(input.settings),
   })
@@ -366,23 +545,36 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       timeout: { totalMs: policy.maxDurationMs },
     })
   } catch (error) {
+    if (inFlightTools.size > 0) await Promise.allSettled([...inFlightTools])
+    if (input.signal?.aborted || isAbortError(error)) {
+      throw normalizeAbortError(input.signal?.reason ?? error)
+    }
     if (!isToolCompatibilityError(error)) throw error
     input.onProgress?.({ phase: 'finalizing', detail: '当前模型不支持工具调用，正在切换兼容模式' })
     return runToollessCompatibilityFallback(input, calls)
   }
 
   const reasoningText = collectReasoningText(result)
-  if (reasoningText) input.onDelta?.(reasoningText, 'reasoning')
+  const channelOutput = resolveAgentOutputChannels(result.text, reasoningText)
+  if (channelOutput.reasoningForDisplay) {
+    input.onDelta?.(channelOutput.reasoningForDisplay, 'reasoning')
+  }
+  if (input.outputContract) {
+    const validated = validateAgentOutputContract(input.outputContract, result.text, reasoningText)
+    return { output: JSON.stringify(validated), rounds: result.steps.length, toolCalls: calls }
+  }
   input.onProgress?.({ phase: 'finalizing', detail: '正在整理可确认的修改' })
-  let parsedOutput = normalizeAgentOutputCandidate(result.text)
+  let parsedOutput =
+    proposedCommands.length > 0 || proposedPatches.length > 0
+      ? createCapturedProposalOutput({
+          commands: proposedCommands,
+          patches: proposedPatches,
+          text: result.text,
+          structuredOutput: channelOutput.output,
+        })
+      : channelOutput.output
   if (!parsedOutput) {
-    input.onProgress?.({ phase: 'finalizing', detail: '正在兼容当前模型的输出格式' })
-    parsedOutput = await repairAgentOutput(
-      input,
-      calls,
-      result.text,
-      '模型返回内容不是可识别的 Agent JSON。',
-    )
+    parsedOutput = createNaturalAgentTextOutput(result.text)
   }
   parsedOutput = normalizeAgentOutputForTaskIntent(parsedOutput, input.prompt, input.intent)
   if (!policy.allowWriteProposals && parsedOutput.outcome === 'proposal') {
@@ -397,54 +589,6 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
   return { output, rounds: result.steps.length, toolCalls: calls }
 }
 
-async function repairAgentOutput(
-  input: AgentRuntimeInput,
-  calls: AgentToolCall[],
-  invalidOutput: string,
-  validationError: string,
-): Promise<z.infer<typeof agentOutputSchema>> {
-  const policy = normalizeExecutionPolicy(
-    input.executionPolicy ?? createDefaultAgentExecutionPolicy(input.settings.maxTokens),
-  )
-  const observations = calls
-    .filter((call) => call.status === 'completed')
-    .map((call) => `${call.toolName}: ${call.resultJson ?? 'null'}`)
-    .join('\n')
-    .slice(0, 24_000)
-  try {
-    const result = await generateText({
-      model: createAiSdkModel(input.settings),
-      system: [
-        '你只负责把文档修改提案校正为合法 JSON，不调用工具，也不增加未经资料支持的事实。',
-        AGENT_TEXT_OUTPUT_PROTOCOL,
-        '复杂改写可以使用 patches。commands 只允许 replace_text_by_regex、replace_block、insert_blocks、create_document，且字段名必须是 tool，不能是 type。',
-        'commands 和 patches 二选一。patch 必须包含 operation、blockId、targetBlockIds、after、reason。所有 block id 必须来自上下文。',
-        '有安全修改时 outcome 为 proposal；无需修改时为 no_change；缺少必要信息时为 blocked。后两者的 commands 和 patches 必须为空。',
-        '不得声称内容已经写入、保存或执行完成。只输出 JSON。',
-      ].join('\n'),
-      prompt: [
-        `用户任务：${input.prompt}`,
-        input.context ? `允许的上下文：\n${input.context}` : '',
-        observations ? `已取得的工具结果：\n${observations}` : '',
-        `上一次无效输出：\n${invalidOutput.slice(0, 12_000)}`,
-        `校验错误：${validationError}`,
-        '请保留有效意图并修正结构。',
-      ]
-        .filter(Boolean)
-        .join('\n\n'),
-      ...samplingParameters(input.settings, 0),
-      maxOutputTokens: Math.min(input.settings.maxTokens, policy.tokenBudget),
-      abortSignal: input.signal,
-      timeout: { totalMs: policy.maxDurationMs },
-    })
-    const normalized = normalizeAgentOutputCandidate(result.text)
-    return normalized ?? createCompatibleAgentTextOutput(result.text || invalidOutput, input.intent)
-  } catch (error) {
-    if (invalidOutput.trim()) return createCompatibleAgentTextOutput(invalidOutput, input.intent)
-    throw error
-  }
-}
-
 async function runToollessCompatibilityFallback(
   input: AgentRuntimeInput,
   calls: AgentToolCall[],
@@ -456,9 +600,13 @@ async function runToollessCompatibilityFallback(
     model: createAiSdkModel(input.settings),
     system: [
       input.systemPrompt,
-      AGENT_TEXT_OUTPUT_PROTOCOL,
-      '当前模型不支持工具调用。仅依据已提供的上下文回答；缺少必要资料时将 outcome 设为 blocked。',
-    ].join('\n\n'),
+      input.outputContract
+        ? ''
+        : '当前模型不支持工具调用。仅依据已提供的上下文用自然语言回答，不得声称已经读取、创建、修改或保存任何内容。',
+      input.outputContract?.systemInstruction ?? '',
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
     prompt: [input.prompt, input.context ? `当前上下文：\n${input.context}` : '']
       .filter(Boolean)
       .join('\n\n'),
@@ -467,10 +615,19 @@ async function runToollessCompatibilityFallback(
     abortSignal: input.signal,
     timeout: { totalMs: policy.maxDurationMs },
   })
-  if (result.reasoningText) input.onDelta?.(result.reasoningText, 'reasoning')
-  const parsed =
-    normalizeAgentOutputCandidate(result.text) ??
-    createCompatibleAgentTextOutput(result.text, input.intent)
+  const channelOutput = resolveAgentOutputChannels(result.text, result.reasoningText ?? '')
+  if (channelOutput.reasoningForDisplay) {
+    input.onDelta?.(channelOutput.reasoningForDisplay, 'reasoning')
+  }
+  if (input.outputContract) {
+    const validated = validateAgentOutputContract(
+      input.outputContract,
+      result.text,
+      result.reasoningText ?? '',
+    )
+    return { output: JSON.stringify(validated), rounds: 1, toolCalls: calls }
+  }
+  const parsed = channelOutput.output ?? createNaturalAgentTextOutput(result.text)
   return {
     output: JSON.stringify(normalizeAgentOutputForTaskIntent(parsed, input.prompt, input.intent)),
     rounds: 1,
@@ -497,28 +654,66 @@ function collectReasoningText(result: {
   return stepReasoning || result.reasoningText?.trim() || ''
 }
 
-function isToolCompatibilityError(error: unknown): boolean {
+export function resolveAgentOutputChannels(text: string, reasoningText: string) {
+  const textOutput = normalizeAgentOutputCandidate(text)
+  const reasoningOutput = normalizeAgentOutputCandidate(reasoningText)
+  return {
+    output: textOutput ?? reasoningOutput,
+    reasoningForDisplay: reasoningOutput ? '' : reasoningText.trim(),
+  }
+}
+
+export function isToolCompatibilityError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
-  return /(?:tool|function|工具|函数).*(?:unsupported|not supported|not available|不支持|无效)|(?:unsupported|not supported|不支持).*(?:tool|function|工具|函数)/i.test(
+  return /(?:tool[_\s-]?choice|tool|function|工具|函数).*(?:unsupported|not supported|does not support|not available|不支持|无效)|(?:unsupported|not supported|does not support|不支持).*(?:tool[_\s-]?choice|tool|function|工具|函数)/i.test(
     message,
   )
 }
 
-export function createCompatibleAgentTextOutput(
-  value: string,
-  intent: AgentRuntimeInput['intent'] = 'default',
-): z.infer<typeof agentOutputSchema> {
-  const finalAnswer =
-    value
-      .trim()
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/\s*```$/, '')
-      .slice(0, 24_000) || '当前模型没有返回可显示的文本。'
+export function createNaturalAgentTextOutput(value: string): z.infer<typeof agentOutputSchema> {
+  const text = value.trim()
+  const looksLikeIncompleteProtocol =
+    /^```(?:json)?\s*(?:\{|\[)/i.test(text) ||
+    /^(?:\{|\[)/.test(text) ||
+    /"(?:outcome|commands|patches|finalAnswer)"\s*:/.test(text)
+  if (!text || looksLikeIncompleteProtocol) {
+    return agentOutputSchema.parse({
+      outcome: 'blocked',
+      commands: [],
+      patches: [],
+      finalAnswer: text
+        ? '模型没有完成本次结构化提案；未执行任何写入，请重试。'
+        : '模型没有返回最终答复；未执行任何写入，请重试。',
+    })
+  }
   return agentOutputSchema.parse({
-    outcome: intent === 'plan' || intent === 'research' ? 'no_change' : 'blocked',
+    outcome: 'no_change',
     commands: [],
     patches: [],
-    finalAnswer,
+    finalAnswer: text.slice(0, 24_000),
+  })
+}
+
+export function createCapturedProposalOutput(input: {
+  commands: AgentCommand[]
+  patches: AgentPatch[]
+  text: string
+  structuredOutput?: z.infer<typeof agentOutputSchema> | null
+}): z.infer<typeof agentOutputSchema> {
+  const plainText = input.text.trim()
+  const usablePlainText =
+    plainText && !/^\s*(?:```(?:json)?\s*)?\{/i.test(plainText) ? plainText.slice(0, 4_000) : ''
+  const hasCreation = input.commands.some(
+    (command) => command.tool === 'create_document' || command.tool === 'create_group',
+  )
+  return agentOutputSchema.parse({
+    outcome: 'proposal',
+    commands: input.commands,
+    patches: input.patches,
+    finalAnswer:
+      input.structuredOutput?.finalAnswer.trim() ||
+      usablePlainText ||
+      (hasCreation ? '已生成创建提案，等待确认后写入。' : '已生成修改提案，等待确认后写入。'),
   })
 }
 
@@ -529,89 +724,160 @@ export function normalizeAgentOutputCandidate(
     .trim()
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/, '')
-  const start = trimmed.indexOf('{')
-  const end = trimmed.lastIndexOf('}')
-  if (start < 0 || end <= start) return null
-  try {
-    const parsedJson = JSON.parse(trimmed.slice(start, end + 1)) as Record<string, unknown>
-    const nestedOutput = [parsedJson.result, parsedJson.output, parsedJson.response].find(isRecord)
-    const candidate = nestedOutput ? { ...nestedOutput } : { ...parsedJson }
-    if (!Array.isArray(candidate.commands) && Array.isArray(candidate.actions)) {
-      candidate.commands = candidate.actions
+  let bestOutput: z.infer<typeof agentOutputSchema> | null = null
+  let bestPriority = -1
+  for (const jsonObject of extractBalancedJsonObjects(trimmed)) {
+    try {
+      const parsedJson = JSON.parse(jsonObject) as Record<string, unknown>
+      const normalized = normalizeParsedAgentOutput(parsedJson)
+      if (!normalized) continue
+      const priority = hasStructuredAgentEnvelope(parsedJson) ? 2 : 1
+      if (priority >= bestPriority) {
+        bestOutput = normalized
+        bestPriority = priority
+      }
+    } catch {
+      // DeepSeek 等兼容模型可能在合法对象后继续输出解释或示例；继续寻找下一个对象。
     }
-    if (!Array.isArray(candidate.patches) && Array.isArray(candidate.changes)) {
-      candidate.patches = candidate.changes
-    }
-    candidate.commands = Array.isArray(candidate.commands) ? candidate.commands : []
-    candidate.patches = Array.isArray(candidate.patches) ? candidate.patches : []
-    if (typeof candidate.finalAnswer !== 'string') {
-      candidate.finalAnswer = firstString(
-        candidate.final_answer,
-        candidate.answer,
-        candidate.message,
-        candidate.content,
-        candidate.text,
-      )
-    }
-    if (
-      candidate.outcome !== 'proposal' &&
-      candidate.outcome !== 'no_change' &&
-      candidate.outcome !== 'blocked'
-    ) {
-      candidate.outcome =
-        candidate.commands.length > 0 || candidate.patches.length > 0 ? 'proposal' : 'no_change'
-    }
-    if (Array.isArray(candidate.patches) && candidate.patches.length > 0) {
-      candidate.commands = []
-      candidate.patches = candidate.patches.map((patch) => {
-        if (!patch || typeof patch !== 'object') return patch
-        const fields = patch as Record<string, unknown>
-        const blockId = firstString(fields.blockId, fields.block_id)
-        return {
-          ...fields,
-          operation: fields.operation === 'update' ? 'replace' : fields.operation,
-          blockId,
-          targetBlockIds:
-            Array.isArray(fields.targetBlockIds) && fields.targetBlockIds.length > 0
-              ? fields.targetBlockIds
-              : Array.isArray(fields.target_block_ids) && fields.target_block_ids.length > 0
-                ? fields.target_block_ids
-                : blockId
-                  ? [blockId]
-                  : fields.targetBlockIds,
-          after:
-            typeof fields.after === 'string' && fields.after.length > 0
-              ? fields.after
-              : typeof fields.value === 'string'
-                ? fields.value
-                : firstString(fields.new_content, fields.content, fields.after),
-        }
-      })
-    } else if (Array.isArray(candidate.commands)) {
-      candidate.commands = candidate.commands.map((command) => {
-        if (!command || typeof command !== 'object') return command
-        const fields = command as Record<string, unknown>
-        return fields.tool === undefined && typeof fields.type === 'string'
-          ? { ...fields, tool: fields.type }
-          : fields
-      })
-    }
-    const parsed = agentOutputSchema.safeParse(candidate)
-    return parsed.success ? parsed.data : null
-  } catch {
-    return null
   }
+  return bestOutput
 }
 
-export function requiresKnowledgeRetrieval(prompt: string): boolean {
-  return /(知识库|资料库|查找|搜索|检索|翻翻|找找|参考.*(?:资料|文档)|knowledge\s*base|search|look\s*up)/i.test(
-    prompt,
-  )
+function hasStructuredAgentEnvelope(parsedJson: Record<string, unknown>): boolean {
+  const outputObject =
+    [parsedJson.result, parsedJson.output, parsedJson.response].find(isRecord) ?? parsedJson
+  return [
+    'outcome',
+    'commands',
+    'actions',
+    'patches',
+    'changes',
+    'finalAnswer',
+    'final_answer',
+  ].some((field) => Object.hasOwn(outputObject, field))
+}
+
+function normalizeParsedAgentOutput(
+  parsedJson: Record<string, unknown>,
+): z.infer<typeof agentOutputSchema> | null {
+  const nestedOutput = [parsedJson.result, parsedJson.output, parsedJson.response].find(isRecord)
+  const outputObject = nestedOutput ?? parsedJson
+  if (
+    Object.hasOwn(outputObject, 'tool') ||
+    ![
+      'outcome',
+      'commands',
+      'actions',
+      'patches',
+      'changes',
+      'finalAnswer',
+      'final_answer',
+      'answer',
+      'message',
+      'content',
+      'text',
+    ].some((field) => Object.hasOwn(outputObject, field))
+  ) {
+    return null
+  }
+  const candidate = { ...outputObject }
+  if (!Array.isArray(candidate.commands) && Array.isArray(candidate.actions)) {
+    candidate.commands = candidate.actions
+  }
+  if (!Array.isArray(candidate.patches) && Array.isArray(candidate.changes)) {
+    candidate.patches = candidate.changes
+  }
+  candidate.commands = Array.isArray(candidate.commands) ? candidate.commands : []
+  candidate.patches = Array.isArray(candidate.patches) ? candidate.patches : []
+  if (typeof candidate.finalAnswer !== 'string') {
+    candidate.finalAnswer = firstString(
+      candidate.final_answer,
+      candidate.answer,
+      candidate.message,
+      candidate.content,
+      candidate.text,
+    )
+  }
+  if (
+    candidate.outcome !== 'proposal' &&
+    candidate.outcome !== 'no_change' &&
+    candidate.outcome !== 'blocked'
+  ) {
+    candidate.outcome =
+      candidate.commands.length > 0 || candidate.patches.length > 0 ? 'proposal' : 'no_change'
+  }
+  if (Array.isArray(candidate.patches) && candidate.patches.length > 0) {
+    candidate.commands = []
+    candidate.patches = candidate.patches.map((patch) => {
+      if (!patch || typeof patch !== 'object') return patch
+      const fields = patch as Record<string, unknown>
+      const blockId = firstString(fields.blockId, fields.block_id)
+      return {
+        ...fields,
+        operation: fields.operation === 'update' ? 'replace' : fields.operation,
+        blockId,
+        targetBlockIds:
+          Array.isArray(fields.targetBlockIds) && fields.targetBlockIds.length > 0
+            ? fields.targetBlockIds
+            : Array.isArray(fields.target_block_ids) && fields.target_block_ids.length > 0
+              ? fields.target_block_ids
+              : blockId
+                ? [blockId]
+                : fields.targetBlockIds,
+        after:
+          typeof fields.after === 'string' && fields.after.length > 0
+            ? fields.after
+            : typeof fields.value === 'string'
+              ? fields.value
+              : firstString(fields.new_content, fields.content, fields.after),
+      }
+    })
+  } else if (Array.isArray(candidate.commands)) {
+    candidate.commands = candidate.commands.map((command) => {
+      if (!command || typeof command !== 'object') return command
+      const fields = command as Record<string, unknown>
+      return fields.tool === undefined && typeof fields.type === 'string'
+        ? { ...fields, tool: fields.type }
+        : fields
+    })
+  }
+  const parsed = agentOutputSchema.safeParse(candidate)
+  return parsed.success ? parsed.data : null
+}
+
+function extractBalancedJsonObjects(value: string): string[] {
+  const objects: string[] = []
+  let start = -1
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (character === '\\') escaped = true
+      else if (character === '"') inString = false
+      continue
+    }
+    if (character === '"' && depth > 0) {
+      inString = true
+    } else if (character === '{') {
+      if (depth === 0) start = index
+      depth += 1
+    } else if (character === '}' && depth > 0) {
+      depth -= 1
+      if (depth === 0 && start >= 0) {
+        objects.push(value.slice(start, index + 1))
+        start = -1
+      }
+    }
+  }
+  return objects
 }
 
 export function normalizeAgentOutputForTaskIntent(
   output: z.infer<typeof agentOutputSchema>,
-  prompt: string,
+  _prompt: string,
   intent: AgentRuntimeInput['intent'] = 'default',
 ): z.infer<typeof agentOutputSchema> {
   if (intent === 'plan' || intent === 'research') {
@@ -622,34 +888,7 @@ export function normalizeAgentOutputForTaskIntent(
       finalAnswer: output.finalAnswer,
     })
   }
-  if (intent !== 'create' && !requiresDocumentCreation(prompt)) return output
-  if (output.commands.some((command) => command.tool === 'create_document')) return output
-  if (output.patches.length === 0) return output
-
-  const content = output.patches
-    .map((patch) => patch.after.trim())
-    .filter(Boolean)
-    .join('\n\n')
-  if (!content) return output
-  const requestedTitle = prompt.match(/《([^》]{1,160})》/)?.[1]?.trim()
-  const contentTitle = content.match(/^#\s+(.+)$/m)?.[1]?.trim()
-  return agentOutputSchema.parse({
-    outcome: 'proposal',
-    commands: [
-      {
-        tool: 'create_document',
-        title: requestedTitle || contentTitle || 'Agent 新建文档',
-        content,
-        reason: output.patches[0]?.reason || '根据用户要求创建新文档。',
-      },
-    ],
-    patches: [],
-    finalAnswer: output.finalAnswer,
-  })
-}
-
-function requiresDocumentCreation(prompt: string): boolean {
-  return /(?:新建|创建)[^。！？\n]{0,16}(?:一篇|页面|文档|子页面|笔记)/.test(prompt)
+  return output
 }
 
 function getToolProgressLabel(name: string, completed: boolean): string {
@@ -658,6 +897,7 @@ function getToolProgressLabel(name: string, completed: boolean): string {
     get_selected_blocks: ['正在确认选中的内容', '已确认选中的内容'],
     get_document_outline: ['正在查看页面结构', '已查看页面结构'],
     search_documents: ['正在知识库中查找资料', '已完成知识库检索'],
+    list_document_groups: ['正在查找文档分组', '已找到文档分组'],
     read_document: ['正在阅读相关资料', '已读取相关资料'],
     find_blocks_by_regex: ['正在定位需要修改的内容', '已定位需要修改的内容'],
     read_skill_file: ['正在读取技能资料', '已读取技能资料'],
@@ -668,6 +908,12 @@ function getToolProgressLabel(name: string, completed: boolean): string {
     get_system_info: ['正在读取系统信息', '已读取系统信息'],
     create_automation_draft: ['正在确认自动化草稿', '已创建自动化草稿'],
     create_skill_draft: ['正在确认 Skill 草稿', '已创建 Skill 草稿'],
+    replace_text_by_regex: ['正在提交文本替换提案', '文本替换提案已就绪'],
+    replace_block: ['正在提交块修改提案', '块修改提案已就绪'],
+    insert_blocks: ['正在提交内容插入提案', '内容插入提案已就绪'],
+    create_document: ['正在生成文档提案', '文档提案已就绪'],
+    create_group: ['正在生成分组提案', '分组提案已就绪'],
+    propose_document_patches: ['正在提交复杂修改提案', '复杂修改提案已就绪'],
   }
   return labels[name]?.[completed ? 1 : 0] ?? (completed ? '工具调用已完成' : '正在调用工具')
 }
@@ -693,7 +939,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function safeJson(value: unknown): string {
-  const json = JSON.stringify(value) ?? 'null'
-  return json.length > 24_000 ? `${json.slice(0, 24_000)}…` : json
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
+function normalizeAbortError(reason: unknown): Error {
+  if (reason instanceof Error && reason.name === 'AbortError') return reason
+  const error = new Error('Agent Provider 请求已取消。')
+  error.name = 'AbortError'
+  return error
 }

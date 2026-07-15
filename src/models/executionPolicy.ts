@@ -20,9 +20,9 @@ export function createDefaultExecutionPolicy(input: {
 }): ExecutionPolicy {
   return {
     version: 1,
-    maxToolRounds: 6,
-    maxDurationMs: 5 * 60 * 1000,
-    maxToolFailures: 2,
+    maxToolRounds: 32,
+    maxDurationMs: 10 * 60 * 1000,
+    maxToolFailures: 6,
     tokenBudget: Math.max(1, Math.round(input.tokenBudget)),
     allowedTools: Array.from(new Set(input.allowedTools)),
     riskLevel: input.riskLevel ?? 'propose_write',
@@ -35,7 +35,7 @@ export function createDefaultExecutionPolicy(input: {
 export function normalizeExecutionPolicy(policy: ExecutionPolicy): ExecutionPolicy {
   return {
     version: 1,
-    maxToolRounds: clampInteger(policy.maxToolRounds, 1, 24),
+    maxToolRounds: clampInteger(policy.maxToolRounds, 1, 64),
     maxDurationMs: clampInteger(policy.maxDurationMs, 1_000, 30 * 60 * 1000),
     maxToolFailures: clampInteger(policy.maxToolFailures, 0, 12),
     tokenBudget: clampInteger(policy.tokenBudget, 1, 128_000),

@@ -1,69 +1,89 @@
 import { invoke } from '@tauri-apps/api/core'
 
+import { getDefaultDataDirectory } from '@/infrastructure/database/dataDirectory'
 import type { McpResourceDescriptor, McpServerConfig, McpToolDescriptor } from '@/models/mcp'
 import { loadAppSettings } from '@/models/settings'
+import { runCancellableAgentInvoke } from './AgentToolCancellation'
 
-function dataDirectory(): string {
-  return loadAppSettings().dataDirectory
+async function dataDirectory(): Promise<string> {
+  return loadAppSettings().dataDirectory ?? getDefaultDataDirectory()
 }
 
-export function listMcpServers(): Promise<McpServerConfig[]> {
-  return invoke('list_mcp_servers', { input: { dataDirectory: dataDirectory() } })
+export async function listMcpServers(): Promise<McpServerConfig[]> {
+  return invoke('list_mcp_servers', { input: { dataDirectory: await dataDirectory() } })
 }
 
-export function importMcpConfig(sourcePath: string): Promise<McpServerConfig[]> {
+export async function importMcpConfig(sourcePath: string): Promise<McpServerConfig[]> {
   return invoke('import_mcp_config', {
-    input: { dataDirectory: dataDirectory(), sourcePath },
+    input: { dataDirectory: await dataDirectory(), sourcePath },
   })
 }
 
-export function setMcpServerEnabled(serverId: string, enabled: boolean): Promise<McpServerConfig> {
+export async function importMcpConfigText(content: string): Promise<McpServerConfig[]> {
+  return invoke('import_mcp_config_text', {
+    input: { dataDirectory: await dataDirectory(), content },
+  })
+}
+
+export async function setMcpServerEnabled(
+  serverId: string,
+  enabled: boolean,
+): Promise<McpServerConfig> {
   return invoke('set_mcp_server_enabled', {
-    input: { dataDirectory: dataDirectory(), serverId, enabled },
+    input: { dataDirectory: await dataDirectory(), serverId, enabled },
   })
 }
 
-export function setMcpServerTrusted(serverId: string, trusted: boolean): Promise<McpServerConfig> {
+export async function setMcpServerTrusted(
+  serverId: string,
+  trusted: boolean,
+): Promise<McpServerConfig> {
   return invoke('set_mcp_server_trusted', {
-    input: { dataDirectory: dataDirectory(), serverId, trusted },
+    input: { dataDirectory: await dataDirectory(), serverId, trusted },
   })
 }
 
-export function removeMcpServer(serverId: string): Promise<void> {
+export async function removeMcpServer(serverId: string): Promise<void> {
   return invoke('remove_mcp_server', {
-    input: { dataDirectory: dataDirectory(), serverId },
+    input: { dataDirectory: await dataDirectory(), serverId },
   })
 }
 
-export function listMcpTools(serverId?: string): Promise<McpToolDescriptor[]> {
+export async function listMcpTools(serverId?: string): Promise<McpToolDescriptor[]> {
   return invoke('list_mcp_tools', {
-    input: { dataDirectory: dataDirectory(), ...(serverId ? { serverId } : {}) },
+    input: { dataDirectory: await dataDirectory(), ...(serverId ? { serverId } : {}) },
   })
 }
 
-export function callMcpTool(
+export async function callMcpTool(
   serverId: string,
   toolName: string,
   args: Record<string, unknown>,
+  options?: { callId?: string; signal?: AbortSignal },
 ): Promise<unknown> {
-  return invoke('call_mcp_tool', {
-    input: {
-      dataDirectory: dataDirectory(),
-      serverId,
-      toolName,
-      arguments: args,
-    },
-  })
+  const operation = async () =>
+    invoke('call_mcp_tool', {
+      input: {
+        dataDirectory: await dataDirectory(),
+        callId: options?.callId,
+        serverId,
+        toolName,
+        arguments: args,
+      },
+    })
+  return options?.callId
+    ? runCancellableAgentInvoke(options.callId, options.signal, operation)
+    : operation()
 }
 
-export function listMcpResources(serverId?: string): Promise<McpResourceDescriptor[]> {
+export async function listMcpResources(serverId?: string): Promise<McpResourceDescriptor[]> {
   return invoke('list_mcp_resources', {
-    input: { dataDirectory: dataDirectory(), ...(serverId ? { serverId } : {}) },
+    input: { dataDirectory: await dataDirectory(), ...(serverId ? { serverId } : {}) },
   })
 }
 
-export function readMcpResource(serverId: string, uri: string): Promise<unknown> {
+export async function readMcpResource(serverId: string, uri: string): Promise<unknown> {
   return invoke('read_mcp_resource', {
-    input: { dataDirectory: dataDirectory(), serverId, uri },
+    input: { dataDirectory: await dataDirectory(), serverId, uri },
   })
 }

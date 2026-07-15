@@ -1,7 +1,13 @@
-.table-block,
 .math-block {
   overflow: hidden;
   border: 1px solid #e1e4e8;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.table-block {
+  overflow: hidden;
+  border: 0;
   border-radius: 12px;
   background: #ffffff;
 }

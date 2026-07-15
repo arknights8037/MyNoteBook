@@ -201,6 +201,18 @@ body,
   color: var(--color-text-tertiary);
 }
 
+.ui-input__control {
+  color: var(--color-text-primary);
+}
+
+.ui-input__control::placeholder {
+  color: var(--color-text-placeholder);
+}
+
+.ui-dialog-card__title {
+  color: var(--color-text-primary);
+}
+
 .ui-button:disabled,
 .ui-input--disabled,
 .ui-select[data-disabled],

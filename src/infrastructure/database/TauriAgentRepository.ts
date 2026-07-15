@@ -8,6 +8,7 @@ import type {
   AgentDocumentTransaction,
   AgentRecoveryState,
   ApplyAgentDocumentCreationInput,
+  ApplyAgentGroupCreationInput,
   AgentRepository,
   AppliedAgentPatchSet,
   ApplyAgentPatchSetInput,
@@ -24,6 +25,7 @@ interface AgentTransactionCommandResult {
   beforeRevision: number
   resultingRevision: number
   createdAt: number
+  childDocumentId?: string | null
 }
 
 interface AgentTaskRow extends Record<string, unknown> {
@@ -407,6 +409,7 @@ export class TauriAgentRepository implements AgentRepository {
               : input.patch.parentDocumentId,
           title: input.patch.documentTitle,
           contentJson: input.contentJson,
+          acceptedAfterText: input.patch.after,
           plainText: input.plainText,
           transactionId: input.transactionId,
           createdAt: now,
@@ -414,9 +417,54 @@ export class TauriAgentRepository implements AgentRepository {
       })
       const created = await this.documentRepository.findById(input.patch.documentId)
       if (!created.ok) return created
-      return ok({ document: created.value, transaction: mapTransaction(result, 'applied', null) })
+      return ok({
+        document: created.value,
+        createdDocuments: [created.value],
+        transaction: mapTransaction(result, 'applied', null),
+      })
     } catch (error) {
       return err(normalizeError(error, 'Agent 新建文档失败，数据库未发生变更。'))
+    }
+  }
+
+  async applyGroupCreation(
+    input: ApplyAgentGroupCreationInput,
+  ): Promise<AppResult<AppliedAgentPatchSet>> {
+    if (input.patch.operation !== 'create_group' || !input.patch.documentTitle?.trim()) {
+      return err({ code: 'validation-error', message: '新分组提案无效。' })
+    }
+    const now = Date.now()
+    try {
+      const result = await invoke<AgentTransactionCommandResult>('apply_agent_group_creation', {
+        input: {
+          dataDirectory: loadAppSettings().dataDirectory,
+          taskId: input.task.id,
+          patchId: input.patch.patchId,
+          groupDocumentId: input.patch.documentId,
+          groupTitle: input.patch.documentTitle,
+          childDocumentId: input.patch.blockId || null,
+          childTitle: input.patch.before || null,
+          childContentJson: input.childContentJson ?? null,
+          childAfterText: input.patch.blockId ? input.patch.after : null,
+          transactionId: input.transactionId,
+          createdAt: now,
+        },
+      })
+      const group = await this.documentRepository.findById(input.patch.documentId)
+      if (!group.ok) return group
+      const createdDocuments = [group.value]
+      if (input.patch.blockId) {
+        const child = await this.documentRepository.findById(input.patch.blockId)
+        if (!child.ok) return child
+        createdDocuments.push(child.value)
+      }
+      return ok({
+        document: group.value,
+        createdDocuments,
+        transaction: mapTransaction(result, 'applied', null),
+      })
+    } catch (error) {
+      return err(normalizeError(error, 'Agent 新建分组失败，数据库未发生变更。'))
     }
   }
 
@@ -431,7 +479,13 @@ export class TauriAgentRepository implements AgentRepository {
         },
       })
       if (result.beforeRevision === 0) {
-        return ok({ document: null, transaction: mapTransaction(result, 'rolled_back', now) })
+        return ok({
+          document: null,
+          removedDocumentIds: [result.childDocumentId, result.documentId].filter(
+            (value): value is string => Boolean(value),
+          ),
+          transaction: mapTransaction(result, 'rolled_back', now),
+        })
       }
       const saved = await this.documentRepository.findById(result.documentId)
       if (!saved.ok) return saved
@@ -553,7 +607,14 @@ function mapProvider(value: unknown): AgentTask['provider'] {
 }
 
 function mapPatchOperation(value: string): BlockPatch['operation'] {
-  return ['replace', 'insert_before', 'insert_after', 'append', 'create_document'].includes(value)
+  return [
+    'replace',
+    'insert_before',
+    'insert_after',
+    'append',
+    'create_document',
+    'create_group',
+  ].includes(value)
     ? (value as BlockPatch['operation'])
     : 'replace'
 }

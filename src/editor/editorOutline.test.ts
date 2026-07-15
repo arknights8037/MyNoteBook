@@ -22,7 +22,7 @@ describe('editorOutline', () => {
   })
 
   it('filters anchor and outline modes independently from Vue state', () => {
-    expect(filterEditorOutlineItems(items, 'anchors', 4).map((item) => item.id)).toEqual(['one'])
+    expect(filterEditorOutlineItems(items, 'anchors', 2).map((item) => item.id)).toEqual(['three'])
     expect(filterEditorOutlineItems(items, 'outline', 2).map((item) => item.id)).toEqual([
       'one',
       'three',

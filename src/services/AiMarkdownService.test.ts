@@ -187,6 +187,24 @@ describe('AiMarkdownService', () => {
     const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>
     expect(body).not.toHaveProperty('thinking')
   })
+
+  it('redacts credentials from provider error bodies', async () => {
+    proxyRequest.mockResolvedValue(
+      new Response('{"api_key":"sk-provider-secret","authorization":"Bearer abc.def.secret"}', {
+        status: 401,
+      }),
+    )
+
+    const result = runAiMarkdownCompletion({
+      prompt: '整理',
+      context: '',
+      settings: DEFAULT_AI_SETTINGS,
+      onDelta: vi.fn(),
+    })
+
+    await expect(result).rejects.toThrow('AI 请求失败：401')
+    await expect(result).rejects.not.toThrow(/sk-provider-secret|abc\.def\.secret/)
+  })
 })
 
 function mockSuccessfulFetch(payload: unknown = { choices: [{ message: { content: 'ok' } }] }) {

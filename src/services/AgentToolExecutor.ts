@@ -3,10 +3,13 @@ import type { DocumentRecord, DocumentSummary } from '@/models/document'
 import type { AgentAuthorizationRequest } from '@/models/agentRuntime'
 import type { AutomationTriggerConfig, AutomationTriggerType } from '@/models/automation'
 import { getAgentToolDefinition } from './AgentToolRegistry'
+import { throwIfAgentToolAborted } from './AgentToolCancellation'
 
 export interface AgentToolRequest {
+  callId?: string
   name: string
   arguments: Record<string, unknown>
+  signal?: AbortSignal
 }
 
 export interface AgentToolExecutionContext {
@@ -23,13 +26,17 @@ export interface AgentToolExecutionContext {
   executeNativeTool?: (
     name:
       | 'search_documents'
+      | 'list_document_groups'
       | 'read_document'
+      | 'find_blocks_by_regex'
       | 'read_skill_file'
       | 'execute_shell'
       | 'inspect_environment_paths'
       | 'discover_local_tools'
       | 'get_system_info',
     args: Record<string, unknown>,
+    callId?: string,
+    signal?: AbortSignal,
   ) => Promise<unknown>
   requestAuthorizerInput?: (request: Omit<AgentAuthorizationRequest, 'id'>) => Promise<string>
   createAutomationDraft?: (input: {
@@ -56,12 +63,13 @@ export async function executeAgentTool(
   request: AgentToolRequest,
   context: AgentToolExecutionContext,
 ): Promise<AgentToolExecutionResult> {
+  throwIfAgentToolAborted(request.signal)
   const definition = getAgentToolDefinition(request.name)
   if (!definition) return { ok: false, error: `工具 ${request.name} 不在白名单中。` }
   if (definition.risk === 'write') {
     return {
       ok: false,
-      error: `写工具 ${request.name} 只能在最终 commands/Patches 中提出，不能在 loop 中直接执行。`,
+      error: `写入提案工具 ${request.name} 应由 Agent Runtime 捕获，不能作为数据库写入工具直接执行。`,
     }
   }
 
@@ -84,7 +92,12 @@ export async function executeAgentTool(
         if (context.executeNativeTool) {
           return {
             ok: true,
-            value: await context.executeNativeTool('search_documents', { query, limit }),
+            value: await context.executeNativeTool(
+              'search_documents',
+              { query, limit },
+              request.callId,
+              request.signal,
+            ),
           }
         }
         const documents = await context.searchDocuments(query, limit)
@@ -98,10 +111,30 @@ export async function executeAgentTool(
           })),
         }
       }
+      case 'list_document_groups': {
+        if (!context.executeNativeTool) {
+          return { ok: false, error: '当前环境未提供分组读取器。' }
+        }
+        const query = readOptionalString(request.arguments.query, 'query')
+        return {
+          ok: true,
+          value: await context.executeNativeTool(
+            'list_document_groups',
+            { query },
+            request.callId,
+            request.signal,
+          ),
+        }
+      }
       case 'read_document': {
         const documentId = readRequiredString(request.arguments.documentId, 'documentId')
         if (context.executeNativeTool) {
-          const document = await context.executeNativeTool('read_document', { documentId })
+          const document = await context.executeNativeTool(
+            'read_document',
+            { documentId },
+            request.callId,
+            request.signal,
+          )
           return document
             ? { ok: true, value: document }
             : { ok: false, error: `文档 ${documentId} 不存在或不可读取。` }
@@ -124,13 +157,17 @@ export async function executeAgentTool(
         const pattern = readRequiredString(request.arguments.pattern, 'pattern')
         if (pattern.length > 240) throw new Error('正则表达式不得超过 240 个字符。')
         const flags = normalizeRegexFlags(request.arguments.flags)
-        const expression = new RegExp(pattern, flags)
+        if (!context.executeNativeTool) {
+          return { ok: false, error: '当前环境未提供安全正则匹配器。' }
+        }
         return {
           ok: true,
-          value: context.currentDocument.blocks.filter((block) => {
-            expression.lastIndex = 0
-            return expression.test(block.text)
-          }),
+          value: await context.executeNativeTool(
+            'find_blocks_by_regex',
+            { pattern, flags, blocks: context.currentDocument.blocks },
+            request.callId,
+            request.signal,
+          ),
         }
       }
       case 'read_skill_file': {
@@ -141,7 +178,12 @@ export async function executeAgentTool(
         const relativePath = readRequiredString(request.arguments.relativePath, 'relativePath')
         return {
           ok: true,
-          value: await context.executeNativeTool('read_skill_file', { skillId, relativePath }),
+          value: await context.executeNativeTool(
+            'read_skill_file',
+            { skillId, relativePath },
+            request.callId,
+            request.signal,
+          ),
         }
       }
       case 'request_authorizer_input': {
@@ -184,12 +226,17 @@ export async function executeAgentTool(
         )
         return {
           ok: true,
-          value: await context.executeNativeTool('execute_shell', {
-            command,
-            args,
-            ...(timeoutMs === undefined ? {} : { timeoutMs }),
-            ...(maxOutputChars === undefined ? {} : { maxOutputChars }),
-          }),
+          value: await context.executeNativeTool(
+            'execute_shell',
+            {
+              command,
+              args,
+              ...(timeoutMs === undefined ? {} : { timeoutMs }),
+              ...(maxOutputChars === undefined ? {} : { maxOutputChars }),
+            },
+            request.callId,
+            request.signal,
+          ),
         }
       }
       case 'inspect_environment_paths':
@@ -197,7 +244,15 @@ export async function executeAgentTool(
         if (!context.executeNativeTool) {
           return { ok: false, error: '当前环境未提供本机信息执行器。' }
         }
-        return { ok: true, value: await context.executeNativeTool(definition.name, {}) }
+        return {
+          ok: true,
+          value: await context.executeNativeTool(
+            definition.name,
+            {},
+            request.callId,
+            request.signal,
+          ),
+        }
       }
       case 'discover_local_tools': {
         if (!context.executeNativeTool) {
@@ -206,7 +261,12 @@ export async function executeAgentTool(
         const names = readStringArray(request.arguments.names, 'names', 32)
         return {
           ok: true,
-          value: await context.executeNativeTool('discover_local_tools', { names }),
+          value: await context.executeNativeTool(
+            'discover_local_tools',
+            { names },
+            request.callId,
+            request.signal,
+          ),
         }
       }
       case 'create_automation_draft': {
@@ -224,6 +284,7 @@ export async function executeAgentTool(
           describeAutomationDraft(triggerType, triggerConfig),
         )
         if (!confirmed) return { ok: true, value: { created: false, reason: '用户取消创建。' } }
+        throwIfAgentToolAborted(request.signal)
         return {
           ok: true,
           value: await context.createAutomationDraft({
@@ -248,6 +309,7 @@ export async function executeAgentTool(
           '将写入本地 skills 目录并保持停用；你可以在插件技能页审阅和启用。',
         )
         if (!confirmed) return { ok: true, value: { created: false, reason: '用户取消创建。' } }
+        throwIfAgentToolAborted(request.signal)
         return {
           ok: true,
           value: await context.createSkillDraft({ name, description, instructions }),

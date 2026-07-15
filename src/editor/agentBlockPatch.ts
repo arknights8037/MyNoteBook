@@ -18,8 +18,12 @@ export function applyAgentBlockPatches(
   source: TiptapDocumentJson,
   patches: BlockPatch[],
 ): ApplyBlockPatchResult {
-  if (patches.some((patch) => patch.operation === 'create_document')) {
-    return { ok: false, error: '新建文档提案必须由文档事务执行器处理。' }
+  if (
+    patches.some(
+      (patch) => patch.operation === 'create_document' || patch.operation === 'create_group',
+    )
+  ) {
+    return { ok: false, error: '新建文档或分组提案必须由创建事务执行器处理。' }
   }
   const content = cloneEditorContent(source)
   const blocks = content.content ?? []

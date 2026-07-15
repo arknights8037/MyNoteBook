@@ -1,3 +1,5 @@
+import type { AgentToolTag } from './cognitive'
+
 export type AgentToolRisk = 'read' | 'draft' | 'write'
 export type AgentToolCallStatus = 'pending' | 'running' | 'completed' | 'failed' | 'rejected'
 
@@ -7,6 +9,7 @@ export interface AgentToolDefinition {
     | 'get_selected_blocks'
     | 'get_document_outline'
     | 'search_documents'
+    | 'list_document_groups'
     | 'read_document'
     | 'find_blocks_by_regex'
     | 'read_skill_file'
@@ -21,10 +24,13 @@ export interface AgentToolDefinition {
     | 'replace_block'
     | 'insert_blocks'
     | 'create_document'
+    | 'create_group'
+    | 'propose_document_patches'
   description: string
   risk: AgentToolRisk
   requiresConfirmation: boolean
   maxCallsPerTask: number
+  tags: AgentToolTag[]
 }
 
 export interface AgentToolCall {

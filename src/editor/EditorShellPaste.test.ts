@@ -6,6 +6,18 @@ import { nextTick } from 'vue'
 import EditorShell from './EditorShell.vue'
 import type { TiptapDocumentJson } from '@/models/document'
 
+const { storeFile } = vi.hoisted(() => ({ storeFile: vi.fn() }))
+vi.mock('@/infrastructure/assets/AssetService', () => ({
+  assetService: {
+    storeFile,
+    findAsset: vi.fn(async () => null),
+    resolveAssetUrl: vi.fn(async (value: string) => value),
+    openAsset: vi.fn(),
+  },
+  getAssetUrl: (id: string) => `asset://${id}`,
+  getAssetDisplayName: () => '附件',
+}))
+
 interface EditorShellExpose {
   editor?: Editor
   getJSON: () => TiptapDocumentJson | undefined
@@ -13,6 +25,7 @@ interface EditorShellExpose {
 
 describe('EditorShell image paste', () => {
   it('pastes an image from the clipboard at the current selection', async () => {
+    storeFile.mockResolvedValue({ id: 'asset-paste-1', originalName: '剪贴板图片.png' })
     const wrapper = mount(EditorShell, {
       attachTo: document.body,
       props: {
@@ -54,7 +67,7 @@ describe('EditorShell image paste', () => {
         alt: '剪贴板图片.png',
         originalName: '剪贴板图片.png',
       })
-      expect(imageNode?.attrs?.src).toMatch(/^data:image\/png;base64,/)
+      expect(imageNode?.attrs?.src).toBe('asset://asset-paste-1')
     })
     wrapper.unmount()
   })

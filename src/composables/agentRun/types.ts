@@ -7,6 +7,7 @@ import type { AiChatMode } from '@/models/aiChatMode'
 import type { DocumentBlock } from '@/models/documentBlock'
 import type { DocumentRecord, DocumentSummary } from '@/models/document'
 import type { AgentRepository } from '@/repositories/AgentRepository'
+import type { RegexReplaceExecutor } from '@/services/AgentCommandService'
 
 export interface AgentRunDocumentSnapshot {
   id: string
@@ -47,6 +48,7 @@ export interface UseAgentRunOptions {
   tasks: Ref<AgentTask[]>
   ensureSecretLoaded: () => Promise<boolean>
   createId: () => string
+  replaceBlocksByRegex: RegexReplaceExecutor
   notify: { success: (message: string) => void; error: (message: string) => void }
   document: AgentRunDocumentAdapter
   patches: AgentRunPatchWorkflow

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { useAgentPatchWorkflow } from './useAgentPatchWorkflow'
 import type { AgentPatchSet, AgentTask, BlockPatch } from '@/models/agent'
 import type { DocumentRecord, TiptapDocumentJson } from '@/models/document'
-import { ok } from '@/models/result'
+import { err, ok, type AppResult } from '@/models/result'
 import type { AgentRepository, AppliedAgentPatchSet } from '@/repositories/AgentRepository'
 
 const content: TiptapDocumentJson = {
@@ -104,6 +104,120 @@ describe('useAgentPatchWorkflow', () => {
       expect.any(Array),
     )
   })
+
+  it('atomically creates a group and its initial document through the creation workflow', async () => {
+    const { workflow, repository, mergeDocument, notify } = createWorkflow()
+    workflow.pendingAgentTask.value = task()
+    workflow.pendingAgentPatchSet.value = groupPatchSet()
+
+    await workflow.applyPendingAgentPatches()
+
+    expect(repository.applyGroupCreation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        patch: expect.objectContaining({ operation: 'create_group', documentId: 'group-1' }),
+        childContentJson: expect.any(String),
+        childPlainText: expect.stringContaining('初始内容'),
+      }),
+    )
+    expect(mergeDocument).toHaveBeenCalledTimes(2)
+    expect(mergeDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'group-1', documentKind: 'group' }),
+    )
+    expect(mergeDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'child-1', parentId: 'group-1' }),
+    )
+    expect(notify.success).toHaveBeenCalledWith('Agent 分组已创建，可用撤销恢复')
+  })
+
+  it('keeps a failed creation waiting for confirmation and allows a successful retry', async () => {
+    const { workflow, repository, mergeDocument, notify } = createWorkflow()
+    workflow.pendingAgentTask.value = task()
+    workflow.pendingAgentPatchSet.value = documentCreationPatchSet()
+    workflow.showAgentPatchModal.value = true
+    repository.applyDocumentCreation
+      .mockResolvedValueOnce(
+        err({
+          code: 'validation-error',
+          message: 'Patch creation-patch 的接受内容与结果文档投影不一致。',
+        }),
+      )
+      .mockResolvedValueOnce(
+        ok({
+          document: documentRecord(1, '正文'),
+          createdDocuments: [documentRecord(1, '正文')],
+          transaction: {
+            id: 'transaction-1',
+            taskId: 'task-1',
+            documentId: 'new-document',
+            beforeRevision: 0,
+            resultingRevision: 1,
+            status: 'applied',
+            createdAt: 100,
+            rolledBackAt: null,
+          },
+        }),
+      )
+
+    await workflow.applyPendingAgentPatches()
+
+    expect(workflow.pendingAgentTask.value).toMatchObject({
+      status: 'waiting_confirmation',
+      currentStep: '写入未完成，可检查后重试',
+    })
+    expect(workflow.pendingAgentPatchSet.value).not.toBeNull()
+    expect(workflow.showAgentPatchModal.value).toBe(true)
+    expect(repository.updateTask).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'waiting_confirmation' }),
+    )
+
+    await workflow.applyPendingAgentPatches()
+
+    expect(repository.applyDocumentCreation).toHaveBeenCalledTimes(2)
+    expect(workflow.pendingAgentTask.value).toBeNull()
+    expect(workflow.pendingAgentPatchSet.value).toBeNull()
+    expect(workflow.lastAppliedAgentTask.value).toMatchObject({ status: 'completed', error: null })
+    expect(mergeDocument).toHaveBeenCalled()
+    expect(notify.success).toHaveBeenCalledWith('Agent 新文档已创建，可用撤销恢复')
+  })
+
+  it('ignores duplicate apply clicks while a creation request is in flight', async () => {
+    const { workflow, repository } = createWorkflow()
+    workflow.pendingAgentTask.value = task()
+    workflow.pendingAgentPatchSet.value = documentCreationPatchSet()
+    let resolveCreation: ((value: AppResult<AppliedAgentPatchSet>) => void) | undefined
+    repository.applyDocumentCreation.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCreation = resolve
+      }),
+    )
+
+    const firstApply = workflow.applyPendingAgentPatches()
+    const duplicateApply = workflow.applyPendingAgentPatches()
+    await duplicateApply
+
+    await vi.waitFor(() => expect(repository.applyDocumentCreation).toHaveBeenCalledTimes(1))
+    expect(workflow.isApplyingAgentPatches.value).toBe(true)
+
+    resolveCreation?.(
+      ok({
+        document: documentRecord(1, '正文'),
+        createdDocuments: [documentRecord(1, '正文')],
+        transaction: {
+          id: 'transaction-1',
+          taskId: 'task-1',
+          documentId: 'new-document',
+          beforeRevision: 0,
+          resultingRevision: 1,
+          status: 'applied',
+          createdAt: 100,
+          rolledBackAt: null,
+        },
+      }),
+    )
+    await firstApply
+
+    expect(workflow.isApplyingAgentPatches.value).toBe(false)
+  })
 })
 
 function createWorkflow() {
@@ -120,9 +234,35 @@ function createWorkflow() {
     rolledBackAt: null,
   }
   const applied: AppliedAgentPatchSet = { document: appliedDocument, transaction }
+  const groupDocument: DocumentRecord = {
+    ...documentRecord(1, ''),
+    id: 'group-1',
+    documentKind: 'group',
+    title: '资料分组',
+  }
+  const childDocument: DocumentRecord = {
+    ...documentRecord(1, '初始内容'),
+    id: 'child-1',
+    parentId: 'group-1',
+    title: '介绍',
+  }
   const repository = {
     loadRecoveryState: vi.fn(),
     applyPatchSet: vi.fn().mockResolvedValue(ok(applied)),
+    applyDocumentCreation: vi.fn().mockResolvedValue(ok(applied)),
+    applyGroupCreation: vi.fn().mockResolvedValue(
+      ok({
+        document: groupDocument,
+        createdDocuments: [groupDocument, childDocument],
+        transaction: {
+          ...transaction,
+          documentId: 'group-1',
+          childDocumentId: 'child-1',
+          beforeRevision: 0,
+          resultingRevision: 1,
+        },
+      }),
+    ),
     rollbackTransaction: vi.fn().mockResolvedValue(
       ok({
         document: rolledBackDocument,
@@ -133,6 +273,7 @@ function createWorkflow() {
     updateTask: vi.fn().mockImplementation(async (nextTask) => ok(nextTask)),
   } as unknown as AgentRepository
   const applyDocument = vi.fn()
+  const mergeDocument = vi.fn()
   const notify = { success: vi.fn(), error: vi.fn() }
   const workflow = useAgentPatchWorkflow({
     document: {
@@ -144,7 +285,7 @@ function createWorkflow() {
         blocks: [{ id: 'block-1', type: 'paragraph', text: '修改前', index: 0 }],
       }),
       applyDocument,
-      mergeDocument: vi.fn(),
+      mergeDocument,
       removeDocument: vi.fn(),
     },
     error: ref(''),
@@ -152,7 +293,7 @@ function createWorkflow() {
     createRepository: async () => repository,
     createTransactionId: () => 'transaction-1',
   })
-  return { workflow, repository, applyDocument, notify }
+  return { workflow, repository, applyDocument, mergeDocument, notify }
 }
 
 function task(): AgentTask {
@@ -177,6 +318,58 @@ function patchSet(): AgentPatchSet {
     model: 'test-model',
     contextSources: [],
     createdAt: 1,
+  }
+}
+
+function groupPatchSet(): AgentPatchSet {
+  return {
+    taskId: 'task-1',
+    model: 'test-model',
+    contextSources: [],
+    createdAt: 1,
+    patches: [
+      {
+        patchId: 'group-patch',
+        taskId: 'task-1',
+        operation: 'create_group',
+        documentId: 'group-1',
+        blockId: 'child-1',
+        targetBlockIds: [],
+        expectedVersion: 0,
+        before: '介绍',
+        after: '# 介绍\n\n初始内容',
+        reason: '创建资料分组',
+        accepted: true,
+        documentTitle: '资料分组',
+        parentDocumentId: null,
+      },
+    ],
+  }
+}
+
+function documentCreationPatchSet(): AgentPatchSet {
+  return {
+    taskId: 'task-1',
+    model: 'test-model',
+    contextSources: [],
+    createdAt: 1,
+    patches: [
+      {
+        patchId: 'creation-patch',
+        taskId: 'task-1',
+        operation: 'create_document',
+        documentId: 'new-document',
+        blockId: '',
+        targetBlockIds: [],
+        expectedVersion: 0,
+        before: '',
+        after: '# 新文档\n\n正文',
+        reason: '创建文档',
+        accepted: true,
+        documentTitle: '新文档',
+        parentDocumentId: null,
+      },
+    ],
   }
 }
 

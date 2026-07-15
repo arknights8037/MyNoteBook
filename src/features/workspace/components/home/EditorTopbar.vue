@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Archive, Ellipsis, ImagePlus, MessageSquare, Plus, Search, Share2 } from '@lucide/vue'
+import { nextTick, ref } from 'vue'
 
 import NButton from '@/ui/NButton.vue'
 import NIcon from '@/ui/NIcon.vue'
@@ -16,6 +17,7 @@ defineProps<{
 }>()
 
 const title = defineModel<string>('title', { required: true })
+const editingTitle = ref(false)
 
 const emit = defineEmits<{
   titleInput: []
@@ -27,6 +29,17 @@ const emit = defineEmits<{
   inspect: []
   search: []
 }>()
+
+async function beginTitleEdit(): Promise<void> {
+  if (editingTitle.value) return
+  editingTitle.value = true
+  await nextTick()
+}
+
+function finishTitleEdit(): void {
+  editingTitle.value = false
+  emit('commitTitle')
+}
 </script>
 
 <template>
@@ -35,15 +48,27 @@ const emit = defineEmits<{
       <template #trigger>
         <div class="topbar__title">
           <NInput
+            v-if="editingTitle"
             v-model:value="title"
             class="topbar-title-input"
             :bordered="false"
             :disabled="disabled"
+            autofocus
             aria-label="文档标题"
             @update:value="emit('titleInput')"
-            @blur="emit('commitTitle')"
-            @keydown.enter.prevent="emit('commitTitle')"
+            @blur="finishTitleEdit"
+            @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
           />
+          <button
+            v-else
+            type="button"
+            class="topbar-title-display"
+            :disabled="disabled"
+            aria-label="编辑文档标题"
+            @click="beginTitleEdit"
+          >
+            {{ title }}
+          </button>
         </div>
       </template>
       {{ title }}

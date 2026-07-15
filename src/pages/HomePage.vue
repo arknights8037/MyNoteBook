@@ -4,6 +4,7 @@ import {
   createAutomationServiceProvider,
   createDocumentService,
   createDocumentTransferServiceProvider,
+  tauriRegexReplaceExecutor,
 } from '@/app/composition/surfaceServiceProviders'
 import { createKnowledgeControlService } from '@/app/composition/knowledgeControlServiceFactory'
 import WorkspaceSurface from '@/features/workspace/components/WorkspaceSurface.vue'
@@ -23,5 +24,6 @@ const getKnowledgeControlService = () =>
     :get-audit-repository="getAuditRepository"
     :get-automation-service="getAutomationService"
     :get-knowledge-control-service="getKnowledgeControlService"
+    :replace-blocks-by-regex="tauriRegexReplaceExecutor"
   />
 </template>

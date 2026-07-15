@@ -220,6 +220,7 @@ fn secret_error(error: impl std::fmt::Display) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
     use std::time::Instant;
 
     fn temporary_secret_path(name: &str) -> PathBuf {
@@ -322,5 +323,47 @@ mod tests {
             "keyring set={set_elapsed:?}, get={get_elapsed:?}, aes-gcm decrypt avg={:?}",
             decrypt_elapsed / 10_000
         );
+    }
+
+    #[test]
+    #[ignore = "requires the configured real Provider credential and network access"]
+    fn real_provider_agent_tool_loop_error_and_cancellation_smoke() {
+        let local_app_data = std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA");
+        let path = PathBuf::from(local_app_data)
+            .join("com.local.mynotebook")
+            .join(SECRET_FILENAME);
+        let key = load_or_create_keyring_key().expect("load Provider data key");
+        let plaintext = decrypt_secret(&path, &key).expect("decrypt Provider credentials");
+        let keys = decode_api_keys(&plaintext, "deepseek");
+        let provider = std::env::var("MYNOTEBOOK_PROVIDER_SMOKE_PROVIDER")
+            .unwrap_or_else(|_| "deepseek".to_string());
+        let api_key = keys
+            .get(&provider)
+            .filter(|value| !value.trim().is_empty())
+            .expect("configured Provider API key");
+        let project = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("project root");
+        let status = std::process::Command::new("pnpm.cmd")
+            .current_dir(project)
+            .arg("exec")
+            .arg("vitest")
+            .arg("run")
+            .arg("src/services/RealProviderSmoke.test.ts")
+            .env("MYNOTEBOOK_PROVIDER_SMOKE_API_KEY", api_key)
+            .env("MYNOTEBOOK_PROVIDER_SMOKE_PROVIDER", &provider)
+            .env(
+                "MYNOTEBOOK_PROVIDER_SMOKE_ENDPOINT",
+                std::env::var("MYNOTEBOOK_PROVIDER_SMOKE_ENDPOINT")
+                    .unwrap_or_else(|_| "https://api.deepseek.com".to_string()),
+            )
+            .env(
+                "MYNOTEBOOK_PROVIDER_SMOKE_MODEL",
+                std::env::var("MYNOTEBOOK_PROVIDER_SMOKE_MODEL")
+                    .unwrap_or_else(|_| "deepseek-v4-pro".to_string()),
+            )
+            .status()
+            .expect("run real Provider smoke");
+        assert!(status.success(), "real Provider smoke failed");
     }
 }

@@ -62,7 +62,10 @@ export function useDocumentAutosave(
 
   let timer: ReturnType<typeof setTimeout> | null = null
   let dirtyVersion = 0
-  let saveSequence = 0
+  let activeFlush: Promise<AppResult<DocumentRecord | null>> | null = null
+  let allowWindowClose = false
+  let disposed = false
+  let unlistenWindowClose: (() => void) | null = null
 
   function clearPendingTimer(): void {
     if (timer === null) {
@@ -75,9 +78,12 @@ export function useDocumentAutosave(
 
   function scheduleFlush(): void {
     clearPendingTimer()
-    timer = setTimeout(() => {
-      void flush()
-    }, Math.max(0, toValue(debounceMs)))
+    timer = setTimeout(
+      () => {
+        void flush()
+      },
+      Math.max(0, toValue(debounceMs)),
+    )
   }
 
   function markDirty(): void {
@@ -91,10 +97,27 @@ export function useDocumentAutosave(
   async function flush(): Promise<AppResult<DocumentRecord | null>> {
     clearPendingTimer()
 
-    if (!dirty.value) {
-      return ok(null)
+    if (activeFlush) return activeFlush
+
+    activeFlush = runFlushLoop().finally(() => {
+      activeFlush = null
+    })
+    return activeFlush
+  }
+
+  async function runFlushLoop(): Promise<AppResult<DocumentRecord | null>> {
+    let latestResult: AppResult<DocumentRecord | null> = ok(null)
+
+    while (dirty.value) {
+      const result = await saveCurrentSnapshot()
+      latestResult = result
+      if (!result.ok) return result
     }
 
+    return latestResult
+  }
+
+  async function saveCurrentSnapshot(): Promise<AppResult<DocumentRecord | null>> {
     const documentService = toValue(options.documentService)
     if (!documentService) {
       const appError: AppError = {
@@ -118,7 +141,6 @@ export function useDocumentAutosave(
     }
 
     const capturedDirtyVersion = dirtyVersion
-    const currentSaveSequence = ++saveSequence
     saving.value = true
     status.value = 'saving'
 
@@ -137,13 +159,7 @@ export function useDocumentAutosave(
       sortOrder: snapshot.sortOrder ?? 0,
     })
 
-    if (currentSaveSequence === saveSequence) {
-      saving.value = false
-    }
-
-    if (currentSaveSequence !== saveSequence) {
-      return saveResult
-    }
+    saving.value = false
 
     if (!saveResult.ok) {
       error.value = saveResult.error
@@ -178,10 +194,34 @@ export function useDocumentAutosave(
     dirtyVersion += 1
   }
 
-  function handleBeforeUnload(): void {
+  function handleBeforeUnload(event: BeforeUnloadEvent): void {
     if (dirty.value) {
+      // Browser unload handlers cannot await SQLite writes. Keep the page alive and let the
+      // Tauri close-request handler below finish the flush before closing the native window.
+      event.preventDefault()
       void flush()
     }
+  }
+
+  if (typeof window !== 'undefined') {
+    void import('@tauri-apps/api/window')
+      .then(async ({ getCurrentWindow }) => {
+        const appWindow = getCurrentWindow()
+        const unlisten = await appWindow.onCloseRequested(async (event) => {
+          if (allowWindowClose || !dirty.value) return
+          event.preventDefault()
+          const result = await flush()
+          if (result.ok && !dirty.value) {
+            allowWindowClose = true
+            await appWindow.close()
+          }
+        })
+        if (disposed) unlisten()
+        else unlistenWindowClose = unlisten
+      })
+      .catch(() => {
+        // Browser development and unit tests do not expose a native Tauri window.
+      })
   }
 
   if (typeof window !== 'undefined') {
@@ -189,6 +229,8 @@ export function useDocumentAutosave(
   }
 
   onBeforeUnmount(() => {
+    disposed = true
+    unlistenWindowClose?.()
     clearPendingTimer()
     if (dirty.value) {
       void flush()

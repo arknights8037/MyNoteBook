@@ -57,15 +57,10 @@ export function filterEditorOutlineItems(
   maxLevel: number,
 ): EditorOutlineItem[] {
   if (mode === 'anchors') {
-    const primaryLevel = getPrimaryHeadingLevel(items)
-    return primaryLevel === null ? [] : items.filter((item) => item.level === primaryLevel)
+    return items.filter((item) => item.level === maxLevel)
   }
 
   return mode === 'outline' ? items.filter((item) => item.level <= maxLevel) : []
-}
-
-function getPrimaryHeadingLevel(items: EditorOutlineItem[]): number | null {
-  return items.length === 0 ? null : Math.min(...items.map((item) => item.level))
 }
 
 function getNodePlainText(node: EditorJsonNode): string {

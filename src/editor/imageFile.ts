@@ -11,24 +11,3 @@ export function validateImageFile(file: File): string | null {
 
   return null
 }
-
-export function readImageFileAsDataUrl(file: File): Promise<string> {
-  const validationError = validateImageFile(file)
-  if (validationError) {
-    return Promise.reject(new Error(validationError))
-  }
-
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.addEventListener('load', () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result)
-        return
-      }
-
-      reject(new Error('无法读取图片'))
-    })
-    reader.addEventListener('error', () => reject(new Error('无法读取图片')))
-    reader.readAsDataURL(file)
-  })
-}

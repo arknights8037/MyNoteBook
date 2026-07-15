@@ -45,7 +45,7 @@ describe('automation and audit repositories', () => {
         status TEXT NOT NULL, input_json TEXT NOT NULL, output_json TEXT, error TEXT,
         schedule_next_run_at INTEGER, queued_at INTEGER NOT NULL,
         started_at INTEGER, completed_at INTEGER,
-        correlation_id TEXT, causation_id TEXT
+        correlation_id TEXT, causation_id TEXT, task_run_id TEXT
       );
       CREATE UNIQUE INDEX idx_automation_runs_active ON automation_runs(automation_id)
       WHERE automation_id IS NOT NULL AND status IN ('queued', 'running');
@@ -57,7 +57,7 @@ describe('automation and audit repositories', () => {
       END;
       CREATE TABLE agent_tasks (
         id TEXT PRIMARY KEY, user_instruction TEXT NOT NULL, status TEXT NOT NULL,
-        error TEXT, created_at INTEGER NOT NULL, completed_at INTEGER
+        error TEXT, created_at INTEGER NOT NULL, completed_at INTEGER, task_run_id TEXT
       );
       CREATE TABLE agent_tool_calls (
         id TEXT PRIMARY KEY, task_id TEXT NOT NULL, tool_name TEXT NOT NULL,
@@ -111,7 +111,7 @@ describe('automation and audit repositories', () => {
         status TEXT NOT NULL, last_error TEXT, created_at INTEGER NOT NULL, published_at INTEGER
       );
       INSERT INTO documents VALUES ('doc-1');
-      INSERT INTO agent_tasks VALUES ('agent-1', '总结页面', 'completed', NULL, 50, 80);
+      INSERT INTO agent_tasks VALUES ('agent-1', '总结页面', 'completed', NULL, 50, 80, NULL);
     `)
     repository = new TauriAutomationRepository(client)
   })
@@ -178,5 +178,13 @@ describe('automation and audit repositories', () => {
     if (!audit.ok) return
     expect(audit.value.map((entry) => entry.category)).toEqual(['automation_run', 'agent_task'])
     expect(audit.value[0]).toMatchObject({ title: '每日总结', status: 'queued' })
+
+    const filtered = await new TauriAuditRepository(client).listEntries({
+      category: 'agent_task',
+      search: '总结页面',
+      limit: 1,
+    })
+    expect(filtered.ok && filtered.value).toHaveLength(1)
+    expect(filtered.ok && filtered.value[0]).toMatchObject({ category: 'agent_task' })
   })
 })

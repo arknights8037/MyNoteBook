@@ -36,7 +36,9 @@ describe('P1 repositories', () => {
       INSERT INTO documents VALUES ('doc-1');
       CREATE TABLE knowledge_objects (
         id TEXT PRIMARY KEY, object_type TEXT NOT NULL, status TEXT NOT NULL,
-        title TEXT NOT NULL, owner_id TEXT, scope_json TEXT NOT NULL,
+        title TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', structured_data_json TEXT NOT NULL DEFAULT '{}',
+        generated_run_id TEXT, cognitive_mode TEXT, template_id TEXT, template_version INTEGER,
+        owner_id TEXT, scope_json TEXT NOT NULL,
         document_id TEXT, block_id TEXT, source_revision INTEGER,
         authority_level TEXT NOT NULL, confidence REAL, valid_from INTEGER,
         valid_until INTEGER, verified_at INTEGER, version INTEGER NOT NULL,
@@ -49,6 +51,16 @@ describe('P1 repositories', () => {
         UNIQUE(from_object_id, relation_type, to_object_id),
         FOREIGN KEY (from_object_id) REFERENCES knowledge_objects(id),
         FOREIGN KEY (to_object_id) REFERENCES knowledge_objects(id)
+      );
+      CREATE TABLE knowledge_object_sources (
+        id TEXT PRIMARY KEY, knowledge_object_id TEXT NOT NULL, document_id TEXT NOT NULL,
+        block_id TEXT, revision INTEGER NOT NULL, quote TEXT, start_offset INTEGER,
+        end_offset INTEGER, created_at INTEGER NOT NULL
+      );
+      CREATE TABLE knowledge_validations (
+        id TEXT PRIMARY KEY, knowledge_object_id TEXT NOT NULL, rule_id TEXT NOT NULL,
+        verdict TEXT NOT NULL, severity TEXT NOT NULL, message TEXT NOT NULL,
+        source_json TEXT NOT NULL, validated_at INTEGER NOT NULL
       );
       CREATE TABLE task_definitions (
         id TEXT PRIMARY KEY, definition_type TEXT NOT NULL, name TEXT NOT NULL,
@@ -188,5 +200,68 @@ describe('P1 repositories', () => {
     expect(staleUpdate).toMatchObject({ ok: false, error: { code: 'revision-conflict' } })
     expect((await repository.listArtifacts('run-1')).ok).toBe(true)
     expect((await repository.listEvidence('run-1')).ok).toBe(true)
+  })
+
+  it('persists cognitive candidates, multiple sources and validations with guarded decisions', async () => {
+    const repository = new TauriKnowledgeRepository(client)
+    const candidate = await repository.createObject({
+      id: 'claim-1',
+      objectType: 'claim',
+      status: 'candidate',
+      title: '候选结论',
+      content: '结构化研究产生的候选结论',
+      structuredData: { confidence: 'medium' },
+      generatedRunId: 'run-cognitive-1',
+      cognitiveMode: 'research',
+      templateId: 'default-cognitive-control',
+      templateVersion: 1,
+      createdAt: 10,
+    })
+    await repository.addSource({
+      id: 'source-1',
+      knowledgeObjectId: 'claim-1',
+      documentId: 'doc-1',
+      blockId: 'block-1',
+      revision: 3,
+      quote: '原文',
+      startOffset: 0,
+      endOffset: 2,
+      createdAt: 11,
+    })
+    await repository.addValidation({
+      id: 'validation-1',
+      knowledgeObjectId: 'claim-1',
+      ruleId: 'source-present',
+      verdict: 'passed',
+      severity: 'info',
+      message: '存在可定位来源',
+      source: { sourceId: 'source-1' },
+      validatedAt: 12,
+    })
+    const stale = await repository.decideCandidate({
+      id: 'claim-1',
+      expectedVersion: 0,
+      decision: 'approved',
+    })
+    const approved = await repository.decideCandidate({
+      id: 'claim-1',
+      expectedVersion: 1,
+      decision: 'approved',
+    })
+
+    expect(candidate).toMatchObject({
+      ok: true,
+      value: { objectType: 'claim', content: '结构化研究产生的候选结论' },
+    })
+    expect(stale).toMatchObject({ ok: false, error: { code: 'revision-conflict' } })
+    expect(approved).toMatchObject({ ok: true, value: { status: 'approved', version: 2 } })
+    expect(await repository.listSources('claim-1')).toMatchObject({
+      ok: true,
+      value: [{ id: 'source-1' }],
+    })
+    expect(await repository.listValidations('claim-1')).toMatchObject({
+      ok: true,
+      value: [{ id: 'validation-1', verdict: 'passed' }],
+    })
   })
 })

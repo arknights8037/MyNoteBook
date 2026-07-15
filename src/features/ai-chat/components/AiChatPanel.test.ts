@@ -46,6 +46,7 @@ function runtimeState(status: AgentRuntimeViewState['status'] = 'running'): Agen
 function createWrapper(state = runtimeState()) {
   const settings = createAiSettings('openai')
   settings.model = 'test-model'
+  const isActive = state.status === 'running' || state.status === 'waiting_authorizer'
   return mount(AiChatPanel, {
     props: {
       workspace: false,
@@ -58,13 +59,28 @@ function createWrapper(state = runtimeState()) {
       reasoningOptions: [],
       modelOptions: ['test-model'],
       settings,
-      messages: [],
+      messages: [
+        {
+          id: 'message-user',
+          role: 'user',
+          mode: 'agent',
+          content: '查找差旅制度',
+          status: 'done',
+        },
+        {
+          id: 'message-assistant',
+          role: 'assistant',
+          mode: 'agent',
+          content: isActive ? '' : '已根据制度完成处理。',
+          status: isActive ? 'streaming' : 'done',
+        },
+      ],
       currentDocumentTitle: '差旅说明',
       knowledgeSourceCount: 4,
       prompt: '',
       promptPlaceholder: '描述任务',
       error: '',
-      isRunning: state.status === 'running' || state.status === 'waiting_authorizer',
+      isRunning: isActive,
       agentStep: state.detail,
       runtimeState: state,
       renderMarkdownMessage: (markdown: string) => markdown,
@@ -76,22 +92,26 @@ function createWrapper(state = runtimeState()) {
 }
 
 describe('AiChatPanel runtime visibility', () => {
-  it('shows live phase, tool identity, arguments and duration', () => {
+  it('shows the live loop inside the current assistant message', () => {
     const wrapper = createWrapper()
 
-    expect(wrapper.get('.ai-agent-runbar').text()).toContain('正在搜索知识库')
-    expect(wrapper.get('.ai-agent-runbar').text()).toContain('运行中')
+    const assistantMessage = wrapper.get('.ai-chat-message--assistant')
+    expect(assistantMessage.get('.ai-agent-loop').text()).toContain('正在搜索知识库')
+    expect(assistantMessage.get('.ai-agent-loop').text()).toContain('运行中')
     expect(wrapper.get('.ai-agent-tool-list').text()).toContain('搜索知识库')
     expect(wrapper.get('.ai-agent-tool-list').text()).toContain('search_documents')
     expect(wrapper.get('.ai-agent-tool-list').text()).toContain('差旅报销')
+    expect(wrapper.get('.ai-agent-tool-step').attributes('open')).toBeUndefined()
+    expect(wrapper.find('.ai-chat-message__waiting').exists()).toBe(false)
   })
 
   it('keeps the latest tool trace visible after completion', () => {
     const wrapper = createWrapper(runtimeState('completed'))
 
-    expect(wrapper.get('.ai-agent-runbar').text()).toContain('已完成')
-    expect(wrapper.get('.ai-agent-runbar').text()).toContain('2 轮')
-    expect(wrapper.get('.ai-agent-tool-list').text()).toContain('差旅制度')
+    expect(wrapper.get('.ai-agent-loop').text()).toContain('已完成')
+    expect(wrapper.get('.ai-agent-loop').text()).toContain('2 轮')
+    expect(wrapper.get('.ai-agent-tool-step__preview').text()).toContain('差旅制度')
+    expect(wrapper.get('.ai-agent-tool-step__status').text()).toContain('返回 1 项')
     expect(wrapper.find('button[aria-label="停止 Agent"]').exists()).toBe(false)
   })
 
@@ -108,5 +128,4 @@ describe('AiChatPanel runtime visibility', () => {
     expect(wrapper.emitted('select-mode')?.at(-1)).toEqual(['agent'])
     expect(wrapper.emitted('update:prompt')?.at(-1)).toEqual(['/plan '])
   })
-
 })
