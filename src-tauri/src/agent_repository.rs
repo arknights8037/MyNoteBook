@@ -375,6 +375,7 @@ fn validate_disjoint_patch_targets(patches: &[AgentPatchDraft]) -> Result<(), St
         if patch.operation == "replace"
             && normalize_visible_markdown(&patch.before_text)
                 == normalize_visible_markdown(&patch.after_text)
+            && !looks_like_markdown_table(&patch.after_text)
         {
             return Err("替换 Patch 的 before 与 after 相同，无需提交。".to_string());
         }
@@ -385,6 +386,20 @@ fn validate_disjoint_patch_targets(patches: &[AgentPatchDraft]) -> Result<(), St
         }
     }
     Ok(())
+}
+
+fn looks_like_markdown_table(value: &str) -> bool {
+    let lines = value.lines().map(str::trim).collect::<Vec<_>>();
+    if lines.len() < 2 || !lines[0].contains('|') {
+        return false;
+    }
+    let delimiter = lines[1].trim_matches('|');
+    let cells = delimiter.split('|').map(str::trim).collect::<Vec<_>>();
+    !cells.is_empty()
+        && cells.iter().all(|cell| {
+            let cell = cell.trim_start_matches(':').trim_end_matches(':').trim();
+            cell.len() >= 3 && cell.chars().all(|character| character == '-')
+        })
 }
 
 #[tauri::command]
@@ -1449,6 +1464,12 @@ mod tests {
         assert!(validate_disjoint_patch_targets(&[noop])
             .unwrap_err()
             .contains("before 与 after 相同"));
+
+        let mut structural_table_repair = patch_draft("patch-table", r#"["block-1"]"#);
+        structural_table_repair.before_text = "工具\t风险\nread_document\tread".to_string();
+        structural_table_repair.after_text =
+            "| 工具 | 风险 |\n| --- | --- |\n| read_document | read |".to_string();
+        validate_disjoint_patch_targets(&[structural_table_repair]).unwrap();
     }
 
     #[test]

@@ -5,6 +5,7 @@ import { useAgentRun, type AgentRunDocumentSnapshot } from './useAgentRun'
 import type { AiConversationMessage } from './useAiConversation'
 import { createAiSettings, type AiSettings } from '@/models/ai'
 import type { AgentRepository } from '@/repositories/AgentRepository'
+import type { DocumentBlock } from '@/models/documentBlock'
 
 const completion = vi.hoisted(() => vi.fn())
 const agentLoop = vi.hoisted(() => vi.fn())
@@ -105,6 +106,51 @@ describe('useAgentRun', () => {
     expect(run.workflow.runtimeState.value).toMatchObject({ status: 'idle', toolCalls: [] })
   })
 
+  it('reloads canonical Markdown blocks when an external Agent request arrives before the editor ref', async () => {
+    let observation: unknown
+    agentLoop.mockImplementation(async (input) => {
+      observation = await input.executeTool({ name: 'get_current_document', arguments: {} })
+      return noChangeAgentResult(1)
+    })
+    const settings = ref(createAiSettings('openai'))
+    settings.value.model = 'test-model'
+    const currentSnapshot = snapshot()
+    currentSnapshot.blocks = []
+    currentSnapshot.markdown = ''
+    const canonicalBlocks: DocumentBlock[] = [
+      {
+        id: 'block-1',
+        documentId: 'doc-1',
+        type: 'paragraph',
+        index: 0,
+        contentJson: JSON.stringify({
+          type: 'paragraph',
+          attrs: { id: 'block-1' },
+          content: [{ type: 'text', text: '运行开始正文', marks: [{ type: 'bold' }] }],
+        }),
+        plainText: '运行开始正文',
+        documentRevision: 1,
+        updatedAt: Date.now(),
+      },
+    ]
+    const run = createRun(
+      settings,
+      currentSnapshot,
+      async () => true,
+      'agent',
+      '更新当前文档',
+      canonicalBlocks,
+    )
+
+    await run.workflow.run()
+
+    expect(agentLoop).toHaveBeenCalled()
+    expect(observation).toMatchObject({
+      ok: true,
+      value: { blocks: [expect.objectContaining({ id: 'block-1', markdown: '**运行开始正文**' })] },
+    })
+  })
+
   it('routes an auto page-creation prompt to Agent with create intent', async () => {
     agentLoop.mockResolvedValue({
       output: JSON.stringify({
@@ -124,9 +170,38 @@ describe('useAgentRun', () => {
 
     expect(completion).not.toHaveBeenCalled()
     expect(agentLoop).toHaveBeenCalledWith(
-      expect.objectContaining({ prompt: '创建页面', intent: 'create' }),
+      expect.objectContaining({
+        prompt: '创建页面',
+        intent: 'create',
+        executionPolicy: expect.objectContaining({
+          allowedTools: expect.arrayContaining(['create_document', 'create_group']),
+        }),
+      }),
     )
+    expect(agentLoop.mock.calls[0]?.[0].executionPolicy.allowedTools).not.toContain('execute_shell')
     expect(run.messages.value[0]?.mode).toBe('agent')
+  })
+
+  it('uses a read-only minimal tool bundle for research intent', async () => {
+    agentLoop.mockResolvedValue(noChangeAgentResult(2))
+    const settings = ref(createAiSettings('openai'))
+    settings.value.model = 'test-model'
+    const run = createRun(settings, snapshot(), async () => true, 'agent', '/research 对比制度')
+
+    await run.workflow.run()
+
+    expect(agentLoop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent: 'research',
+        executionPolicy: expect.objectContaining({
+          allowWriteProposals: false,
+          riskLevel: 'read_only',
+        }),
+      }),
+    )
+    expect(agentLoop.mock.calls[0]?.[0].executionPolicy.allowedTools).not.toContain(
+      'submit_document_edits',
+    )
   })
 
   it('pauses an interactive slash command for the authorizer and resumes the same run', async () => {
@@ -287,6 +362,7 @@ function createRun(
   ensureSecretLoaded: () => Promise<boolean>,
   mode: 'ask' | 'agent' | 'auto' = 'ask',
   initialPrompt = '总结当前文档',
+  canonicalBlocks: DocumentBlock[] = [],
 ) {
   const messages = ref<AiConversationMessage[]>([])
   const isRunning = ref(false)
@@ -310,7 +386,7 @@ function createRun(
       flushBeforeEdit: async () => ({ ok: true, revision: currentSnapshot.revision }),
       searchDocuments: async () => [],
       readDocument: async () => null,
-      listDocumentBlocks: async () => [],
+      listDocumentBlocks: async () => canonicalBlocks,
     },
     patches: {
       pendingTask: ref(null),
@@ -337,6 +413,7 @@ function snapshot(): AgentRunDocumentSnapshot {
     sourceUrl: '',
     author: '',
     text: '运行开始正文',
+    markdown: '运行开始正文\n',
     revision: 1,
     blocks: [{ id: 'block-1', type: 'paragraph', text: '运行开始正文', index: 0 }],
     selectedBlocks: [],

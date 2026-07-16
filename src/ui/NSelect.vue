@@ -25,11 +25,15 @@ const props = withDefaults(
     value?: string
     options?: SelectOption[]
     size?: 'small' | 'medium'
+    placeholder?: string
+    disabled?: boolean
   }>(),
   {
     value: '',
     options: () => [],
     size: 'medium',
+    placeholder: '请选择',
+    disabled: false,
   },
 )
 
@@ -39,7 +43,9 @@ const emit = defineEmits<{
 
 const attrs = useAttrs()
 const selectedLabel = computed(
-  () => props.options.find((option) => option.value === props.value)?.label ?? props.value,
+  () =>
+    props.options.find((option) => option.value === props.value)?.label ??
+    (props.value || props.placeholder),
 )
 
 function handleValue(value: unknown): void {
@@ -48,14 +54,15 @@ function handleValue(value: unknown): void {
 </script>
 
 <template>
-  <SelectRoot :model-value="value" @update:model-value="handleValue">
+  <SelectRoot :model-value="value" :disabled="disabled" @update:model-value="handleValue">
     <SelectTrigger
+      v-bind="attrs"
       class="ui-select"
-      :class="[attrs.class, `ui-select--${size}`]"
-      :style="attrs.style"
+      :class="`ui-select--${size}`"
+      :disabled="disabled"
     >
       <span class="ui-select__value"
-        ><SelectValue>{{ selectedLabel }}</SelectValue></span
+        ><SelectValue :placeholder="placeholder">{{ selectedLabel }}</SelectValue></span
       >
       <ChevronDown :size="14" />
     </SelectTrigger>

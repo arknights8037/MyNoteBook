@@ -51,11 +51,11 @@ describe('SidebarDocumentTree', () => {
 
     await rows[0]?.get('.document-list__select').trigger('click')
     await rows[0]?.get('.document-list__toggle').trigger('click')
-    await wrapper.get('button[aria-label="parent中新建子页面"]').trigger('click')
+    await wrapper.get('button[aria-label="parent中新建内容"]').trigger('click')
 
     expect(wrapper.emitted('select')).toContainEqual(['parent'])
     expect(wrapper.emitted('toggle')).toContainEqual(['parent'])
-    expect(wrapper.emitted('createChild')).toContainEqual(['parent'])
+    expect(wrapper.emitted('createChildView')).toContainEqual(['parent'])
   })
 })
 

@@ -5,6 +5,7 @@ import type { AiSettings } from '@/models/ai'
 import type { AiChatHistoryMessage } from '@/models/aiChatHistory'
 import type { AiChatMode } from '@/models/aiChatMode'
 import type { KnowledgeSource } from '@/models/knowledgeRetrieval'
+import type { AgentWorkspaceHistoryStore } from '@/infrastructure/database/AgentWorkspaceHistoryStore'
 
 export interface AiConversationMessage extends AiChatHistoryMessage {
   sources?: KnowledgeSource[]
@@ -18,12 +19,19 @@ export interface AiConversationOptions {
   createId: () => string
   stop?: () => void
   notify?: (message: string) => void
+  historyStore?: AgentWorkspaceHistoryStore
 }
 
 export function useAiConversation(options: AiConversationOptions) {
   const messages = ref<AiConversationMessage[]>([])
   const prompt = ref('')
-  const historyState = useAiChatHistory(messages, options.settings, options.createId)
+  const historyState = useAiChatHistory(
+    messages,
+    options.settings,
+    options.createId,
+    options.historyStore,
+  )
+  void historyState.hydrate()
   const stopHistoryWatch = watch(messages, historyState.scheduleSave, { deep: true })
 
   function clear(): void {
@@ -92,6 +100,48 @@ export function useAiConversation(options: AiConversationOptions) {
     return removed
   }
 
+  function selectProject(projectId: string): boolean {
+    if (options.isRunning.value) return false
+    historyState.flush()
+    const project = historyState.selectProject(projectId)
+    if (!project) return false
+    messages.value = []
+    prompt.value = ''
+    options.error.value = ''
+    return true
+  }
+
+  function createProject(input?: { name?: string; workspaceRootIds?: string[] }): void {
+    if (options.isRunning.value) {
+      options.notify?.('请先停止当前 Agent 任务，再新建项目')
+      return
+    }
+    historyState.flush()
+    const project = historyState.createProject(input)
+    messages.value = []
+    prompt.value = ''
+    options.error.value = ''
+    options.notify?.(`项目“${project.name}”已创建`)
+  }
+
+  function startTask(projectId: string | null): boolean {
+    if (options.isRunning.value) {
+      options.notify?.('请先停止当前 Agent 任务，再新建任务')
+      return false
+    }
+    historyState.flush()
+    if (!historyState.startTask(projectId)) return false
+    messages.value = []
+    prompt.value = ''
+    options.error.value = ''
+    return true
+  }
+
+  function ensureConversationId(): string {
+    if (!historyState.currentId.value) historyState.currentId.value = options.createId()
+    return historyState.currentId.value
+  }
+
   function restoreMessageForEditing(message: AiConversationMessage, messageIndex: number): void {
     prompt.value = message.content
     options.mode.value = message.mode
@@ -114,14 +164,27 @@ export function useAiConversation(options: AiConversationOptions) {
   return {
     messages,
     prompt,
-    history: historyState.history,
+    history: historyState.orderedHistory,
+    projectHistory: historyState.projectHistory,
+    projects: historyState.orderedProjects,
+    activeProject: historyState.activeProject,
+    activeProjectId: historyState.activeProjectId,
     currentHistoryId: historyState.currentId,
+    ensureConversationId,
     clear,
     forkAtMessage,
     editMessage,
     prepareRetry,
     selectHistory,
     deleteHistory,
+    selectProject,
+    createProject,
+    startTask,
+    toggleProjectPin: historyState.toggleProjectPin,
+    toggleHistoryPin: historyState.toggleHistoryPin,
+    renameProject: historyState.renameProject,
+    updateWorkspace: historyState.updateWorkspace,
+    ensureDefaultWorkspace: historyState.ensureDefaultWorkspace,
     flushHistory: historyState.flush,
   }
 }

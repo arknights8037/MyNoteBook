@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Sparkles } from '@lucide/vue'
+import { Sparkles, X } from '@lucide/vue'
 import {
   computed,
   defineAsyncComponent,
@@ -28,8 +28,11 @@ import { useHomeKeyboardShortcuts } from '@/composables/useHomeKeyboardShortcuts
 import { ensureTopLevelBlockIds } from '@/editor/blockId'
 import { parseEditorContentJson } from '@/editor/editorContent'
 import { EMPTY_TIPTAP_DOCUMENT, type DocumentId, type DocumentSummary } from '@/models/document'
+import type { MindMapSummary } from '@/models/mindMap'
+import type { StructuredWorkspaceViewSummary, StructuredWorkspaceViewType } from '@/models/workspaceView'
 import { AI_PROVIDER_CONFIGS } from '@/models/ai'
 import { AI_MODE_OPTIONS } from '@/models/aiChatMode'
+import { UNGROUPED_AGENT_PROJECT_ID } from '@/models/aiChatHistory'
 import type { AgentTask } from '@/models/agent'
 import { createEntityId } from '@/models/id'
 import {
@@ -42,6 +45,10 @@ import type { DocumentService } from '@/services/DocumentService'
 import type { DocumentTransferService } from '@/services/DocumentTransferService'
 import type { AutomationService } from '@/services/AutomationService'
 import type { KnowledgeControlService } from '@/services/KnowledgeControlService'
+import type { MindMapService } from '@/services/MindMapService'
+import { createMindMapService } from '@/app/composition/mindMapServiceFactory'
+import { createWorkspaceViewService } from '@/app/composition/workspaceViewServiceFactory'
+import type { WorkspaceViewService } from '@/services/WorkspaceViewService'
 import type { AuditRepository } from '@/repositories/AuditRepository'
 import type { RegexReplaceExecutor } from '@/services/AgentCommandService'
 import {
@@ -85,6 +92,12 @@ const AutomationSurface = defineLazySurface(
 const AuditSurface = defineLazySurface(() => import('@/features/audit/components/AuditSurface.vue'))
 const KnowledgeControlSurface = defineLazySurface(
   () => import('@/features/knowledge-control/components/KnowledgeControlSurface.vue'),
+)
+const MindMapWorkspace = defineLazySurface(
+  () => import('@/features/mind-map/components/MindMapWorkspace.vue'),
+)
+const WorkspaceViewWorkspace = defineLazySurface(
+  () => import('@/features/workspace-views/components/WorkspaceViewWorkspace.vue'),
 )
 const AgentPatchReviewModal = defineLazyComponent(() => import('./home/AgentPatchReviewModal.vue'))
 const CreateViewModal = defineLazyComponent(() => import('./home/CreateViewModal.vue'))
@@ -136,6 +149,15 @@ const showInspector = ref(false)
 const showImportModal = ref(false)
 const showShareModal = ref(false)
 const showCreateViewModal = ref(false)
+const createViewParentId = ref<string | null>(null)
+const mindMaps = ref<MindMapSummary[]>([])
+const activeMindMapId = ref<string | null>(null)
+const draggedMindMapId = ref<string | null>(null)
+const draggedWorkspaceViewId = ref<string | null>(null)
+let mindMapServicePromise: Promise<MindMapService> | null = null
+const workspaceViews = ref<StructuredWorkspaceViewSummary[]>([])
+const activeWorkspaceViewId = ref<string | null>(null)
+let workspaceViewServicePromise: Promise<WorkspaceViewService> | null = null
 const {
   showAiChat,
   aiChatFullscreen,
@@ -237,14 +259,205 @@ const {
 const {
   initialize: initializeDocuments,
   create: createDocument,
-  createAndOpen: createAndOpenDocument,
+  createAndOpen: createAndOpenWorkspaceDocument,
   createAndOpenFromContent: createAndOpenDocumentFromContent,
   load: loadDocument,
-  select: selectDocument,
+  select: selectWorkspaceDocument,
   onEditorContentUpdate: handleEditorContentUpdate,
   onTextUpdate: handleTextUpdate,
   onTitleInput: handleTitleInput,
 } = lifecycle
+
+function mindMapService(): Promise<MindMapService> {
+  return (mindMapServicePromise ??= createMindMapService())
+}
+function workspaceViewService(): Promise<WorkspaceViewService> { return (workspaceViewServicePromise ??= createWorkspaceViewService()) }
+
+async function selectDocument(documentId: DocumentId): Promise<void> {
+  activeMindMapId.value = null
+  activeWorkspaceViewId.value = null
+  await selectWorkspaceDocument(documentId)
+}
+
+async function createAndOpenDocument(parentId: DocumentId | null): Promise<void> {
+  activeMindMapId.value = null
+  activeWorkspaceViewId.value = null
+  await createAndOpenWorkspaceDocument(parentId)
+}
+
+async function refreshMindMaps(): Promise<void> {
+  const result = await (await mindMapService()).list()
+  if (!result.ok) throw new Error(result.error.message)
+  mindMaps.value = result.value
+}
+
+function handleMindMapSaved(summary: MindMapSummary): void {
+  const remaining = mindMaps.value.filter((item) => item.id !== summary.id)
+  mindMaps.value = [summary, ...remaining]
+}
+
+function openMindMap(mindMapId: string): void {
+  activeMindMapId.value = mindMapId
+  activeWorkspaceViewId.value = null
+  sidebarView.value = 'documents'
+  openDocumentSurface()
+}
+
+async function createAndOpenMindMap(parentId: string | null = null): Promise<void> {
+  const result = await (await mindMapService()).create('新思维导图', parentId)
+  if (!result.ok) throw new Error(result.error.message)
+  await refreshMindMaps()
+  if (parentId) expandDocument(parentId)
+  openMindMap(result.value.id)
+}
+
+async function deleteMindMap(mindMapId: string): Promise<void> {
+  const mindMap = mindMaps.value.find((item) => item.id === mindMapId)
+  if (!mindMap || !(await confirmMindMapRemoval(mindMap.title))) return
+  const result = await (await mindMapService()).delete(mindMapId)
+  if (!result.ok) return message.error(result.error.message)
+  mindMaps.value = mindMaps.value.filter((item) => item.id !== mindMapId)
+  if (activeMindMapId.value === mindMapId) activeMindMapId.value = null
+  message.success('思维导图已删除')
+}
+
+function confirmMindMapRemoval(title: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value: boolean): void => {
+      if (settled) return
+      settled = true
+      resolve(value)
+    }
+    dialog.warning({
+      title: '删除思维导图',
+      content: `删除「${title.trim() || '未命名思维导图'}」？此操作无法恢复。`,
+      positiveText: '删除',
+      negativeText: '取消',
+      onPositiveClick: () => finish(true),
+      onNegativeClick: () => finish(false),
+      onClose: () => finish(false),
+    })
+  })
+}
+
+function handleMindMapDragStart(
+  event: InstanceType<typeof globalThis.DragEvent>,
+  mindMapId: string,
+): void {
+  if (isBusy.value) return event.preventDefault()
+  draggedMindMapId.value = mindMapId
+  event.dataTransfer?.setData('application/x-my-notebook-mind-map', mindMapId)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+}
+
+function handleWorkspaceViewDragStart(
+  event: InstanceType<typeof globalThis.DragEvent>,
+  viewId: string,
+): void {
+  if (isBusy.value) return event.preventDefault()
+  draggedWorkspaceViewId.value = viewId
+  event.dataTransfer?.setData('application/x-my-notebook-workspace-view', viewId)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+}
+
+function handleWorkspacePageDragEnd(): void {
+  draggedMindMapId.value = null
+  draggedWorkspaceViewId.value = null
+  handleArticleDragEnd()
+}
+
+function handleWorkspaceGroupDragOver(
+  event: InstanceType<typeof globalThis.DragEvent>,
+  groupId: DocumentId,
+): void {
+  if (draggedMindMapId.value) {
+    const mindMap = mindMaps.value.find((item) => item.id === draggedMindMapId.value)
+    if (!mindMap || mindMap.parentId === groupId) return
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+    dropTargetGroupId.value = groupId
+    return
+  }
+  if (draggedWorkspaceViewId.value) {
+    const view = workspaceViews.value.find((item) => item.id === draggedWorkspaceViewId.value)
+    if (!view || view.parentId === groupId) return
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+    dropTargetGroupId.value = groupId
+    return
+  }
+  handleGroupDragOver(event, groupId)
+}
+
+async function handleWorkspaceGroupDrop(
+  event: InstanceType<typeof globalThis.DragEvent>,
+  groupId: DocumentId,
+): Promise<void> {
+  const mindMapId =
+    draggedMindMapId.value ?? event.dataTransfer?.getData('application/x-my-notebook-mind-map')
+  const workspaceViewId =
+    draggedWorkspaceViewId.value ??
+    event.dataTransfer?.getData('application/x-my-notebook-workspace-view')
+  if (!mindMapId && !workspaceViewId) return handleGroupDrop(event, groupId)
+  event.preventDefault()
+  handleWorkspacePageDragEnd()
+  if (workspaceViewId) {
+    const view = workspaceViews.value.find((item) => item.id === workspaceViewId)
+    if (!view || view.parentId === groupId) return
+    const result = await (await workspaceViewService()).move({
+      id: view.id,
+      expectedVersion: view.version,
+      parentId: groupId,
+    })
+    if (!result.ok) return message.error(result.error.message)
+    await refreshWorkspaceViews()
+    expandGroup(groupId)
+    message.success('视图已移动到分组')
+    return
+  }
+  if (!mindMapId) return
+  const mindMap = mindMaps.value.find((item) => item.id === mindMapId)
+  if (!mindMap || mindMap.parentId === groupId) return
+  const result = await (await mindMapService()).move({
+    id: mindMap.id,
+    expectedVersion: mindMap.version,
+    parentId: groupId,
+  })
+  if (!result.ok) return message.error(result.error.message)
+  await refreshMindMaps()
+  expandGroup(groupId)
+  message.success('思维导图已移动到分组')
+}
+async function refreshWorkspaceViews(): Promise<void> { const result = await (await workspaceViewService()).list(); if (!result.ok) throw new Error(result.error.message); workspaceViews.value = result.value }
+function openWorkspaceView(viewId: string): void { activeWorkspaceViewId.value = viewId; activeMindMapId.value = null; sidebarView.value = 'documents'; openDocumentSurface() }
+function handleWorkspaceViewSaved(summary: StructuredWorkspaceViewSummary): void { workspaceViews.value = [summary, ...workspaceViews.value.filter((item) => item.id !== summary.id)] }
+async function deleteWorkspaceView(viewId: string): Promise<void> {
+  const view = workspaceViews.value.find((item) => item.id === viewId)
+  if (!view || !(await confirmWorkspaceViewRemoval(view.title))) return
+  const result = await (await workspaceViewService()).delete(viewId)
+  if (!result.ok) return message.error(result.error.message)
+  workspaceViews.value = workspaceViews.value.filter((item) => item.id !== viewId)
+  if (activeWorkspaceViewId.value === viewId) activeWorkspaceViewId.value = null
+  message.success('视图已删除')
+}
+function confirmWorkspaceViewRemoval(title: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value: boolean): void => { if (!settled) { settled = true; resolve(value) } }
+    dialog.warning({
+      title: '删除视图',
+      content: `删除「${title.trim() || '未命名视图'}」？此操作无法恢复。`,
+      positiveText: '删除',
+      negativeText: '取消',
+      onPositiveClick: () => finish(true),
+      onNegativeClick: () => finish(false),
+      onClose: () => finish(false),
+    })
+  })
+}
+function openCreateView(parentId: string | null = null): void {
+  createViewParentId.value = parentId
+  showCreateViewModal.value = true
+}
 const { rename, properties, commitCurrentTitle } = metadata
 const {
   document: renamingDocument,
@@ -358,6 +571,22 @@ const {
     removeDocument: (documentId) => removeDocumentsFromLists([documentId]),
   },
 })
+const showAgentRollbackToast = ref(false)
+let agentRollbackToastTimer: ReturnType<typeof globalThis.setTimeout> | null = null
+
+function dismissAgentRollbackToast(): void {
+  showAgentRollbackToast.value = false
+  if (agentRollbackToastTimer !== null) {
+    globalThis.clearTimeout(agentRollbackToastTimer)
+    agentRollbackToastTimer = null
+  }
+}
+
+function scheduleAgentRollbackToastDismissal(): void {
+  dismissAgentRollbackToast()
+  showAgentRollbackToast.value = true
+  agentRollbackToastTimer = globalThis.setTimeout(dismissAgentRollbackToast, 9_000)
+}
 const activeAgentTask = computed(
   () => agentTasks.value.find((task) => task.status === 'running') ?? pendingAgentTask.value,
 )
@@ -373,6 +602,32 @@ const aiConversation = useAiConversation({
 const aiMessages = aiConversation.messages
 const aiPrompt = aiConversation.prompt
 const aiChatHistory = aiConversation.history
+const currentAiChatHistoryId = aiConversation.currentHistoryId
+const aiProjects = aiConversation.projects
+const currentAiProjectId = aiConversation.activeProjectId
+const currentAiProject = aiConversation.activeProject
+const currentAgentRuntimeProjectId = computed(() =>
+  currentAiProjectId.value === UNGROUPED_AGENT_PROJECT_ID ? '' : currentAiProjectId.value,
+)
+const agentWorkspaceOptions = computed(() =>
+  documents.value
+    .filter((document) => document.documentKind === 'group' && !document.isDeleted)
+    .map((document) => ({ label: document.title, value: document.id })),
+)
+const currentAgentWorkspaceRootIds = computed(
+  () => currentAiProject.value?.workspaceRootIds ?? [],
+)
+
+watch(
+  documents,
+  (availableDocuments) => {
+    const agentMvp = availableDocuments.find(
+      (document) => document.documentKind === 'group' && document.title.trim() === 'Agent MVP',
+    )
+    if (agentMvp) aiConversation.ensureDefaultWorkspace(agentMvp.id, agentMvp.title)
+  },
+  { immediate: true },
+)
 const agentRun = useAgentRun({
   settings: aiSettings,
   mode: aiChatMode,
@@ -385,6 +640,13 @@ const agentRun = useAgentRun({
   createId: createDocumentId,
   replaceBlocksByRegex: dependencies.replaceBlocksByRegex,
   notify: message,
+  workspace: {
+    projectId: currentAgentRuntimeProjectId,
+    projectName: computed(() => currentAiProject.value?.name ?? '未分组任务'),
+    rootDocumentIds: currentAgentWorkspaceRootIds,
+    conversationId: currentAiChatHistoryId,
+    ensureConversationId: aiConversation.ensureConversationId,
+  },
   document: {
     captureSnapshot: () => ({
       id: currentDocumentId.value,
@@ -393,6 +655,7 @@ const agentRun = useAgentRun({
       sourceUrl: currentDocument.value?.sourceUrl ?? '',
       author: currentDocument.value?.author ?? '',
       text: editorShell.value?.getText?.() || plainText.value,
+      markdown: editorShell.value?.getDocumentMarkdown?.() || plainText.value,
       revision: autosave.revision.value,
       blocks: editorShell.value?.getCurrentDocumentBlocks?.() ?? [],
       selectedBlocks: editorShell.value?.getSelectedBlocks?.() ?? [],
@@ -540,6 +803,10 @@ onMounted(async () => {
   await initializeDocuments()
   hasInitializedDocuments = true
   globalThis.performance.mark('notebook:documents-ready')
+  void refreshMindMaps().catch((mindMapError) => {
+    message.error(mindMapError instanceof Error ? mindMapError.message : String(mindMapError))
+  })
+  void refreshWorkspaceViews().catch((viewError) => message.error(viewError instanceof Error ? viewError.message : String(viewError)))
   if (import.meta.env.DEV) {
     const marks = globalThis.performance
       .getEntriesByType('mark')
@@ -557,8 +824,21 @@ onBeforeUnmount(() => {
   globalThis.removeEventListener('keydown', handleDeveloperToolKeydown, true)
   globalThis.removeEventListener('keydown', handleGlobalKeydown)
   if (agentCommunicationTimer !== null) globalThis.clearInterval(agentCommunicationTimer)
+  dismissAgentRollbackToast()
   unsubscribeSystemTheme?.()
 })
+
+watch(
+  [lastAppliedPatchSet, lastAppliedAgentTask, currentDocumentId],
+  ([patchSet, task, documentId], [previousPatchSet]) => {
+    if (!patchSet || task?.sessionId !== documentId) {
+      dismissAgentRollbackToast()
+      return
+    }
+    if (patchSet !== previousPatchSet) scheduleAgentRollbackToastDismissal()
+  },
+  { flush: 'post' },
+)
 
 watch(
   appSettings,
@@ -740,7 +1020,9 @@ async function pollAgentCommunication(): Promise<void> {
         request.id,
         taskId,
         agentRuntimeState.value.detail ||
-          (agentRuntimeState.value.status === 'cancelled' ? 'Agent 任务已取消。' : 'Agent 任务失败。'),
+          (agentRuntimeState.value.status === 'cancelled'
+            ? 'Agent 任务已取消。'
+            : 'Agent 任务失败。'),
       )
     } else if (!taskId) {
       await agentCommunication.markFailed(
@@ -823,14 +1105,32 @@ const deleteAiChatHistory = aiConversation.deleteHistory
 const renderMarkdownMessage = renderAiMarkdown
 
 async function createAndOpenView(kind: CreateViewKind): Promise<void> {
+  const parentId = createViewParentId.value
+  createViewParentId.value = null
+  if (kind === 'mindmap') {
+    showCreateViewModal.value = false
+    await createAndOpenMindMap(parentId)
+    return
+  }
+  if (kind === 'slides' || kind === 'uml' || kind === 'table') {
+    showCreateViewModal.value = false
+    const titles: Record<StructuredWorkspaceViewType, string> = { slides: '新幻灯片', uml: '新 UML 图', table: '新表格' }
+    const result = await (await workspaceViewService()).create(kind, titles[kind], parentId)
+    if (!result.ok) throw new Error(result.error.message)
+    await refreshWorkspaceViews()
+    openWorkspaceView(result.value.id)
+    return
+  }
   const template = CREATE_VIEW_TEMPLATES[kind]
   const { parseMarkdownDocument } = await import('@/editor/markdownImport')
   const parsed = parseMarkdownDocument(template.markdown, template.title)
   showCreateViewModal.value = false
+  activeMindMapId.value = null
 
   await createAndOpenDocumentFromContent(template.title, {
     content: parsed.content,
     plainText: parsed.plainText,
+    parentId,
   })
 }
 
@@ -926,12 +1226,18 @@ function documentCharacterCount(document: DocumentSummary): number {
         :collapsed-group-ids="collapsedGroupIds"
         :collapsed-document-ids="collapsedDocumentIds"
         :dragged-article-id="draggedArticleId"
+        :dragged-mind-map-id="draggedMindMapId"
+        :dragged-workspace-view-id="draggedWorkspaceViewId"
         :drop-target-group-id="dropTargetGroupId"
         :import-file-accept="importFileAccept"
         :busy="isBusy"
+        :mind-maps="mindMaps"
+        :active-mind-map-id="activeMindMapId"
+        :workspace-views="workspaceViews"
+        :active-workspace-view-id="activeWorkspaceViewId"
         @search="openSearch"
         @agent="openAgentWorkspace"
-        @new-view="showCreateViewModal = true"
+        @new-view="openCreateView()"
         @plugins="openPluginSkillsSurface"
         @automations="openAutomationsSurface"
         @audit="openAuditSurface"
@@ -940,9 +1246,13 @@ function documentCharacterCount(document: DocumentSummary): number {
         @import="importDocumentFile"
         @file-change="handleImportFileChange"
         @create-group="createGroup"
-        @create-document="createAndOpenDocument"
+        @create-view="openCreateView"
         @toggle-group="toggleGroup"
         @select-document="selectDocument"
+        @select-mind-map="openMindMap"
+        @delete-mind-map="deleteMindMap"
+        @delete-workspace-view="deleteWorkspaceView"
+        @select-workspace-view="openWorkspaceView"
         @toggle-document="toggleDocument"
         @properties="openDocumentProperties"
         @rename="startRename"
@@ -950,10 +1260,12 @@ function documentCharacterCount(document: DocumentSummary): number {
         @restore="restoreDocument"
         @permanently-delete="permanentlyDeleteDocument"
         @article-drag-start="handleArticleDragStart"
-        @article-drag-end="handleArticleDragEnd"
-        @group-drag-over="handleGroupDragOver"
+        @article-drag-end="handleWorkspacePageDragEnd"
+        @mind-map-drag-start="handleMindMapDragStart"
+        @workspace-view-drag-start="handleWorkspaceViewDragStart"
+        @group-drag-over="handleWorkspaceGroupDragOver"
         @group-drag-leave="handleGroupDragLeave"
-        @group-drop="handleGroupDrop"
+        @group-drop="handleWorkspaceGroupDrop"
       />
       <Transition name="settings-surface" mode="out-in">
         <SettingsSurface
@@ -1017,6 +1329,11 @@ function documentCharacterCount(document: DocumentSummary): number {
             :settings="aiSettings"
             :messages="aiMessages"
             :chat-history="aiChatHistory"
+            :current-history-id="currentAiChatHistoryId"
+            :projects="aiProjects"
+            :current-project-id="currentAiProjectId"
+            :workspace-options="agentWorkspaceOptions"
+            :current-workspace-root-ids="currentAgentWorkspaceRootIds"
             :current-document-title="documentTitle"
             :knowledge-source-count="knowledgeDocumentCount"
             :prompt-placeholder="aiPromptPlaceholder"
@@ -1035,6 +1352,13 @@ function documentCharacterCount(document: DocumentSummary): number {
             @retry-message="retryAiChatMessage"
             @select-history="selectAiChatHistory"
             @delete-history="deleteAiChatHistory"
+            @select-project="aiConversation.selectProject"
+            @create-project="aiConversation.createProject"
+            @new-task="aiConversation.startTask"
+            @pin-project="aiConversation.toggleProjectPin"
+            @pin-history="aiConversation.toggleHistoryPin"
+            @rename-project="aiConversation.renameProject"
+            @update-workspace="aiConversation.updateWorkspace"
             @close="closeAiChat"
             @run="runAiAssistant"
             @stop="stopAiAssistant"
@@ -1050,6 +1374,17 @@ function documentCharacterCount(document: DocumentSummary): number {
             :class="{ 'editor-panel--behind-ai': showAiChat && aiChatFullscreen }"
             :aria-hidden="showAiChat && aiChatFullscreen"
           >
+            <MindMapWorkspace
+              v-if="activeMindMapId"
+              :mind-map-id="activeMindMapId"
+              @saved="handleMindMapSaved"
+            />
+            <WorkspaceViewWorkspace
+              v-else-if="activeWorkspaceViewId"
+              :view-id="activeWorkspaceViewId"
+              @saved="handleWorkspaceViewSaved"
+            />
+            <template v-else>
             <EditorTopbar
               v-model:title="documentTitle"
               :disabled="isLoadingDocument || Boolean(loadError)"
@@ -1080,6 +1415,7 @@ function documentCharacterCount(document: DocumentSummary): number {
               @image-error="message.error"
               @open-document="openEditorDocument"
             />
+            </template>
           </section>
         </div>
       </Transition>
@@ -1113,6 +1449,11 @@ function documentCharacterCount(document: DocumentSummary): number {
         :settings="aiSettings"
         :messages="aiMessages"
         :chat-history="aiChatHistory"
+        :current-history-id="currentAiChatHistoryId"
+        :projects="aiProjects"
+        :current-project-id="currentAiProjectId"
+        :workspace-options="agentWorkspaceOptions"
+        :current-workspace-root-ids="currentAgentWorkspaceRootIds"
         :current-document-title="documentTitle"
         :knowledge-source-count="knowledgeDocumentCount"
         :prompt-placeholder="aiPromptPlaceholder"
@@ -1131,6 +1472,13 @@ function documentCharacterCount(document: DocumentSummary): number {
         @retry-message="retryAiChatMessage"
         @select-history="selectAiChatHistory"
         @delete-history="deleteAiChatHistory"
+        @select-project="aiConversation.selectProject"
+        @create-project="aiConversation.createProject"
+        @new-task="aiConversation.startTask"
+        @pin-project="aiConversation.toggleProjectPin"
+        @pin-history="aiConversation.toggleHistoryPin"
+        @rename-project="aiConversation.renameProject"
+        @update-workspace="aiConversation.updateWorkspace"
         @close="closeAiChat"
         @run="runAiAssistant"
         @stop="stopAiAssistant"
@@ -1142,12 +1490,24 @@ function documentCharacterCount(document: DocumentSummary): number {
       />
 
       <div
-        v-if="lastAppliedPatchSet && lastAppliedAgentTask?.sessionId === currentDocumentId"
+        v-if="
+          showAgentRollbackToast &&
+          lastAppliedPatchSet &&
+          lastAppliedAgentTask?.sessionId === currentDocumentId
+        "
         class="agent-rollback-toast"
         role="status"
       >
         <span>最近一次 Agent 修改已写入，可撤销整次操作。</span>
         <NButton size="small" secondary @click="rollbackLastAgentTask">撤销</NButton>
+        <button
+          type="button"
+          class="agent-rollback-toast__close"
+          aria-label="关闭撤销提示"
+          @click="dismissAgentRollbackToast"
+        >
+          <X :size="14" />
+        </button>
       </div>
 
       <CreateViewModal

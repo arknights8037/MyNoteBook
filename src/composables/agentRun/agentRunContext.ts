@@ -16,31 +16,40 @@ export async function buildAgentRunContext(input: {
 }): Promise<{ text: string; sources: KnowledgeSource[] }> {
   const { snapshot, mode } = input
   const document = snapshot.document
+  const documentMarkdown = document.markdown || document.text
   const targetBlocks = input.targetBlocks ?? []
   if (mode === 'agent') {
     return {
       text: [
+        `当前 Agent 项目：${snapshot.workspace?.projectName ?? '未分组项目'}`,
+        `项目工作区根范围：${snapshot.workspace?.rootDocumentIds.join('、') || '未限制'}`,
         '本次 Agent 任务未预载当前文档或知识库正文。',
         '需要页面内容、选中块、文档大纲或知识库资料时，请按任务需要调用对应的只读工具。',
+        '知识库检索默认限定项目工作区；若工作区证据不足，可以显式扩大到全库搜索。',
       ].join('\n'),
       sources: [],
     }
   }
   const lines = [
+    'Agent 项目：' + (snapshot.workspace?.projectName ?? '未分组项目'),
+    '工作区根范围：' + (snapshot.workspace?.rootDocumentIds.join('、') || '未限制'),
     '标题：' + normalizeDocumentTitle(document.title),
     '标签：' + (document.tags.join('、') || '无'),
     '来源：' + (document.sourceUrl || '无'),
     '作者：' + (document.author || '无'),
     '',
-    '正文：',
-    document.text,
+    '正文（Markdown）：',
+    documentMarkdown,
   ]
   if (targetBlocks.length > 0) {
     lines.push(
       '',
       '本次需要修改的目标块：',
       ...targetBlocks.map((block, index) =>
-        [`[${index + 1}] id=${block.id} type=${block.type}`, block.text || '（空块）'].join('\n'),
+        [
+          `[${index + 1}] id=${block.id} type=${block.type}`,
+          block.markdown || block.text || '（空块）',
+        ].join('\n'),
       ),
     )
   }
@@ -58,7 +67,7 @@ export async function buildAgentRunContext(input: {
       documents: searched,
       currentDocumentId: document.id,
       currentDocumentTitle: normalizeDocumentTitle(document.title),
-      currentDocumentText: document.text,
+      currentDocumentText: documentMarkdown,
       maxSources: 5,
     })
     if (retrieval.sources.length > 0) {

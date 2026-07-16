@@ -37,6 +37,8 @@ interface AgentPatchBatchCommandResult {
 interface AgentTaskRow extends Record<string, unknown> {
   id: string
   session_id: string
+  project_id?: string | null
+  conversation_id?: string | null
   status: string
   user_instruction: string
   context_scope: string
@@ -106,8 +108,8 @@ export class TauriAgentRepository implements AgentRepository {
         `INSERT INTO agent_tasks (
           id, session_id, document_id, status, user_instruction, context_scope, model,
           current_step, error, created_at, completed_at, correlation_id, causation_id,
-          execution_policy_json, context_bundle_id, provider
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          execution_policy_json, context_bundle_id, provider, project_id, conversation_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           task.id,
           task.sessionId,
@@ -125,6 +127,8 @@ export class TauriAgentRepository implements AgentRepository {
           JSON.stringify(task.executionPolicy),
           task.contextBundleId,
           task.provider,
+          task.projectId,
+          task.conversationId,
         ],
       )
       return ok(task)
@@ -155,7 +159,7 @@ export class TauriAgentRepository implements AgentRepository {
         )
       }
       const taskRows = await this.sqlClient.select<AgentTaskRow>(
-        `SELECT id, session_id, status, user_instruction, context_scope, model,
+        `SELECT id, session_id, project_id, conversation_id, status, user_instruction, context_scope, model,
                 current_step, error, created_at, completed_at, correlation_id, causation_id,
                 execution_policy_json, context_bundle_id, provider, task_run_id
          FROM agent_tasks
@@ -213,7 +217,7 @@ export class TauriAgentRepository implements AgentRepository {
         : null
       if (lastAppliedTransaction && !lastAppliedTask) {
         const transactionTaskRows = await this.sqlClient.select<AgentTaskRow>(
-          `SELECT id, session_id, status, user_instruction, context_scope, model,
+          `SELECT id, session_id, project_id, conversation_id, status, user_instruction, context_scope, model,
                   current_step, error, created_at, completed_at, correlation_id, causation_id,
                   execution_policy_json, context_bundle_id, provider, task_run_id
            FROM agent_tasks
@@ -630,6 +634,8 @@ function mapTaskRow(row: AgentTaskRow): AgentTask {
   return {
     id: row.id,
     sessionId: row.session_id,
+    projectId: row.project_id ?? '',
+    conversationId: row.conversation_id ?? '',
     status,
     userInstruction: row.user_instruction,
     contextScope,

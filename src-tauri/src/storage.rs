@@ -934,15 +934,21 @@ mod tests {
 
     fn cleanup_test_directory(path: &Path) {
         let mut last_error = None;
-        for _ in 0..20 {
+        // Windows may keep a just-closed SQLite/WAL handle alive briefly while the
+        // async driver and virus scanner release it. Keep cleanup bounded, but give
+        // those handles enough time to drain when the full test suite runs in parallel.
+        for _ in 0..100 {
             match fs::remove_dir_all(path) {
                 Ok(()) => return,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
                 Err(error) => last_error = Some(error),
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        panic!("cleanup failed: {}", last_error.expect("cleanup error"));
+        panic!(
+            "cleanup failed after bounded Windows file-lock retries: {}",
+            last_error.expect("cleanup error")
+        );
     }
 
     #[tokio::test]

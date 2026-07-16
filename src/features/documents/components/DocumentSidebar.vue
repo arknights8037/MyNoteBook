@@ -45,6 +45,8 @@ import {
   countSidebarDocumentNodes,
 } from '@/features/documents/documentTree'
 import type { DocumentId, DocumentSummary } from '@/models/document'
+import type { MindMapSummary } from '@/models/mindMap'
+import type { StructuredWorkspaceViewSummary } from '@/models/workspaceView'
 import NButton from '@/ui/NButton.vue'
 import NButtonGroup from '@/ui/NButtonGroup.vue'
 import NIcon from '@/ui/NIcon.vue'
@@ -63,7 +65,7 @@ type BrowserEvent = InstanceType<typeof globalThis.Event>
 type BrowserDragEvent = InstanceType<typeof globalThis.DragEvent>
 type BrowserInputElement = InstanceType<typeof globalThis.HTMLInputElement>
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   documents: DocumentSummary[]
   deletedDocuments: DocumentSummary[]
   view: SidebarView
@@ -73,10 +75,19 @@ const props = defineProps<{
   collapsedGroupIds: Set<DocumentId>
   collapsedDocumentIds: Set<DocumentId>
   draggedArticleId: DocumentId | null
+  draggedMindMapId?: string | null
+  draggedWorkspaceViewId?: string | null
   dropTargetGroupId: DocumentId | null
   importFileAccept: string
   busy: boolean
-}>()
+  mindMaps: MindMapSummary[]
+  activeMindMapId: string | null
+  workspaceViews: StructuredWorkspaceViewSummary[]
+  activeWorkspaceViewId: string | null
+}>(), {
+  draggedMindMapId: null,
+  draggedWorkspaceViewId: null,
+})
 
 const emit = defineEmits<{
   search: []
@@ -91,9 +102,15 @@ const emit = defineEmits<{
   'file-change': [event: BrowserEvent]
   'create-group': []
   'create-document': [parentId: DocumentId | null]
+  'create-mind-map': [parentId: string | null]
+  'create-view': [parentId: string | null]
   'update:view': [view: SidebarView]
   'toggle-group': [groupId: DocumentId]
   'select-document': [documentId: DocumentId]
+  'select-mind-map': [mindMapId: string]
+  'delete-mind-map': [mindMapId: string]
+  'delete-workspace-view': [viewId: string]
+  'select-workspace-view': [viewId: string]
   'toggle-document': [documentId: DocumentId]
   properties: [document: DocumentSummary]
   rename: [document: DocumentSummary]
@@ -102,13 +119,56 @@ const emit = defineEmits<{
   'permanently-delete': [document: DocumentSummary]
   'article-drag-start': [event: BrowserDragEvent, document: DocumentSummary]
   'article-drag-end': []
+  'mind-map-drag-start': [event: BrowserDragEvent, mindMapId: string]
+  'workspace-view-drag-start': [event: BrowserDragEvent, viewId: string]
   'group-drag-over': [event: BrowserDragEvent, groupId: DocumentId]
   'group-drag-leave': [event: BrowserDragEvent, groupId: DocumentId]
   'group-drop': [event: BrowserDragEvent, groupId: DocumentId]
 }>()
 
 const fileInput = ref<BrowserInputElement | null>(null)
-const documentForest = computed(() => buildSidebarDocumentForest(props.documents))
+const activeDocumentId = computed(() =>
+  props.activeMindMapId || props.activeWorkspaceViewId ? '' : props.currentDocumentId,
+)
+const mindMapIds = computed(() => new Set(props.mindMaps.map((mindMap) => mindMap.id)))
+const workspaceViewIds = computed(() => new Set(props.workspaceViews.map((view) => view.id)))
+const workspaceViewTypes = computed(() => Object.fromEntries(props.workspaceViews.map((view) => [view.id, view.viewType])))
+const sidebarPages = computed<DocumentSummary[]>(() => [
+  ...props.documents,
+  ...props.mindMaps.map((mindMap) => ({
+    id: mindMap.id,
+    parentId: mindMap.parentId,
+    documentKind: 'article' as const,
+    title: mindMap.title,
+    tags: [],
+    sourceUrl: '',
+    author: '',
+    description: `${mindMap.nodeCount} 个节点`,
+    plainText: '',
+    revision: mindMap.version,
+    sortOrder: mindMap.sortOrder,
+    isDeleted: false,
+    createdAt: mindMap.createdAt,
+    updatedAt: mindMap.updatedAt,
+  })),
+  ...props.workspaceViews.map((workspaceView) => ({
+    id: workspaceView.id,
+    parentId: workspaceView.parentId,
+    documentKind: 'article' as const,
+    title: workspaceView.title,
+    tags: [],
+    sourceUrl: '',
+    author: '',
+    description: workspaceView.viewType === 'table' ? '表格' : workspaceView.viewType === 'uml' ? 'UML / 流程图' : '幻灯片',
+    plainText: '',
+    revision: workspaceView.version,
+    sortOrder: workspaceView.sortOrder,
+    isDeleted: false,
+    createdAt: workspaceView.createdAt,
+    updatedAt: workspaceView.updatedAt,
+  })),
+])
+const documentForest = computed(() => buildSidebarDocumentForest(sidebarPages.value))
 const articleGroups = computed(() =>
   props.documents.filter(
     (document) => document.documentKind === 'group' && document.parentId === null,
@@ -129,6 +189,10 @@ function getGroupArticleCount(groupId: DocumentId): number {
 }
 
 function canDropArticleIntoGroup(groupId: DocumentId): boolean {
+  const mindMap = props.mindMaps.find((item) => item.id === props.draggedMindMapId)
+  if (mindMap) return mindMap.parentId !== groupId
+  const workspaceView = props.workspaceViews.find((item) => item.id === props.draggedWorkspaceViewId)
+  if (workspaceView) return workspaceView.parentId !== groupId
   const article = props.documents.find((document) => document.id === props.draggedArticleId)
   return article?.documentKind === 'article' && article.parentId !== groupId
 }
@@ -261,16 +325,16 @@ defineExpose({ openFilePicker })
               size="tiny"
               quaternary
               circle
-              aria-label="新建页面"
+              aria-label="新建内容"
               :disabled="busy"
-              @click="emit('create-document', null)"
+              @click="emit('create-view', null)"
             >
               <template #icon
                 ><NIcon :size="14"><Plus /></NIcon
               ></template>
             </NButton>
           </template>
-          新建页面
+          新建内容
         </NTooltip>
       </NButtonGroup>
     </div>
@@ -332,16 +396,16 @@ defineExpose({ openFilePicker })
                       class="document-list__more"
                       size="tiny"
                       quaternary
-                      :aria-label="`${displayDocumentTitle(group)}中新建页面`"
+                      :aria-label="`${displayDocumentTitle(group)}中新建内容`"
                       :disabled="busy"
-                      @click.stop="emit('create-document', group.id)"
+                      @click.stop="emit('create-view', group.id)"
                     >
                       <template #icon
                         ><NIcon :size="14"><Plus /></NIcon
                       ></template>
                     </NButton>
                   </template>
-                  新建页面
+                  新建内容
                 </NTooltip>
                 <DropdownMenuRoot>
                   <DropdownMenuTrigger as-child>
@@ -360,6 +424,7 @@ defineExpose({ openFilePicker })
                   </DropdownMenuTrigger>
                   <DropdownMenuPortal>
                     <DropdownMenuContent class="document-card-menu" align="end" :side-offset="5">
+                      <DropdownMenuItem class="document-card-menu__item" @select="emit('create-view', group.id)"><Plus :size="14" />新建内容</DropdownMenuItem>
                       <DropdownMenuItem
                         class="document-card-menu__item"
                         @select="emit('properties', group)"
@@ -380,8 +445,8 @@ defineExpose({ openFilePicker })
             <ContextMenuContent class="document-card-menu" :collision-padding="8">
               <ContextMenuItem
                 class="document-card-menu__item"
-                @select="emit('create-document', group.id)"
-                ><Plus :size="14" />新建页面</ContextMenuItem
+                @select="emit('create-view', group.id)"
+                ><Plus :size="14" />新建内容</ContextMenuItem
               >
               <ContextMenuItem class="document-card-menu__item" @select="emit('properties', group)"
                 ><Info :size="14" />属性</ContextMenuItem
@@ -396,18 +461,31 @@ defineExpose({ openFilePicker })
         <SidebarDocumentTree
           v-if="!collapsedGroupIds.has(group.id)"
           :nodes="getGroupArticleNodes(group.id)"
-          :current-document-id="currentDocumentId"
+          :current-document-id="activeDocumentId"
           :collapsed-document-ids="collapsedDocumentIds"
           :dragged-article-id="draggedArticleId"
+          :dragged-mind-map-id="draggedMindMapId"
+          :dragged-workspace-view-id="draggedWorkspaceViewId"
+          :mind-map-ids="mindMapIds"
+          :workspace-view-ids="workspaceViewIds"
+          :workspace-view-types="workspaceViewTypes"
+          :active-mind-map-id="activeMindMapId"
+          :active-workspace-view-id="activeWorkspaceViewId"
           :busy="busy"
           :depth="1"
           @select="emit('select-document', $event)"
+          @select-mind-map="emit('select-mind-map', $event)"
+          @select-workspace-view="emit('select-workspace-view', $event)"
           @toggle="emit('toggle-document', $event)"
-          @create-child="emit('create-document', $event)"
+          @create-child-view="emit('create-view', $event)"
+          @delete-mind-map="emit('delete-mind-map', $event)"
+          @delete-workspace-view="emit('delete-workspace-view', $event)"
           @properties="emit('properties', $event)"
           @rename="emit('rename', $event)"
           @delete="emit('delete', $event)"
           @drag-start="emit('article-drag-start', $event.event, $event.document)"
+          @mind-map-drag-start="emit('mind-map-drag-start', $event.event, $event.mindMapId)"
+          @workspace-view-drag-start="emit('workspace-view-drag-start', $event.event, $event.viewId)"
           @drag-end="emit('article-drag-end')"
         />
       </div>
@@ -421,17 +499,30 @@ defineExpose({ openFilePicker })
 
       <SidebarDocumentTree
         :nodes="ungroupedArticleNodes"
-        :current-document-id="currentDocumentId"
+        :current-document-id="activeDocumentId"
         :collapsed-document-ids="collapsedDocumentIds"
         :dragged-article-id="draggedArticleId"
+        :dragged-mind-map-id="draggedMindMapId"
+        :dragged-workspace-view-id="draggedWorkspaceViewId"
+        :mind-map-ids="mindMapIds"
+        :workspace-view-ids="workspaceViewIds"
+        :workspace-view-types="workspaceViewTypes"
+        :active-mind-map-id="activeMindMapId"
+        :active-workspace-view-id="activeWorkspaceViewId"
         :busy="busy"
         @select="emit('select-document', $event)"
+        @select-mind-map="emit('select-mind-map', $event)"
+        @select-workspace-view="emit('select-workspace-view', $event)"
         @toggle="emit('toggle-document', $event)"
-        @create-child="emit('create-document', $event)"
+        @create-child-view="emit('create-view', $event)"
+        @delete-mind-map="emit('delete-mind-map', $event)"
+        @delete-workspace-view="emit('delete-workspace-view', $event)"
         @properties="emit('properties', $event)"
         @rename="emit('rename', $event)"
         @delete="emit('delete', $event)"
         @drag-start="emit('article-drag-start', $event.event, $event.document)"
+        @mind-map-drag-start="emit('mind-map-drag-start', $event.event, $event.mindMapId)"
+        @workspace-view-drag-start="emit('workspace-view-drag-start', $event.event, $event.viewId)"
         @drag-end="emit('article-drag-end')"
       />
 

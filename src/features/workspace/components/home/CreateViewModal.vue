@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ClipboardList, FileText, GitBranch, Presentation } from '@lucide/vue'
+import { FileText, GitBranch, Network, Presentation, Table2 } from '@lucide/vue'
 import { computed } from 'vue'
 
 import { NModal } from '@/ui'
@@ -21,9 +21,10 @@ const modalVisible = computed({
 
 const viewIcons = {
   document: FileText,
-  flowchart: GitBranch,
+  uml: GitBranch,
+  mindmap: Network,
   slides: Presentation,
-  plan: ClipboardList,
+  table: Table2,
 } as const
 </script>
 
@@ -36,7 +37,7 @@ const viewIcons = {
     :bordered="false"
   >
     <p class="create-view-modal__intro">
-      选择一种展示形式。所有视图共享同一套知识内容，可继续交给 Agent 处理。
+      选择一种工作形式。各视图独立编辑、独立保存，后续可由 Agent 在视图之间转换内容。
     </p>
     <div class="create-view-grid">
       <button

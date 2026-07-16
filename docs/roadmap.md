@@ -170,10 +170,29 @@ cargo build --release --manifest-path src-tauri/Cargo.toml --bin my-notebook
 - revision continuation 会由 Runtime 重新加载上一提案目标的 canonical provenance，把上一版 summary、完整 Patch 和授权人反馈编译为紧凑修订输入；ExecutionPolicy 只允许 `submit_document_edits`，最多 6 轮，不允许重新搜索或扩大文档范围。若反馈需要新资料，必须拒绝当前提案并创建新的完整 request。
 - 写提案 Runtime 的最低 output token 预算由 2048 提高为 16384，并同时提高 task tokenBudget；标准 result 现在保存 provider `finishReason` 与聚合 input/output/total usage。通信消费者不再把 cancelled 或缺少 result 的任务标为 completed。
 - `read_document` 改为直接从 canonical `content_json` 生成 revision、plain text 与 blocks；`submit_document_edits` 在工具调用当下验证文档已读取、目标 block 来自该次读取、同文档目标互斥且 replace 非 no-op。旧的“工具成功、结果阶段才过滤全部 Patch”路径已消除。
+- 结构化块往返缺陷已修复：此前 `read_document` 只暴露 `plainText`，导致 `tableBlock` 的 TSV 投影被模型按普通段落写回；Rust 又只比较可见文本，将“段落 → tableBlock”的同文本结构修复误判为 no-op。现在 canonical block 同时返回 `contentJson` 与 Markdown，tableBlock replacement 必须解析为唯一 Markdown pipe table，TSV/普通段落会在工具入口被拒绝，真正的表格 no-op 按 canonical Markdown 判断，Rust 允许合法的同文本结构恢复。
 - 启动恢复通过 Rust transaction 自动拒绝未绑定任何通信 request、且已被更新任务取代的孤立 `waiting_confirmation` 提案；Patch、task 和 confirmation 审计同步更新。手动 MCP orphan 清理入口已移除，脏状态不再转嫁给外部调用方。
 - 真实 stdio MCP 纵向验收使用 request `agent-request-adeff126b29459a708aec22a`。首次 task 自主检索并生成 2 文档/4 Patch 提案，`finishReason=stop`，input 84076、output 7412、total 91488 tokens，证明输出不再受 2048 限制。随后同一 request 通过 `revise_agent_request` 仅统一一处术语；revision task `53231b62-4560-4526-b89a-eb135636f8eb` 只调用一次 `submit_document_edits`，没有 `search_documents`/`read_document`，result 报告 input 18519、output 2400、total 20919 tokens。
 - 修订版依据 Agent 标准 result.summary 批准，没有由外部调用方读取知识正文复核。最终 request 为 `completed`、4 个 Patch 均 accepted；Agent 汇总为 2 篇知识内容、4 处 edit、无新增未处理项。Rust batch 生成 2 条 applied `agent_document_transactions`，覆盖 2 个不同 document，验证 migration `0017` 的 `UNIQUE(task_id, document_id)` 与多文档原子批准路径。
-- 本轮最终门禁：`pnpm test:run` 107 个测试文件通过、2 个跳过，398 项通过、5 项跳过；`pnpm typecheck`、`pnpm lint`、`pnpm build` 均通过。Rust 全量测试 52 项通过、3 项显式忽略；迁移失败恢复测试首次并发运行在 Windows 临时目录清理时遇到 error 32，业务断言已通过，增加 10 次 × 20ms 有界文件锁重试后单测与默认并发全量均通过。`git diff --check` 通过，仅有既有 LF → CRLF 工作树提示。
+- 表格结构纵向修复使用 stdio MCP request `agent-request-14aa5c63f8ff0465866efcbd`。初始 task 自主执行 `search_documents`、`read_document` 和 `submit_document_edits`，生成 1 个完整三列 Markdown 表格 Patch；同一 request 的 revision task `d4c0585e-035b-47e4-adc7-d681a920b6e2` 只调用一次 `submit_document_edits`，未重新检索或读取。调用方依据标准 result.summary（1 个目标块、恢复 1 个三列表格、保留 21 行事实、无未处理项）批准，没有读取知识正文复核；最终 request 为 `completed`、error 为空、Patch 为 `accepted`、transaction 为 `applied`，结构索引确认目标位置为 `tableBlock`，文档 revision 从 3 增至 4。
+- 表格修复后的最终门禁：`pnpm test:run` 107 个测试文件通过、2 个跳过，400 项通过、5 项跳过；`pnpm typecheck`、`pnpm lint`、`pnpm build` 均通过。Rust 全量测试 52 项通过、3 项显式忽略。首次 Rust 全量运行另发现 `storage::tests::migrates_managed_files_and_rewrites_local_metadata` 在 Windows 并发测试下清理已关闭 SQLite/WAL 临时目录时遇到 error 32；业务断言已通过，测试清理现使用最长 2 秒的有界文件锁重试，针对性测试与随后默认并发全量均通过。生产构建只保留既有 Rollup pure annotation、动态/静态 import 与 chunk size 提示。
+- C1.5-R Agent 能力 Review 后完成过程与稳定性收口：AI SDK `onStepStart` / `onStepEnd`、工具生命周期、显式只读重试和授权等待进入同一前端时间线；UI 不显示隐藏思维链，只显示可验证行动摘要。`allowedTools` 现在同时裁剪 Provider ToolSet 与 `activeTools`，`/plan`、`/research`、`/create` 使用 intent 最小工具包，continuation 只暴露 `submit_document_edits`。
+- `maxRetries` 已接入 Provider SDK；显式 `retryable` 的幂等只读工具使用有界退避并产生 retry 事件，相同工具与相同规范化参数失败后不能原样重复。`safeAuditJson` 的大结果改为合法版本化截断 envelope，不再产生无法解析的 JSON。
+- `read_document` 新增 `cursor`、`maxChars` 与 `blockIds`，默认正文摘要从 12,000 字符缩至 2,000，并返回 `truncated` / `nextCursor` / 字符预算统计；前端在本地将 canonical `contentJson` 转为 Markdown 后删除 JSON 树，模型不再同时接收整篇正文、JSON 与 Markdown 三份结构。内置工具的模型可见描述统一取自 `AgentToolRegistry`，Rust 保留独立安全 schema 并对分页参数重复校验。
+- C1.5-R 功能维护新增 Agent 项目组和可折叠工作记录管理器。项目可绑定多个文档分组作为默认作业区；默认 FTS 检索由 Rust recursive CTE 限定在根节点及后代，证据不足时模型仍可显式使用 `scope=global` 外出搜索，且只有搜索实际发现的文档可继续读取。
+- Agent 项目管理进一步改为 Codex 风格文件夹树：对话按所属项目直接嵌套，创建项目时同步填写名称和选择作业区；项目、对话均支持持久化置顶，列表按置顶优先和最近更新排序。
+- migration `0019` 增加 `agent_workspace_state`，项目、作业区与会话消息以版本化快照持久化到 SQLite；`agent_tasks` 新增 `project_id`、`conversation_id`，任务不再只靠当前文档 ID 表达归属。旧 localStorage 会话键只清除、不迁移，无工具模型的静默兼容 fallback 已删除。
+- 维护前数据库已备份为 `editor-pre-agent-workspaces-20260716-014346.db`；既有对话、任务、工具调用、请求、确认、Patch、事务和审计已清空。文档库仅保留 `Agent MVP` 根组及其 10 个后代文档，FTS 已重建且外键检查通过。
+
+## 工作空间视图一期
+
+状态：**完成（2026-07-16）**。
+
+- 空间树已统一承载文档、思维导图、幻灯片、UML/流程图和表格；所有创建入口共用类型选择器，并保留父子位置、拖放和右键删除能力。
+- 思维导图使用版本化 canonical 数据、MindElixir 人类编辑器、左右分支继承、稳定编辑焦点、非模态右键菜单、JSON/指向性文本导出和 Agent 读取工具。
+- 幻灯片采用受限模板与 slot；UML 采用受限 Mermaid flowchart 与语义节点修改；表格复用 rows 和 `TableField`，独立视图使用稳定的轻量编辑器。
+- 结构化视图具备 repository、service、revision history、验证器和语义 operation schema。幻灯片、UML、表格的 Agent read/create/edit/convert 工具尚未暴露，作为后续增量，不进行实时共享数据映射。
+- 详细边界见 `docs/workspace-views.md`。
 
 ## C2：Research 完整闭环
 

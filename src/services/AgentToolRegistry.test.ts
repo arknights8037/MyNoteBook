@@ -14,7 +14,12 @@ import {
 
 describe('AgentToolRegistry', () => {
   it('only exposes the P0 allowlist and keeps writes confirmation-gated', () => {
-    expect(AGENT_TOOL_REGISTRY).toHaveLength(21)
+    expect(AGENT_TOOL_REGISTRY).toHaveLength(23)
+    expect(getAgentToolDefinition('read_mind_map')).toMatchObject({
+      risk: 'read',
+      requiresConfirmation: false,
+      tags: ['knowledge.read'],
+    })
     expect(getAgentToolDefinition('read_skill_file')).toMatchObject({
       risk: 'read',
       requiresConfirmation: false,
@@ -60,6 +65,15 @@ describe('AgentToolRegistry', () => {
       requiresConfirmation: true,
       maxCallsPerTask: 2,
     })
+  })
+
+  it('keeps every tool name and model description unique and non-empty', () => {
+    expect(new Set(AGENT_TOOL_REGISTRY.map((tool) => tool.name)).size).toBe(
+      AGENT_TOOL_REGISTRY.length,
+    )
+    for (const tool of AGENT_TOOL_REGISTRY) {
+      expect(tool.description.trim().length, tool.name).toBeGreaterThan(12)
+    }
   })
 
   it('defines bounded execution limits before a tool loop is enabled', () => {

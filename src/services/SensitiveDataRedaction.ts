@@ -33,7 +33,13 @@ export function redactSensitiveValue(value: unknown): unknown {
 
 export function safeAuditJson(value: unknown, maxChars = 24_000): string {
   const json = JSON.stringify(redactSensitiveValue(value)) ?? 'null'
-  return json.length > maxChars ? `${json.slice(0, maxChars)}…` : json
+  if (json.length <= maxChars) return json
+  return JSON.stringify({
+    version: 1,
+    truncated: true,
+    originalChars: json.length,
+    preview: json.slice(0, Math.max(0, maxChars - 160)),
+  })
 }
 
 export function safeErrorMessage(error: unknown, maxChars = 4_000): string {

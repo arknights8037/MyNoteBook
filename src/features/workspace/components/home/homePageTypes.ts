@@ -6,6 +6,7 @@ import type { SelectedBlock } from '@/models/agent'
 export interface EditorShellExpose {
   getJSON: () => TiptapDocumentJson | undefined
   getText: () => string
+  getDocumentMarkdown: () => string
   getCurrentDocumentBlocks: () => SelectedBlock[]
   getSelectedBlocks: () => SelectedBlock[]
   hasBlockSelection: () => boolean

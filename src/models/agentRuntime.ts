@@ -27,6 +27,26 @@ export type AgentRuntimeViewPhase =
   | 'failed'
   | 'cancelled'
 
+export type AgentTimelineEventKind =
+  | 'status'
+  | 'step_started'
+  | 'step_completed'
+  | 'tool'
+  | 'retry'
+
+export type AgentTimelineEventStatus = 'running' | 'completed' | 'failed'
+
+export interface AgentTimelineEvent {
+  id: string
+  kind: AgentTimelineEventKind
+  status: AgentTimelineEventStatus
+  detail: string
+  occurredAt: number
+  completedAt: number | null
+  stepNumber?: number
+  toolCallId?: string
+}
+
 export interface AgentRuntimeViewState {
   status: AgentRuntimeViewStatus
   phase: AgentRuntimeViewPhase
@@ -35,6 +55,7 @@ export interface AgentRuntimeViewState {
   completedAt: number | null
   rounds: number
   toolCalls: AgentToolCall[]
+  timelineEvents: AgentTimelineEvent[]
   authorizationRequest: AgentAuthorizationRequest | null
 }
 
@@ -47,6 +68,7 @@ export function createIdleAgentRuntimeState(): AgentRuntimeViewState {
     completedAt: null,
     rounds: 0,
     toolCalls: [],
+    timelineEvents: [],
     authorizationRequest: null,
   }
 }

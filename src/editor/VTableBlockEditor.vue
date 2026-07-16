@@ -98,6 +98,7 @@ const themeObserver = shallowRef<InstanceType<typeof globalThis.MutationObserver
 const listenerIds = ref<number[]>([])
 const initError = ref('')
 const isApplyingTableUpdate = ref(false)
+const isUnmounting = ref(false)
 const isTableActive = ref(false)
 const searchQuery = ref('')
 const activeMatchIndex = ref(-1)
@@ -197,6 +198,7 @@ watch(
 )
 
 onMounted(() => {
+  isUnmounting.value = false
   globalThis.document.addEventListener('pointerdown', handleDocumentPointerDown)
   themeObserver.value = new globalThis.MutationObserver(() => refreshTableOption(tableRows.value))
   themeObserver.value.observe(globalThis.document.documentElement, {
@@ -207,6 +209,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  isUnmounting.value = true
   globalThis.document.removeEventListener('pointerdown', handleDocumentPointerDown)
   themeObserver.value?.disconnect()
   themeObserver.value = null
@@ -272,13 +275,17 @@ function releaseVTable(): void {
   resizeObserver.value?.disconnect()
   resizeObserver.value = null
 
+  const instance = table.value
+  table.value = null
+  // VTable's editors keep document-level completion handlers. Cancel the active editor before
+  // release clears internalProps, otherwise a late blur/pointer event calls getElement() on null.
+  instance?.cancelEditCell()
   for (const id of listenerIds.value) {
-    table.value?.off(id)
+    instance?.off(id)
   }
   listenerIds.value = []
 
-  table.value?.release()
-  table.value = null
+  instance?.release()
 }
 
 function refreshTableOption(rows: string[][], fields = tableFields.value): void {
@@ -294,10 +301,19 @@ function refreshTableOption(rows: string[][], fields = tableFields.value): void 
 }
 
 function requestTableResize(): void {
-  if (resizeFrame !== 0) return
+  if (resizeFrame !== 0 || isUnmounting.value) return
   resizeFrame = globalThis.requestAnimationFrame(() => {
     resizeFrame = 0
-    table.value?.resize()
+    const instance = table.value
+    if (
+      isUnmounting.value ||
+      !instance ||
+      !container.value?.isConnected ||
+      !blockRoot.value?.isConnected
+    ) {
+      return
+    }
+    instance.resize()
   })
 }
 
@@ -419,8 +435,17 @@ function focusTableCell(address: TableCellAddress): void {
   activeCell.value = address
   selectedRange.value = { start: { ...address }, end: { ...address } }
   globalThis.requestAnimationFrame(() => {
-    table.value?.selectCell(address.column, address.row, false, false, true)
-    table.value?.scrollToCell({ col: address.column, row: address.row })
+    const instance = table.value
+    if (
+      isUnmounting.value ||
+      !instance ||
+      !container.value?.isConnected ||
+      !blockRoot.value?.isConnected
+    ) {
+      return
+    }
+    instance.selectCell(address.column, address.row, false, false, true)
+    instance.scrollToCell({ col: address.column, row: address.row })
   })
 }
 

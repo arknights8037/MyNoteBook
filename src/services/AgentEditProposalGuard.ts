@@ -1,4 +1,5 @@
 import type { SelectedBlock } from '@/models/agent'
+import { parseMarkdownDocument } from '@/editor/markdownImport'
 
 export type AgentDocumentEdit =
   | {
@@ -55,6 +56,7 @@ export function parseReadDocumentProvenance(
       id: item.id,
       type: item.blockType,
       text: item.plainText,
+      ...(typeof item.markdown === 'string' ? { markdown: item.markdown } : {}),
       index: item.blockIndex as number,
     })
   }
@@ -88,10 +90,23 @@ export function validateDocumentEditProvenance(
         )
       }
       if (edit.kind === 'replace') {
+        const targetBlocks = edit.targetBlockIds.map((blockId) => blocksById.get(blockId)!)
+        if (targetBlocks.length === 1 && targetBlocks[0]?.type === 'tableBlock') {
+          const parsedBlocks = parseMarkdownDocument(edit.content, 'Agent table edit').content.content ?? []
+          if (parsedBlocks.length !== 1 || parsedBlocks[0]?.type !== 'tableBlock') {
+            throw new Error(
+              `文档 ${document.documentId} 的 tableBlock 必须使用 Markdown pipe table 完整替换；TSV、空格对齐文本或普通段落不保留表格结构。`,
+            )
+          }
+        }
         const before = edit.targetBlockIds
           .map((blockId) => blocksById.get(blockId)?.text ?? '')
           .join('\n\n')
-        if (normalizeText(before) === normalizeText(edit.content)) {
+        const structuralBefore =
+          targetBlocks.length === 1 && targetBlocks[0]?.markdown
+            ? targetBlocks[0].markdown
+            : before
+        if (normalizeText(structuralBefore) === normalizeText(edit.content)) {
           throw new Error(
             `文档 ${document.documentId} 的 replace 内容与 canonical 目标块相同；请删除 no-op edit 后重新提交完整提案。`,
           )

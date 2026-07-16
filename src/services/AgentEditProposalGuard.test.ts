@@ -55,4 +55,56 @@ describe('AgentEditProposalGuard', () => {
       validateDocumentEditProvenance(proposal('doc-1', ['block-1'], 'after'), [readable]),
     ).not.toThrow()
   })
+
+  it('requires a tableBlock replacement to remain a Markdown table', () => {
+    const tableDocument = {
+      documentId: 'doc-table',
+      documentTitle: 'Tools',
+      expectedVersion: 4,
+      blocks: [
+        {
+          id: 'table-1',
+          type: 'tableBlock',
+          text: '工具\t风险\nread_document\tread',
+          markdown: '| 工具 | 风险 |\n| --- | --- |\n| read_document | read |',
+          index: 0,
+        },
+      ],
+    }
+    const proposal = (content: string) => ({
+      documents: [
+        {
+          documentId: 'doc-table',
+          edits: [
+            {
+              kind: 'replace' as const,
+              targetBlockIds: ['table-1'],
+              content,
+              reason: '更新工具表',
+            },
+          ],
+        },
+      ],
+      summary: '更新表格',
+    })
+
+    expect(() =>
+      validateDocumentEditProvenance(
+        proposal('工具\t风险\nread_document\twrite proposal'),
+        [tableDocument],
+      ),
+    ).toThrow('Markdown pipe table')
+    expect(() =>
+      validateDocumentEditProvenance(
+        proposal('| 工具 | 风险 |\n| --- | --- |\n| read_document | write proposal |'),
+        [tableDocument],
+      ),
+    ).not.toThrow()
+    expect(() =>
+      validateDocumentEditProvenance(
+        proposal('| 工具 | 风险 |\n| --- | --- |\n| read_document | read |'),
+        [tableDocument],
+      ),
+    ).toThrow('no-op')
+  })
 })

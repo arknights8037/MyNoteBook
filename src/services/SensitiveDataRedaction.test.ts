@@ -35,4 +35,12 @@ describe('SensitiveDataRedaction', () => {
     value.self = value
     expect(safeAuditJson(value)).toBe('{"apiKey":"[REDACTED]","self":"[CIRCULAR]"}')
   })
+
+  it('keeps oversized audit payloads as valid versioned JSON', () => {
+    const parsed = JSON.parse(safeAuditJson({ content: 'x'.repeat(1_000) }, 240))
+
+    expect(parsed).toMatchObject({ version: 1, truncated: true })
+    expect(parsed.originalChars).toBeGreaterThan(1_000)
+    expect(parsed.preview).toEqual(expect.any(String))
+  })
 })

@@ -127,6 +127,36 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0018_add_agent_request_revision.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 19,
+            description: "add_agent_workspace_state",
+            sql: include_str!("../migrations/0019_add_agent_workspace_state.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 20,
+            description: "add_mind_maps",
+            sql: include_str!("../migrations/0020_add_mind_maps.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 21,
+            description: "add_workspace_views",
+            sql: include_str!("../migrations/0021_add_workspace_views.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 22,
+            description: "add_mind_map_tree_position",
+            sql: include_str!("../migrations/0022_add_mind_map_tree_position.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 23,
+            description: "add_workspace_view_tree_position",
+            sql: include_str!("../migrations/0023_add_workspace_view_tree_position.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

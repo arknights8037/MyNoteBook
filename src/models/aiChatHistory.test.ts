@@ -1,118 +1,119 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { AI_CHAT_HISTORY_LIMIT, loadAiChatHistory, saveAiChatHistory } from './aiChatHistory'
+import {
+  AI_CHAT_HISTORY_LIMIT,
+  DEFAULT_AGENT_PROJECT_ID,
+  normalizeAgentWorkspaceHistory,
+  purgeLegacyAgentHistoryStorage,
+  UNGROUPED_AGENT_PROJECT_ID,
+} from './aiChatHistory'
 
-describe('AI chat history', () => {
+describe('Agent workspace history model', () => {
   beforeEach(() => globalThis.localStorage.clear())
 
-  it('persists and restores chat history', () => {
-    saveAiChatHistory([
-      {
-        id: 'history-1',
-        title: '整理摘要',
-        updatedAt: 100,
-        messageCount: 2,
-        provider: 'deepseek',
-        model: 'deepseek-v4-flash',
-        messages: [
-          {
-            id: 'message-1',
-            role: 'user',
-            mode: 'ask',
-            content: '整理一下',
-            status: 'done',
-          },
-          {
-            id: 'message-2',
-            role: 'assistant',
-            mode: 'ask',
-            content: '好的',
-            reasoningContent: '先看结构',
-            status: 'done',
-          },
-        ],
-      },
-    ])
-
-    expect(loadAiChatHistory()).toMatchObject([
-      {
-        id: 'history-1',
-        title: '整理摘要',
-        messageCount: 2,
-        messages: [{ content: '整理一下' }, { content: '好的', reasoningContent: '先看结构' }],
-      },
-    ])
-  })
-
-  it('normalizes invalid values and supports legacy array storage', () => {
-    globalThis.localStorage.setItem(
-      'my-notebook:ai-chat-history',
-      JSON.stringify([
+  it('normalizes the versioned project and conversation state', () => {
+    const state = normalizeAgentWorkspaceHistory({
+      version: 2,
+      projects: [
         {
-          id: 'legacy',
-          title: '',
-          updatedAt: Number.NaN,
-          messages: [
-            { id: 'ok', role: 'assistant', mode: 'ask', content: 'answer', status: 'streaming' },
-            { id: 'bad', role: 'system', mode: 'ask', content: 'ignored' },
-          ],
+          id: 'project-1',
+          name: 'Research',
+          workspaceRootIds: ['group-1', 'group-1'],
+          pinnedAt: 30,
+          createdAt: 10,
+          updatedAt: 20,
         },
-      ]),
-    )
+      ],
+      activeProjectId: 'project-1',
+      items: [historyItem('history-1', 'project-1')],
+    })
 
-    expect(loadAiChatHistory()).toMatchObject([
-      {
-        id: 'legacy',
-        title: '未命名对话',
-        messageCount: 1,
-        messages: [{ id: 'ok', status: 'done' }],
-      },
-    ])
+    expect(state.activeProjectId).toBe('project-1')
+    expect(state.projects[0]?.workspaceRootIds).toEqual(['group-1'])
+    expect(state.projects[0]?.pinnedAt).toBe(30)
+    expect(state.items[0]).toMatchObject({
+      id: 'history-1',
+      projectId: 'project-1',
+      messageCount: 1,
+    })
   })
 
-  it('limits persisted history size', () => {
-    saveAiChatHistory(
-      Array.from({ length: AI_CHAT_HISTORY_LIMIT + 5 }, (_, index) => ({
-        id: `history-${index}`,
-        title: `记录 ${index}`,
-        updatedAt: index,
-        messageCount: 1,
-        provider: 'openai',
-        model: 'gpt',
-        messages: [
-          {
-            id: `message-${index}`,
-            role: 'user' as const,
-            mode: 'ask' as const,
-            content: `问题 ${index}`,
-            status: 'done' as const,
-          },
-        ],
-      })),
-    )
+  it('rejects unversioned legacy arrays instead of migrating them', () => {
+    const state = normalizeAgentWorkspaceHistory([historyItem('legacy', 'project-1')])
 
-    expect(loadAiChatHistory()).toHaveLength(AI_CHAT_HISTORY_LIMIT)
+    expect(state.activeProjectId).toBe(DEFAULT_AGENT_PROJECT_ID)
+    expect(state.items).toEqual([])
   })
 
-  it('restores agent and auto mode messages', () => {
-    saveAiChatHistory([
-      {
-        id: 'agent-history',
-        title: '知识整理',
-        updatedAt: 100,
-        messageCount: 2,
-        provider: 'openai',
-        model: 'gpt',
-        messages: [
-          { id: 'auto', role: 'user', mode: 'auto', content: '整理资料', status: 'done' },
-          { id: 'agent', role: 'assistant', mode: 'agent', content: '整理结果', status: 'done' },
-        ],
-      },
-    ])
+  it('purges both legacy local history keys', () => {
+    localStorage.setItem('my-notebook:ai-chat-history', 'legacy')
+    localStorage.setItem('my-notebook:agent-workspace-history:v2', 'legacy-v2')
 
-    expect(loadAiChatHistory()[0]?.messages.map((message) => message.mode)).toEqual([
-      'auto',
-      'agent',
-    ])
+    purgeLegacyAgentHistoryStorage()
+
+    expect(localStorage.length).toBe(0)
+  })
+
+  it('limits conversations and removes records for unknown projects', () => {
+    const state = normalizeAgentWorkspaceHistory({
+      version: 2,
+      projects: [project('project-1')],
+      activeProjectId: 'project-1',
+      items: [
+        ...Array.from({ length: AI_CHAT_HISTORY_LIMIT + 5 }, (_, index) =>
+          historyItem(`history-${index}`, 'project-1'),
+        ),
+        historyItem('orphan', 'missing-project'),
+      ],
+    })
+
+    expect(state.items).toHaveLength(AI_CHAT_HISTORY_LIMIT)
+    expect(state.items.some((item) => item.id === 'orphan')).toBe(false)
+  })
+
+  it('preserves ungrouped tasks without creating a synthetic project', () => {
+    const state = normalizeAgentWorkspaceHistory({
+      version: 2,
+      projects: [project('project-1')],
+      activeProjectId: UNGROUPED_AGENT_PROJECT_ID,
+      items: [historyItem('loose-task', UNGROUPED_AGENT_PROJECT_ID)],
+    })
+
+    expect(state.activeProjectId).toBe(UNGROUPED_AGENT_PROJECT_ID)
+    expect(state.projects).toHaveLength(1)
+    expect(state.items[0]?.projectId).toBe(UNGROUPED_AGENT_PROJECT_ID)
   })
 })
+
+function project(id: string) {
+  return {
+    id,
+    name: 'Project',
+    workspaceRootIds: [],
+    pinnedAt: null,
+    createdAt: 1,
+    updatedAt: 1,
+  }
+}
+
+function historyItem(id: string, projectId: string) {
+  return {
+    id,
+    projectId,
+    title: 'Conversation',
+    updatedAt: 1,
+    messageCount: 1,
+    provider: 'openai',
+    model: 'gpt',
+    pinnedAt: null,
+    messages: [
+      {
+        id: `${id}-message`,
+        role: 'user',
+        mode: 'agent',
+        content: 'work',
+        status: 'done',
+      },
+    ],
+  }
+}

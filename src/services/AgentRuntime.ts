@@ -1,6 +1,6 @@
 import type { AgentToolCall } from '@/models/agentTool'
 import type { AiSettings } from '@/models/ai'
-import type { AgentAuthorizationRequest } from '@/models/agentRuntime'
+import type { AgentAuthorizationRequest, AgentTimelineEvent } from '@/models/agentRuntime'
 import type { AgentRunIntent } from '@/models/agentSlashCommand'
 import type { AgentExternalTool } from '@/models/mcp'
 import type { ExecutionPolicy } from '@/models/executionPolicy'
@@ -26,6 +26,7 @@ export interface AgentProgressUpdate {
   toolName?: string
   detail: string
   toolCall?: AgentToolCall
+  timelineEvent?: AgentTimelineEvent
 }
 
 export interface AgentRuntimeInput {

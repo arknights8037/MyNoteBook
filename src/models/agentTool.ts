@@ -11,6 +11,8 @@ export interface AgentToolDefinition {
     | 'search_documents'
     | 'list_document_groups'
     | 'read_document'
+    | 'list_mind_maps'
+    | 'read_mind_map'
     | 'find_blocks_by_regex'
     | 'read_skill_file'
     | 'request_authorizer_input'

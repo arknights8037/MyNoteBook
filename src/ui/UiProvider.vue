@@ -13,7 +13,7 @@ import {
   ToastViewport,
   TooltipProvider,
 } from 'reka-ui'
-import { provide, ref } from 'vue'
+import { onBeforeUnmount, provide, ref } from 'vue'
 
 import {
   dialogServiceKey,
@@ -34,12 +34,26 @@ const messages = ref<ToastMessage[]>([])
 const alertOpen = ref(false)
 const alertOptions = ref<DialogOptions | null>(null)
 let nextToastId = 0
+const toastTimers = new Map<number, ReturnType<typeof globalThis.setTimeout>>()
+const MAX_VISIBLE_TOASTS = 4
+const TOAST_LIFETIME_MS = 3200
 
 function notify(type: ToastMessage['type'], text: string): void {
-  messages.value.push({ id: ++nextToastId, text, type, open: true })
+  const id = ++nextToastId
+  messages.value.push({ id, text, type, open: true })
+  while (messages.value.length > MAX_VISIBLE_TOASTS) {
+    removeToast(messages.value[0]!.id)
+  }
+  toastTimers.set(
+    id,
+    globalThis.setTimeout(() => removeToast(id), TOAST_LIFETIME_MS),
+  )
 }
 
 function removeToast(id: number): void {
+  const timer = toastTimers.get(id)
+  if (timer) globalThis.clearTimeout(timer)
+  toastTimers.delete(id)
   messages.value = messages.value.filter((message) => message.id !== id)
 }
 
@@ -50,6 +64,9 @@ const messageService: MessageService = {
 
 const dialogService: DialogService = {
   warning: (options) => {
+    if (alertOptions.value && alertOptions.value !== options) {
+      alertOptions.value.onClose?.()
+    }
     alertOptions.value = options
     alertOpen.value = true
   },
@@ -71,6 +88,13 @@ function resolveAlert(positive: boolean): void {
   if (positive) options?.onPositiveClick?.()
   else options?.onNegativeClick?.()
 }
+
+onBeforeUnmount(() => {
+  for (const timer of toastTimers.values()) globalThis.clearTimeout(timer)
+  toastTimers.clear()
+  alertOptions.value?.onClose?.()
+  alertOptions.value = null
+})
 
 provide(messageServiceKey, messageService)
 provide(dialogServiceKey, dialogService)

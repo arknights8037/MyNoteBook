@@ -122,6 +122,9 @@ importers:
       mermaid:
         specifier: ^11.16.0
         version: 11.16.0
+      mind-elixir:
+        specifier: 5.14.0
+        version: 5.14.0
       reka-ui:
         specifier: ^2.10.1
         version: 2.10.1(vue@3.5.38(typescript@6.0.3))
@@ -2308,6 +2311,9 @@ packages:
   micromatch@4.0.8:
     resolution: {integrity: sha512-PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA==}
     engines: {node: '>=8.6'}
+
+  mind-elixir@5.14.0:
+    resolution: {integrity: sha512-V1PHE6TcVvbWMku8Jgo00LV6/vFLC0StAVccPqRT3GmaQsj93SFMviRoDHEjv0M0Yn8n10gktxNWCDUWdgRY0Q==}
 
   minimatch@10.2.5:
     resolution: {integrity: sha512-MULkVLfKGYDFYejP07QOurDLLQpcjk7Fw+7jXS2R2czRQzR56yHRveU5NDJEOviH+hETZKSkIk5c+T23GjFUMg==}
@@ -5104,6 +5110,8 @@ snapshots:
     dependencies:
       braces: 3.0.3
       picomatch: 2.3.2
+
+  mind-elixir@5.14.0: {}
 
   minimatch@10.2.5:
     dependencies:

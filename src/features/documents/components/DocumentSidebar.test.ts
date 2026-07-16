@@ -29,9 +29,9 @@ describe('DocumentSidebar', () => {
     ])
 
     expect(wrapper.text()).toContain('2 个页面')
-    await wrapper.get('button[aria-label="group中新建页面"]').trigger('click')
+    await wrapper.get('button[aria-label="group中新建内容"]').trigger('click')
 
-    expect(wrapper.emitted('create-document')).toContainEqual(['group'])
+    expect(wrapper.emitted('create-view')).toContainEqual(['group'])
   })
 
   it('owns the file input and exposes a narrow picker command', () => {
@@ -62,6 +62,72 @@ describe('DocumentSidebar', () => {
     expect(wrapper.emitted('new-view')).toHaveLength(1)
     expect(wrapper.emitted('plugins')).toHaveLength(1)
   })
+
+  it('renders persisted mind-map views in the workspace and opens them by id', async () => {
+    const wrapper = createWrapper([])
+    await wrapper.setProps({
+      mindMaps: [
+        {
+          id: 'map-1',
+          parentId: null,
+          sortOrder: 0,
+          title: '产品规划',
+          rootNodeId: 'root',
+          nodeCount: 4,
+          version: 2,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+      activeMindMapId: 'map-1',
+    })
+
+    expect(wrapper.get('.document-list__item--mindmap').text()).toContain('产品规划')
+    expect(wrapper.get('.document-list__item--mindmap').classes()).toContain(
+      'document-list__item--active',
+    )
+    await wrapper.get('.document-list__item--mindmap .document-list__select').trigger('click')
+    expect(wrapper.emitted('select-mind-map')).toEqual([['map-1']])
+  })
+
+  it('places mind maps in the same hierarchy as documents and groups', async () => {
+    const wrapper = createWrapper([
+      summary('group', null, 'group'),
+      summary('child-document', 'map-1'),
+    ])
+    await wrapper.setProps({
+      mindMaps: [{
+        id: 'map-1', parentId: 'group', sortOrder: 0, title: '研究地图', rootNodeId: 'root',
+        nodeCount: 3, version: 1, createdAt: 1, updatedAt: 2,
+      }],
+    })
+
+    const rows = wrapper.findAll('.document-list__item--tree')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.text()).toContain('研究地图')
+    expect(rows[0]?.attributes('style')).toContain('--document-tree-depth: 1')
+    expect(rows[1]?.attributes('style')).toContain('--document-tree-depth: 2')
+  })
+
+  it('places tables in the same hierarchy and gives them the shared content menu', async () => {
+    const wrapper = createWrapper([summary('group', null, 'group')])
+    await wrapper.setProps({
+      workspaceViews: [{
+        id: 'table-1', parentId: 'group', sortOrder: 0, viewType: 'table', title: '项目表',
+        version: 1, createdAt: 1, updatedAt: 2,
+      }],
+      activeWorkspaceViewId: 'table-1',
+    })
+
+    const row = wrapper.get('.document-list__item--workspace-view')
+    expect(row.text()).toContain('项目表')
+    expect(row.text()).toContain('表格')
+    await row.get('.document-list__select').trigger('click')
+    await row.get('button[aria-label="项目表中新建内容"]').trigger('click')
+
+    expect(wrapper.emitted('select-workspace-view')).toEqual([['table-1']])
+    expect(wrapper.emitted('create-view')).toContainEqual(['table-1'])
+  })
 })
 
 function createWrapper(documents: DocumentSummary[], view: 'documents' | 'trash' = 'documents') {
@@ -79,6 +145,10 @@ function createWrapper(documents: DocumentSummary[], view: 'documents' | 'trash'
       dropTargetGroupId: null,
       importFileAccept: '.md',
       busy: false,
+      mindMaps: [],
+      activeMindMapId: null,
+      workspaceViews: [],
+      activeWorkspaceViewId: null,
     },
     global: { stubs: menuStubs },
   })

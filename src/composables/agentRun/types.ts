@@ -16,6 +16,7 @@ export interface AgentRunDocumentSnapshot {
   sourceUrl: string
   author: string
   text: string
+  markdown: string
   revision: number | null
   blocks: SelectedBlock[]
   selectedBlocks: SelectedBlock[]
@@ -53,6 +54,13 @@ export interface UseAgentRunOptions {
   notify: { success: (message: string) => void; error: (message: string) => void }
   document: AgentRunDocumentAdapter
   patches: AgentRunPatchWorkflow
+  workspace?: {
+    projectId: Readonly<Ref<string>>
+    projectName: Readonly<Ref<string>>
+    rootDocumentIds: Readonly<Ref<string[]>>
+    conversationId: Readonly<Ref<string | null>>
+    ensureConversationId: () => string
+  }
 }
 
 export interface AgentRunContinuation {
@@ -67,4 +75,10 @@ export interface AgentRunSnapshot {
   requestedMode: AiChatMode
   settings: AiSettings
   document: AgentRunDocumentSnapshot
+  workspace?: {
+    projectId: string
+    projectName: string
+    rootDocumentIds: string[]
+    conversationId: string
+  }
 }

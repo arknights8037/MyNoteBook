@@ -29,6 +29,9 @@ import { compileContextBundle } from '@/models/contextBundle'
 import { auditConfiguredModelParameters } from '@/models/providerCapabilities'
 import { prepareAgentRunExecution } from '@/services/AgentRunExecution'
 import { resolveAgentOutputTokenLimit } from '@/services/AgentToolRegistry'
+import { exportTiptapBlockToMarkdown } from '@/editor/documentExport'
+import { createMindMapService } from '@/app/composition/mindMapServiceFactory'
+import type { MindMapService } from '@/services/MindMapService'
 
 export type {
   AgentRunDocumentAdapter,
@@ -40,6 +43,8 @@ export type {
 
 export function useAgentRun(options: UseAgentRunOptions) {
   let abortController: AbortController | null = null
+  let mindMapService: Promise<MindMapService> | null = null
+  const mapsControl = () => (mindMapService ??= createMindMapService())
   let pendingAuthorization: {
     request: AgentAuthorizationRequest
     resolve: (answer: string) => void
@@ -68,6 +73,8 @@ export function useAgentRun(options: UseAgentRunOptions) {
     const originalPrompt = prompt
     const slashCommand = resolveAgentSlashCommand(originalPrompt)
     if (slashCommand) options.mode.value = slashCommand.command.mode
+    const conversationId =
+      options.workspace?.ensureConversationId() ?? options.workspace?.conversationId.value ?? ''
 
     // Capture before the first await so navigation and settings edits cannot retarget this run.
     const snapshot = captureAgentRunSnapshot({
@@ -75,6 +82,12 @@ export function useAgentRun(options: UseAgentRunOptions) {
       requestedMode: slashCommand?.command.mode ?? options.mode.value,
       settings: options.settings.value,
       document: options.document.captureSnapshot(),
+      workspace: {
+        projectId: options.workspace?.projectId.value ?? '',
+        projectName: options.workspace?.projectName.value ?? '未分组 Agent 项目',
+        rootDocumentIds: [...(options.workspace?.rootDocumentIds.value ?? [])],
+        conversationId,
+      },
     })
     if (!(await options.ensureSecretLoaded())) {
       fail('密钥库在 3 秒内未就绪，请稍后重试或在 AI 设置中重新填写 API Key。')
@@ -91,7 +104,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
       { runAiMarkdownCompletion },
       { buildAiSystemPrompt },
       { runAgentToolLoop },
-      { executeAgentTool },
+      { executeAgentTool, prepareReadDocumentObservation },
       { executeRustAgentTool },
       { loadEnabledSkillPrompt },
       { formatAgentRunSummary, resolveAgentRunResult },
@@ -111,6 +124,12 @@ export function useAgentRun(options: UseAgentRunOptions) {
     let agentRounds = 0
     let agentToolCallCount = 0
     let agentDiagnostics: Pick<AgentRuntimeResult, 'finishReason' | 'usage'> = {}
+    const workspaceDocumentIds = resolveWorkspaceDocumentIds(
+      snapshot.document.documents,
+      snapshot.workspace?.rootDocumentIds ?? [],
+    )
+    workspaceDocumentIds.add(snapshot.document.id)
+    const discoveredDocumentIds = new Set(workspaceDocumentIds)
     const readableDocuments = new Map<
       string,
       {
@@ -120,9 +139,8 @@ export function useAgentRun(options: UseAgentRunOptions) {
         blocks: Array<{ id: string; type: string; text: string; index: number }>
       }
     >()
-    const { parseReadDocumentProvenance, validateDocumentEditProvenance } = await import(
-      '@/services/AgentEditProposalGuard'
-    )
+    const { parseReadDocumentProvenance, validateDocumentEditProvenance } =
+      await import('@/services/AgentEditProposalGuard')
     const taskApprovedMcpServerIds = new Set<string>()
 
     if (snapshot.requestedMode === 'auto') {
@@ -136,11 +154,32 @@ export function useAgentRun(options: UseAgentRunOptions) {
         return
       }
       snapshot.document.revision = flushResult.revision ?? snapshot.document.revision
+      if (snapshot.document.blocks.length === 0 && snapshot.document.id) {
+        const canonicalBlocks = await options.document.listDocumentBlocks(snapshot.document.id)
+        snapshot.document.blocks = canonicalBlocks.map((block) => ({
+          id: block.id,
+          type: block.type,
+          text: block.plainText,
+          markdown: markdownFromCanonicalBlock(block.contentJson, block.plainText),
+          index: block.index,
+        }))
+        if (!snapshot.document.text) {
+          snapshot.document.text = canonicalBlocks.map((block) => block.plainText).join('\n')
+        }
+        if (!snapshot.document.markdown) {
+          snapshot.document.markdown = snapshot.document.blocks
+            .map((block) => block.markdown || block.text)
+            .filter(Boolean)
+            .join('\n\n')
+        }
+        snapshot.document.revision ??= canonicalBlocks[0]?.documentRevision ?? null
+      }
       editPlan = createAgentEditPlan({ snapshot, mode, createId: options.createId })
       if (!editPlan) {
         fail('当前文档还没有可修改的块或版本信息。')
         return
       }
+      restrictToolsForIntent(editPlan.task.executionPolicy, agentIntent)
       if (continuation) {
         editPlan.task.causationId = continuation.previousTaskId
         editPlan.task.executionPolicy.allowedTools = ['submit_document_edits']
@@ -187,20 +226,23 @@ export function useAgentRun(options: UseAgentRunOptions) {
       completedAt: null,
       rounds: 0,
       toolCalls: [],
+      timelineEvents: [],
       authorizationRequest: null,
     }
 
     try {
       if (continuation) {
-        for (const documentId of new Set(
-          continuation.patches.map((patch) => patch.documentId),
-        )) {
-          const toolResult = await executeRustAgentTool(
+        for (const documentId of new Set(continuation.patches.map((patch) => patch.documentId))) {
+          const targetBlockIds = continuation.patches
+            .filter((patch) => patch.documentId === documentId)
+            .flatMap((patch) => patch.targetBlockIds)
+          const rawToolResult = await executeRustAgentTool(
             'read_document',
-            { documentId },
+            { documentId, blockIds: [...new Set(targetBlockIds)] },
             undefined,
             abortController.signal,
           )
+          const toolResult = prepareReadDocumentObservation(rawToolResult)
           const provenance = parseReadDocumentProvenance(toolResult, documentId)
           if (!provenance) {
             throw new Error(`无法恢复修订提案的 canonical provenance：${documentId}`)
@@ -255,7 +297,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
                   id: 'S1',
                   documentId: snapshot.document.id,
                   documentTitle: normalizeDocumentTitle(snapshot.document.title),
-                  contentSnippet: snapshot.document.text,
+                  contentSnippet: snapshot.document.markdown || snapshot.document.text,
                   score: Number.MAX_SAFE_INTEGER,
                   isCurrentDocument: true,
                   revision: snapshot.document.revision ?? editPlan.expectedRevision,
@@ -427,16 +469,47 @@ export function useAgentRun(options: UseAgentRunOptions) {
                     title: normalizeDocumentTitle(snapshot.document.title),
                     revision: snapshot.document.revision,
                     text: snapshot.document.text,
+                    markdown: snapshot.document.markdown || snapshot.document.text,
                     blocks: snapshot.document.blocks,
                   },
                   selectedBlocks: editPlan.usesSelection ? editPlan.targetBlocks : [],
+                  workspaceRootIds: snapshot.workspace?.rootDocumentIds ?? [],
+                  workspaceDocumentIds: [...workspaceDocumentIds],
+                  onDocumentsDiscovered: (documentIds) => {
+                    for (const documentId of documentIds) discoveredDocumentIds.add(documentId)
+                  },
+                  canReadDocument: (documentId) => discoveredDocumentIds.has(documentId),
                   searchDocuments: options.document.searchDocuments,
                   readDocument: options.document.readDocument,
+                  listMindMaps: async () => {
+                    const result = await (await mapsControl()).list()
+                    if (!result.ok) throw new Error(result.error.message)
+                    return result.value
+                  },
+                  readMindMap: async (mindMapId, query) => {
+                    const result = await (await mapsControl()).readSubtree(mindMapId, query)
+                    if (!result.ok) {
+                      if (result.error.code === 'not-found') return null
+                      throw new Error(result.error.message)
+                    }
+                    return result.value
+                  },
                   onDocumentRead: async (documentId, toolResult) => {
-                    if (readableDocuments.has(documentId)) return
                     const provenance = parseReadDocumentProvenance(toolResult, documentId)
                     if (provenance) {
-                      readableDocuments.set(documentId, provenance)
+                      const existing = readableDocuments.get(documentId)
+                      if (existing && existing.expectedVersion === provenance.expectedVersion) {
+                        const blocks = new Map(existing.blocks.map((block) => [block.id, block]))
+                        for (const block of provenance.blocks) blocks.set(block.id, block)
+                        readableDocuments.set(documentId, {
+                          ...existing,
+                          blocks: [...blocks.values()].sort(
+                            (left, right) => left.index - right.index,
+                          ),
+                        })
+                      } else {
+                        readableDocuments.set(documentId, provenance)
+                      }
                       return
                     }
                     const [document, blocks] = await Promise.all([
@@ -577,6 +650,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
             : '任务已完成'
       runtimeState.value.completedAt = Date.now()
       runtimeState.value.authorizationRequest = null
+      appendTimelineStatus('completed', runtimeState.value.detail)
     } catch (error) {
       const aborted = (error as { name?: string }).name === 'AbortError'
       if (!aborted) options.error.value = error instanceof Error ? error.message : String(error)
@@ -603,6 +677,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
       runtimeState.value.detail = aborted ? '任务已停止' : options.error.value || '任务失败'
       runtimeState.value.completedAt = Date.now()
       runtimeState.value.authorizationRequest = null
+      appendTimelineStatus(aborted ? 'completed' : 'failed', runtimeState.value.detail)
     } finally {
       cancelPendingAuthorization('Agent 任务已经结束。')
       options.isRunning.value = false
@@ -630,6 +705,14 @@ export function useAgentRun(options: UseAgentRunOptions) {
     runtimeState.value.phase = 'waiting_authorizer'
     runtimeState.value.detail = '等待授权人回答'
     runtimeState.value.authorizationRequest = authorizationRequest
+    runtimeState.value.timelineEvents.push({
+      id: `authorization:${authorizationRequest.id}`,
+      kind: 'status',
+      status: 'running',
+      detail: request.question,
+      occurredAt: Date.now(),
+      completedAt: null,
+    })
     return new Promise<string>((resolve, reject) => {
       pendingAuthorization = { request: authorizationRequest, resolve, reject }
     })
@@ -651,6 +734,14 @@ export function useAgentRun(options: UseAgentRunOptions) {
     runtimeState.value.phase = 'tool_running'
     runtimeState.value.detail = '已收到授权人回答，继续执行'
     runtimeState.value.authorizationRequest = null
+    const authorizationEvent = runtimeState.value.timelineEvents.find(
+      (event) => event.id === `authorization:${requestId}`,
+    )
+    if (authorizationEvent) {
+      authorizationEvent.status = 'completed'
+      authorizationEvent.detail = '已收到授权人回答，继续执行'
+      authorizationEvent.completedAt = Date.now()
+    }
     pending.resolve(normalized)
     return true
   }
@@ -671,11 +762,31 @@ export function useAgentRun(options: UseAgentRunOptions) {
   function applyProgressUpdate(update: AgentProgressUpdate): void {
     runtimeState.value.phase = update.phase
     runtimeState.value.detail = update.detail
+    if (update.timelineEvent) {
+      const timelineIndex = runtimeState.value.timelineEvents.findIndex(
+        (event) => event.id === update.timelineEvent?.id,
+      )
+      if (timelineIndex >= 0)
+        runtimeState.value.timelineEvents[timelineIndex] = update.timelineEvent
+      else runtimeState.value.timelineEvents.push(update.timelineEvent)
+    }
     if (!update.toolCall) return
 
     const index = runtimeState.value.toolCalls.findIndex((call) => call.id === update.toolCall?.id)
     if (index >= 0) runtimeState.value.toolCalls[index] = update.toolCall
     else runtimeState.value.toolCalls.push(update.toolCall)
+  }
+
+  function appendTimelineStatus(status: 'running' | 'completed' | 'failed', detail: string): void {
+    const occurredAt = Date.now()
+    runtimeState.value.timelineEvents.push({
+      id: `status:${options.createId()}`,
+      kind: 'status',
+      status,
+      detail,
+      occurredAt,
+      completedAt: status === 'running' ? null : occurredAt,
+    })
   }
 
   function resetRuntime(): void {
@@ -692,6 +803,36 @@ export function useAgentRun(options: UseAgentRunOptions) {
     lastRunReport,
     resetRuntime,
   }
+}
+
+function markdownFromCanonicalBlock(contentJson: string, fallback: string): string {
+  try {
+    return (
+      exportTiptapBlockToMarkdown(
+        JSON.parse(contentJson) as Parameters<typeof exportTiptapBlockToMarkdown>[0],
+      ) || fallback
+    )
+  } catch {
+    return fallback
+  }
+}
+
+function resolveWorkspaceDocumentIds(
+  documents: import('@/models/document').DocumentSummary[],
+  rootIds: string[],
+): Set<string> {
+  if (rootIds.length === 0) return new Set(documents.map((document) => document.id))
+  const allowed = new Set(rootIds)
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const document of documents) {
+      if (allowed.has(document.id) || !document.parentId || !allowed.has(document.parentId)) continue
+      allowed.add(document.id)
+      changed = true
+    }
+  }
+  return allowed
 }
 
 function buildContinuationPrompt(basePrompt: string, continuation: AgentRunContinuation): string {
@@ -715,6 +856,34 @@ function buildContinuationPrompt(basePrompt: string, continuation: AgentRunConti
   ]
     .filter(Boolean)
     .join('\n')
+}
+
+function restrictToolsForIntent(
+  policy: import('@/models/executionPolicy').ExecutionPolicy,
+  intent: import('@/models/agentSlashCommand').AgentRunIntent,
+): void {
+  const sharedReadTools = [
+    'get_current_document',
+    'get_selected_blocks',
+    'get_document_outline',
+    'search_documents',
+    'list_document_groups',
+    'read_document',
+    'list_mind_maps',
+    'read_mind_map',
+    'find_blocks_by_regex',
+    'read_skill_file',
+    'request_authorizer_input',
+  ]
+  if (intent === 'plan' || intent === 'research') {
+    policy.allowedTools = [...sharedReadTools, 'mcp:*']
+    policy.allowWriteProposals = false
+    policy.riskLevel = 'read_only'
+    return
+  }
+  if (intent === 'create') {
+    policy.allowedTools = [...sharedReadTools, 'create_document', 'create_group']
+  }
 }
 
 function projectKnowledgeForBundle(object: {

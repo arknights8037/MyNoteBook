@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import AiChatPanel from './AiChatPanel.vue'
 import { createAiSettings } from '@/models/ai'
@@ -37,6 +37,26 @@ function runtimeState(status: AgentRuntimeViewState['status'] = 'running'): Agen
         startedAt: 1_200,
         completedAt: status === 'running' ? null : 1_700,
         error: null,
+      },
+    ],
+    timelineEvents: [
+      {
+        id: 'step:task-1:0',
+        kind: 'step_completed',
+        status: 'completed',
+        detail: '已确定先检索相关制度',
+        occurredAt: 1_050,
+        completedAt: 1_100,
+        stepNumber: 1,
+      },
+      {
+        id: 'tool:call-1',
+        kind: 'tool',
+        status: status === 'running' ? 'running' : 'completed',
+        detail: status === 'running' ? '正在搜索知识库' : '已完成知识库检索',
+        occurredAt: 1_200,
+        completedAt: status === 'running' ? null : 1_700,
+        toolCallId: 'call-1',
       },
     ],
     authorizationRequest: null,
@@ -92,6 +112,10 @@ function createWrapper(state = runtimeState()) {
 }
 
 describe('AiChatPanel runtime visibility', () => {
+  beforeEach(() => {
+    globalThis.localStorage?.removeItem('my-notebook:agent-history-collapsed')
+  })
+
   it('shows the live loop inside the current assistant message', () => {
     const wrapper = createWrapper()
 
@@ -101,6 +125,8 @@ describe('AiChatPanel runtime visibility', () => {
     expect(wrapper.get('.ai-agent-tool-list').text()).toContain('搜索知识库')
     expect(wrapper.get('.ai-agent-tool-list').text()).toContain('search_documents')
     expect(wrapper.get('.ai-agent-tool-list').text()).toContain('差旅报销')
+    expect(wrapper.get('.ai-agent-timeline').text()).toContain('第 1 轮完成')
+    expect(wrapper.get('.ai-agent-timeline').text()).toContain('已确定先检索相关制度')
     expect(wrapper.get('.ai-agent-tool-step').attributes('open')).toBeUndefined()
     expect(wrapper.find('.ai-chat-message__waiting').exists()).toBe(false)
   })
@@ -127,5 +153,125 @@ describe('AiChatPanel runtime visibility', () => {
     await wrapper.get('textarea[aria-label="AI 输入"]').trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('select-mode')?.at(-1)).toEqual(['agent'])
     expect(wrapper.emitted('update:prompt')?.at(-1)).toEqual(['/plan '])
+  })
+
+  it('manages persistent work history from a collapsible left rail', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+    await wrapper.setProps({
+      docked: true,
+      currentHistoryId: 'history-1',
+      currentProjectId: 'project-1',
+      projects: [
+        {
+          id: 'project-1',
+          name: 'StudioSite',
+          workspaceRootIds: ['group-1'],
+          pinnedAt: null,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+      chatHistory: [
+        {
+          id: 'history-1',
+          projectId: 'project-1',
+          title: '检查差旅制度',
+          updatedAt: Date.now(),
+          messageCount: 4,
+          provider: 'openai',
+          model: 'test-model',
+          pinnedAt: null,
+        },
+      ],
+    })
+
+    expect(wrapper.get('.ai-chat-history').text()).toContain('检查差旅制度')
+    expect(wrapper.get('.ai-chat-history__item').classes()).toContain('is-active')
+    await wrapper.get('.ai-chat-history__select').trigger('click')
+    expect(wrapper.emitted('select-history')?.at(-1)).toEqual(['history-1'])
+    await wrapper.get('button[aria-label="置顶项目：StudioSite"]').trigger('click')
+    expect(wrapper.emitted('pin-project')?.at(-1)).toEqual(['project-1'])
+    await wrapper.get('button[aria-label="置顶对话：检查差旅制度"]').trigger('click')
+    expect(wrapper.emitted('pin-history')?.at(-1)).toEqual(['history-1'])
+
+    await wrapper.get('button[aria-label="折叠对话历史"]').trigger('click')
+    expect(wrapper.get('.ai-chat-history').classes()).toContain('ai-chat-history--collapsed')
+    expect(globalThis.localStorage?.getItem('my-notebook:agent-history-collapsed')).toBe('true')
+    await wrapper.get('.ai-chat-history__new').trigger('click')
+    expect(wrapper.emitted('new-task')?.at(-1)).toEqual([null])
+  })
+
+  it('separates ungrouped tasks from project task creation', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+    await wrapper.setProps({
+      docked: true,
+      currentProjectId: 'project-1',
+      projects: [
+        {
+          id: 'project-1',
+          name: 'StudioSite',
+          workspaceRootIds: [],
+          pinnedAt: null,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    })
+
+    await wrapper.get('button[aria-label="新建未分组任务"]').trigger('click')
+    expect(wrapper.emitted('new-task')?.at(-1)).toEqual([null])
+
+    await wrapper.get('button[aria-label="在项目中新建任务：StudioSite"]').trigger('click')
+    expect(wrapper.emitted('new-task')?.at(-1)).toEqual(['project-1'])
+  })
+
+  it('creates a project together with its document workspace', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+    await wrapper.setProps({
+      docked: true,
+      workspaceOptions: [
+        { label: 'Agent MVP', value: 'group-agent' },
+        { label: 'StudioSite', value: 'group-studio' },
+      ],
+    })
+
+    await wrapper.get('button[aria-label="新建 Agent 项目"]').trigger('click')
+    expect(wrapper.get('.ai-chat-project-dialog').attributes('aria-modal')).toBe('true')
+    const workspaceInputs = wrapper.findAll('.ai-chat-project-dialog input[type="checkbox"]')
+    await workspaceInputs[1]!.setValue(true)
+    expect(wrapper.get('.ai-chat-project-dialog__name input').element).toHaveProperty(
+      'value',
+      'StudioSite',
+    )
+    await wrapper.get('.ai-chat-project-dialog').trigger('submit')
+
+    expect(wrapper.emitted('create-project')?.at(-1)).toEqual([
+      { name: 'StudioSite', workspaceRootIds: ['group-studio'] },
+    ])
+  })
+
+  it('can create an empty project without requiring a name or workspace', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+    await wrapper.setProps({
+      docked: true,
+      projects: [
+        {
+          id: 'project-1',
+          name: 'Agent MVP',
+          workspaceRootIds: [],
+          pinnedAt: null,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    })
+
+    await wrapper.get('button[aria-label="新建 Agent 项目"]').trigger('click')
+    await wrapper.get('.ai-chat-project-dialog').trigger('submit')
+
+    expect(wrapper.emitted('create-project')?.at(-1)).toEqual([
+      { name: '新项目 2', workspaceRootIds: [] },
+    ])
+    expect(wrapper.find('.ai-chat-project-dialog').exists()).toBe(false)
   })
 })

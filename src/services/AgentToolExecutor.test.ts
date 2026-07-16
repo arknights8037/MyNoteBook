@@ -8,9 +8,10 @@ const context: AgentToolExecutionContext = {
     title: '任务',
     revision: 2,
     text: 'P0 完成\nP1 进行中',
+    markdown: '# P0 完成\n\nP1 **进行中**\n',
     blocks: [
-      { id: 'p0', type: 'heading', text: 'P0 完成', index: 0 },
-      { id: 'p1', type: 'paragraph', text: 'P1 进行中', index: 1 },
+      { id: 'p0', type: 'heading', text: 'P0 完成', markdown: '# P0 完成', index: 0 },
+      { id: 'p1', type: 'paragraph', text: 'P1 进行中', markdown: 'P1 **进行中**', index: 1 },
     ],
   },
   selectedBlocks: [],
@@ -19,6 +20,27 @@ const context: AgentToolExecutionContext = {
 }
 
 describe('AgentToolExecutor', () => {
+  it('projects the current document and selected blocks as Markdown observations', async () => {
+    const current = await executeAgentTool({ name: 'get_current_document', arguments: {} }, context)
+    const selected = await executeAgentTool(
+      { name: 'get_selected_blocks', arguments: {} },
+      { ...context, selectedBlocks: [context.currentDocument.blocks[1]!] },
+    )
+
+    expect(current).toMatchObject({
+      ok: true,
+      value: {
+        markdown: '# P0 完成\n\nP1 **进行中**\n',
+        blocks: [{ markdown: '# P0 完成' }, { markdown: 'P1 **进行中**' }],
+      },
+    })
+    expect(current.value).not.toHaveProperty('text')
+    expect(selected).toMatchObject({
+      ok: true,
+      value: [{ id: 'p1', markdown: 'P1 **进行中**' }],
+    })
+  })
+
   it('executes whitelisted read tools', async () => {
     const executeNativeTool = vi.fn(async (_name, args) =>
       (args.blocks as AgentToolExecutionContext['currentDocument']['blocks']).filter((block) =>
@@ -69,6 +91,191 @@ describe('AgentToolExecutor', () => {
       undefined,
       undefined,
     )
+  })
+
+  it('lists mind maps and reads a bounded subtree through the application reader', async () => {
+    const listMindMaps = vi.fn(async () => [
+      { id: 'map-1', title: '规划', rootNodeId: 'root', nodeCount: 3, version: 2, createdAt: 1, updatedAt: 2 },
+    ])
+    const readMindMap = vi.fn(async (_id, query) => ({
+      mindMapId: 'map-1', title: '规划', version: 2, returnedNodes: 1, truncated: true,
+      root: { id: 'root', text: '规划', children: [] },
+      query,
+    }))
+
+    await expect(executeAgentTool(
+      { name: 'list_mind_maps', arguments: {} },
+      { ...context, listMindMaps, readMindMap },
+    )).resolves.toMatchObject({ ok: true, value: [{ id: 'map-1', nodeCount: 3 }] })
+    await expect(executeAgentTool(
+      { name: 'read_mind_map', arguments: { mindMapId: 'map-1', depth: 1, maxNodes: 20 } },
+      { ...context, listMindMaps, readMindMap },
+    )).resolves.toMatchObject({ ok: true, value: { version: 2, truncated: true } })
+    expect(readMindMap).toHaveBeenCalledWith('map-1', expect.objectContaining({ depth: 1, maxNodes: 20 }))
+  })
+
+  it('searches the configured workspace by default', async () => {
+    const executeNativeTool = vi.fn(async () => [{ id: 'doc-workspace', title: 'Workspace' }])
+    const onDocumentsDiscovered = vi.fn()
+
+    await expect(
+      executeAgentTool(
+        { name: 'search_documents', arguments: { query: 'runtime' } },
+        {
+          ...context,
+          workspaceRootIds: ['group-agent-mvp'],
+          executeNativeTool,
+          onDocumentsDiscovered,
+        },
+      ),
+    ).resolves.toMatchObject({ ok: true })
+
+    expect(executeNativeTool).toHaveBeenCalledWith(
+      'search_documents',
+      {
+        query: 'runtime',
+        limit: 5,
+        scope: 'workspace',
+        workspaceRootIds: ['group-agent-mvp'],
+      },
+      undefined,
+      undefined,
+    )
+    expect(onDocumentsDiscovered).toHaveBeenCalledWith(['doc-workspace'], 'workspace')
+  })
+
+  it('allows an explicit global search to discover an outside document before reading it', async () => {
+    const discovered = new Set(['doc-1'])
+    const executeNativeTool = vi.fn(async (name: string) =>
+      name === 'search_documents'
+        ? [{ id: 'doc-outside', title: 'Outside' }]
+        : { id: 'doc-outside', title: 'Outside', revision: 1, blocks: [] },
+    )
+    const scopedContext: AgentToolExecutionContext = {
+      ...context,
+      workspaceRootIds: ['group-agent-mvp'],
+      executeNativeTool,
+      onDocumentsDiscovered: (ids) => ids.forEach((id) => discovered.add(id)),
+      canReadDocument: (id) => discovered.has(id),
+    }
+
+    await expect(
+      executeAgentTool(
+        { name: 'read_document', arguments: { documentId: 'doc-outside' } },
+        scopedContext,
+      ),
+    ).resolves.toMatchObject({ ok: false, error: expect.stringContaining('scope="global"') })
+
+    await executeAgentTool(
+      { name: 'search_documents', arguments: { query: 'outside', scope: 'global' } },
+      scopedContext,
+    )
+    await expect(
+      executeAgentTool(
+        { name: 'read_document', arguments: { documentId: 'doc-outside' } },
+        scopedContext,
+      ),
+    ).resolves.toMatchObject({ ok: true, value: { id: 'doc-outside' } })
+    expect(executeNativeTool).toHaveBeenCalledWith(
+      'search_documents',
+      expect.objectContaining({ scope: 'global', workspaceRootIds: ['group-agent-mvp'] }),
+      undefined,
+      undefined,
+    )
+  })
+
+  it('exposes canonical structured blocks as editable Markdown', async () => {
+    const onDocumentRead = vi.fn()
+    const executeNativeTool = vi.fn(async () => ({
+      id: 'doc-table',
+      title: 'Tools',
+      revision: 4,
+      blocks: [
+        {
+          id: 'table-1',
+          blockType: 'tableBlock',
+          blockIndex: 0,
+          plainText: '工具\t风险\nread_document\tread',
+          contentJson: {
+            type: 'tableBlock',
+            attrs: {
+              id: 'table-1',
+              rows: [
+                ['工具', '风险'],
+                ['read_document', 'read'],
+              ],
+            },
+          },
+        },
+      ],
+    }))
+
+    const result = await executeAgentTool(
+      { name: 'read_document', arguments: { documentId: 'doc-table' } },
+      { ...context, executeNativeTool, onDocumentRead },
+    )
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        blocks: [
+          {
+            markdown: '| 工具 | 风险 |\n| --- | --- |\n| read_document | read |',
+          },
+        ],
+      },
+    })
+    expect(onDocumentRead).toHaveBeenCalledWith(
+      'doc-table',
+      expect.objectContaining({
+        blocks: [expect.objectContaining({ markdown: expect.any(String) })],
+      }),
+    )
+    expect(result.value.blocks[0]).not.toHaveProperty('contentJson')
+  })
+
+  it('forwards bounded document paging arguments to the native tool', async () => {
+    const executeNativeTool = vi.fn(async () => ({
+      id: 'doc-long',
+      title: 'Long',
+      revision: 2,
+      blocks: [],
+      truncated: true,
+      nextCursor: 12,
+    }))
+
+    await executeAgentTool(
+      {
+        name: 'read_document',
+        arguments: { documentId: 'doc-long', cursor: 4, maxChars: 8_192, blockIds: ['block-9'] },
+      },
+      { ...context, executeNativeTool },
+    )
+
+    expect(executeNativeTool).toHaveBeenCalledWith(
+      'read_document',
+      { documentId: 'doc-long', cursor: 4, maxChars: 8_192, blockIds: ['block-9'] },
+      undefined,
+      undefined,
+    )
+  })
+
+  it('marks SQLite busy read failures as retryable', async () => {
+    const executeNativeTool = vi.fn(async () => {
+      throw new Error('SQLite database is locked')
+    })
+
+    await expect(
+      executeAgentTool(
+        { name: 'read_document', arguments: { documentId: 'doc-locked' } },
+        { ...context, executeNativeTool },
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'database_busy',
+      retryable: true,
+      retryAfterMs: 250,
+    })
   })
 
   it('does not start a native tool after cancellation', async () => {

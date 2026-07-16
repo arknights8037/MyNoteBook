@@ -187,6 +187,7 @@ describe('TauriAgentRepository recovery', () => {
     sqlClient.database.exec(`
       CREATE TABLE agent_tasks (
         id TEXT PRIMARY KEY, session_id TEXT NOT NULL, document_id TEXT NOT NULL,
+        project_id TEXT NOT NULL DEFAULT '', conversation_id TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL, user_instruction TEXT NOT NULL, context_scope TEXT NOT NULL,
         model TEXT NOT NULL, current_step TEXT NOT NULL, error TEXT,
         created_at INTEGER NOT NULL, completed_at INTEGER,

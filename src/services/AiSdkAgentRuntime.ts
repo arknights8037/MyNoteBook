@@ -1,10 +1,12 @@
-import { generateText, jsonSchema, ToolLoopAgent, stepCountIs, tool, type ToolSet } from 'ai'
+import { jsonSchema, ToolLoopAgent, stepCountIs, tool, type ToolSet } from 'ai'
 import { z } from 'zod'
 
 import type { AgentToolCall } from '@/models/agentTool'
+import type { AgentTimelineEvent } from '@/models/agentRuntime'
 import { createAiSdkModel } from './AiSdkProvider'
 import {
   createDefaultAgentExecutionPolicy,
+  AGENT_TOOL_REGISTRY,
   getAgentToolDefinition,
   resolveAgentOutputTokenLimit,
 } from './AgentToolRegistry'
@@ -257,11 +259,7 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
   )
   const calls: AgentToolCall[] = []
   if (!resolveProviderCapabilities(input.settings.provider, input.settings.model).toolChoice) {
-    input.onProgress?.({
-      phase: 'finalizing',
-      detail: 'Capability Matrix 标记当前模型不支持工具调用，使用只读兼容模式',
-    })
-    return runToollessCompatibilityFallback(input, calls)
+    throw new Error('当前模型不支持 Agent 工具调用，请选择支持原生工具调用的模型。')
   }
   const callCounts = new Map<string, number>()
   const externalTools = new Map(
@@ -270,6 +268,8 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
   const proposedCommands: AgentCommand[] = []
   const proposedPatches: AgentPatch[] = []
   const inFlightTools = new Set<Promise<unknown>>()
+  const failedCallSignatures = new Set<string>()
+  const stepStartedAt = new Map<number, number>()
   let failures = 0
 
   const executeTracked = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
@@ -292,6 +292,7 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       toolName: name,
       detail: getToolProgressLabel(name, false),
       toolCall: runningCall,
+      timelineEvent: createToolTimelineEvent(runningCall, getToolProgressLabel(name, false)),
     })
     await input.recordToolCall(runningCall)
     throwIfAgentToolAborted(input.signal)
@@ -299,12 +300,15 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
     const externalDefinition = externalTools.get(name)
     const nextCount = (callCounts.get(name) ?? 0) + 1
     callCounts.set(name, nextCount)
-    let execution: AgentToolExecutionResult
+    let execution: AgentToolExecutionResult = { ok: false, error: '工具未执行。' }
     let executionWasAborted = false
     const policyAllowsTool =
       policy.allowedTools.includes(name) ||
       (name.startsWith('mcp__') && policy.allowedTools.includes('mcp:*'))
-    if (!policyAllowsTool) {
+    const signature = createToolCallSignature(name, args)
+    if (failedCallSignatures.has(signature)) {
+      execution = { ok: false, error: `工具 ${name} 的相同参数已经失败；请调整参数或停止。` }
+    } else if (!policyAllowsTool) {
       execution = { ok: false, error: `ExecutionPolicy 不允许工具 ${name}。` }
     } else if (name === 'request_authorizer_input' && !policy.allowUserInput) {
       execution = { ok: false, error: 'ExecutionPolicy 不允许请求用户输入。' }
@@ -316,12 +320,54 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       execution = { ok: false, error: `工具 ${name} 超过单任务调用上限。` }
     } else {
       try {
-        execution = await input.executeTool({
-          callId,
-          name,
-          arguments: args,
-          signal: input.signal,
-        })
+        const maxReadRetries =
+          definition?.risk === 'read' || externalDefinition?.readOnly
+            ? Math.min(policy.maxRetries, 2)
+            : 0
+        let attempt = 0
+        while (attempt <= maxReadRetries) {
+          execution = await input.executeTool({
+            callId,
+            name,
+            arguments: args,
+            signal: input.signal,
+          })
+          if (execution.ok || !execution.retryable || attempt >= maxReadRetries) break
+          attempt += 1
+          const retryDelayMs = Math.min(
+            Math.max(execution.retryAfterMs ?? 250 * 2 ** (attempt - 1), 0),
+            5_000,
+          )
+          input.onProgress?.({
+            phase: 'planning',
+            toolName: name,
+            detail: `${getToolProgressLabel(name, false)}失败，${retryDelayMs}ms 后自动重试（${attempt}/${maxReadRetries}）`,
+            timelineEvent: {
+              id: `retry:${callId}:${attempt}`,
+              kind: 'retry',
+              status: 'running',
+              detail: `${name}：${execution.errorCode ?? execution.error ?? '瞬态错误'}，${retryDelayMs}ms 后重试`,
+              occurredAt: Date.now(),
+              completedAt: null,
+              toolCallId: callId,
+            },
+          })
+          await waitForRetry(retryDelayMs, input.signal)
+          input.onProgress?.({
+            phase: 'tool_running',
+            toolName: name,
+            detail: `${getToolProgressLabel(name, false)}（重试 ${attempt}/${maxReadRetries}）`,
+            timelineEvent: {
+              id: `retry:${callId}:${attempt}`,
+              kind: 'retry',
+              status: 'completed',
+              detail: `开始第 ${attempt} 次自动重试`,
+              occurredAt: Date.now(),
+              completedAt: Date.now(),
+              toolCallId: callId,
+            },
+          })
+        }
       } catch (error) {
         executionWasAborted = input.signal?.aborted === true || isAbortError(error)
         execution = {
@@ -353,6 +399,10 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       toolName: name,
       detail: execution.ok ? getToolProgressLabel(name, true) : getToolFailureProgressLabel(name),
       toolCall: call,
+      timelineEvent: createToolTimelineEvent(
+        call,
+        execution.ok ? getToolProgressLabel(name, true) : getToolFailureProgressLabel(name),
+      ),
     })
     await input.recordToolCall(call)
     if (input.signal?.aborted) throwIfAgentToolAborted(input.signal)
@@ -360,8 +410,9 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       throw Object.assign(new Error('Agent 工具调用已取消。'), { name: 'AbortError' })
     }
     if (!execution.ok) {
+      failedCallSignatures.add(signature)
       failures += 1
-      if (failures > policy.maxToolFailures) throw new Error('Agent 工具失败次数超过上限。')
+      if (failures >= policy.maxToolFailures) throw new Error('Agent 工具失败次数达到上限。')
       return { ok: false, error: safeExecutionError }
     }
     return safeValue
@@ -397,14 +448,18 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       toolName: name,
       detail: getToolProgressLabel(name, false),
       toolCall: runningCall,
+      timelineEvent: createToolTimelineEvent(runningCall, getToolProgressLabel(name, false)),
     })
     await input.recordToolCall(runningCall)
     throwIfAgentToolAborted(input.signal)
     const definition = getAgentToolDefinition(name)
+    const signature = createToolCallSignature(name, args)
     const nextCount = (callCounts.get(name) ?? 0) + 1
     callCounts.set(name, nextCount)
     let error: string | null = null
-    if (!policy.allowWriteProposals) {
+    if (failedCallSignatures.has(signature)) {
+      error = `工具 ${name} 的相同参数已经失败；请根据错误重新规划完整提案。`
+    } else if (!policy.allowWriteProposals) {
       error = 'ExecutionPolicy 不允许提出写入修改。'
     } else if (!policy.allowedTools.includes(name)) {
       error = `ExecutionPolicy 不允许工具 ${name}。`
@@ -439,11 +494,16 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       toolName: name,
       detail: error ? getToolFailureProgressLabel(name) : getToolProgressLabel(name, true),
       toolCall: call,
+      timelineEvent: createToolTimelineEvent(
+        call,
+        error ? getToolFailureProgressLabel(name) : getToolProgressLabel(name, true),
+      ),
     })
     await input.recordToolCall(call)
     if (error) {
+      failedCallSignatures.add(signature)
       failures += 1
-      if (failures > policy.maxToolFailures) throw new Error('Agent 工具失败次数超过上限。')
+      if (failures >= policy.maxToolFailures) throw new Error('Agent 工具失败次数达到上限。')
       return { ok: false, error }
     }
     return value
@@ -503,10 +563,12 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       execute: (args) => execute('get_document_outline', args),
     }),
     search_documents: tool({
-      description: '搜索本地知识库，返回文档 ID、标题、片段和 revision。',
+      description:
+        '搜索本地知识库。默认 scope=workspace，只检索当前项目配置的文档分组；当工作区证据不足时可主动改用 scope=global 扩大到全库，并在过程里说明扩大原因。',
       inputSchema: z.object({
         query: z.string().min(1),
         limit: z.number().int().min(1).max(10).optional(),
+        scope: z.enum(['workspace', 'global']).optional(),
       }),
       execute: (args) => execute('search_documents', args),
     }),
@@ -517,9 +579,33 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       execute: (args) => execute('list_document_groups', args),
     }),
     read_document: tool({
-      description: '按文档 ID 读取知识库文档正文、标签和 revision。',
-      inputSchema: z.object({ documentId: z.string().min(1) }),
+      description:
+        '按文档 ID 分页读取知识库块，返回 revision、canonical Markdown 和稳定 block id。结果截断时使用 nextCursor 继续；已知目标块时优先传 blockIds。',
+      inputSchema: z.object({
+        documentId: z.string().min(1),
+        cursor: z.number().int().min(0).optional(),
+        maxChars: z.number().int().min(4_096).max(65_536).optional(),
+        blockIds: z.array(z.string().min(1)).max(100).optional(),
+      }),
       execute: (args) => execute('read_document', args),
+    }),
+    list_mind_maps: tool({
+      description: '列出本地思维导图的 ID、标题、节点数和当前版本。',
+      inputSchema: z.object({}),
+      execute: (args) => execute('list_mind_maps', args),
+    }),
+    read_mind_map: tool({
+      description:
+        '读取一张思维导图或指定节点下的子树。先通过 list_mind_maps 获取真实 mindMapId；大图应限制 depth/maxNodes 并继续按 nodeId 查询。',
+      inputSchema: z.object({
+        mindMapId: z.string().min(1),
+        nodeId: z.string().min(1).optional(),
+        depth: z.number().int().min(0).max(32).optional(),
+        maxNodes: z.number().int().min(1).max(1_000).optional(),
+        includeNotes: z.boolean().optional(),
+        includeSources: z.boolean().optional(),
+      }),
+      execute: (args) => execute('read_mind_map', args),
     }),
     find_blocks_by_regex: tool({
       description: '使用受限正则表达式定位当前文档中的块。',
@@ -652,6 +738,12 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
     }),
   }
 
+  for (const definition of AGENT_TOOL_REGISTRY) {
+    const runtimeTool = tools[definition.name]
+    if (runtimeTool)
+      tools[definition.name] = { ...runtimeTool, description: definition.description }
+  }
+
   for (const definition of externalTools.values()) {
     tools[definition.runtimeName] = tool({
       description: [
@@ -670,10 +762,15 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
     })
   }
 
+  const activeToolNames = Object.keys(tools).filter((name) => policyAllowsToolName(name, policy))
+  const activeToolSet = Object.fromEntries(
+    activeToolNames.map((name) => [name, tools[name]]),
+  ) as ToolSet
   const agent = new ToolLoopAgent({
     model: createAiSdkModel(input.settings),
     instructions: [
       input.systemPrompt,
+      `本次 Runtime 实际可用工具：${activeToolNames.length > 0 ? activeToolNames.join('、') : '无'}。未列出的工具不可调用。`,
       !input.outputContract && input.intent === 'create'
         ? '本次任务要求创建独立页面或文档。请在完成必要判断后主动调用 create_document 提案工具。'
         : '',
@@ -687,32 +784,94 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
     ]
       .filter(Boolean)
       .join('\n\n'),
-    tools,
+    tools: activeToolSet,
+    activeTools: activeToolNames,
     stopWhen: stepCountIs(policy.maxToolRounds),
+    maxRetries: policy.maxRetries,
     maxOutputTokens: resolveAgentOutputTokenLimit(input.settings.maxTokens, policy),
+    onStepStart: ({ stepNumber }) => {
+      const displayStep = stepNumber + 1
+      const occurredAt = Date.now()
+      stepStartedAt.set(stepNumber, occurredAt)
+      input.onProgress?.({
+        phase: 'planning',
+        detail:
+          displayStep === 1
+            ? '第 1 轮：正在判断任务和所需资料'
+            : `第 ${displayStep} 轮：正在根据工具结果判断下一步`,
+        timelineEvent: {
+          id: `step:${input.taskId}:${stepNumber}`,
+          kind: 'step_started',
+          status: 'running',
+          detail:
+            displayStep === 1 ? '正在判断任务和所需资料' : '正在根据上一轮 Observation 判断下一步',
+          occurredAt,
+          completedAt: null,
+          stepNumber: displayStep,
+        },
+      })
+    },
+    onStepEnd: ({ stepNumber, toolCalls, finishReason }) => {
+      const displayStep = stepNumber + 1
+      const detail =
+        toolCalls.length > 0
+          ? `已完成判断并发起 ${toolCalls.length} 个工具调用`
+          : finishReason === 'stop'
+            ? '已完成判断，准备整理最终结果'
+            : `本轮结束：${finishReason}`
+      input.onProgress?.({
+        phase: 'planning',
+        detail: `第 ${displayStep} 轮：${detail}`,
+        timelineEvent: {
+          id: `step:${input.taskId}:${stepNumber}`,
+          kind: 'step_completed',
+          status: 'completed',
+          detail,
+          occurredAt: stepStartedAt.get(stepNumber) ?? Date.now(),
+          completedAt: Date.now(),
+          stepNumber: displayStep,
+        },
+      })
+    },
     ...samplingParameters(input.settings),
   })
   input.onProgress?.({ phase: 'planning', detail: '正在判断需要读取哪些资料' })
-  let result
+  const liveReasoning = createLiveReasoningEmitter((delta) => input.onDelta?.(delta, 'reasoning'))
+  let result: {
+    text: string
+    steps: Array<{ reasoningText?: string }>
+    reasoningText?: string
+    finishReason: string
+    usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number }
+  }
   try {
-    result = await agent.generate({
+    const streamResult = await agent.stream({
       prompt: [input.prompt, input.context ? `\n当前上下文：\n${input.context}` : ''].join(''),
       abortSignal: input.signal,
       timeout: { totalMs: policy.maxDurationMs },
     })
+    for await (const part of streamResult.fullStream) {
+      if (part.type === 'reasoning-delta') liveReasoning.push(part.delta)
+    }
+    const [text, steps, reasoningText, finishReason, usage] = await Promise.all([
+      streamResult.text,
+      streamResult.steps,
+      streamResult.reasoningText,
+      streamResult.finishReason,
+      streamResult.usage,
+    ])
+    result = { text, steps, reasoningText, finishReason, usage }
   } catch (error) {
     if (inFlightTools.size > 0) await Promise.allSettled([...inFlightTools])
     if (input.signal?.aborted || isAbortError(error)) {
       throw normalizeAbortError(input.signal?.reason ?? error)
     }
-    if (!isToolCompatibilityError(error)) throw error
-    input.onProgress?.({ phase: 'finalizing', detail: '当前模型不支持工具调用，正在切换兼容模式' })
-    return runToollessCompatibilityFallback(input, calls)
+    throw error
   }
 
   const reasoningText = collectReasoningText(result)
   const channelOutput = resolveAgentOutputChannels(result.text, reasoningText)
-  if (channelOutput.reasoningForDisplay) {
+  if (channelOutput.reasoningForDisplay && !liveReasoning.hasEmitted()) {
     input.onDelta?.(channelOutput.reasoningForDisplay, 'reasoning')
   }
   if (input.outputContract) {
@@ -757,51 +916,35 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
   }
 }
 
-async function runToollessCompatibilityFallback(
-  input: AgentRuntimeInput,
-  calls: AgentToolCall[],
-): Promise<AgentRuntimeResult> {
-  const policy = normalizeExecutionPolicy(
-    input.executionPolicy ?? createDefaultAgentExecutionPolicy(input.settings.maxTokens),
-  )
-  const result = await generateText({
-    model: createAiSdkModel(input.settings),
-    system: [
-      input.systemPrompt,
-      input.outputContract
-        ? ''
-        : '当前模型不支持工具调用。仅依据已提供的上下文用自然语言回答，不得声称已经读取、创建、修改或保存任何内容。',
-      input.outputContract?.systemInstruction ?? '',
-    ]
-      .filter(Boolean)
-      .join('\n\n'),
-    prompt: [input.prompt, input.context ? `当前上下文：\n${input.context}` : '']
-      .filter(Boolean)
-      .join('\n\n'),
-    ...samplingParameters(input.settings),
-    maxOutputTokens: resolveAgentOutputTokenLimit(input.settings.maxTokens, policy),
-    abortSignal: input.signal,
-    timeout: { totalMs: policy.maxDurationMs },
-  })
-  const channelOutput = resolveAgentOutputChannels(result.text, result.reasoningText ?? '')
-  if (channelOutput.reasoningForDisplay) {
-    input.onDelta?.(channelOutput.reasoningForDisplay, 'reasoning')
-  }
-  if (input.outputContract) {
-    const validated = validateAgentOutputContract(
-      input.outputContract,
-      result.text,
-      result.reasoningText ?? '',
-    )
-    return { output: JSON.stringify(validated), rounds: 1, toolCalls: calls }
-  }
-  const parsed = channelOutput.output ?? createNaturalAgentTextOutput(result.text)
+function createLiveReasoningEmitter(emit: (delta: string) => void): {
+  push: (delta: string) => void
+  hasEmitted: () => boolean
+} {
+  let decision: 'pending' | 'display' | 'suppress' = 'pending'
+  let pending = ''
+  let emitted = false
   return {
-    output: JSON.stringify(normalizeAgentOutputForTaskIntent(parsed, input.prompt, input.intent)),
-    rounds: 1,
-    toolCalls: calls,
-    finishReason: result.finishReason,
-    usage: projectLanguageModelUsage(result.usage),
+    push(delta) {
+      if (!delta || decision === 'suppress') return
+      if (decision === 'display') {
+        emitted = true
+        emit(delta)
+        return
+      }
+      pending += delta
+      const trimmed = pending.trimStart()
+      if (!trimmed) return
+      if (/^(?:\{|\[|```(?:json)?)/i.test(trimmed)) {
+        decision = 'suppress'
+        pending = ''
+        return
+      }
+      decision = 'display'
+      emitted = true
+      emit(pending)
+      pending = ''
+    },
+    hasEmitted: () => emitted,
   }
 }
 
@@ -844,13 +987,6 @@ export function resolveAgentOutputChannels(text: string, reasoningText: string) 
     output: textOutput ?? reasoningOutput,
     reasoningForDisplay: reasoningOutput ? '' : reasoningText.trim(),
   }
-}
-
-export function isToolCompatibilityError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
-  return /(?:tool[_\s-]?choice|tool|function|工具|函数).*(?:unsupported|not supported|does not support|not available|不支持|无效)|(?:unsupported|not supported|does not support|不支持).*(?:tool[_\s-]?choice|tool|function|工具|函数)/i.test(
-    message,
-  )
 }
 
 export function createNaturalAgentTextOutput(value: string): z.infer<typeof agentOutputSchema> {
@@ -1103,6 +1239,59 @@ function getToolProgressLabel(name: string, completed: boolean): string {
 
 function getToolFailureProgressLabel(name: string): string {
   return `${getToolProgressLabel(name, false).replace(/^正在/, '')}失败`
+}
+
+function policyAllowsToolName(
+  name: string,
+  policy: ReturnType<typeof normalizeExecutionPolicy>,
+): boolean {
+  return (
+    policy.allowedTools.includes(name) ||
+    (name.startsWith('mcp__') && policy.allowedTools.includes('mcp:*'))
+  )
+}
+
+function createToolTimelineEvent(call: AgentToolCall, detail: string): AgentTimelineEvent {
+  return {
+    id: `tool:${call.id}`,
+    kind: 'tool',
+    status:
+      call.status === 'running' ? 'running' : call.status === 'completed' ? 'completed' : 'failed',
+    detail,
+    occurredAt: call.startedAt,
+    completedAt: call.completedAt,
+    toolCallId: call.id,
+  }
+}
+
+function createToolCallSignature(name: string, args: Record<string, unknown>): string {
+  return `${name}:${stableJson(args)}`
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw normalizeAbortError(signal.reason)
+  return new Promise((resolve, reject) => {
+    const handleAbort = () => {
+      globalThis.clearTimeout(timeout)
+      reject(normalizeAbortError(signal?.reason))
+    }
+    const timeout = globalThis.setTimeout(() => {
+      signal?.removeEventListener('abort', handleAbort)
+      resolve()
+    }, delayMs)
+    signal?.addEventListener('abort', handleAbort, { once: true })
+  })
 }
 
 export function parseAiSdkAgentOutput(value: string): z.infer<typeof agentOutputSchema> {

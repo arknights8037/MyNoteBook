@@ -16,12 +16,19 @@ export function captureAgentRunSnapshot(input: {
   requestedMode: AiChatMode
   settings: AiSettings
   document: AgentRunDocumentSnapshot
+  workspace?: AgentRunSnapshot['workspace']
 }): AgentRunSnapshot {
   return {
     prompt: input.prompt.trim(),
     requestedMode: input.requestedMode,
     settings: cloneSettings(input.settings),
     document: cloneDocumentSnapshot(input.document),
+    workspace: {
+      projectId: input.workspace?.projectId ?? '',
+      projectName: input.workspace?.projectName ?? '未分组 Agent 项目',
+      rootDocumentIds: [...(input.workspace?.rootDocumentIds ?? [])],
+      conversationId: input.workspace?.conversationId ?? '',
+    },
   }
 }
 
@@ -50,6 +57,8 @@ export function createAgentEditPlan(input: {
   const task = createAgentTask({
     id: input.createId(),
     sessionId: document.id,
+    projectId: snapshot.workspace?.projectId,
+    conversationId: snapshot.workspace?.conversationId,
     userInstruction: snapshot.prompt,
     contextScope:
       mode === 'agent' && !usesSelection

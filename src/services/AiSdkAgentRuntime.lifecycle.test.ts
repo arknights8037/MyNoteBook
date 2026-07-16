@@ -5,7 +5,9 @@ import type { AgentToolCall } from '@/models/agentTool'
 
 const agentHarness = vi.hoisted(() => ({
   resultText: '已完成检查。',
+  reasoningDeltas: [] as string[],
   instructions: '',
+  options: {} as Record<string, unknown>,
   run: null as
     | null
     | ((tools: Record<string, { execute: (args: unknown) => Promise<unknown> }>) => Promise<void>),
@@ -22,14 +24,44 @@ vi.mock('ai', () => ({
     constructor(options: {
       tools: Record<string, { execute: (args: unknown) => Promise<unknown> }>
       instructions: string
+      onStepStart?: (event: { stepNumber: number }) => void
+      onStepEnd?: (event: {
+        stepNumber: number
+        toolCalls: unknown[]
+        finishReason: string
+      }) => void
     }) {
       this.tools = options.tools
       agentHarness.instructions = options.instructions
+      agentHarness.options = options
     }
 
-    async generate() {
-      await agentHarness.run?.(this.tools)
-      return { text: agentHarness.resultText, steps: [], reasoningText: '' }
+    async stream() {
+      const options = agentHarness.options as {
+        onStepStart?: (event: { stepNumber: number }) => void
+        onStepEnd?: (event: {
+          stepNumber: number
+          toolCalls: unknown[]
+          finishReason: string
+        }) => void
+      }
+      const tools = this.tools
+      async function* fullStream() {
+        options.onStepStart?.({ stepNumber: 0 })
+        for (const delta of agentHarness.reasoningDeltas) {
+          yield { type: 'reasoning-delta' as const, id: 'reasoning-1', delta }
+        }
+        await agentHarness.run?.(tools)
+        options.onStepEnd?.({ stepNumber: 0, toolCalls: [], finishReason: 'stop' })
+      }
+      return {
+        fullStream: fullStream(),
+        text: Promise.resolve(agentHarness.resultText),
+        steps: Promise.resolve([]),
+        reasoningText: Promise.resolve(agentHarness.reasoningDeltas.join('')),
+        finishReason: Promise.resolve('stop'),
+        usage: Promise.resolve({ inputTokens: 10, outputTokens: 5, totalTokens: 15 }),
+      }
     }
   },
 }))
@@ -48,7 +80,9 @@ function settings() {
 describe('AI SDK Agent tool lifecycle', () => {
   beforeEach(() => {
     agentHarness.resultText = '已完成检查。'
+    agentHarness.reasoningDeltas = []
     agentHarness.instructions = ''
+    agentHarness.options = {}
     agentHarness.run = async (tools) => {
       await tools.search_documents?.execute({ query: 'Agent loop' })
     }
@@ -103,6 +137,173 @@ describe('AI SDK Agent tool lifecycle', () => {
     expect(records.map((call) => call.id)).toEqual(['call-lifecycle', 'call-lifecycle'])
     expect(executeTool).toHaveBeenCalledWith(
       expect.objectContaining({ callId: 'call-lifecycle', name: 'search_documents' }),
+    )
+  })
+
+  it('only exposes policy-allowed tools and forwards the retry limit', async () => {
+    agentHarness.run = async (tools) => {
+      expect(Object.keys(tools)).toEqual(['submit_document_edits'])
+    }
+
+    await runAiSdkAgent({
+      taskId: 'task-policy-tools',
+      prompt: '修订提案',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      executionPolicy: {
+        version: 1,
+        maxToolRounds: 6,
+        maxDurationMs: 60_000,
+        maxToolFailures: 2,
+        tokenBudget: 16_384,
+        allowedTools: ['submit_document_edits'],
+        riskLevel: 'propose_write',
+        allowUserInput: false,
+        allowWriteProposals: true,
+        maxRetries: 0,
+      },
+      createId: () => 'call-policy-tools',
+      executeTool: async () => ({ ok: true }),
+      recordToolCall: async () => undefined,
+    })
+
+    expect(agentHarness.options).toMatchObject({
+      activeTools: ['submit_document_edits'],
+      maxRetries: 0,
+    })
+    expect(agentHarness.instructions).toContain('本次 Runtime 实际可用工具：submit_document_edits')
+  })
+
+  it('emits model step events around the tool loop', async () => {
+    agentHarness.run = async () => undefined
+    const progress: Array<{ detail: string; timelineEvent?: { kind: string; status: string } }> = []
+
+    await runAiSdkAgent({
+      taskId: 'task-step-progress',
+      prompt: '检查资料',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      createId: () => 'call-step-progress',
+      executeTool: async () => ({ ok: true }),
+      recordToolCall: async () => undefined,
+      onProgress: (update) => progress.push(update),
+    })
+
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          timelineEvent: expect.objectContaining({ kind: 'step_started', status: 'running' }),
+        }),
+        expect.objectContaining({
+          timelineEvent: expect.objectContaining({ kind: 'step_completed', status: 'completed' }),
+        }),
+      ]),
+    )
+  })
+
+  it('forwards reasoning deltas before the tool loop finishes', async () => {
+    let releaseToolLoop!: () => void
+    const toolLoopGate = new Promise<void>((resolve) => {
+      releaseToolLoop = () => resolve()
+    })
+    agentHarness.reasoningDeltas = ['正在检查', '相关资料。']
+    agentHarness.run = async () => toolLoopGate
+    const deltas: string[] = []
+
+    const run = runAiSdkAgent({
+      taskId: 'task-live-reasoning',
+      prompt: '检查资料',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      createId: () => 'call-live-reasoning',
+      executeTool: async () => ({ ok: true }),
+      recordToolCall: async () => undefined,
+      onDelta: (delta, channel) => {
+        if (channel === 'reasoning') deltas.push(delta)
+      },
+    })
+
+    await vi.waitFor(() => expect(deltas.join('')).toBe('正在检查相关资料。'))
+    releaseToolLoop()
+    await run
+  })
+
+  it('does not expose streamed structured protocol as reasoning', async () => {
+    agentHarness.reasoningDeltas = ['```json\n', '{"outcome":"no_change"}', '\n```']
+    const onDelta = vi.fn()
+
+    await runAiSdkAgent({
+      taskId: 'task-hidden-protocol',
+      prompt: '检查资料',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      createId: () => 'call-hidden-protocol',
+      executeTool: async () => ({ ok: true }),
+      recordToolCall: async () => undefined,
+      onDelta,
+    })
+
+    expect(onDelta).not.toHaveBeenCalled()
+  })
+
+  it('does not execute an identical failed tool call twice', async () => {
+    agentHarness.run = async (tools) => {
+      await tools.search_documents?.execute({ query: 'same failure' })
+      await tools.search_documents?.execute({ query: 'same failure' })
+    }
+    const executeTool = vi.fn(async () => ({ ok: false, error: 'temporary failure' }))
+
+    await runAiSdkAgent({
+      taskId: 'task-duplicate-failure',
+      prompt: '检查资料',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      createId: (() => {
+        let index = 0
+        return () => `call-duplicate-failure-${++index}`
+      })(),
+      executeTool,
+      recordToolCall: async () => undefined,
+    })
+
+    expect(executeTool).toHaveBeenCalledOnce()
+  })
+
+  it('automatically retries an explicitly retryable read failure', async () => {
+    const progress: Array<{ timelineEvent?: { kind: string } }> = []
+    const executeTool = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: 'database busy',
+        errorCode: 'database_busy',
+        retryable: true,
+        retryAfterMs: 0,
+      })
+      .mockResolvedValueOnce({ ok: true, value: [{ title: 'Recovered' }] })
+
+    await runAiSdkAgent({
+      taskId: 'task-read-retry',
+      prompt: '检查资料',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      createId: () => 'call-read-retry',
+      executeTool,
+      recordToolCall: async () => undefined,
+      onProgress: (update) => progress.push(update),
+    })
+
+    expect(executeTool).toHaveBeenCalledTimes(2)
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ timelineEvent: expect.objectContaining({ kind: 'retry' }) }),
+      ]),
     )
   })
 

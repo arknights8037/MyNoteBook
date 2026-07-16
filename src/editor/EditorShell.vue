@@ -63,6 +63,7 @@ import {
 } from './blockTypeRegistry'
 import { isSameEditorContent, normalizeEditorContent } from './editorContent'
 import { parseMarkdownDocument } from './markdownImport'
+import { exportTiptapBlockToMarkdown, exportTiptapDocumentToMarkdown } from './documentExport'
 import {
   HIGHLIGHT_COLOR_SWATCHES,
   TEXT_COLOR_SWATCHES,
@@ -379,17 +380,24 @@ function getCurrentDocumentBlocks(): EditorBlockSnapshot[] {
     const id = isRecord(node.attrs) ? String(node.attrs.id ?? '') : ''
     if (!id) return
 
+    const json = node.toJSON()
     blocks.push({
       id,
       type: node.type.name,
       text: node.textBetween(0, node.content.size, '\n').trim(),
+      markdown: exportTiptapBlockToMarkdown(json),
       index,
       from: offset,
       to: offset + node.nodeSize,
-      json: node.toJSON(),
+      json,
     })
   })
   return blocks
+}
+
+function getDocumentMarkdown(): string {
+  const content = editor.value?.getJSON() as TiptapDocumentJson | undefined
+  return content ? exportTiptapDocumentToMarkdown(content) : ''
 }
 
 function getSelectedBlocks(): EditorBlockSnapshot[] {
@@ -776,6 +784,7 @@ defineExpose({
   shouldShowBubbleMenu,
   getJSON: () => editor.value?.getJSON() as TiptapDocumentJson | undefined,
   getText: () => editor.value?.getText() ?? '',
+  getDocumentMarkdown,
   getCurrentDocumentBlocks,
   getSelectedBlocks,
   hasBlockSelection: () => Boolean(editor.value && !editor.value.state.selection.empty),

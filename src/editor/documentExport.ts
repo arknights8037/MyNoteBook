@@ -26,7 +26,21 @@ export async function exportDocumentToMarkdown(
   if (metadata.description) lines.push('说明：' + metadata.description)
   if (lines.length > 2) lines.push('')
   lines.push(...nodesToMarkdown(content.content ?? []))
-  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n'
+  return (
+    lines
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim() + '\n'
+  )
+}
+
+/** Converts the in-memory Tiptap tree to a model-friendly Markdown body without file I/O. */
+export function exportTiptapDocumentToMarkdown(content: TiptapDocumentJson): string {
+  const markdown = nodesToMarkdown(content.content ?? [])
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return markdown ? `${markdown}\n` : ''
 }
 
 export async function exportDocumentToHtml(
@@ -46,7 +60,9 @@ export async function exportDocumentToHtml(
       escapeHtml(metadata.sourceUrl) +
       '</a></p>'
     : ''
-  const author = metadata.author ? '<p class="doc-meta">作者：' + escapeHtml(metadata.author) + '</p>' : ''
+  const author = metadata.author
+    ? '<p class="doc-meta">作者：' + escapeHtml(metadata.author) + '</p>'
+    : ''
   const description = metadata.description
     ? '<p class="doc-description">' + escapeHtml(metadata.description) + '</p>'
     : ''
@@ -98,20 +114,63 @@ function nodesToMarkdown(nodes: JSONContent[]): string[] {
 }
 
 function nodeToMarkdown(node: JSONContent): string[] {
-  if (node.type === 'heading') return ['#'.repeat(Number(node.attrs?.level ?? 1)) + ' ' + inlineText(node), '']
-  if (node.type === 'paragraph') return [inlineText(node), '']
-  if (node.type === 'blockquote') return [inlineText(node).split('\n').map((line) => '> ' + line).join('\n'), '']
-  if (node.type === 'bulletList') return (node.content ?? []).map((item) => '- ' + inlineText(item)).concat('')
-  if (node.type === 'orderedList') return (node.content ?? []).map((item, index) => String(index + 1) + '. ' + inlineText(item)).concat('')
-  if (node.type === 'taskList') return (node.content ?? []).map((item) => '- [' + (item.attrs?.checked ? 'x' : ' ') + '] ' + inlineText(item)).concat('')
-  if (node.type === 'codeBlock') return [CODE_FENCE + String(node.attrs?.language ?? ''), textContent(node), CODE_FENCE, '']
+  if (node.type === 'heading')
+    return ['#'.repeat(Number(node.attrs?.level ?? 1)) + ' ' + inlineMarkdown(node), '']
+  if (node.type === 'paragraph') return [inlineMarkdown(node), '']
+  if (node.type === 'blockquote')
+    return [
+      inlineMarkdown(node)
+        .split('\n')
+        .map((line) => '> ' + line)
+        .join('\n'),
+      '',
+    ]
+  if (node.type === 'bulletList')
+    return (node.content ?? []).map((item) => '- ' + inlineMarkdown(item)).concat('')
+  if (node.type === 'orderedList')
+    return (node.content ?? [])
+      .map((item, index) => String(index + 1) + '. ' + inlineMarkdown(item))
+      .concat('')
+  if (node.type === 'taskList')
+    return (node.content ?? [])
+      .map((item) => '- [' + (item.attrs?.checked ? 'x' : ' ') + '] ' + inlineMarkdown(item))
+      .concat('')
+  if (node.type === 'codeBlock')
+    return [CODE_FENCE + String(node.attrs?.language ?? ''), textContent(node), CODE_FENCE, '']
   if (node.type === 'horizontalRule') return ['---', '']
-  if (node.type === 'imageFigure') return ['![' + (inlineText(node) || String(node.attrs?.alt ?? '图片')) + '](' + String(node.attrs?.src ?? '') + ')', '']
-  if (node.type === 'attachmentBlock') return ['[📎 ' + String(node.attrs?.name ?? '附件') + '](asset://' + String(node.attrs?.assetId ?? '') + ')', '']
+  if (node.type === 'imageFigure')
+    return [
+      '![' +
+        (inlineMarkdown(node) || String(node.attrs?.alt ?? '图片')) +
+        '](' +
+        String(node.attrs?.src ?? '') +
+        ')',
+      '',
+    ]
+  if (node.type === 'attachmentBlock')
+    return [
+      '[📎 ' +
+        String(node.attrs?.name ?? '附件') +
+        '](asset://' +
+        String(node.attrs?.assetId ?? '') +
+        ')',
+      '',
+    ]
   if (node.type === 'tableBlock') return tableMarkdown(node)
   if (node.type === 'mathBlock') return ['$$', String(node.attrs?.latex ?? ''), '$$', '']
-  if (node.type === 'collapsibleBlock') return ['<details><summary>' + escapeHtml(String(node.attrs?.title ?? '折叠内容')) + '</summary>', '', ...nodesToMarkdown(node.content ?? []), '</details>', '']
+  if (node.type === 'collapsibleBlock')
+    return [
+      '<details><summary>' + escapeHtml(String(node.attrs?.title ?? '折叠内容')) + '</summary>',
+      '',
+      ...nodesToMarkdown(node.content ?? []),
+      '</details>',
+      '',
+    ]
   return textContent(node) ? [textContent(node), ''] : []
+}
+
+export function exportTiptapBlockToMarkdown(node: JSONContent): string {
+  return nodeToMarkdown(node).join('\n').trim()
 }
 
 async function nodesToHtml(nodes: JSONContent[]): Promise<string> {
@@ -124,30 +183,71 @@ async function nodeToHtml(node: JSONContent): Promise<string> {
     return '<h' + level + '>' + inlineHtml(node) + '</h' + level + '>'
   }
   if (node.type === 'paragraph') return '<p>' + (inlineHtml(node) || '<br />') + '</p>'
-  if (node.type === 'blockquote') return '<blockquote>' + (await nodesToHtml(node.content ?? [])) + '</blockquote>'
+  if (node.type === 'blockquote')
+    return '<blockquote>' + (await nodesToHtml(node.content ?? [])) + '</blockquote>'
   if (node.type === 'bulletList') return '<ul>' + (await listItemsToHtml(node)) + '</ul>'
   if (node.type === 'orderedList') return '<ol>' + (await listItemsToHtml(node)) + '</ol>'
-  if (node.type === 'taskList') return '<ul>' + (node.content ?? []).map((item) => '<li>' + (item.attrs?.checked ? '☑' : '☐') + ' ' + inlineHtml(item) + '</li>').join('') + '</ul>'
-  if (node.type === 'codeBlock') return '<pre><code>' + escapeHtml(textContent(node)) + '</code></pre>'
+  if (node.type === 'taskList')
+    return (
+      '<ul>' +
+      (node.content ?? [])
+        .map(
+          (item) => '<li>' + (item.attrs?.checked ? '☑' : '☐') + ' ' + inlineHtml(item) + '</li>',
+        )
+        .join('') +
+      '</ul>'
+    )
+  if (node.type === 'codeBlock')
+    return '<pre><code>' + escapeHtml(textContent(node)) + '</code></pre>'
   if (node.type === 'horizontalRule') return '<hr />'
   if (node.type === 'imageFigure') {
     const rawSrc = String(node.attrs?.src ?? '')
     const src = parseAssetUrl(rawSrc) ? await assetService.resolveAssetUrl(rawSrc) : rawSrc
     const caption = inlineHtml(node)
-    return '<figure><img src="' + escapeAttribute(src) + '" alt="' + escapeAttribute(String(node.attrs?.alt ?? '')) + '" />' + (caption ? '<figcaption>' + caption + '</figcaption>' : '') + '</figure>'
+    return (
+      '<figure><img src="' +
+      escapeAttribute(src) +
+      '" alt="' +
+      escapeAttribute(String(node.attrs?.alt ?? '')) +
+      '" />' +
+      (caption ? '<figcaption>' + caption + '</figcaption>' : '') +
+      '</figure>'
+    )
   }
   if (node.type === 'attachmentBlock') {
     const name = String(node.attrs?.name ?? '附件')
-    return '<section class="attachment">📎 <span><strong>' + escapeHtml(name) + '</strong><br /><small>' + escapeHtml(String(node.attrs?.mimeType ?? '')) + ' · ' + formatFileSize(Number(node.attrs?.sizeBytes ?? 0)) + '</small></span></section>'
+    return (
+      '<section class="attachment">📎 <span><strong>' +
+      escapeHtml(name) +
+      '</strong><br /><small>' +
+      escapeHtml(String(node.attrs?.mimeType ?? '')) +
+      ' · ' +
+      formatFileSize(Number(node.attrs?.sizeBytes ?? 0)) +
+      '</small></span></section>'
+    )
   }
   if (node.type === 'tableBlock') return tableHtml(node)
-  if (node.type === 'mathBlock') return '<div class="math">' + escapeHtml(String(node.attrs?.latex ?? '')) + '</div>'
-  if (node.type === 'collapsibleBlock') return '<details open><summary>' + escapeHtml(String(node.attrs?.title ?? '折叠内容')) + '</summary>' + (await nodesToHtml(node.content ?? [])) + '</details>'
+  if (node.type === 'mathBlock')
+    return '<div class="math">' + escapeHtml(String(node.attrs?.latex ?? '')) + '</div>'
+  if (node.type === 'collapsibleBlock')
+    return (
+      '<details open><summary>' +
+      escapeHtml(String(node.attrs?.title ?? '折叠内容')) +
+      '</summary>' +
+      (await nodesToHtml(node.content ?? [])) +
+      '</details>'
+    )
   return textContent(node) ? '<p>' + escapeHtml(textContent(node)) + '</p>' : ''
 }
 
 async function listItemsToHtml(node: JSONContent): Promise<string> {
-  return (await Promise.all((node.content ?? []).map(async (item) => '<li>' + (await nodesToHtml(item.content ?? [])) + '</li>'))).join('')
+  return (
+    await Promise.all(
+      (node.content ?? []).map(
+        async (item) => '<li>' + (await nodesToHtml(item.content ?? [])) + '</li>',
+      ),
+    )
+  ).join('')
 }
 
 function tableMarkdown(node: JSONContent): string[] {
@@ -155,17 +255,48 @@ function tableMarkdown(node: JSONContent): string[] {
   if (rows.length === 0) return []
   const normalized = rows.map((row) => row.map((cell) => String(cell ?? '').replace(/\|/g, '\\|')))
   const width = Math.max(1, ...normalized.map((row) => row.length))
-  const padded = normalized.map((row) => Array.from({ length: width }, (_, index) => row[index] ?? ''))
-  return ['| ' + padded[0].join(' | ') + ' |', '| ' + Array.from({ length: width }, () => '---').join(' | ') + ' |', ...padded.slice(1).map((row) => '| ' + row.join(' | ') + ' |'), '']
+  const padded = normalized.map((row) =>
+    Array.from({ length: width }, (_, index) => row[index] ?? ''),
+  )
+  return [
+    '| ' + padded[0].join(' | ') + ' |',
+    '| ' + Array.from({ length: width }, () => '---').join(' | ') + ' |',
+    ...padded.slice(1).map((row) => '| ' + row.join(' | ') + ' |'),
+    '',
+  ]
 }
 
 function tableHtml(node: JSONContent): string {
   const rows = Array.isArray(node.attrs?.rows) ? (node.attrs.rows as unknown[][]) : []
-  return '<table><tbody>' + rows.map((row) => '<tr>' + row.map((cell) => '<td>' + escapeHtml(String(cell ?? '')) + '</td>').join('') + '</tr>').join('') + '</tbody></table>'
+  return (
+    '<table><tbody>' +
+    rows
+      .map(
+        (row) =>
+          '<tr>' +
+          row.map((cell) => '<td>' + escapeHtml(String(cell ?? '')) + '</td>').join('') +
+          '</tr>',
+      )
+      .join('') +
+    '</tbody></table>'
+  )
 }
 
-function inlineText(node: JSONContent): string {
-  return (node.content ?? []).map((child) => textContent(child)).join('')
+function inlineMarkdown(node: JSONContent): string {
+  if (node.type === 'hardBreak') return '  \n'
+  if (node.type !== 'text') return (node.content ?? []).map(inlineMarkdown).join('')
+  let markdown = node.text ?? ''
+  for (const mark of node.marks ?? []) {
+    if (mark.type === 'bold') markdown = `**${markdown}**`
+    if (mark.type === 'italic') markdown = `*${markdown}*`
+    if (mark.type === 'strike') markdown = `~~${markdown}~~`
+    if (mark.type === 'code') markdown = `\`${markdown}\``
+    if (mark.type === 'link') markdown = `[${markdown}](${String(mark.attrs?.href ?? '')})`
+    if (mark.type === 'underline') markdown = `<u>${markdown}</u>`
+    if (mark.type === 'subscript') markdown = `<sub>${markdown}</sub>`
+    if (mark.type === 'superscript') markdown = `<sup>${markdown}</sup>`
+  }
+  return markdown
 }
 
 function inlineHtml(node: JSONContent): string {
@@ -180,7 +311,8 @@ function inlineNodeHtml(node: JSONContent): string {
     if (mark.type === 'italic') html = '<em>' + html + '</em>'
     if (mark.type === 'strike') html = '<s>' + html + '</s>'
     if (mark.type === 'code') html = '<code>' + html + '</code>'
-    if (mark.type === 'link') html = '<a href="' + escapeAttribute(String(mark.attrs?.href ?? '')) + '">' + html + '</a>'
+    if (mark.type === 'link')
+      html = '<a href="' + escapeAttribute(String(mark.attrs?.href ?? '')) + '">' + html + '</a>'
   }
   return html
 }
@@ -190,7 +322,12 @@ function textContent(node: JSONContent): string {
 }
 
 function escapeHtml(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 function escapeAttribute(value: string): string {

@@ -3,7 +3,7 @@ use rig_core::{
     tool::{Tool, ToolSet},
 };
 use serde::{Deserialize, Serialize};
-use sqlx::{Connection, Row, SqliteConnection};
+use sqlx::{Connection, QueryBuilder, Row, Sqlite, SqliteConnection};
 use std::{
     collections::{HashMap, HashSet},
     env, fmt, fs,
@@ -43,9 +43,13 @@ struct SearchDocumentsTool {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SearchDocumentsArgs {
     query: String,
     limit: Option<i64>,
+    scope: Option<String>,
+    #[serde(default)]
+    workspace_root_ids: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -256,7 +260,13 @@ impl Tool for SearchDocumentsTool {
                 "type": "object",
                 "properties": {
                     "query": { "type": "string", "minLength": 1 },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 10 }
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 10 },
+                    "scope": { "type": "string", "enum": ["workspace", "global"] },
+                    "workspaceRootIds": {
+                        "type": "array",
+                        "items": { "type": "string", "minLength": 1 },
+                        "maxItems": 100
+                    }
                 },
                 "required": ["query"]
             }),
@@ -268,18 +278,53 @@ impl Tool for SearchDocumentsTool {
         if query.is_empty() {
             return Ok(Vec::new());
         }
+        let scope = args
+            .scope
+            .as_deref()
+            .unwrap_or(if args.workspace_root_ids.is_empty() {
+                "global"
+            } else {
+                "workspace"
+            });
+        if scope != "workspace" && scope != "global" {
+            return Err(NativeToolError(
+                "search_documents.scope 必须是 workspace 或 global。".to_string(),
+            ));
+        }
+        if scope == "workspace" && args.workspace_root_ids.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut connection = open_database(&self.database_path).await?;
-        let rows = sqlx::query(
+        let mut builder = QueryBuilder::<Sqlite>::new(
             "SELECT documents.id, documents.title, documents.plain_text, documents.revision \
              FROM document_search INNER JOIN documents ON documents.id = document_search.document_id \
-             WHERE document_search MATCH ? AND documents.document_kind = 'article' \
-             AND documents.is_deleted = 0 ORDER BY bm25(document_search), documents.updated_at DESC LIMIT ?",
-        )
-        .bind(query)
-        .bind(args.limit.unwrap_or(5).clamp(1, 10))
-        .fetch_all(&mut connection)
-        .await
-        .map_err(native_error)?;
+             WHERE document_search MATCH ",
+        );
+        builder
+            .push_bind(query)
+            .push(" AND documents.document_kind = 'article' AND documents.is_deleted = 0");
+        if scope == "workspace" {
+            builder.push(
+                " AND documents.id IN (WITH RECURSIVE workspace(id) AS (SELECT id FROM documents WHERE id IN (",
+            );
+            {
+                let mut roots = builder.separated(", ");
+                for root_id in &args.workspace_root_ids {
+                    roots.push_bind(root_id);
+                }
+            }
+            builder.push(
+                ") UNION ALL SELECT child.id FROM documents child JOIN workspace parent ON child.parent_id = parent.id) SELECT id FROM workspace)",
+            );
+        }
+        builder
+            .push(" ORDER BY bm25(document_search), documents.updated_at DESC LIMIT ")
+            .push_bind(args.limit.unwrap_or(5).clamp(1, 10));
+        let rows = builder
+            .build()
+            .fetch_all(&mut connection)
+            .await
+            .map_err(native_error)?;
         rows.into_iter()
             .map(|row| {
                 let plain_text: String = row.try_get("plain_text").map_err(native_error)?;
@@ -303,6 +348,10 @@ struct ReadDocumentTool {
 #[serde(rename_all = "camelCase")]
 struct ReadDocumentArgs {
     document_id: String,
+    cursor: Option<usize>,
+    max_chars: Option<usize>,
+    #[serde(default)]
+    block_ids: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -314,6 +363,10 @@ struct ReadDocumentResult {
     revision: i64,
     tags: Vec<String>,
     blocks: Vec<ReadDocumentBlock>,
+    truncated: bool,
+    next_cursor: Option<usize>,
+    returned_blocks: usize,
+    estimated_chars: usize,
 }
 
 #[derive(Serialize)]
@@ -323,6 +376,7 @@ struct ReadDocumentBlock {
     block_type: String,
     block_index: i64,
     plain_text: String,
+    content_json: serde_json::Value,
 }
 
 const DEFAULT_SHELL_TIMEOUT_MS: u64 = 10_000;
@@ -331,6 +385,9 @@ const MAX_SHELL_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_SHELL_OUTPUT_LIMIT: usize = 32 * 1024;
 const MIN_SHELL_OUTPUT_LIMIT: usize = 4 * 1024;
 const MAX_SHELL_OUTPUT_LIMIT: usize = 64 * 1024;
+const DEFAULT_DOCUMENT_OUTPUT_LIMIT: usize = 24 * 1024;
+const MIN_DOCUMENT_OUTPUT_LIMIT: usize = 4 * 1024;
+const MAX_DOCUMENT_OUTPUT_LIMIT: usize = 64 * 1024;
 
 #[derive(Clone)]
 struct ExecuteShellTool;
@@ -612,10 +669,20 @@ impl Tool for ReadDocumentTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "按 ID 读取本地知识库文档。".to_string(),
+            description: "按 ID 分页读取本地知识库文档；支持 cursor、maxChars 和 blockIds。"
+                .to_string(),
             parameters: serde_json::json!({
                 "type": "object",
-                "properties": { "documentId": { "type": "string", "minLength": 1 } },
+                "properties": {
+                    "documentId": { "type": "string", "minLength": 1 },
+                    "cursor": { "type": "integer", "minimum": 0 },
+                    "maxChars": { "type": "integer", "minimum": 4096, "maximum": 65536 },
+                    "blockIds": {
+                        "type": "array",
+                        "items": { "type": "string", "minLength": 1 },
+                        "maxItems": 100
+                    }
+                },
                 "required": ["documentId"]
             }),
         }
@@ -643,25 +710,77 @@ impl Tool for ReadDocumentTool {
         let content_json: String = row.try_get("content_json").map_err(native_error)?;
         let projection =
             validate_and_project_tiptap(&content_json, true).map_err(NativeToolError)?;
+        if args.block_ids.len() > 100 {
+            return Err(NativeToolError("blockIds 最多包含 100 项。".to_string()));
+        }
+        let max_chars = args.max_chars.unwrap_or(DEFAULT_DOCUMENT_OUTPUT_LIMIT);
+        if !(MIN_DOCUMENT_OUTPUT_LIMIT..=MAX_DOCUMENT_OUTPUT_LIMIT).contains(&max_chars) {
+            return Err(NativeToolError(format!(
+                "maxChars 必须在 {MIN_DOCUMENT_OUTPUT_LIMIT} 到 {MAX_DOCUMENT_OUTPUT_LIMIT} 之间。"
+            )));
+        }
+        let requested_ids: HashSet<&str> = args.block_ids.iter().map(String::as_str).collect();
+        let has_explicit_blocks = !requested_ids.is_empty();
+        let cursor = if has_explicit_blocks {
+            0
+        } else {
+            args.cursor.unwrap_or(0)
+        };
+        let total_blocks = projection.blocks.len();
+        if cursor > total_blocks {
+            return Err(NativeToolError("cursor 超出文档块范围。".to_string()));
+        }
+        let mut returned_blocks = Vec::new();
+        let mut estimated_chars = 0usize;
+        for block in projection.blocks.into_iter().skip(cursor) {
+            if has_explicit_blocks && !requested_ids.contains(block.id.as_str()) {
+                continue;
+            }
+            let block_chars = block.plain_text.chars().count() + block.content_json.chars().count();
+            if estimated_chars.saturating_add(block_chars) > max_chars {
+                if returned_blocks.is_empty() {
+                    return Err(NativeToolError(
+                        "下一个 canonical 块超过 maxChars 预算；请提高预算或用更小的目标块。"
+                            .to_string(),
+                    ));
+                }
+                break;
+            }
+            estimated_chars = estimated_chars.saturating_add(block_chars);
+            returned_blocks.push(ReadDocumentBlock {
+                id: block.id,
+                block_type: block.block_type,
+                block_index: block.block_index,
+                plain_text: block.plain_text,
+                content_json: serde_json::from_str(&block.content_json)
+                    .unwrap_or(serde_json::Value::Null),
+            });
+        }
+        if has_explicit_blocks && returned_blocks.len() != requested_ids.len() {
+            return Err(NativeToolError(
+                "一个或多个 blockIds 不存在，或目标块超过单次 maxChars 预算。".to_string(),
+            ));
+        }
+        let returned_count = returned_blocks.len();
+        let next_cursor = if has_explicit_blocks || cursor + returned_count >= total_blocks {
+            None
+        } else {
+            Some(cursor + returned_count)
+        };
         Ok(Some(ReadDocumentResult {
             id: row.try_get("id").map_err(native_error)?,
             title: row.try_get("title").map_err(native_error)?,
-            plain_text: projection.plain_text.chars().take(12_000).collect(),
+            plain_text: projection.plain_text.chars().take(2_000).collect(),
             revision: row.try_get("revision").map_err(native_error)?,
             tags: tag_rows
                 .into_iter()
                 .map(|tag| tag.try_get("name").map_err(native_error))
                 .collect::<Result<Vec<_>, _>>()?,
-            blocks: projection
-                .blocks
-                .into_iter()
-                .map(|block| ReadDocumentBlock {
-                    id: block.id,
-                    block_type: block.block_type,
-                    block_index: block.block_index,
-                    plain_text: block.plain_text,
-                })
-                .collect(),
+            blocks: returned_blocks,
+            truncated: next_cursor.is_some(),
+            next_cursor,
+            returned_blocks: returned_count,
+            estimated_chars,
         }))
     }
 }

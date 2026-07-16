@@ -1,9 +1,14 @@
 import type { SelectedBlock } from '@/models/agent'
 import type { DocumentRecord, DocumentSummary } from '@/models/document'
+import type { MindMapSubtreeQuery, MindMapSubtreeResult, MindMapSummary } from '@/models/mindMap'
 import type { AgentAuthorizationRequest } from '@/models/agentRuntime'
 import type { AutomationTriggerConfig, AutomationTriggerType } from '@/models/automation'
 import { getAgentToolDefinition } from './AgentToolRegistry'
 import { throwIfAgentToolAborted } from './AgentToolCancellation'
+import {
+  exportTiptapBlockToMarkdown,
+  exportTiptapDocumentToMarkdown,
+} from '@/editor/documentExport'
 
 export interface AgentToolRequest {
   callId?: string
@@ -18,11 +23,21 @@ export interface AgentToolExecutionContext {
     title: string
     revision: number | null
     text: string
+    markdown: string
     blocks: SelectedBlock[]
   }
   selectedBlocks: SelectedBlock[]
+  workspaceRootIds?: string[]
+  workspaceDocumentIds?: string[]
+  onDocumentsDiscovered?: (documentIds: string[], scope: 'workspace' | 'global') => void
+  canReadDocument?: (documentId: string) => boolean
   searchDocuments: (query: string, limit: number) => Promise<DocumentSummary[]>
   readDocument: (documentId: string) => Promise<DocumentRecord | null>
+  listMindMaps?: () => Promise<MindMapSummary[]>
+  readMindMap?: (
+    mindMapId: string,
+    query: MindMapSubtreeQuery,
+  ) => Promise<MindMapSubtreeResult | null>
   onDocumentRead?: (documentId: string, document: unknown) => Promise<void> | void
   executeNativeTool?: (
     name:
@@ -58,6 +73,9 @@ export interface AgentToolExecutionResult {
   ok: boolean
   value?: unknown
   error?: string
+  errorCode?: string
+  retryable?: boolean
+  retryAfterMs?: number
 }
 
 export async function executeAgentTool(
@@ -77,9 +95,9 @@ export async function executeAgentTool(
   try {
     switch (definition.name) {
       case 'get_current_document':
-        return { ok: true, value: context.currentDocument }
+        return { ok: true, value: projectCurrentDocumentAsMarkdown(context.currentDocument) }
       case 'get_selected_blocks':
-        return { ok: true, value: context.selectedBlocks }
+        return { ok: true, value: context.selectedBlocks.map(projectBlockAsMarkdown) }
       case 'get_document_outline':
         return {
           ok: true,
@@ -90,18 +108,35 @@ export async function executeAgentTool(
       case 'search_documents': {
         const query = readRequiredString(request.arguments.query, 'query')
         const limit = readLimit(request.arguments.limit, 5)
+        const scope = readSearchScope(request.arguments.scope, context.workspaceRootIds)
         if (context.executeNativeTool) {
+          const value = await context.executeNativeTool(
+            'search_documents',
+            {
+              query,
+              limit,
+              scope,
+              workspaceRootIds: context.workspaceRootIds ?? [],
+            },
+            request.callId,
+            request.signal,
+          )
+          context.onDocumentsDiscovered?.(readDocumentIds(value), scope)
           return {
             ok: true,
-            value: await context.executeNativeTool(
-              'search_documents',
-              { query, limit },
-              request.callId,
-              request.signal,
-            ),
+            value,
           }
         }
-        const documents = await context.searchDocuments(query, limit)
+        const documents = (await context.searchDocuments(query, limit)).filter(
+          (document) =>
+            scope === 'global' ||
+            !context.workspaceDocumentIds?.length ||
+            context.workspaceDocumentIds.includes(document.id),
+        )
+        context.onDocumentsDiscovered?.(
+          documents.map((document) => document.id),
+          scope,
+        )
         return {
           ok: true,
           value: documents.map((document) => ({
@@ -129,16 +164,34 @@ export async function executeAgentTool(
       }
       case 'read_document': {
         const documentId = readRequiredString(request.arguments.documentId, 'documentId')
+        if (context.canReadDocument && !context.canReadDocument(documentId)) {
+          return {
+            ok: false,
+            error:
+              '目标文档不在当前项目工作区，也未由本次全库搜索发现。请先用 search_documents(scope="global") 扩大搜索范围。',
+          }
+        }
+        const cursor = readOptionalInteger(request.arguments.cursor, 'cursor', 0, 1_000_000)
+        const maxChars = readOptionalInteger(request.arguments.maxChars, 'maxChars', 4_096, 65_536)
+        const blockIds = readStringArray(request.arguments.blockIds, 'blockIds', 100).filter(
+          Boolean,
+        )
         if (context.executeNativeTool) {
           const document = await context.executeNativeTool(
             'read_document',
-            { documentId },
+            {
+              documentId,
+              ...(cursor === undefined ? {} : { cursor }),
+              ...(maxChars === undefined ? {} : { maxChars }),
+              ...(blockIds.length === 0 ? {} : { blockIds }),
+            },
             request.callId,
             request.signal,
           )
-          if (document) await context.onDocumentRead?.(documentId, document)
-          return document
-            ? { ok: true, value: document }
+          const enriched = prepareReadDocumentObservation(document)
+          if (enriched) await context.onDocumentRead?.(documentId, enriched)
+          return enriched
+            ? { ok: true, value: enriched }
             : { ok: false, error: `文档 ${documentId} 不存在或不可读取。` }
         }
         const document = await context.readDocument(documentId)
@@ -149,12 +202,33 @@ export async function executeAgentTool(
               value: {
                 id: document.id,
                 title: document.title,
-                plainText: document.plainText.slice(0, 12_000),
+                markdown: exportTiptapDocumentToMarkdown(document.contentJson).slice(0, 12_000),
                 revision: document.revision,
                 tags: document.tags,
               },
             }
           : { ok: false, error: `文档 ${documentId} 不存在或不可读取。` }
+      }
+      case 'list_mind_maps': {
+        if (!context.listMindMaps) return { ok: false, error: '当前环境未提供思维导图读取器。' }
+        return { ok: true, value: await context.listMindMaps() }
+      }
+      case 'read_mind_map': {
+        if (!context.readMindMap) return { ok: false, error: '当前环境未提供思维导图读取器。' }
+        const mindMapId = readRequiredString(request.arguments.mindMapId, 'mindMapId')
+        const nodeId = readOptionalString(request.arguments.nodeId, 'nodeId')
+        const depth = readOptionalInteger(request.arguments.depth, 'depth', 0, 32)
+        const maxNodes = readOptionalInteger(request.arguments.maxNodes, 'maxNodes', 1, 1_000)
+        const value = await context.readMindMap(mindMapId, {
+          ...(nodeId ? { nodeId } : {}),
+          ...(depth === undefined ? {} : { depth }),
+          ...(maxNodes === undefined ? {} : { maxNodes }),
+          includeNotes: request.arguments.includeNotes === true,
+          includeSources: request.arguments.includeSources === true,
+        })
+        return value
+          ? { ok: true, value }
+          : { ok: false, error: `思维导图 ${mindMapId} 不存在或不可读取。` }
       }
       case 'find_blocks_by_regex': {
         const pattern = readRequiredString(request.arguments.pattern, 'pattern')
@@ -322,8 +396,73 @@ export async function executeAgentTool(
         return { ok: false, error: `工具 ${definition.name} 尚未接入执行器。` }
     }
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    const message = error instanceof Error ? error.message : String(error)
+    const transientDatabaseFailure =
+      /(?:database|sqlite).*(?:busy|locked)|(?:busy|locked).*(?:database|sqlite)/i.test(message)
+    return {
+      ok: false,
+      error: message,
+      ...(transientDatabaseFailure
+        ? { errorCode: 'database_busy', retryable: true, retryAfterMs: 250 }
+        : {}),
+    }
   }
+}
+
+function readSearchScope(
+  value: unknown,
+  workspaceRootIds: string[] | undefined,
+): 'workspace' | 'global' {
+  if (value === undefined) return workspaceRootIds?.length ? 'workspace' : 'global'
+  if (value === 'workspace' || value === 'global') return value
+  throw new Error('工具参数 scope 必须是 workspace 或 global。')
+}
+
+function readDocumentIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item) => (isRecord(item) && typeof item.id === 'string' ? item.id : ''))
+    .filter(Boolean)
+}
+
+function projectCurrentDocumentAsMarkdown(
+  document: AgentToolExecutionContext['currentDocument'],
+): Record<string, unknown> {
+  return {
+    id: document.id,
+    title: document.title,
+    revision: document.revision,
+    markdown: document.markdown || document.text,
+    blocks: document.blocks.map(projectBlockAsMarkdown),
+  }
+}
+
+function projectBlockAsMarkdown(block: SelectedBlock): Record<string, unknown> {
+  return {
+    id: block.id,
+    type: block.type,
+    index: block.index,
+    markdown: block.markdown || block.text,
+  }
+}
+
+export function prepareReadDocumentObservation(value: unknown): unknown {
+  if (!isRecord(value) || !Array.isArray(value.blocks)) return value
+  return {
+    ...value,
+    blocks: value.blocks.map((block) => {
+      if (!isRecord(block) || !isRecord(block.contentJson)) return block
+      const { contentJson, ...visibleBlock } = block
+      return {
+        ...visibleBlock,
+        markdown: exportTiptapBlockToMarkdown(contentJson),
+      }
+    }),
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 async function confirmDraftCreation(

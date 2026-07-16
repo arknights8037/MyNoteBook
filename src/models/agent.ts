@@ -21,12 +21,15 @@ export interface SelectedBlock {
   id: string
   type: string
   text: string
+  markdown?: string
   index: number
 }
 
 export interface AgentTask {
   id: string
   sessionId: string
+  projectId: string
+  conversationId: string
   status: AgentTaskStatus
   userInstruction: string
   contextScope: 'selection' | 'current_block' | 'current_document'
@@ -175,6 +178,8 @@ export function validateBlockPatch(
 export function createAgentTask(input: {
   id: string
   sessionId: string
+  projectId?: string
+  conversationId?: string
   userInstruction: string
   contextScope: AgentTask['contextScope']
   model: string
@@ -186,6 +191,8 @@ export function createAgentTask(input: {
   return {
     id: input.id,
     sessionId: input.sessionId,
+    projectId: input.projectId ?? '',
+    conversationId: input.conversationId ?? '',
     status: 'pending',
     userInstruction: input.userInstruction,
     contextScope: input.contextScope,
