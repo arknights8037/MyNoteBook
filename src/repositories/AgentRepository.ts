@@ -25,7 +25,6 @@ export interface ApplyAgentPatchSetInput {
     documentId: DocumentId
     expectedRevision: number
     contentJson: string
-    plainText: string
     transactionId: string
   }>
 }

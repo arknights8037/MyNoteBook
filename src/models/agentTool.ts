@@ -21,6 +21,7 @@ export interface AgentToolDefinition {
     | 'discover_local_tools'
     | 'get_system_info'
     | 'create_automation_draft'
+    | 'create_mcp_server_draft'
     | 'create_skill_draft'
     | 'replace_text_by_regex'
     | 'replace_block'

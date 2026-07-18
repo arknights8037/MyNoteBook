@@ -54,7 +54,7 @@
 }
 
 .ai-chat-message__reasoning {
-  border-left-color: color-mix(in srgb, var(--color-agent-accent) 34%, transparent);
+  border-color: color-mix(in srgb, var(--color-agent-accent) 18%, var(--color-border-subtle));
   color: var(--color-text-secondary);
 }
 
@@ -86,7 +86,7 @@
 }
 
 .ai-chat-message--streaming .markdown-preview {
-  box-shadow: inset 3px 0 0 var(--color-agent-accent);
+  box-shadow: none;
 }
 
 .ai-chat-message > header em {

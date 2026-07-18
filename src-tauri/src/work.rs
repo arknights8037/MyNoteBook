@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use sqlx::Row;
 use tauri::AppHandle;
 
@@ -24,6 +25,8 @@ pub struct CommitVerificationInput {
     pub(crate) verdict: String,
     pub(crate) checks_json: String,
     pub(crate) summary: String,
+    pub(crate) confirmation_envelope_json: String,
+    pub(crate) confirmation_hash: String,
     pub(crate) proposed_change_set: Option<ChangeSetDraft>,
     pub(crate) correlation_id: String,
     pub(crate) event_id: String,
@@ -78,6 +81,16 @@ pub(crate) async fn commit_result_verification_in_pool(
     }
     serde_json::from_str::<serde_json::Value>(&input.checks_json)
         .map_err(|error| format!("Verifier checks JSON 无效：{error}"))?;
+    serde_json::from_str::<serde_json::Value>(&input.confirmation_envelope_json)
+        .map_err(|error| format!("Confirmation Envelope JSON 无效：{error}"))?;
+    crate::governance::validate_hash(&input.confirmation_hash, "Confirmation hash")?;
+    let computed_confirmation_hash = format!(
+        "{:x}",
+        Sha256::digest(input.confirmation_envelope_json.as_bytes())
+    );
+    if computed_confirmation_hash != input.confirmation_hash.to_ascii_lowercase() {
+        return Err("Confirmation hash 与 Envelope 内容不匹配。".to_string());
+    }
     let mut transaction = pool.begin().await.map_err(database_error)?;
     let proposed_change_set_id = input
         .proposed_change_set
@@ -104,7 +117,8 @@ pub(crate) async fn commit_result_verification_in_pool(
     }
     sqlx::query(
         "INSERT INTO result_verifications (id, task_run_id, verdict, checks_json, summary, \
-         proposed_change_set_id, correlation_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+         proposed_change_set_id, correlation_id, created_at, confirmation_envelope_json, \
+         confirmation_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&input.id)
     .bind(&input.task_run_id)
@@ -114,6 +128,8 @@ pub(crate) async fn commit_result_verification_in_pool(
     .bind(proposed_change_set_id)
     .bind(&input.correlation_id)
     .bind(input.created_at)
+    .bind(&input.confirmation_envelope_json)
+    .bind(&input.confirmation_hash)
     .execute(&mut *transaction)
     .await
     .map_err(database_error)?;

@@ -29,6 +29,8 @@ export type AgentRuntimeViewPhase =
 
 export type AgentTimelineEventKind =
   | 'status'
+  | 'decision'
+  | 'summary'
   | 'step_started'
   | 'step_completed'
   | 'tool'
@@ -57,6 +59,7 @@ export interface AgentRuntimeViewState {
   toolCalls: AgentToolCall[]
   timelineEvents: AgentTimelineEvent[]
   authorizationRequest: AgentAuthorizationRequest | null
+  summary?: string
 }
 
 export function createIdleAgentRuntimeState(): AgentRuntimeViewState {
@@ -70,5 +73,6 @@ export function createIdleAgentRuntimeState(): AgentRuntimeViewState {
     toolCalls: [],
     timelineEvents: [],
     authorizationRequest: null,
+    summary: '',
   }
 }

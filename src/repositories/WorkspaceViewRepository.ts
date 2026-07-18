@@ -7,5 +7,6 @@ export interface WorkspaceViewRepository {
   list(): Promise<AppResult<StructuredWorkspaceViewSummary[]>>
   update(input: { id: string; expectedVersion: number; title: string; payload: StructuredWorkspaceViewPayload; updatedAt?: number }): Promise<AppResult<StructuredWorkspaceView>>
   move(input: { id: string; expectedVersion: number; parentId: string | null; sortOrder?: number; updatedAt?: number }): Promise<AppResult<StructuredWorkspaceView>>
+  setPinned(input: { id: string; pinnedAt: number | null }): Promise<AppResult<StructuredWorkspaceView>>
   delete(id: string): Promise<AppResult<void>>
 }

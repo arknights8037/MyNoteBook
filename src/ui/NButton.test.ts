@@ -25,4 +25,13 @@ describe('NButton', () => {
 
     expect(wrapper.get('.n-button__content').text()).toBe('保存')
   })
+
+  it('supports semantic submit buttons for shared form actions', () => {
+    const wrapper = mount(NButton, {
+      props: { nativeType: 'submit' },
+      slots: { default: '提交' },
+    })
+
+    expect(wrapper.get('button').attributes('type')).toBe('submit')
+  })
 })

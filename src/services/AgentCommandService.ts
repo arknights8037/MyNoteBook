@@ -1,55 +1,14 @@
 import type { BlockPatch, SelectedBlock } from '@/models/agent'
+import type { AgentWriteCommand, RegexReplaceCommand } from './AgentWriteContract'
 
-export interface RegexReplaceCommand {
-  tool: 'replace_text_by_regex'
-  pattern: string
-  replacement: string
-  flags?: string
-  blockIds?: string[]
-  reason?: string
-}
-
-export interface ReplaceBlockCommand {
-  tool: 'replace_block'
-  documentId?: string
-  blockId: string
-  content: string
-  reason?: string
-}
-
-export interface InsertBlocksCommand {
-  tool: 'insert_blocks'
-  documentId?: string
-  anchorBlockId: string
-  position: 'before' | 'after' | 'append'
-  content: string
-  reason?: string
-}
-
-export interface CreateDocumentCommand {
-  tool: 'create_document'
-  title: string
-  content: string
-  parentDocumentId?: string | null
-  reason?: string
-}
-
-export interface CreateGroupCommand {
-  tool: 'create_group'
-  title: string
-  initialDocument?: {
-    title: string
-    content: string
-  }
-  reason?: string
-}
-
-export type AgentWriteCommand =
-  | RegexReplaceCommand
-  | ReplaceBlockCommand
-  | InsertBlocksCommand
-  | CreateDocumentCommand
-  | CreateGroupCommand
+export type {
+  AgentWriteCommand,
+  CreateDocumentCommand,
+  CreateGroupCommand,
+  InsertBlocksCommand,
+  RegexReplaceCommand,
+  ReplaceBlockCommand,
+} from './AgentWriteContract'
 
 export async function createAgentCommandPatches(input: {
   command: AgentWriteCommand

@@ -8,6 +8,10 @@ const createSkill = vi.fn()
 const readSkillFile = vi.fn()
 const writeSkillFile = vi.fn()
 const setSkillEnabled = vi.fn()
+const listMcpServers = vi.fn()
+const importMcpConfigText = vi.fn()
+const setMcpServerEnabled = vi.fn()
+const setMcpServerTrusted = vi.fn()
 
 describe('AgentResourceDraftService', () => {
   function createService() {
@@ -19,6 +23,12 @@ describe('AgentResourceDraftService', () => {
         writeFile: writeSkillFile,
         setEnabled: setSkillEnabled,
       },
+      {
+        list: listMcpServers,
+        importText: importMcpConfigText,
+        setEnabled: setMcpServerEnabled,
+        setTrusted: setMcpServerTrusted,
+      },
     )
   }
 
@@ -28,6 +38,10 @@ describe('AgentResourceDraftService', () => {
     readSkillFile.mockReset()
     writeSkillFile.mockReset()
     setSkillEnabled.mockReset()
+    listMcpServers.mockReset()
+    importMcpConfigText.mockReset()
+    setMcpServerEnabled.mockReset()
+    setMcpServerTrusted.mockReset()
   })
 
   it('persists automations as disabled drafts without scheduling them', async () => {
@@ -57,9 +71,7 @@ describe('AgentResourceDraftService', () => {
       name: '每日摘要',
       enabled: false,
     })
-    expect(createTask).toHaveBeenCalledWith(
-      expect.objectContaining({ enabled: false }),
-    )
+    expect(createTask).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }))
   })
 
   it('writes complete Skill instructions and leaves the new Skill disabled', async () => {
@@ -102,5 +114,64 @@ describe('AgentResourceDraftService', () => {
     })
 
     expect(setSkillEnabled).toHaveBeenCalledWith('legacy-skill', false)
+  })
+
+  it('creates MCP configs under a fresh id and keeps them disabled and untrusted', async () => {
+    listMcpServers.mockResolvedValue([
+      { id: 'local-tools', name: '旧服务', enabled: true, trusted: true },
+    ])
+    importMcpConfigText.mockImplementation(async (content: string) => {
+      const parsed = JSON.parse(content)
+      expect(parsed).toEqual({
+        mcpServers: {
+          'local-tools-2': {
+            name: 'Local Tools',
+            command: 'npx',
+            args: ['-y', '@example/mcp-server'],
+            enabled: false,
+          },
+        },
+      })
+      return [
+        {
+          id: 'local-tools-2',
+          name: 'Local Tools',
+          transport: 'stdio',
+          enabled: false,
+          trusted: false,
+        },
+      ]
+    })
+    const service = createService()
+
+    await expect(
+      service.createMcpServerDraft({
+        name: 'Local Tools',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', '@example/mcp-server'],
+      }),
+    ).resolves.toEqual({
+      created: true,
+      id: 'local-tools-2',
+      name: 'Local Tools',
+      enabled: false,
+      trusted: false,
+    })
+    expect(setMcpServerEnabled).not.toHaveBeenCalled()
+    expect(setMcpServerTrusted).not.toHaveBeenCalled()
+  })
+
+  it('rejects unsafe HTTP MCP protocols before persisting', async () => {
+    const service = createService()
+
+    await expect(
+      service.createMcpServerDraft({
+        name: 'File endpoint',
+        transport: 'http',
+        url: 'file:///tmp/mcp.sock',
+      }),
+    ).rejects.toThrow('只支持 http 或 https')
+    expect(importMcpConfigText).not.toHaveBeenCalled()
   })
 })

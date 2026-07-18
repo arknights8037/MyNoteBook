@@ -560,7 +560,7 @@ fn normalize_operations(values: &[String]) -> Result<Vec<String>, String> {
     Ok(result)
 }
 
-fn validate_hash(value: &str, label: &str) -> Result<(), String> {
+pub(crate) fn validate_hash(value: &str, label: &str) -> Result<(), String> {
     if value.len() == 64 && value.chars().all(|character| character.is_ascii_hexdigit()) {
         Ok(())
     } else {
@@ -597,6 +597,7 @@ fn optional_string(value: &Value, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::Digest;
 
     #[test]
     fn delegation_operations_are_explicit_and_deduplicated() {
@@ -899,6 +900,17 @@ mod tests {
             .expect("submit CLI artifact or evidence");
         }
 
+        let confirmation_envelope_json = serde_json::json!({
+            "version": 1,
+            "task": { "id": "cli-smoke-run" },
+            "externalResult": { "summary": "isolated" },
+            "checks": [{ "id": "cli-output", "passed": true }]
+        })
+        .to_string();
+        let confirmation_hash = format!(
+            "{:x}",
+            sha2::Sha256::digest(confirmation_envelope_json.as_bytes())
+        );
         crate::work::commit_result_verification_in_pool(
             pool.as_ref(),
             &crate::work::CommitVerificationInput {
@@ -907,6 +919,8 @@ mod tests {
                 task_run_id: "cli-smoke-run".to_string(),
                 verdict: "needs_approval".to_string(),
                 checks_json: "[{\"id\":\"cli-output\",\"passed\":true}]".to_string(),
+                confirmation_envelope_json,
+                confirmation_hash,
                 summary: "CLI result validated; proposed change still requires approval."
                     .to_string(),
                 proposed_change_set: None,

@@ -85,7 +85,7 @@ function isCreationPatch(patch: BlockPatch): boolean {
         >
       </div>
 
-      <section class="agent-patch-review">
+      <section class="agent-patch-review" aria-label="待审批修改列表" tabindex="0">
         <header class="agent-patch-review__summary">
           <strong>{{ task.currentStep }}</strong>
           <small>展开单项可对比并编辑修改后的内容。</small>

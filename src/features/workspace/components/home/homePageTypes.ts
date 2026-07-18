@@ -23,6 +23,7 @@ export interface CreateDocumentOptions {
   documentKind?: DocumentKind
   content?: TiptapDocumentJson
   plainText?: string
+  sourceUrl?: string
 }
 
 export interface DocumentSidebarExpose {
@@ -42,6 +43,8 @@ interface MarkdownFileList {
 
 interface MarkdownFile {
   name: string
+  path?: string
+  webkitRelativePath?: string
   text: () => Promise<string>
 }
 

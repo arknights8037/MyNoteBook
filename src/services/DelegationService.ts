@@ -1,5 +1,10 @@
 import { createSnapshotHash } from '@/models/contextBundle'
-import type { DelegateType, DelegationOperation, ExternalSubmission } from '@/models/governance'
+import type {
+  DelegateType,
+  DelegatedCompletion,
+  DelegationOperation,
+  ExternalSubmission,
+} from '@/models/governance'
 import type { GovernanceRepository } from '@/repositories/GovernanceRepository'
 
 export class DelegationService {
@@ -35,10 +40,17 @@ export class DelegationService {
       causationId: null,
       createdAt,
     })
-    return result.ok ? { ok: true as const, value: { delegation: result.value, capabilityToken } } : result
+    return result.ok
+      ? { ok: true as const, value: { delegation: result.value, capabilityToken } }
+      : result
   }
 
-  async submit(delegationId: string, capabilityToken: string, idempotencyKey: string, submission: ExternalSubmission) {
+  async submit(
+    delegationId: string,
+    capabilityToken: string,
+    idempotencyKey: string,
+    submission: ExternalSubmission,
+  ) {
     const capabilityTokenHash = await createSnapshotHash(capabilityToken)
     const requestHash = await createSnapshotHash({ delegationId, submission })
     return this.governance.submitExternal({
@@ -49,6 +61,36 @@ export class DelegationService {
       submission,
       submittedAt: this.now(),
     })
+  }
+
+  getContextBundle(id: string) {
+    return this.governance.getContextBundle(id)
+  }
+
+  async submitCompletion(
+    delegationId: string,
+    capabilityToken: string,
+    idempotencyKey: string,
+    completion: DelegatedCompletion,
+  ) {
+    const ordered: ExternalSubmission[] = [
+      ...(completion.artifacts ?? []),
+      ...(completion.evidence ?? []),
+      ...(completion.changeSet ? [completion.changeSet] : []),
+      completion.result,
+    ]
+    let lastResult: Awaited<ReturnType<DelegationService['submit']>> | null = null
+    for (let index = 0; index < ordered.length; index += 1) {
+      const submission = ordered[index]!
+      lastResult = await this.submit(
+        delegationId,
+        capabilityToken,
+        `${idempotencyKey}:${index}:${submission.type}`,
+        submission,
+      )
+      if (!lastResult.ok) return lastResult
+    }
+    return lastResult!
   }
 }
 

@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { createEmptyMindMapContent } from '@/models/mindMap'
 import MindMapEditor from './MindMapEditor.vue'
@@ -61,12 +61,13 @@ describe('MindMapEditor with MindElixir', () => {
     await new Promise((resolve) => globalThis.setTimeout(resolve, 20))
     expect(document.querySelector('.document-card-menu')).not.toBeNull()
 
-    wrapper.get('.mind-map-editor').element.dispatchEvent(
-      new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }),
-    )
+    wrapper
+      .get('.mind-map-editor')
+      .element.dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }),
+      )
     await wrapper.vm.$nextTick()
-    await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
-    expect(document.querySelector('.document-card-menu')).toBeNull()
+    await vi.waitFor(() => expect(document.querySelector('.document-card-menu')).toBeNull())
     wrapper.unmount()
   })
 })

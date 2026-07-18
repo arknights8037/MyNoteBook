@@ -1,6 +1,13 @@
 import type { AiChatMode } from './aiChatMode'
 
-export type AgentRunIntent = 'default' | 'plan' | 'create' | 'research' | 'review' | 'interactive'
+export type AgentRunIntent =
+  | 'default'
+  | 'plan'
+  | 'create'
+  | 'research'
+  | 'review'
+  | 'learning'
+  | 'interactive'
 
 export interface AgentSlashCommand {
   name: string
@@ -67,13 +74,54 @@ export const AGENT_SLASH_COMMANDS: readonly AgentSlashCommand[] = [
   {
     name: 'review',
     label: '审阅模式',
-    description: '检查当前内容并生成可确认的改进建议',
+    description: '只读检查事实、来源和逻辑问题',
     mode: 'agent',
     intent: 'review',
     placeholder: '说明审阅重点，例如结构、事实或表达',
-    defaultPrompt: '请审阅当前页面并提出必要的修改建议。',
+    defaultPrompt: '请审阅当前页面，列出可定位的问题、严重程度和建议动作。',
     systemInstruction:
-      '当前为审阅模式。先说明发现的问题，再只为确有必要的内容生成最小修改提案；存在主观取舍时向授权人提问。',
+      '当前为只读 Review Mode。输出结构化问题，不生成修改提案；只有用户稍后明确选择处理某项问题时，才进入独立的 Patch 提案运行。',
+  },
+  {
+    name: 'learn',
+    label: '学习模式',
+    description: '先解释或作答，再获得逐步反馈与提示',
+    mode: 'agent',
+    intent: 'learning',
+    placeholder: '输入希望理解的主题或当前困惑',
+    defaultPrompt: '请围绕当前页面选择一个核心概念，引导我先用自己的话解释。',
+    systemInstruction:
+      '当前为 Learning Mode。首次只提出问题并等待用户尝试；后续依据持久化 Learning Session 分析尝试，不直接写文档或正式知识。',
+  },
+  {
+    name: 'find-assumptions',
+    label: '查找假设',
+    description: '使用 Review Mode 聚焦范围和隐含假设',
+    mode: 'agent',
+    intent: 'review',
+    placeholder: '补充需要关注的章节或范围',
+    defaultPrompt: '聚焦检查当前页面中缺失的范围、前提和隐含假设。',
+    systemInstruction: '使用 Review Mode，并将本次任务聚焦于范围与假设。',
+  },
+  {
+    name: 'find-conflicts',
+    label: '查找冲突',
+    description: '使用 Review Mode 聚焦内部或来源冲突',
+    mode: 'agent',
+    intent: 'review',
+    placeholder: '补充需要比较的观点或资料',
+    defaultPrompt: '聚焦检查当前页面及相关来源中的内部冲突。',
+    systemInstruction: '使用 Review Mode，并将本次任务聚焦于冲突。',
+  },
+  {
+    name: 'extract-claims',
+    label: '检查结论',
+    description: '使用 Review Mode 聚焦结论及其证据',
+    mode: 'agent',
+    intent: 'review',
+    placeholder: '补充需要检查的结论范围',
+    defaultPrompt: '聚焦提取并检查当前页面中的结论、来源和证据支持情况。',
+    systemInstruction: '使用 Review Mode，并将本次任务聚焦于结论与证据。',
   },
   {
     name: 'edit',

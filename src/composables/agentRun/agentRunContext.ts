@@ -19,6 +19,41 @@ export async function buildAgentRunContext(input: {
   const documentMarkdown = document.markdown || document.text
   const targetBlocks = input.targetBlocks ?? []
   if (mode === 'agent') {
+    if (snapshot.explicitTargets.length > 0) {
+      const perTargetLimit = Math.max(1_000, Math.floor(120_000 / snapshot.explicitTargets.length))
+      const targetSections = snapshot.explicitTargets.map((target, index) => {
+        const rawTargetContent =
+          target.content?.trim() ||
+          (target.kind === 'document' && target.id === document.id
+            ? documentMarkdown
+            : '（该目标没有可用的提取文本）')
+        const targetContent =
+          rawTargetContent.length > perTargetLimit
+            ? `${rawTargetContent.slice(0, perTargetLimit)}\n\n（该目标内容较长，本次上下文已截断。）`
+            : rawTargetContent
+        return [
+          `## 目标 ${index + 1}：${target.title}`,
+          `目标类型：${target.kind === 'document' ? '知识库文件' : '知识资产'}`,
+          target.kind === 'knowledge_asset'
+            ? '该目标没有稳定 document/block revision，不得伪造 Evidence 来源；相关结论应标为 unverified。'
+            : `目标文档 ID：${target.id}；revision：${target.revision ?? '未知'}`,
+          '',
+          targetContent,
+        ].join('\n')
+      })
+      return {
+        text: [
+          `当前 Agent 项目：${snapshot.workspace?.projectName ?? '未分组项目'}`,
+          `显式目标数量：${snapshot.explicitTargets.length}`,
+          '这是多文件 Research。必须逐份分析，并比较共同点、差异、冲突、证据强弱与缺失信息。',
+          '',
+          ...targetSections,
+          '',
+          '本次任务必须以以上显式目标集合为边界，不得把当前打开页面替换或混入研究目标。',
+        ].join('\n'),
+        sources: [],
+      }
+    }
     return {
       text: [
         `当前 Agent 项目：${snapshot.workspace?.projectName ?? '未分组项目'}`,

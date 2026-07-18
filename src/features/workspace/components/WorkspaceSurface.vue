@@ -3,7 +3,6 @@ import { Sparkles, X } from '@lucide/vue'
 import {
   computed,
   defineAsyncComponent,
-  nextTick,
   onBeforeUnmount,
   onMounted,
   ref,
@@ -15,8 +14,12 @@ import NIcon from '@/ui/NIcon.vue'
 import NTooltip from '@/ui/NTooltip.vue'
 import { useDialog, useMessage } from '@/ui/services'
 
-import { useAiConversation } from '@/composables/useAiConversation'
-import { useAgentRun, type AgentRunContinuation } from '@/composables/useAgentRun'
+import { useAiConversation, type AiConversationMessage } from '@/composables/useAiConversation'
+import {
+  useAgentRun,
+  type AgentRunContinuation,
+  type AgentRunDocumentSnapshot,
+} from '@/composables/useAgentRun'
 import { useAgentPatchWorkflow } from '@/composables/useAgentPatchWorkflow'
 import { useDocumentWorkspace } from '@/composables/useDocumentWorkspace'
 import { useSensitiveAuthorization } from '@/composables/useSensitiveAuthorization'
@@ -29,11 +32,18 @@ import { ensureTopLevelBlockIds } from '@/editor/blockId'
 import { parseEditorContentJson } from '@/editor/editorContent'
 import { EMPTY_TIPTAP_DOCUMENT, type DocumentId, type DocumentSummary } from '@/models/document'
 import type { MindMapSummary } from '@/models/mindMap'
-import type { StructuredWorkspaceViewSummary, StructuredWorkspaceViewType } from '@/models/workspaceView'
+import type {
+  StructuredWorkspaceViewSummary,
+  StructuredWorkspaceViewType,
+} from '@/models/workspaceView'
 import { AI_PROVIDER_CONFIGS } from '@/models/ai'
-import { AI_MODE_OPTIONS } from '@/models/aiChatMode'
+import { AI_MODE_OPTIONS, type AiChatMode } from '@/models/aiChatMode'
 import { UNGROUPED_AGENT_PROJECT_ID } from '@/models/aiChatHistory'
+import { createIdleAgentRuntimeState } from '@/models/agentRuntime'
 import type { AgentTask } from '@/models/agent'
+import type { AgentExplicitTarget, AgentTargetOption } from '@/models/agentTarget'
+import type { KnowledgeAsset } from '@/models/knowledgeAsset'
+import type { ResearchCandidateRef, ReviewIssue } from '@/models/cognitive'
 import { createEntityId } from '@/models/id'
 import {
   createDefaultAppSettings,
@@ -56,6 +66,7 @@ import {
   type AgentCommunicationRequest,
 } from '@/services/AgentCommunicationService'
 import { renderAiMarkdown } from '@/services/AiMarkdownRenderer'
+import { generateConversationTitle } from '@/services/ConversationTitleService'
 import { applyTheme, setThemePreference, subscribeToSystemTheme } from '@/services/theme'
 import DocumentSidebar, {
   type SidebarView,
@@ -72,6 +83,7 @@ import type { DocumentSidebarExpose, EditorShellExpose } from './home/homePageTy
 import { useDocumentTransferActions } from './home/useDocumentTransferActions'
 import { useHomeAiMessageActions } from './home/useHomeAiMessageActions'
 import { CREATE_VIEW_TEMPLATES, type CreateViewKind } from './home/viewTemplates'
+import type { WorkspaceItemMetadata } from './home/WorkspaceItemMetadataModal.vue'
 
 const EditorShell = defineAsyncComponent({
   loader: () => import('@/editor/EditorShell.vue'),
@@ -107,6 +119,9 @@ const DeveloperInspectorDrawer = defineLazyComponent(
 const DocumentNameModals = defineLazyComponent(() => import('./home/DocumentNameModals.vue'))
 const DocumentPropertiesModal = defineLazyComponent(
   () => import('./home/DocumentPropertiesModal.vue'),
+)
+const WorkspaceItemMetadataModal = defineLazyComponent(
+  () => import('./home/WorkspaceItemMetadataModal.vue'),
 )
 const DocumentSearchModal = defineLazyComponent(() => import('./home/DocumentSearchModal.vue'))
 const ImportDocumentModal = defineLazyComponent(() => import('./home/ImportDocumentModal.vue'))
@@ -157,6 +172,11 @@ const draggedWorkspaceViewId = ref<string | null>(null)
 let mindMapServicePromise: Promise<MindMapService> | null = null
 const workspaceViews = ref<StructuredWorkspaceViewSummary[]>([])
 const activeWorkspaceViewId = ref<string | null>(null)
+const showWorkspaceItemMetadataModal = ref(false)
+const workspaceItemMetadataMode = ref<'rename' | 'properties' | null>(null)
+const workspaceItemMetadataTarget = ref<WorkspaceItemMetadata | null>(null)
+const workspaceItemMetadataTitle = ref('')
+const workspaceItemMetadataBusy = ref(false)
 let workspaceViewServicePromise: Promise<WorkspaceViewService> | null = null
 const {
   showAiChat,
@@ -212,6 +232,7 @@ const {
   ensureAiSecretLoaded,
 } = useAiPreferences(aiError)
 const aiIsRunning = ref(false)
+const explicitAgentTargets = ref<AgentExplicitTarget[]>([])
 const agentTasks = ref<AgentTask[]>([])
 const dialog = useDialog()
 const message = useMessage()
@@ -271,7 +292,9 @@ const {
 function mindMapService(): Promise<MindMapService> {
   return (mindMapServicePromise ??= createMindMapService())
 }
-function workspaceViewService(): Promise<WorkspaceViewService> { return (workspaceViewServicePromise ??= createWorkspaceViewService()) }
+function workspaceViewService(): Promise<WorkspaceViewService> {
+  return (workspaceViewServicePromise ??= createWorkspaceViewService())
+}
 
 async function selectDocument(documentId: DocumentId): Promise<void> {
   activeMindMapId.value = null
@@ -403,7 +426,9 @@ async function handleWorkspaceGroupDrop(
   if (workspaceViewId) {
     const view = workspaceViews.value.find((item) => item.id === workspaceViewId)
     if (!view || view.parentId === groupId) return
-    const result = await (await workspaceViewService()).move({
+    const result = await (
+      await workspaceViewService()
+    ).move({
       id: view.id,
       expectedVersion: view.version,
       parentId: groupId,
@@ -417,7 +442,9 @@ async function handleWorkspaceGroupDrop(
   if (!mindMapId) return
   const mindMap = mindMaps.value.find((item) => item.id === mindMapId)
   if (!mindMap || mindMap.parentId === groupId) return
-  const result = await (await mindMapService()).move({
+  const result = await (
+    await mindMapService()
+  ).move({
     id: mindMap.id,
     expectedVersion: mindMap.version,
     parentId: groupId,
@@ -427,9 +454,20 @@ async function handleWorkspaceGroupDrop(
   expandGroup(groupId)
   message.success('思维导图已移动到分组')
 }
-async function refreshWorkspaceViews(): Promise<void> { const result = await (await workspaceViewService()).list(); if (!result.ok) throw new Error(result.error.message); workspaceViews.value = result.value }
-function openWorkspaceView(viewId: string): void { activeWorkspaceViewId.value = viewId; activeMindMapId.value = null; sidebarView.value = 'documents'; openDocumentSurface() }
-function handleWorkspaceViewSaved(summary: StructuredWorkspaceViewSummary): void { workspaceViews.value = [summary, ...workspaceViews.value.filter((item) => item.id !== summary.id)] }
+async function refreshWorkspaceViews(): Promise<void> {
+  const result = await (await workspaceViewService()).list()
+  if (!result.ok) throw new Error(result.error.message)
+  workspaceViews.value = result.value
+}
+function openWorkspaceView(viewId: string): void {
+  activeWorkspaceViewId.value = viewId
+  activeMindMapId.value = null
+  sidebarView.value = 'documents'
+  openDocumentSurface()
+}
+function handleWorkspaceViewSaved(summary: StructuredWorkspaceViewSummary): void {
+  workspaceViews.value = [summary, ...workspaceViews.value.filter((item) => item.id !== summary.id)]
+}
 async function deleteWorkspaceView(viewId: string): Promise<void> {
   const view = workspaceViews.value.find((item) => item.id === viewId)
   if (!view || !(await confirmWorkspaceViewRemoval(view.title))) return
@@ -439,10 +477,116 @@ async function deleteWorkspaceView(viewId: string): Promise<void> {
   if (activeWorkspaceViewId.value === viewId) activeWorkspaceViewId.value = null
   message.success('视图已删除')
 }
+
+function workspaceParentLabel(parentId: string | null): string {
+  if (!parentId) return '空间根目录'
+  const parentDocument = documents.value.find((item) => item.id === parentId)
+  if (parentDocument) return displayDocumentTitle(parentDocument)
+  return (
+    mindMaps.value.find((item) => item.id === parentId)?.title ??
+    workspaceViews.value.find((item) => item.id === parentId)?.title ??
+    '未知位置'
+  )
+}
+
+function openMindMapMetadata(mindMapId: string, mode: 'rename' | 'properties'): void {
+  const item = mindMaps.value.find((candidate) => candidate.id === mindMapId)
+  if (!item) return
+  workspaceItemMetadataTarget.value = {
+    id: item.id,
+    kind: 'mindmap',
+    title: item.title,
+    typeLabel: '思维导图',
+    parentLabel: workspaceParentLabel(item.parentId),
+    detailLabel: `${item.nodeCount} 个节点`,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    pinned: false,
+  }
+  workspaceItemMetadataTitle.value = item.title
+  workspaceItemMetadataMode.value = mode
+  showWorkspaceItemMetadataModal.value = true
+}
+
+function openWorkspaceViewMetadata(viewId: string, mode: 'rename' | 'properties'): void {
+  const item = workspaceViews.value.find((candidate) => candidate.id === viewId)
+  if (!item) return
+  const labels: Record<StructuredWorkspaceViewType, string> = {
+    slides: '幻灯片',
+    uml: 'UML / 流程图',
+    table: '表格',
+  }
+  workspaceItemMetadataTarget.value = {
+    id: item.id,
+    kind: 'workspace-view',
+    title: item.title,
+    typeLabel: labels[item.viewType],
+    parentLabel: workspaceParentLabel(item.parentId),
+    detailLabel: labels[item.viewType],
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    pinned: item.pinnedAt !== null,
+  }
+  workspaceItemMetadataTitle.value = item.title
+  workspaceItemMetadataMode.value = mode
+  showWorkspaceItemMetadataModal.value = true
+}
+
+async function saveWorkspaceItemRename(): Promise<void> {
+  const target = workspaceItemMetadataTarget.value
+  const title = workspaceItemMetadataTitle.value.trim()
+  if (!target || !title || workspaceItemMetadataBusy.value) return
+  workspaceItemMetadataBusy.value = true
+  try {
+    if (target.kind === 'mindmap') {
+      const service = await mindMapService()
+      const current = await service.get(target.id)
+      if (!current.ok) return message.error(current.error.message)
+      const result = await service.update({
+        id: current.value.id,
+        expectedVersion: current.value.version,
+        title,
+        content: current.value.content,
+      })
+      if (!result.ok) return message.error(result.error.message)
+      await refreshMindMaps()
+    } else {
+      const service = await workspaceViewService()
+      const current = await service.get(target.id)
+      if (!current.ok) return message.error(current.error.message)
+      const result = await service.update({
+        id: current.value.id,
+        expectedVersion: current.value.version,
+        title,
+        payload: current.value.payload,
+      })
+      if (!result.ok) return message.error(result.error.message)
+      await refreshWorkspaceViews()
+    }
+    showWorkspaceItemMetadataModal.value = false
+    message.success('名称已更新')
+  } finally {
+    workspaceItemMetadataBusy.value = false
+  }
+}
+
+async function toggleWorkspaceViewPin(viewId: string): Promise<void> {
+  const item = workspaceViews.value.find((candidate) => candidate.id === viewId)
+  if (!item) return
+  const result = await (await workspaceViewService()).setPinned(viewId, item.pinnedAt === null)
+  if (!result.ok) return message.error(result.error.message)
+  await refreshWorkspaceViews()
+  message.success(item.pinnedAt === null ? '视图已置顶' : '已取消置顶')
+}
 function confirmWorkspaceViewRemoval(title: string): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false
-    const finish = (value: boolean): void => { if (!settled) { settled = true; resolve(value) } }
+    const finish = (value: boolean): void => {
+      if (!settled) {
+        settled = true
+        resolve(value)
+      }
+    }
     dialog.warning({
       title: '删除视图',
       content: `删除「${title.trim() || '未命名视图'}」？此操作无法恢复。`,
@@ -598,6 +742,7 @@ const aiConversation = useAiConversation({
   createId: createDocumentId,
   stop: stopAiAssistant,
   notify: (content) => message.success(content),
+  generateTitle: generateConversationTitle,
 })
 const aiMessages = aiConversation.messages
 const aiPrompt = aiConversation.prompt
@@ -614,8 +759,16 @@ const agentWorkspaceOptions = computed(() =>
     .filter((document) => document.documentKind === 'group' && !document.isDeleted)
     .map((document) => ({ label: document.title, value: document.id })),
 )
-const currentAgentWorkspaceRootIds = computed(
-  () => currentAiProject.value?.workspaceRootIds ?? [],
+const currentAgentWorkspaceRootIds = computed(() => currentAiProject.value?.workspaceRootIds ?? [])
+const agentTargetOptions = computed<AgentTargetOption[]>(() =>
+  documents.value
+    .filter((document) => document.documentKind === 'article' && !document.isDeleted)
+    .map((document) => ({
+      kind: 'document',
+      id: document.id,
+      title: displayTitle(document),
+      subtitle: document.id === currentDocumentId.value ? '当前页面' : '知识库页面',
+    })),
 )
 
 watch(
@@ -640,12 +793,14 @@ const agentRun = useAgentRun({
   createId: createDocumentId,
   replaceBlocksByRegex: dependencies.replaceBlocksByRegex,
   notify: message,
+  explicitTargets: explicitAgentTargets,
   workspace: {
     projectId: currentAgentRuntimeProjectId,
     projectName: computed(() => currentAiProject.value?.name ?? '未分组任务'),
     rootDocumentIds: currentAgentWorkspaceRootIds,
     conversationId: currentAiChatHistoryId,
     ensureConversationId: aiConversation.ensureConversationId,
+    requestConversationTitle: aiConversation.requestConversationTitle,
   },
   document: {
     captureSnapshot: () => ({
@@ -694,7 +849,13 @@ const agentRun = useAgentRun({
 const agentCommunication = new AgentCommunicationService()
 let agentCommunicationTimer: ReturnType<typeof globalThis.setInterval> | null = null
 let isPollingAgentCommunication = false
-const agentRuntimeState = agentRun.runtimeState
+let hasCheckedLegacyAgentCommunicationLeaks = false
+const agentRuntimeState = computed(() =>
+  agentRun.activeConversationId.value === currentAiChatHistoryId.value
+    ? agentRun.runtimeState.value
+    : createIdleAgentRuntimeState(),
+)
+const agentAuthorizationRequest = computed(() => agentRun.runtimeState.value.authorizationRequest)
 let unsubscribeSystemTheme: (() => void) | null = null
 const {
   defaultDataDirectory,
@@ -748,7 +909,11 @@ const internalDocuments = computed(() =>
     .filter(
       (document) => document.documentKind === 'article' && document.id !== currentDocumentId.value,
     )
-    .map((document) => ({ id: document.id, title: displayTitle(document) })),
+    .map((document) => ({
+      id: document.id,
+      title: displayTitle(document),
+      sourceUrl: document.sourceUrl,
+    })),
 )
 const knowledgeDocumentCount = computed(
   () => documents.value.filter((document) => document.documentKind === 'article').length,
@@ -806,7 +971,9 @@ onMounted(async () => {
   void refreshMindMaps().catch((mindMapError) => {
     message.error(mindMapError instanceof Error ? mindMapError.message : String(mindMapError))
   })
-  void refreshWorkspaceViews().catch((viewError) => message.error(viewError instanceof Error ? viewError.message : String(viewError)))
+  void refreshWorkspaceViews().catch((viewError) =>
+    message.error(viewError instanceof Error ? viewError.message : String(viewError)),
+  )
   if (import.meta.env.DEV) {
     const marks = globalThis.performance
       .getEntriesByType('mark')
@@ -880,6 +1047,43 @@ async function runAiAssistant(): Promise<void> {
   await agentRun.run()
 }
 
+function selectAgentTarget(target: AgentTargetOption): void {
+  if (
+    explicitAgentTargets.value.some(
+      (current) => current.kind === target.kind && current.id === target.id,
+    )
+  )
+    return
+  explicitAgentTargets.value = [...explicitAgentTargets.value, { ...target }]
+}
+
+function clearAgentTarget(targetId: string): void {
+  const target = explicitAgentTargets.value.find((current) => current.id === targetId)
+  explicitAgentTargets.value = explicitAgentTargets.value.filter(
+    (current) => current.id !== targetId,
+  )
+  if (target) {
+    aiPrompt.value = aiPrompt.value
+      .replace(`@${target.title}`, '')
+      .replace(/\s{2,}/g, ' ')
+      .trimStart()
+  }
+}
+
+function researchKnowledgeAssets(assets: KnowledgeAsset[]): void {
+  if (assets.length === 0) return
+  explicitAgentTargets.value = assets.map((asset) => ({
+    kind: 'knowledge_asset' as const,
+    id: asset.id,
+    title: asset.title,
+    subtitle: `知识资产 · ${asset.format}`,
+    content: asset.content,
+  }))
+  const mentions = assets.map((asset) => `@${asset.title}`).join(' ')
+  aiPrompt.value = `/research ${mentions} 请对这些知识资产进行多文件分析，比较共同点、差异、冲突、证据强弱、局限和待确认问题。`
+  openAgentWorkspace()
+}
+
 function stopAiAssistant(): void {
   agentRun.stop()
 }
@@ -933,20 +1137,127 @@ function clearAiChat(): void {
   aiConversation.clear()
 }
 
+async function handleResearchCandidateAction(input: {
+  messageId: string
+  itemId: string
+  candidateId: string
+  expectedVersion: number
+  action: 'keep' | 'approve' | 'reject'
+  title?: string
+  content?: string
+}): Promise<void> {
+  const targetMessage = aiMessages.value.find((item) => item.id === input.messageId)
+  const candidateIndex = targetMessage?.researchCandidates?.findIndex(
+    (candidate) => candidate.itemId === input.itemId && candidate.candidateId === input.candidateId,
+  )
+  if (!targetMessage?.researchResult || candidateIndex === undefined || candidateIndex < 0) return
+  const current = targetMessage.researchCandidates?.[candidateIndex]
+  if (!current) return
+
+  try {
+    const { createResearchCandidateService } =
+      await import('@/app/composition/researchCandidateServiceFactory')
+    const service = await createResearchCandidateService((prefix) =>
+      createEntityId(prefix.replace(/[^a-z0-9-]/gi, '-')),
+    )
+    let next: ResearchCandidateRef = current
+    if (
+      input.title !== undefined &&
+      input.content !== undefined &&
+      (input.title.trim() !== current.title || input.content.trim() !== current.content)
+    ) {
+      const revised = await service.revise({
+        candidateId: input.candidateId,
+        expectedVersion: input.expectedVersion,
+        title: input.title,
+        content: input.content,
+      })
+      if (!revised.ok) throw new Error(revised.error.message)
+      next = revised.value
+    }
+    const decided = await service.decide({
+      candidateId: next.candidateId,
+      expectedVersion: next.version,
+      action: input.action,
+    })
+    if (!decided.ok) {
+      next = {
+        ...next,
+        sourceState: decided.error.code === 'revision-conflict' ? 'stale' : next.sourceState,
+        error: decided.error.message,
+      }
+    } else {
+      next = decided.value
+    }
+    targetMessage.researchCandidates!.splice(candidateIndex, 1, next)
+    if (!decided.ok) {
+      message.error(decided.error.message)
+      return
+    }
+    if (input.action === 'approve') {
+      const relations = await service.materializeApprovedRelations({
+        relations: targetMessage.researchResult.relations,
+        candidates: targetMessage.researchCandidates!,
+      })
+      if (!relations.ok) throw new Error(relations.error.message)
+    }
+    message.success(
+      input.action === 'approve'
+        ? '候选已接受为正式知识'
+        : input.action === 'reject'
+          ? '候选已拒绝'
+          : '候选已保留，稍后仍可处理',
+    )
+  } catch (candidateError) {
+    const errorText =
+      candidateError instanceof Error ? candidateError.message : String(candidateError)
+    targetMessage.researchCandidates!.splice(candidateIndex, 1, {
+      ...current,
+      error: errorText,
+    })
+    message.error(errorText)
+  }
+}
+
+async function resolveReviewIssue(input: { messageId: string; issue: ReviewIssue }): Promise<void> {
+  if (aiIsRunning.value) {
+    message.error('请先等待当前 Agent 任务结束')
+    return
+  }
+  if (input.issue.sourceState === 'stale') {
+    message.error('该问题的来源已变化，请重新执行 Review')
+    return
+  }
+  const targetDocumentId = input.issue.sources[0]?.documentId
+  if (targetDocumentId && targetDocumentId !== currentDocumentId.value) {
+    await selectDocument(targetDocumentId)
+  }
+  const { buildReviewIssueResolutionPrompt } = await import('@/services/ReviewResultService')
+  await agentRun.run(buildReviewIssueResolutionPrompt(input.issue))
+}
+
 async function pollAgentCommunication(): Promise<void> {
   if (isPollingAgentCommunication || aiIsRunning.value || isApplyingAgentPatches.value) return
   isPollingAgentCommunication = true
   let claimedRequest: AgentCommunicationRequest | null = null
   let continuation: AgentRunContinuation | undefined
   try {
-    const decision = await agentCommunication.findDecision()
-    if (decision) {
-      if (!pendingAgentTask.value || pendingAgentTask.value.id !== decision.taskId) {
-        await agentCommunication.markCompleted(decision.id, decision.taskId)
-        return
+    if (!hasCheckedLegacyAgentCommunicationLeaks) {
+      const completedRequests = await agentCommunication.listRecentCompleted()
+      for (const completedRequest of completedRequests) {
+        aiConversation.migrateLeakedTask({
+          id: completedRequest.id,
+          title: `A2A · ${completedRequest.prompt}`,
+          prompt: toAgentCommunicationPrompt(completedRequest),
+        })
       }
+      hasCheckedLegacyAgentCommunicationLeaks = true
+    }
+    const decision = pendingAgentTask.value
+      ? await agentCommunication.findDecisionForTask(pendingAgentTask.value.id)
+      : null
+    if (decision) {
       if (decision.status === 'approved') {
-        await ensurePendingPatchDocument()
         await acceptAllPendingAgentPatches()
         if (pendingAgentTask.value?.id === decision.taskId) {
           const failure = aiError.value || 'Patch 应用未完成。'
@@ -988,12 +1299,45 @@ async function pollAgentCommunication(): Promise<void> {
     if (!request) return
     claimedRequest = request
 
-    aiChatMode.value = 'agent'
-    aiPrompt.value = request.prompt
-    await ensureAgentSeedDocument()
-    const runPromise = agentRun.run(request.prompt, continuation)
-    openAgentWorkspace()
-    await runPromise
+    const runtimePrompt = toAgentCommunicationPrompt(request)
+    const routedConversationId = request.branchId ?? request.id
+    const existingTask = aiChatHistory.value.find((item) => item.id === routedConversationId)
+    const routedProjectId = request.projectId ?? existingTask?.projectId
+    const detachedProject = aiProjects.value.find((project) => project.id === routedProjectId)
+    const detachedMessages = ref<AiConversationMessage[]>(
+      existingTask?.messages.map((item) => ({ ...item })) ?? [],
+    )
+    const detachedPrompt = ref(runtimePrompt)
+    const detachedMode = ref<AiChatMode>('agent')
+    const detachedError = ref('')
+    const detachedConversationId = ref<string | null>(routedConversationId)
+    const detachedProjectId = ref(detachedProject?.id ?? request.projectId ?? '')
+    const detachedProjectName = ref(detachedProject?.name ?? '外部 Agent 任务')
+    const detachedWorkspaceRoots = ref([...(detachedProject?.workspaceRootIds ?? [])])
+    const documentSnapshot = await createAgentCommunicationDocumentSnapshot()
+    await agentRun.run(runtimePrompt, continuation, {
+      mode: detachedMode,
+      prompt: detachedPrompt,
+      messages: detachedMessages,
+      error: detachedError,
+      documentSnapshot,
+      explicitTargets: ref([]),
+      background: true,
+      workspace: {
+        projectId: detachedProjectId,
+        projectName: detachedProjectName,
+        rootDocumentIds: detachedWorkspaceRoots,
+        conversationId: detachedConversationId,
+        ensureConversationId: () => routedConversationId,
+      },
+    })
+    aiConversation.saveDetachedTask({
+      id: routedConversationId,
+      projectId: detachedProject?.id ?? request.projectId ?? undefined,
+      parentConversationId: request.parentConversationId,
+      title: request.branchTitle ?? `A2A · ${request.prompt}`,
+      messages: detachedMessages.value,
+    })
     const taskId = agentRun.lastTaskId.value
     const result = agentRun.lastRunReport.value
 
@@ -1013,14 +1357,14 @@ async function pollAgentCommunication(): Promise<void> {
       )
       showAgentPatchModal.value = false
     } else if (
-      agentRuntimeState.value.status === 'failed' ||
-      agentRuntimeState.value.status === 'cancelled'
+      agentRun.runtimeState.value.status === 'failed' ||
+      agentRun.runtimeState.value.status === 'cancelled'
     ) {
       await agentCommunication.markFailed(
         request.id,
         taskId,
-        agentRuntimeState.value.detail ||
-          (agentRuntimeState.value.status === 'cancelled'
+        agentRun.runtimeState.value.detail ||
+          (agentRun.runtimeState.value.status === 'cancelled'
             ? 'Agent 任务已取消。'
             : 'Agent 任务失败。'),
       )
@@ -1028,7 +1372,7 @@ async function pollAgentCommunication(): Promise<void> {
       await agentCommunication.markFailed(
         request.id,
         null,
-        aiError.value || agentRun.lastRunIssue.value || 'Agent 请求未创建可追溯任务。',
+        detachedError.value || agentRun.lastRunIssue.value || 'Agent 请求未创建可追溯任务。',
       )
     } else if (result) {
       await agentCommunication.markCompleted(request.id, taskId, result)
@@ -1053,50 +1397,70 @@ async function pollAgentCommunication(): Promise<void> {
   }
 }
 
-async function waitForEditorShell(): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    await nextTick()
-    if (typeof editorShell.value?.getCurrentDocumentBlocks === 'function') return
-    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 25))
-  }
+function toAgentCommunicationPrompt(request: AgentCommunicationRequest): string {
+  const command =
+    request.mode === 'learning'
+      ? 'learn'
+      : request.mode === 'research' || request.mode === 'review'
+        ? request.mode
+        : null
+  return command ? `/${command} ${request.prompt}` : request.prompt
 }
 
-async function ensureAgentSeedDocument(): Promise<void> {
-  openDocumentSurface()
-  if (await waitForEditorBlocks()) return
-
-  for (const document of documents.value) {
-    if (
-      document.documentKind !== 'article' ||
-      document.isDeleted ||
-      document.id === currentDocumentId.value
-    ) {
-      continue
+async function createAgentCommunicationDocumentSnapshot(): Promise<AgentRunDocumentSnapshot> {
+  const seedSummary =
+    documents.value.find(
+      (document) =>
+        document.id === currentDocumentId.value &&
+        document.documentKind === 'article' &&
+        !document.isDeleted,
+    ) ??
+    documents.value.find((document) => document.documentKind === 'article' && !document.isDeleted)
+  if (!seedSummary) {
+    return {
+      id: '',
+      title: '外部 Agent 任务',
+      tags: [],
+      sourceUrl: '',
+      author: '',
+      text: '',
+      markdown: '',
+      revision: null,
+      blocks: [],
+      selectedBlocks: [],
+      hasBlockSelection: false,
+      documents: [...documents.value],
     }
-    await selectDocument(document.id)
-    openDocumentSurface()
-    if (await waitForEditorBlocks()) return
+  }
+  const [documentResult, blocksResult] = await Promise.all([
+    requireDocumentService().getDocument(seedSummary.id),
+    requireDocumentService().listDocumentBlocks(seedSummary.id),
+  ])
+  if (!documentResult.ok) throw new Error(documentResult.error.message)
+  if (!blocksResult.ok) throw new Error(blocksResult.error.message)
+  const document = documentResult.value
+  return {
+    id: document.id,
+    title: document.title,
+    tags: [...document.tags],
+    sourceUrl: document.sourceUrl,
+    author: document.author,
+    text: document.plainText,
+    markdown: document.plainText,
+    revision: document.revision,
+    blocks: blocksResult.value.map((block) => ({
+      id: block.id,
+      type: block.type,
+      text: block.plainText,
+      markdown: block.plainText,
+      index: block.index,
+    })),
+    selectedBlocks: [],
+    hasBlockSelection: false,
+    documents: [...documents.value],
   }
 }
 
-async function ensurePendingPatchDocument(): Promise<void> {
-  const targetDocumentId = pendingAgentPatchSet.value?.patches[0]?.documentId
-  if (targetDocumentId && targetDocumentId !== currentDocumentId.value) {
-    await selectDocument(targetDocumentId)
-  }
-  openDocumentSurface()
-  await waitForEditorBlocks()
-}
-
-async function waitForEditorBlocks(): Promise<boolean> {
-  await waitForEditorShell()
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    await nextTick()
-    if ((editorShell.value?.getCurrentDocumentBlocks?.() ?? []).length > 0) return true
-    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 50))
-  }
-  return false
-}
 const forkAiChatAtMessage = aiConversation.forkAtMessage
 const editAiChatMessage = aiConversation.editMessage
 
@@ -1114,7 +1478,11 @@ async function createAndOpenView(kind: CreateViewKind): Promise<void> {
   }
   if (kind === 'slides' || kind === 'uml' || kind === 'table') {
     showCreateViewModal.value = false
-    const titles: Record<StructuredWorkspaceViewType, string> = { slides: '新幻灯片', uml: '新 UML 图', table: '新表格' }
+    const titles: Record<StructuredWorkspaceViewType, string> = {
+      slides: '新幻灯片',
+      uml: '新 UML 图',
+      table: '新表格',
+    }
     const result = await (await workspaceViewService()).create(kind, titles[kind], parentId)
     if (!result.ok) throw new Error(result.error.message)
     await refreshWorkspaceViews()
@@ -1204,6 +1572,69 @@ function documentParentTitle(document: DocumentSummary): string {
 function documentCharacterCount(document: DocumentSummary): number {
   return document.characterCount ?? Array.from(document.plainText.trim()).length
 }
+
+const aiChatPanelBindings = computed(() => ({
+  prompt: aiPrompt.value,
+  mode: aiChatMode.value,
+  modeLabel: aiModeLabel.value,
+  modeOptions: AI_MODE_OPTIONS,
+  providerLabel: aiProviderLabel.value,
+  providerOptions: AI_PROVIDER_CONFIGS,
+  reasoningLabel: aiReasoningLabel.value,
+  reasoningOptions: AI_REASONING_OPTIONS,
+  modelOptions: aiModelOptions.value,
+  settings: aiSettings.value,
+  messages: aiMessages.value,
+  chatHistory: aiChatHistory.value,
+  currentHistoryId: currentAiChatHistoryId.value,
+  projects: aiProjects.value,
+  currentProjectId: currentAiProjectId.value,
+  workspaceOptions: agentWorkspaceOptions.value,
+  currentWorkspaceRootIds: currentAgentWorkspaceRootIds.value,
+  currentDocumentTitle: documentTitle.value,
+  knowledgeSourceCount: knowledgeDocumentCount.value,
+  promptPlaceholder: aiPromptPlaceholder.value,
+  error: aiError.value,
+  isRunning: aiIsRunning.value,
+  agentStep: activeAgentTask.value?.currentStep ?? '',
+  runtimeState: agentRuntimeState.value,
+  renderMarkdownMessage,
+  targetOptions: agentTargetOptions.value,
+  explicitTargets: explicitAgentTargets.value,
+  'onUpdate:prompt': (value: string) => {
+    aiPrompt.value = value
+  },
+  onSelectMode: selectAiMode,
+  onSelectProvider: selectAiProvider,
+  onSelectModel: selectAiModel,
+  onSelectReasoning: selectAiReasoning,
+  onToggleWorkspace: setAiChatWorkspace,
+  onForkMessage: forkAiChatAtMessage,
+  onEditMessage: editAiChatMessage,
+  onRetryMessage: retryAiChatMessage,
+  onSelectHistory: selectAiChatHistory,
+  onDeleteHistory: deleteAiChatHistory,
+  onSelectProject: aiConversation.selectProject,
+  onCreateProject: aiConversation.createProject,
+  onNewTask: aiConversation.startTask,
+  onPinProject: aiConversation.toggleProjectPin,
+  onPinHistory: aiConversation.toggleHistoryPin,
+  onMoveHistory: aiConversation.moveHistoryToProject,
+  onRenameProject: aiConversation.renameProject,
+  onUpdateWorkspace: aiConversation.updateWorkspace,
+  onClose: closeAiChat,
+  onRun: runAiAssistant,
+  onStop: stopAiAssistant,
+  onClear: clearAiChat,
+  onInsert: insertAiMessage,
+  onCopyMessage: copyAiMessage,
+  onWriteMessageToChild: writeAiMessageToChildDocument,
+  onOpenSource: openAiSourceDocument,
+  onResearchCandidateAction: handleResearchCandidateAction,
+  onResolveReviewIssue: resolveReviewIssue,
+  onSelectTarget: selectAgentTarget,
+  onClearTarget: clearAgentTarget,
+}))
 </script>
 
 <template>
@@ -1252,6 +1683,11 @@ function documentCharacterCount(document: DocumentSummary): number {
         @select-mind-map="openMindMap"
         @delete-mind-map="deleteMindMap"
         @delete-workspace-view="deleteWorkspaceView"
+        @rename-mind-map="openMindMapMetadata($event, 'rename')"
+        @properties-mind-map="openMindMapMetadata($event, 'properties')"
+        @rename-workspace-view="openWorkspaceViewMetadata($event, 'rename')"
+        @properties-workspace-view="openWorkspaceViewMetadata($event, 'properties')"
+        @pin-workspace-view="toggleWorkspaceViewPin"
         @select-workspace-view="openWorkspaceView"
         @toggle-document="toggleDocument"
         @properties="openDocumentProperties"
@@ -1306,6 +1742,8 @@ function documentCharacterCount(document: DocumentSummary): number {
           :current-document-id="currentDocumentId"
           :current-document-revision="currentDocument?.revision ?? 0"
           :get-service="dependencies.getKnowledgeControlService"
+          :chat-history="aiChatHistory"
+          @research-assets="researchKnowledgeAssets"
         />
 
         <div
@@ -1316,57 +1754,8 @@ function documentCharacterCount(document: DocumentSummary): number {
         >
           <AiChatPanel
             v-if="showAiChat && aiChatFullscreen"
-            v-model:prompt="aiPrompt"
+            v-bind="aiChatPanelBindings"
             workspace
-            :mode="aiChatMode"
-            :mode-label="aiModeLabel"
-            :mode-options="AI_MODE_OPTIONS"
-            :provider-label="aiProviderLabel"
-            :provider-options="AI_PROVIDER_CONFIGS"
-            :reasoning-label="aiReasoningLabel"
-            :reasoning-options="AI_REASONING_OPTIONS"
-            :model-options="aiModelOptions"
-            :settings="aiSettings"
-            :messages="aiMessages"
-            :chat-history="aiChatHistory"
-            :current-history-id="currentAiChatHistoryId"
-            :projects="aiProjects"
-            :current-project-id="currentAiProjectId"
-            :workspace-options="agentWorkspaceOptions"
-            :current-workspace-root-ids="currentAgentWorkspaceRootIds"
-            :current-document-title="documentTitle"
-            :knowledge-source-count="knowledgeDocumentCount"
-            :prompt-placeholder="aiPromptPlaceholder"
-            :error="aiError"
-            :is-running="aiIsRunning"
-            :agent-step="activeAgentTask?.currentStep ?? ''"
-            :runtime-state="agentRuntimeState"
-            :render-markdown-message="renderMarkdownMessage"
-            @select-mode="selectAiMode"
-            @select-provider="selectAiProvider"
-            @select-model="selectAiModel"
-            @select-reasoning="selectAiReasoning"
-            @toggle-workspace="setAiChatWorkspace"
-            @fork-message="forkAiChatAtMessage"
-            @edit-message="editAiChatMessage"
-            @retry-message="retryAiChatMessage"
-            @select-history="selectAiChatHistory"
-            @delete-history="deleteAiChatHistory"
-            @select-project="aiConversation.selectProject"
-            @create-project="aiConversation.createProject"
-            @new-task="aiConversation.startTask"
-            @pin-project="aiConversation.toggleProjectPin"
-            @pin-history="aiConversation.toggleHistoryPin"
-            @rename-project="aiConversation.renameProject"
-            @update-workspace="aiConversation.updateWorkspace"
-            @close="closeAiChat"
-            @run="runAiAssistant"
-            @stop="stopAiAssistant"
-            @clear="clearAiChat"
-            @insert="insertAiMessage"
-            @copy-message="copyAiMessage"
-            @write-message-to-child="writeAiMessageToChildDocument"
-            @open-source="openAiSourceDocument"
           />
 
           <section
@@ -1376,45 +1765,48 @@ function documentCharacterCount(document: DocumentSummary): number {
           >
             <MindMapWorkspace
               v-if="activeMindMapId"
+              :key="`${activeMindMapId}:${mindMaps.find((item) => item.id === activeMindMapId)?.version ?? 0}`"
               :mind-map-id="activeMindMapId"
               @saved="handleMindMapSaved"
             />
             <WorkspaceViewWorkspace
               v-else-if="activeWorkspaceViewId"
+              :key="`${activeWorkspaceViewId}:${workspaceViews.find((item) => item.id === activeWorkspaceViewId)?.version ?? 0}`"
               :view-id="activeWorkspaceViewId"
               @saved="handleWorkspaceViewSaved"
             />
             <template v-else>
-            <EditorTopbar
-              v-model:title="documentTitle"
-              :disabled="isLoadingDocument || Boolean(loadError)"
-              :busy="isBusy"
-              :has-document="Boolean(currentDocument)"
-              :save-status-class="saveStatusClass"
-              :save-status-text="saveStatusText"
-              :preparing-share="isPreparingShare"
-              @title-input="handleTitleInput"
-              @commit-title="commitCurrentTitle"
-              @create-child="createAndOpenDocument(currentDocumentId)"
-              @share="openShareView"
-              @insert-image="editorShell?.insertImage()"
-              @insert-attachment="editorShell?.insertAttachment()"
-              @inspect="showInspector = true"
-              @search="openSearch"
-            />
+              <EditorTopbar
+                v-model:title="documentTitle"
+                :disabled="isLoadingDocument || Boolean(loadError)"
+                :busy="isBusy"
+                :has-document="Boolean(currentDocument)"
+                :save-status-class="saveStatusClass"
+                :save-status-text="saveStatusText"
+                :preparing-share="isPreparingShare"
+                @title-input="handleTitleInput"
+                @commit-title="commitCurrentTitle"
+                @create-child="createAndOpenDocument(currentDocumentId)"
+                @share="openShareView"
+                @insert-image="editorShell?.insertImage()"
+                @insert-attachment="editorShell?.insertAttachment()"
+                @inspect="showInspector = true"
+                @search="openSearch"
+              />
 
-            <EditorShell
-              ref="editorShell"
-              :model-value="editorContent"
-              :readonly="isLoadingDocument || Boolean(loadError)"
-              :settings="editorSettings"
-              :internal-documents="internalDocuments"
-              :document-id="currentDocumentId"
-              @update:model-value="handleEditorContentUpdate"
-              @text-update="handleTextUpdate"
-              @image-error="message.error"
-              @open-document="openEditorDocument"
-            />
+              <EditorShell
+                ref="editorShell"
+                :model-value="editorContent"
+                :readonly="isLoadingDocument || Boolean(loadError)"
+                :settings="editorSettings"
+                :internal-documents="internalDocuments"
+                :document-id="currentDocumentId"
+                @update:model-value="handleEditorContentUpdate"
+                @text-update="handleTextUpdate"
+                @image-error="message.error"
+                @open-document="openEditorDocument"
+                @unresolved-document-link="message.error(`未找到链接对应的知识库文档：${$event}`)"
+              />
             </template>
           </section>
         </div>
@@ -1435,58 +1827,9 @@ function documentCharacterCount(document: DocumentSummary): number {
 
       <AiChatPanel
         v-if="showAiChat && !aiChatFullscreen"
-        v-model:prompt="aiPrompt"
+        v-bind="aiChatPanelBindings"
         :workspace="false"
         docked
-        :mode="aiChatMode"
-        :mode-label="aiModeLabel"
-        :mode-options="AI_MODE_OPTIONS"
-        :provider-label="aiProviderLabel"
-        :provider-options="AI_PROVIDER_CONFIGS"
-        :reasoning-label="aiReasoningLabel"
-        :reasoning-options="AI_REASONING_OPTIONS"
-        :model-options="aiModelOptions"
-        :settings="aiSettings"
-        :messages="aiMessages"
-        :chat-history="aiChatHistory"
-        :current-history-id="currentAiChatHistoryId"
-        :projects="aiProjects"
-        :current-project-id="currentAiProjectId"
-        :workspace-options="agentWorkspaceOptions"
-        :current-workspace-root-ids="currentAgentWorkspaceRootIds"
-        :current-document-title="documentTitle"
-        :knowledge-source-count="knowledgeDocumentCount"
-        :prompt-placeholder="aiPromptPlaceholder"
-        :error="aiError"
-        :is-running="aiIsRunning"
-        :agent-step="activeAgentTask?.currentStep ?? ''"
-        :runtime-state="agentRuntimeState"
-        :render-markdown-message="renderMarkdownMessage"
-        @select-mode="selectAiMode"
-        @select-provider="selectAiProvider"
-        @select-model="selectAiModel"
-        @select-reasoning="selectAiReasoning"
-        @toggle-workspace="setAiChatWorkspace"
-        @fork-message="forkAiChatAtMessage"
-        @edit-message="editAiChatMessage"
-        @retry-message="retryAiChatMessage"
-        @select-history="selectAiChatHistory"
-        @delete-history="deleteAiChatHistory"
-        @select-project="aiConversation.selectProject"
-        @create-project="aiConversation.createProject"
-        @new-task="aiConversation.startTask"
-        @pin-project="aiConversation.toggleProjectPin"
-        @pin-history="aiConversation.toggleHistoryPin"
-        @rename-project="aiConversation.renameProject"
-        @update-workspace="aiConversation.updateWorkspace"
-        @close="closeAiChat"
-        @run="runAiAssistant"
-        @stop="stopAiAssistant"
-        @clear="clearAiChat"
-        @insert="insertAiMessage"
-        @copy-message="copyAiMessage"
-        @write-message-to-child="writeAiMessageToChildDocument"
-        @open-source="openAiSourceDocument"
       />
 
       <div
@@ -1555,8 +1898,8 @@ function documentCharacterCount(document: DocumentSummary): number {
       />
 
       <AgentAuthorizationModal
-        v-if="agentRuntimeState.authorizationRequest"
-        :request="agentRuntimeState.authorizationRequest"
+        v-if="agentAuthorizationRequest"
+        :request="agentAuthorizationRequest"
         @answer="answerAgentAuthorization"
         @cancel="stopAiAssistant"
       />
@@ -1602,6 +1945,17 @@ function documentCharacterCount(document: DocumentSummary): number {
         :format-date-time="formatDocumentDateTime"
         @save="saveDocumentProperties"
         @reset="resetPropertiesState"
+      />
+
+      <WorkspaceItemMetadataModal
+        v-if="showWorkspaceItemMetadataModal"
+        v-model:show="showWorkspaceItemMetadataModal"
+        v-model:title="workspaceItemMetadataTitle"
+        :target="workspaceItemMetadataTarget"
+        :mode="workspaceItemMetadataMode"
+        :busy="workspaceItemMetadataBusy"
+        :format-date-time="formatDocumentDateTime"
+        @save="saveWorkspaceItemRename"
       />
 
       <DocumentNameModals

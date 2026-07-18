@@ -1,10 +1,8 @@
-import type {
-  ChangeSetRecord,
-  ResultVerification,
-  VerificationCheck,
-} from '@/models/work'
+import type { ChangeSetRecord, ResultVerification, VerificationCheck } from '@/models/work'
 import type { AppResult } from '@/models/result'
 import type { WorkRepository } from '@/repositories/WorkRepository'
+import type { ContextBundle } from '@/models/contextBundle'
+import { createContentHash } from '@/models/contextBundle'
 
 export class ResultVerifier {
   constructor(
@@ -12,6 +10,7 @@ export class ResultVerifier {
     private readonly createId: (prefix: string) => string,
     private readonly now: () => number = Date.now,
     private readonly getDocumentRevision?: (documentId: string) => Promise<number | null>,
+    private readonly getContextBundle?: (id: string) => Promise<ContextBundle | null>,
   ) {}
 
   async verify(taskRunId: string): Promise<AppResult<ResultVerification>> {
@@ -28,6 +27,21 @@ export class ResultVerifier {
     const evidence = evidenceResult.value
     const criteria = run.acceptanceCriteria
     const checks: VerificationCheck[] = []
+    const delegatedContext =
+      run.contextBundleId && this.getContextBundle
+        ? await this.getContextBundle(run.contextBundleId)
+        : null
+    if (run.contextBundleId) {
+      checks.push({
+        key: 'context:bundle',
+        passed: delegatedContext !== null,
+        verifiable: delegatedContext !== null,
+        message:
+          delegatedContext !== null
+            ? '已冻结委托 Context Bundle'
+            : '无法读取委托 Context Bundle，确认内容不完整',
+      })
+    }
 
     for (const required of criteria.requiredArtifacts ?? []) {
       const count = artifacts.filter(
@@ -128,6 +142,35 @@ export class ResultVerifier {
       verdict = 'needs_approval'
     }
     const createdAt = this.now()
+    const confirmationEnvelope = {
+      version: 1 as const,
+      task: {
+        id: run.id,
+        frozenInput: run.frozenInput,
+        acceptanceCriteria: run.acceptanceCriteria as Record<string, unknown>,
+        contextBundleId: run.contextBundleId,
+      },
+      delegatedContext,
+      externalResult: run.output,
+      artifacts: artifacts.map((artifact) => ({
+        id: artifact.id,
+        artifactType: artifact.artifactType,
+        name: artifact.name,
+        content: artifact.content,
+        contentHash: artifact.contentHash,
+      })),
+      evidence: evidence.map((item) => ({
+        id: item.id,
+        evidenceType: item.evidenceType,
+        status: item.status,
+        claim: item.claim,
+        documentId: item.documentId,
+        blockId: item.blockId,
+        sourceRevision: item.sourceRevision,
+        details: item.details,
+      })),
+      checks,
+    }
     const verification: ResultVerification = {
       id: this.createId('verification'),
       taskRunId,
@@ -142,10 +185,17 @@ export class ResultVerifier {
               ? '存在无法自动验证的 Evidence。'
               : '验收条件未通过。',
       proposedChangeSetId: proposedChangeSet?.id ?? null,
+      confirmationEnvelope,
+      confirmationHash: await createContentHash(JSON.stringify(confirmationEnvelope)),
       correlationId: run.correlationId,
       createdAt,
     }
-    const nextStatus = verdict === 'passed' ? 'completed' : verdict === 'needs_approval' ? 'waiting_approval' : 'blocked'
+    const nextStatus =
+      verdict === 'passed'
+        ? 'completed'
+        : verdict === 'needs_approval'
+          ? 'waiting_approval'
+          : 'blocked'
     return this.repository.finalizeVerification({
       verification,
       proposedChangeSet,

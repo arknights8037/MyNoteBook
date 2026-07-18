@@ -267,7 +267,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
         }
       }
       const nextContent = applyAgentBlockPatches(snapshot.content, documentPatches)
-      if (!nextContent.ok || !nextContent.content || nextContent.plainText === undefined) {
+      if (!nextContent.ok || !nextContent.content) {
         await reportPendingAgentError(nextContent.error ?? '无法生成 Agent 修改后的文档内容。')
         return
       }
@@ -275,7 +275,6 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
         documentId,
         expectedRevision: snapshot.revision,
         contentJson: JSON.stringify(nextContent.content),
-        plainText: nextContent.plainText,
         transactionId:
           documentMutations.length === 0 ? batchId : `${batchId}:${documentMutations.length}`,
       })

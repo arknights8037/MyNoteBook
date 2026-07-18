@@ -8,12 +8,13 @@ export interface ContextBundleSource {
   revision: number
   title: string
   contentHash: string
+  contentSnapshot: string | null
 }
 
 export interface ContextBundle {
   id: string
   taskId: string
-  version: 1
+  version: 1 | 2
   scope: Record<string, unknown>
   permissionSnapshot: { actor: 'local_user'; canReadKnowledge: true; canProposeWrites: boolean }
   sources: ContextBundleSource[]
@@ -66,10 +67,11 @@ export async function compileContextBundle(input: {
       revision: source.revision,
       title: source.documentTitle,
       contentHash: await sha256(source.contentSnippet),
+      contentSnapshot: source.contentSnippet,
     })),
   )
   const material = {
-    version: 1,
+    version: 2,
     taskId: input.taskId,
     scope: {
       documentId: input.documentId,
@@ -107,6 +109,10 @@ export async function compileContextBundle(input: {
 
 export function createSnapshotHash(value: unknown): Promise<string> {
   return sha256(stableStringify(value))
+}
+
+export function createContentHash(value: string): Promise<string> {
+  return sha256(value)
 }
 
 function stableStringify(value: unknown): string {

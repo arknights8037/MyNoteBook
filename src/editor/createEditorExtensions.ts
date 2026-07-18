@@ -47,6 +47,7 @@ export function createEditorExtensions(): Extensions {
         autolink: true,
         defaultProtocol: 'https',
         openOnClick: false,
+        protocols: ['file'],
         linkOnPaste: true,
         HTMLAttributes: {
           rel: 'noopener noreferrer nofollow',
@@ -61,7 +62,16 @@ export function createEditorExtensions(): Extensions {
     }),
     Heading.extend({
       addNodeView() {
-        return VueNodeViewRenderer(BlockContainerNodeView)
+        return VueNodeViewRenderer(BlockContainerNodeView, {
+          update: ({ oldNode, newNode, updateProps }) => {
+            if (oldNode.type !== newNode.type || oldNode.attrs.level !== newNode.attrs.level) {
+              return false
+            }
+
+            updateProps()
+            return true
+          },
+        })
       },
     }).configure({
       levels: [...HEADING_LEVELS],

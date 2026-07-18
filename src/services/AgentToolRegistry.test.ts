@@ -14,7 +14,7 @@ import {
 
 describe('AgentToolRegistry', () => {
   it('only exposes the P0 allowlist and keeps writes confirmation-gated', () => {
-    expect(AGENT_TOOL_REGISTRY).toHaveLength(23)
+    expect(AGENT_TOOL_REGISTRY).toHaveLength(25)
     expect(getAgentToolDefinition('read_mind_map')).toMatchObject({
       risk: 'read',
       requiresConfirmation: false,
@@ -23,18 +23,24 @@ describe('AgentToolRegistry', () => {
     expect(getAgentToolDefinition('read_skill_file')).toMatchObject({
       risk: 'read',
       requiresConfirmation: false,
-      maxCallsPerTask: 16,
+      maxCallsPerTask: 24,
     })
     expect(getAgentToolDefinition('request_authorizer_input')).toMatchObject({
       risk: 'read',
       requiresConfirmation: false,
-      maxCallsPerTask: 6,
+      maxCallsPerTask: 8,
+    })
+    expect(getAgentToolDefinition('report_progress')).toMatchObject({
+      risk: 'read',
+      requiresConfirmation: false,
+      maxCallsPerTask: 36,
+      tags: ['cognition.interact'],
     })
     expect(isAllowedAgentTool('execute_shell')).toBe(true)
     expect(getAgentToolDefinition('execute_shell')).toMatchObject({
       risk: 'read',
       requiresConfirmation: false,
-      maxCallsPerTask: 8,
+      maxCallsPerTask: 12,
     })
     expect(getAgentToolDefinition('replace_block')).toMatchObject({
       risk: 'write',
@@ -52,7 +58,7 @@ describe('AgentToolRegistry', () => {
     expect(getAgentToolDefinition('submit_document_edits')).toMatchObject({
       risk: 'write',
       requiresConfirmation: true,
-      maxCallsPerTask: 2,
+      maxCallsPerTask: 4,
     })
     expect(getAgentToolDefinition('create_automation_draft')).toMatchObject({
       risk: 'draft',
@@ -64,6 +70,12 @@ describe('AgentToolRegistry', () => {
       risk: 'draft',
       requiresConfirmation: true,
       maxCallsPerTask: 2,
+    })
+    expect(getAgentToolDefinition('create_mcp_server_draft')).toMatchObject({
+      risk: 'draft',
+      requiresConfirmation: true,
+      maxCallsPerTask: 2,
+      tags: ['external.may_write'],
     })
   })
 
@@ -77,9 +89,9 @@ describe('AgentToolRegistry', () => {
   })
 
   it('defines bounded execution limits before a tool loop is enabled', () => {
-    expect(AGENT_MAX_TOOL_ROUNDS).toBe(32)
-    expect(AGENT_MAX_TOOL_FAILURES).toBe(6)
-    expect(AGENT_MAX_TASK_DURATION_MS).toBe(10 * 60 * 1000)
+    expect(AGENT_MAX_TOOL_ROUNDS).toBe(48)
+    expect(AGENT_MAX_TOOL_FAILURES).toBe(10)
+    expect(AGENT_MAX_TASK_DURATION_MS).toBe(15 * 60 * 1000)
   })
 
   it('reserves a large output budget for write proposals', () => {

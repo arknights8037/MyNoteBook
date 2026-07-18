@@ -1,10 +1,6 @@
 import { computed, ref, type Ref } from 'vue'
 
-import type {
-  AgentProject,
-  AiChatHistoryMessage,
-  AiChatHistoryItem,
-} from '@/models/aiChatHistory'
+import type { AgentProject, AiChatHistoryMessage, AiChatHistoryItem } from '@/models/aiChatHistory'
 import {
   createEmptyAgentWorkspaceHistory,
   normalizeAgentWorkspaceHistory,
@@ -30,9 +26,7 @@ export function useAiChatHistory(
   const activeProjectId = ref(initial.activeProjectId)
   const currentId = ref<string | null>(null)
   const projectHistory = computed(() =>
-    sortByPinnedAndRecent(
-      history.value.filter((item) => item.projectId === activeProjectId.value),
-    ),
+    sortByPinnedAndRecent(history.value.filter((item) => item.projectId === activeProjectId.value)),
   )
   const orderedHistory = computed(() => sortByPinnedAndRecent(history.value))
   const orderedProjects = computed(() => sortByPinnedAndRecent(projects.value))
@@ -44,6 +38,7 @@ export function useAiChatHistory(
   let dirtyBeforeHydration = false
   let saveChain = Promise.resolve()
   let pendingDefaultWorkspace: { rootId: string; name: string } | null = null
+  const pendingTitles = new Map<string, string>()
 
   function persist(): void {
     const state = normalizeAgentWorkspaceHistory({
@@ -97,19 +92,46 @@ export function useAiChatHistory(
 
     const id = currentId.value ?? createId()
     currentId.value = id
+    const existing = history.value.find((item) => item.id === id) ?? null
+    if (existing && messagesEqual(existing.messages, persistableMessages)) return
+    const now = Date.now()
     const record: AiChatHistoryItem = {
       id,
       projectId: activeProjectId.value,
-      title: createHistoryTitle(persistableMessages),
-      updatedAt: Date.now(),
+      parentConversationId: existing?.parentConversationId ?? null,
+      title: pendingTitles.get(id) ?? existing?.title ?? createHistoryTitle(persistableMessages),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
       messageCount: persistableMessages.length,
       provider: settings.value.provider,
       model: settings.value.model,
-      pinnedAt: history.value.find((item) => item.id === id)?.pinnedAt ?? null,
+      pinnedAt: existing?.pinnedAt ?? null,
       messages: persistableMessages,
     }
-    history.value = [record, ...history.value.filter((item) => item.id !== id)].slice(0, 100)
+    pendingTitles.delete(id)
+    history.value = existing
+      ? history.value.map((item) => (item.id === id ? record : item))
+      : [record, ...history.value].slice(0, 100)
     persist()
+  }
+
+  function needsTitle(historyId: string): boolean {
+    return !history.value.some((item) => item.id === historyId) && !pendingTitles.has(historyId)
+  }
+
+  function setTitle(historyId: string, title: string): boolean {
+    const normalized = normalizeHistoryTitle(title)
+    if (!normalized) return false
+    const existing = history.value.find((item) => item.id === historyId)
+    if (!existing) {
+      pendingTitles.set(historyId, normalized)
+      return true
+    }
+    history.value = history.value.map((item) =>
+      item.id === historyId ? { ...item, title: normalized } : item,
+    )
+    persist()
+    return true
   }
 
   function select(historyId: string): AiChatHistoryItem | null {
@@ -189,6 +211,94 @@ export function useAiChatHistory(
     return true
   }
 
+  function moveHistoryToProject(historyId: string, projectId: string): boolean {
+    if (!projects.value.some((project) => project.id === projectId)) return false
+    const item = history.value.find((candidate) => candidate.id === historyId)
+    if (!item || item.projectId === projectId) return false
+    history.value = history.value.map((candidate) =>
+      candidate.id === historyId ? { ...candidate, projectId } : candidate,
+    )
+    if (currentId.value === historyId) activeProjectId.value = projectId
+    persist()
+    return true
+  }
+
+  function saveDetachedTask(input: {
+    id: string
+    projectId?: string
+    parentConversationId?: string | null
+    title: string
+    messages: AiChatHistoryMessage[]
+  }): boolean {
+    const persistableMessages = input.messages
+      .filter((message) => message.content.trim() || message.reasoningContent?.trim())
+      .map((message) => ({
+        ...message,
+        status: message.status === 'error' ? ('error' as const) : ('done' as const),
+      }))
+    if (!input.id.trim() || persistableMessages.length === 0) return false
+    const projectId = projects.value.some((project) => project.id === input.projectId)
+      ? input.projectId!
+      : UNGROUPED_AGENT_PROJECT_ID
+    const existing = history.value.find((item) => item.id === input.id)
+    const now = Date.now()
+    const record: AiChatHistoryItem = {
+      id: input.id,
+      projectId,
+      parentConversationId:
+        existing?.parentConversationId ?? input.parentConversationId?.trim() ?? null,
+      title: normalizeHistoryTitle(input.title) || '外部 Agent 任务',
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      messageCount: persistableMessages.length,
+      provider: settings.value.provider,
+      model: settings.value.model,
+      pinnedAt: existing?.pinnedAt ?? null,
+      messages: persistableMessages,
+    }
+    history.value = existing
+      ? history.value.map((item) => (item.id === input.id ? record : item))
+      : [record, ...history.value].slice(0, 100)
+    persist()
+    return true
+  }
+
+  function migrateLeakedTask(input: {
+    id: string
+    title: string
+    prompt: string
+  }): { sourceHistoryId: string; messageIds: string[] } | null {
+    if (history.value.some((item) => item.id === input.id)) return null
+    for (const source of history.value) {
+      const userIndex = source.messages.findIndex(
+        (message, index) =>
+          message.role === 'user' &&
+          message.content === input.prompt &&
+          source.messages[index + 1]?.role === 'assistant',
+      )
+      if (userIndex < 0) continue
+      const detachedMessages = source.messages.slice(userIndex, userIndex + 2)
+      const messageIds = detachedMessages.map((message) => message.id)
+      const remainingMessages = source.messages.filter(
+        (message) => !messageIds.includes(message.id),
+      )
+      history.value = history.value
+        .map((item) =>
+          item.id === source.id
+            ? { ...item, messages: remainingMessages, messageCount: remainingMessages.length }
+            : item,
+        )
+        .filter((item) => item.messages.length > 0)
+      saveDetachedTask({
+        id: input.id,
+        title: input.title,
+        messages: detachedMessages,
+      })
+      return { sourceHistoryId: source.id, messageIds }
+    }
+    return null
+  }
+
   function renameProject(projectId: string, name: string): boolean {
     const normalized = name.trim().slice(0, 80)
     if (!normalized) return false
@@ -250,23 +360,40 @@ export function useAiChatHistory(
     createProject,
     toggleProjectPin,
     toggleHistoryPin,
+    moveHistoryToProject,
+    saveDetachedTask,
+    migrateLeakedTask,
     renameProject,
     updateWorkspace,
     ensureDefaultWorkspace,
+    needsTitle,
+    setTitle,
   }
 }
 
-function sortByPinnedAndRecent<T extends { pinnedAt: number | null; updatedAt: number }>(
-  items: T[],
-): T[] {
+function sortByPinnedAndRecent<
+  T extends { pinnedAt: number | null; createdAt?: number; updatedAt: number },
+>(items: T[]): T[] {
   return [...items].sort((left, right) => {
     if (left.pinnedAt !== null || right.pinnedAt !== null) {
       if (left.pinnedAt === null) return 1
       if (right.pinnedAt === null) return -1
       return right.pinnedAt - left.pinnedAt
     }
-    return right.updatedAt - left.updatedAt
+    return (right.createdAt ?? right.updatedAt) - (left.createdAt ?? left.updatedAt)
   })
+}
+
+function messagesEqual(left: AiChatHistoryMessage[], right: AiChatHistoryMessage[]): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function normalizeHistoryTitle(value: string): string {
+  return value
+    .replace(/\s+/g, ' ')
+    .replace(/^#+\s*/, '')
+    .trim()
+    .slice(0, 36)
 }
 
 function createHistoryTitle(messages: AiChatHistoryMessage[]): string {
@@ -275,5 +402,5 @@ function createHistoryTitle(messages: AiChatHistoryMessage[]): string {
     messages.find((message) => message.content.trim())?.content ??
     messages[0]?.content ??
     ''
-  return source.replace(/\s+/g, ' ').replace(/^#+\s*/, '').trim().slice(0, 36) || '未命名对话'
+  return normalizeHistoryTitle(source) || '未命名对话'
 }

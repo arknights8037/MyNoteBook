@@ -5,7 +5,7 @@ import type {
   BlockPatch,
   SelectedBlock,
 } from '@/models/agent'
-import type { AgentWriteCommand } from './AgentCommandService'
+import { parseAgentWriteCommands, type AgentWriteCommand } from './AgentWriteContract'
 
 interface ModelPatch {
   documentId?: unknown
@@ -93,7 +93,7 @@ export function parseAgentResponse(input: {
         }
       : null,
     toolCalls: parseToolCalls(parsed.toolCalls),
-    commands: parseRegexCommands(parsed.commands),
+    commands: parseAgentWriteCommands(parsed.commands),
     finalAnswer: typeof parsed.finalAnswer === 'string' ? parsed.finalAnswer.trim() : '',
     usedMarkdownFallback: false,
   }
@@ -101,112 +101,6 @@ export function parseAgentResponse(input: {
 
 function readOutcome(value: unknown): ParsedAgentResponse['outcome'] {
   return value === 'no_change' || value === 'blocked' ? value : 'proposal'
-}
-
-function parseRegexCommands(value: unknown): AgentWriteCommand[] {
-  if (!Array.isArray(value)) return []
-  return value.flatMap((command) => {
-    if (!command || typeof command !== 'object') return []
-    const candidate = command as Record<string, unknown>
-    if (
-      candidate.tool === 'replace_block' &&
-      typeof candidate.blockId === 'string' &&
-      typeof candidate.content === 'string'
-    ) {
-      return [
-        {
-          tool: 'replace_block',
-          documentId:
-            typeof candidate.documentId === 'string' ? candidate.documentId : undefined,
-          blockId: candidate.blockId,
-          content: candidate.content,
-          reason: typeof candidate.reason === 'string' ? candidate.reason : undefined,
-        },
-      ]
-    }
-    if (
-      candidate.tool === 'insert_blocks' &&
-      typeof candidate.anchorBlockId === 'string' &&
-      (candidate.position === 'before' ||
-        candidate.position === 'after' ||
-        candidate.position === 'append') &&
-      typeof candidate.content === 'string'
-    ) {
-      return [
-        {
-          tool: 'insert_blocks',
-          documentId:
-            typeof candidate.documentId === 'string' ? candidate.documentId : undefined,
-          anchorBlockId: candidate.anchorBlockId,
-          position: candidate.position,
-          content: candidate.content,
-          reason: typeof candidate.reason === 'string' ? candidate.reason : undefined,
-        },
-      ]
-    }
-    if (
-      candidate.tool === 'create_group' &&
-      typeof candidate.title === 'string' &&
-      (candidate.initialDocument === undefined || isRecord(candidate.initialDocument))
-    ) {
-      const initialDocument = isRecord(candidate.initialDocument)
-        ? candidate.initialDocument
-        : undefined
-      if (
-        initialDocument &&
-        (typeof initialDocument.title !== 'string' || typeof initialDocument.content !== 'string')
-      ) {
-        return []
-      }
-      return [
-        {
-          tool: 'create_group',
-          title: candidate.title,
-          initialDocument: initialDocument
-            ? { title: initialDocument.title as string, content: initialDocument.content as string }
-            : undefined,
-          reason: typeof candidate.reason === 'string' ? candidate.reason : undefined,
-        },
-      ]
-    }
-    if (
-      candidate.tool === 'create_document' &&
-      typeof candidate.title === 'string' &&
-      typeof candidate.content === 'string'
-    ) {
-      return [
-        {
-          tool: 'create_document',
-          title: candidate.title,
-          content: candidate.content,
-          parentDocumentId:
-            typeof candidate.parentDocumentId === 'string' || candidate.parentDocumentId === null
-              ? candidate.parentDocumentId
-              : undefined,
-          reason: typeof candidate.reason === 'string' ? candidate.reason : undefined,
-        },
-      ]
-    }
-    if (
-      candidate.tool !== 'replace_text_by_regex' ||
-      typeof candidate.pattern !== 'string' ||
-      typeof candidate.replacement !== 'string'
-    ) {
-      return []
-    }
-    return [
-      {
-        tool: candidate.tool,
-        pattern: candidate.pattern as string,
-        replacement: candidate.replacement as string,
-        flags: typeof candidate.flags === 'string' ? candidate.flags : undefined,
-        blockIds: Array.isArray(candidate.blockIds)
-          ? candidate.blockIds.filter((blockId): blockId is string => typeof blockId === 'string')
-          : undefined,
-        reason: typeof candidate.reason === 'string' ? candidate.reason : undefined,
-      },
-    ]
-  })
 }
 
 function createMarkdownFallbackPatchSet(

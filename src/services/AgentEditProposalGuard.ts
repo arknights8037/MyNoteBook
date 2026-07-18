@@ -27,6 +27,12 @@ export interface AgentReadableDocument {
   blocks: SelectedBlock[]
 }
 
+const LOSSY_MARKDOWN_REPLACE_TYPES = new Set([
+  'attachmentBlock',
+  'imageFigure',
+  'collapsibleBlock',
+])
+
 export function parseReadDocumentProvenance(
   value: unknown,
   expectedDocumentId: string,
@@ -91,6 +97,12 @@ export function validateDocumentEditProvenance(
       }
       if (edit.kind === 'replace') {
         const targetBlocks = edit.targetBlockIds.map((blockId) => blocksById.get(blockId)!)
+        const lossyTarget = targetBlocks.find((block) => LOSSY_MARKDOWN_REPLACE_TYPES.has(block.type))
+        if (lossyTarget) {
+          throw new Error(
+            `文档 ${document.documentId} 的 ${lossyTarget.type} 不能通过 Markdown Agent Patch 无损替换。请保留该块，或由用户在编辑器中处理。`,
+          )
+        }
         if (targetBlocks.length === 1 && targetBlocks[0]?.type === 'tableBlock') {
           const parsedBlocks = parseMarkdownDocument(edit.content, 'Agent table edit').content.content ?? []
           if (parsedBlocks.length !== 1 || parsedBlocks[0]?.type !== 'tableBlock') {

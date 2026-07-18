@@ -8,6 +8,7 @@ export class WorkspaceViewService {
   create(type: StructuredWorkspaceViewType, title: string, parentId: string | null = null) { return this.repository.create({ id: this.createId('workspace-view'), parentId, viewType: type, title, payload: createDefaultWorkspaceViewPayload(type, this.createId), createdAt: this.now() }) }
   update(input: { id: string; expectedVersion: number; title: string; payload: StructuredWorkspaceViewPayload }) { return this.repository.update({ ...input, updatedAt: this.now() }) }
   move(input: { id: string; expectedVersion: number; parentId: string | null; sortOrder?: number }) { return this.repository.move({ ...input, updatedAt: this.now() }) }
+  setPinned(id: string, pinned: boolean) { return this.repository.setPinned({ id, pinnedAt: pinned ? this.now() : null }) }
   delete(id: string) { return this.repository.delete(id) }
   async applyOperation(id: string, expectedVersion: number, operation: WorkspaceViewOperation) {
     const current = await this.repository.get(id)

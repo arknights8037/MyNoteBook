@@ -44,11 +44,26 @@ describe('TauriCognitiveSessionRepository', () => {
       createdAt: 1,
     })
     expect(started.ok).toBe(true)
-    const waiting = await service.waitForUser('session-1', 1, { attempt: 1 })
+    const waitingState = {
+      version: 1,
+      topic: '概念',
+      currentPrompt: '解释概念',
+      promptKind: 'question',
+      hintLevel: 0,
+      attempts: [],
+      understandingState: 'not_assessed',
+      nextStep: 'await_attempt',
+    }
+    const waiting = await service.waitForUser('session-1', 1, waitingState)
     expect(waiting).toMatchObject({ ok: true, value: { status: 'waiting_user', version: 2 } })
     const stale = await service.resume('session-1', 1)
     expect(stale).toMatchObject({ ok: false, error: { code: 'revision-conflict' } })
-    const resumed = await service.resume('session-1', 2)
-    expect(resumed).toMatchObject({ ok: true, value: { status: 'active', state: { attempt: 1 } } })
+    const reopened = new CognitiveSessionService(new TauriCognitiveSessionRepository(client))
+    expect(await reopened.listByConversation('conversation-1')).toMatchObject({
+      ok: true,
+      value: [{ status: 'waiting_user', state: waitingState }],
+    })
+    const resumed = await reopened.resume('session-1', 2)
+    expect(resumed).toMatchObject({ ok: true, value: { status: 'active', state: waitingState } })
   })
 })

@@ -20,6 +20,7 @@ export interface AiConversationOptions {
   stop?: () => void
   notify?: (message: string) => void
   historyStore?: AgentWorkspaceHistoryStore
+  generateTitle?: (prompt: string, settings: AiSettings) => Promise<string>
 }
 
 export function useAiConversation(options: AiConversationOptions) {
@@ -33,6 +34,7 @@ export function useAiConversation(options: AiConversationOptions) {
   )
   void historyState.hydrate()
   const stopHistoryWatch = watch(messages, historyState.scheduleSave, { deep: true })
+  const requestedTitleIds = new Set<string>()
 
   function clear(): void {
     if (options.isRunning.value) options.stop?.()
@@ -80,6 +82,7 @@ export function useAiConversation(options: AiConversationOptions) {
 
   function selectHistory(historyId: string): boolean {
     if (options.isRunning.value) return false
+    historyState.flush()
     const historyItem = historyState.select(historyId)
     if (!historyItem) return false
 
@@ -137,9 +140,55 @@ export function useAiConversation(options: AiConversationOptions) {
     return true
   }
 
+  function moveHistoryToProject(historyId: string, projectId: string): boolean {
+    if (options.isRunning.value) {
+      options.notify?.('请先停止当前 Agent 任务，再调整任务分组')
+      return false
+    }
+    historyState.flush()
+    const project = historyState.projects.value.find((candidate) => candidate.id === projectId)
+    if (!project || !historyState.moveHistoryToProject(historyId, projectId)) return false
+    options.notify?.(`任务已加入“${project.name}”，资料视野已更新`)
+    return true
+  }
+
+  function saveDetachedTask(input: {
+    id: string
+    projectId?: string
+    parentConversationId?: string | null
+    title: string
+    messages: AiConversationMessage[]
+  }): boolean {
+    return historyState.saveDetachedTask(input)
+  }
+
+  function migrateLeakedTask(input: { id: string; title: string; prompt: string }): boolean {
+    const migrated = historyState.migrateLeakedTask(input)
+    if (!migrated) return false
+    if (historyState.currentId.value === migrated.sourceHistoryId) {
+      messages.value = messages.value.filter((message) => !migrated.messageIds.includes(message.id))
+    }
+    return true
+  }
+
   function ensureConversationId(): string {
     if (!historyState.currentId.value) historyState.currentId.value = options.createId()
     return historyState.currentId.value
+  }
+
+  function requestConversationTitle(conversationId: string, sourcePrompt: string): void {
+    if (
+      !options.generateTitle ||
+      requestedTitleIds.has(conversationId) ||
+      !historyState.needsTitle(conversationId)
+    ) {
+      return
+    }
+    requestedTitleIds.add(conversationId)
+    void options
+      .generateTitle(sourcePrompt, options.settings.value)
+      .then((title) => historyState.setTitle(conversationId, title))
+      .catch(() => undefined)
   }
 
   function restoreMessageForEditing(message: AiConversationMessage, messageIndex: number): void {
@@ -171,6 +220,7 @@ export function useAiConversation(options: AiConversationOptions) {
     activeProjectId: historyState.activeProjectId,
     currentHistoryId: historyState.currentId,
     ensureConversationId,
+    requestConversationTitle,
     clear,
     forkAtMessage,
     editMessage,
@@ -180,6 +230,9 @@ export function useAiConversation(options: AiConversationOptions) {
     selectProject,
     createProject,
     startTask,
+    moveHistoryToProject,
+    saveDetachedTask,
+    migrateLeakedTask,
     toggleProjectPin: historyState.toggleProjectPin,
     toggleHistoryPin: historyState.toggleHistoryPin,
     renameProject: historyState.renameProject,

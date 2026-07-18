@@ -9,6 +9,10 @@ export class CognitiveSessionService {
     return this.sessions.create({ ...input, status: 'active' })
   }
 
+  listByConversation(conversationId: string): Promise<AppResult<CognitiveSession[]>> {
+    return this.sessions.listByConversation(conversationId)
+  }
+
   waitForUser(
     id: string,
     expectedVersion: number,

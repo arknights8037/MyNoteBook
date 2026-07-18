@@ -82,7 +82,7 @@ describe('Agent P1 deterministic edit flow', () => {
       { before: '[ ] P0 完成可信修改闭环', after: '[x] P0 完成可信修改闭环' },
     ])
     expect(applied.ok).toBe(true)
-    expect(applied.plainText).toContain('[x] P0 完成可信修改闭环')
-    expect(applied.plainText).toContain('[ ] P1 完成工具调用循环')
+    expect(JSON.stringify(applied.content)).toContain('[x] P0 完成可信修改闭环')
+    expect(JSON.stringify(applied.content)).toContain('[ ] P1 完成工具调用循环')
   })
 })

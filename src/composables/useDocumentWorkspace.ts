@@ -259,6 +259,7 @@ export function useDocumentWorkspace(options: UseDocumentWorkspaceOptions) {
       parentId: createOptions.parentId ?? null,
       documentKind: createOptions.documentKind ?? 'article',
       title: normalizedTitle,
+      sourceUrl: createOptions.sourceUrl ?? '',
       contentJson: JSON.stringify(
         createOptions.content ?? createInitialDocumentContent(normalizedTitle),
       ),

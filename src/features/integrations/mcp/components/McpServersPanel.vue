@@ -7,6 +7,7 @@ import {
   FileJson,
   Plus,
   RefreshCw,
+  Search,
   Server,
   ShieldCheck,
   Terminal,
@@ -51,6 +52,27 @@ const jsonConfig = ref(`{
 }`)
 const isNative = Reflect.has(globalThis, '__TAURI_INTERNALS__')
 const enabledCount = computed(() => servers.value.filter((server) => server.enabled).length)
+const query = ref('')
+const filter = ref<'all' | 'enabled' | 'trusted'>('all')
+const selectedServerId = ref('')
+const filterOptions = [
+  { value: 'all' as const, label: '全部' },
+  { value: 'enabled' as const, label: '已启用' },
+  { value: 'trusted' as const, label: '已信任' },
+]
+const filteredServers = computed(() => {
+  const keyword = query.value.trim().toLocaleLowerCase()
+  return servers.value.filter((server) => {
+    if (filter.value === 'enabled' && !server.enabled) return false
+    if (filter.value === 'trusted' && !server.trusted) return false
+    return (
+      !keyword || `${server.name} ${endpointLabel(server)}`.toLocaleLowerCase().includes(keyword)
+    )
+  })
+})
+const selectedServer = computed(
+  () => servers.value.find((server) => server.id === selectedServerId.value) ?? null,
+)
 type BrowserEvent = InstanceType<typeof globalThis.Event>
 type BrowserInputElement = InstanceType<typeof globalThis.HTMLInputElement>
 
@@ -60,6 +82,9 @@ async function loadServers(): Promise<void> {
   error.value = ''
   try {
     servers.value = await listMcpServers()
+    if (!servers.value.some((server) => server.id === selectedServerId.value)) {
+      selectedServerId.value = servers.value[0]?.id ?? ''
+    }
   } catch (loadError) {
     error.value = errorMessage(loadError)
   } finally {
@@ -79,6 +104,7 @@ async function chooseConfig(): Promise<void> {
   error.value = ''
   try {
     servers.value = await importMcpConfig(selected)
+    selectedServerId.value = servers.value[0]?.id ?? ''
     message.success(`已导入 MCP 配置，共 ${servers.value.length} 个服务`)
   } catch (importError) {
     error.value = errorMessage(importError)
@@ -137,6 +163,7 @@ async function submitMcpConfig(): Promise<void> {
   error.value = ''
   try {
     servers.value = await importMcpConfigText(content)
+    selectedServerId.value = servers.value[0]?.id ?? ''
     addDialogVisible.value = false
     message.success(`已添加 MCP 配置，共 ${servers.value.length} 个服务`)
   } catch (importError) {
@@ -218,6 +245,7 @@ async function removeServer(server: McpServerConfig): Promise<void> {
   try {
     await removeMcpServer(server.id)
     servers.value = servers.value.filter((item) => item.id !== server.id)
+    if (selectedServerId.value === server.id) selectedServerId.value = servers.value[0]?.id ?? ''
     message.success('MCP 服务已移除')
   } catch (removeError) {
     error.value = errorMessage(removeError)
@@ -235,98 +263,70 @@ function errorMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value)
 }
 
+defineExpose({
+  enabledCount,
+  serverCount: computed(() => servers.value.length),
+  loading,
+  chooseConfig,
+})
+
 onMounted(() => void loadServers())
 </script>
 
 <template>
-  <section class="mcp-panel" aria-label="MCP 服务">
-    <header class="mcp-panel__header">
-      <div>
-        <span class="plugin-skills-page__eyebrow"><Cable :size="14" /> MCP CLIENT</span>
-        <h2>外部 MCP 服务</h2>
-        <p>导入标准 JSON 配置，连接 stdio 或 Streamable HTTP 服务，并将已启用工具提供给 Agent。</p>
-      </div>
-      <div class="mcp-panel__actions">
-        <span
-          ><strong>{{ enabledCount }}</strong> / {{ servers.length }} 已启用</span
+  <section class="mcp-panel skill-library" aria-label="MCP 服务">
+    <div class="skill-library__toolbar">
+      <NInput v-model:value="query" size="small" clearable placeholder="搜索 MCP 服务">
+        <template #prefix><Search :size="14" /></template>
+      </NInput>
+      <div class="skill-filter" aria-label="MCP 服务筛选">
+        <button
+          v-for="item in filterOptions"
+          :key="item.value"
+          type="button"
+          :class="{ 'is-active': filter === item.value }"
+          @click="filter = item.value"
         >
-        <NButton
-          quaternary
-          circle
-          aria-label="刷新 MCP 服务"
-          :loading="loading"
-          @click="loadServers"
-        >
-          <template #icon
-            ><NIcon :size="15"><RefreshCw /></NIcon
-          ></template>
-        </NButton>
-        <NButton secondary :disabled="!isNative" :loading="loading" @click="chooseConfig">
-          <template #icon
-            ><NIcon :size="15"><FileJson /></NIcon
-          ></template>
-          导入文件
-        </NButton>
-        <NButton type="primary" :disabled="!isNative" :loading="loading" @click="openAddDialog()">
-          <template #icon
-            ><NIcon :size="15"><Plus /></NIcon
-          ></template>
-          添加 MCP
-        </NButton>
+          {{ item.label }}
+        </button>
       </div>
-    </header>
+      <NButton quaternary circle aria-label="刷新 MCP 服务" :loading="loading" @click="loadServers">
+        <template #icon
+          ><NIcon :size="15"><RefreshCw /></NIcon
+        ></template>
+      </NButton>
+      <NButton secondary :disabled="!isNative" @click="openAddDialog('local')">
+        <template #icon
+          ><NIcon :size="15"><Plus /></NIcon
+        ></template>
+        新建
+      </NButton>
+    </div>
 
-    <p class="mcp-panel__notice">
-      导入本地 stdio
-      服务会允许应用启动配置中的外部命令。服务默认为不可信；标记为可信后，该服务的所有工具调用都会自动批准。未信任服务可按单次调用或当前任务授权。
-    </p>
     <p v-if="error" class="skill-error" role="alert"><TriangleAlert :size="15" />{{ error }}</p>
 
-    <div v-if="servers.length" class="mcp-server-list">
-      <article v-for="server in servers" :key="server.id" class="mcp-server-card">
-        <div class="mcp-server-card__icon"><Server :size="18" /></div>
-        <div class="mcp-server-card__body">
-          <div class="mcp-server-card__title">
-            <strong>{{ server.name }}</strong>
-            <span>{{ server.transport }}</span>
-            <span v-if="toolsByServer[server.id]" class="status-success">
-              <CheckCircle2 :size="12" />{{ toolsByServer[server.id]?.length }} tools
-            </span>
-          </div>
-          <code>{{ endpointLabel(server) }}</code>
-          <div v-if="toolsByServer[server.id]?.length" class="mcp-tool-chips">
-            <span
-              v-for="tool in toolsByServer[server.id]"
-              :key="tool.name"
-              :title="tool.description"
-            >
-              {{ tool.title || tool.name }} ·
-              {{ tool.serverTrusted ? '可信 · 自动批准' : '需确认' }}
-            </span>
-          </div>
+    <div class="skill-workbench mcp-workbench">
+      <aside class="skill-list" aria-label="已配置 MCP 服务">
+        <div class="skill-list__heading">
+          <strong>MCP 服务</strong><span>{{ filteredServers.length }}</span>
         </div>
-        <div class="mcp-server-card__actions">
-          <NButton
-            size="small"
-            :type="server.trusted ? 'primary' : 'default'"
-            secondary
-            :loading="busyServerId === server.id"
-            @click="toggleTrust(server)"
-          >
-            <template #icon
-              ><NIcon :size="14"><ShieldCheck /></NIcon
-            ></template>
-            {{ server.trusted ? '已信任' : '不可信' }}
-          </NButton>
-          <NButton
-            size="small"
-            secondary
-            :loading="busyServerId === server.id"
-            @click="inspectServer(server)"
-          >
-            测试并发现工具
-          </NButton>
-          <label class="skill-switch" :title="server.enabled ? '停用' : '启用'">
+        <button
+          v-for="server in filteredServers"
+          :key="server.id"
+          type="button"
+          class="skill-list-item mcp-list-item"
+          :class="{ 'is-active': selectedServerId === server.id }"
+          @click="selectedServerId = server.id"
+        >
+          <span class="skill-list-item__icon"><Server :size="17" /></span>
+          <span class="skill-list-item__body">
+            <span
+              ><strong>{{ server.name }}</strong
+              ><small>{{ server.transport }}</small></span
+            >
+            <small>{{ endpointLabel(server) }}</small>
+          </span>
+          <label class="skill-switch" :title="server.enabled ? '停用' : '启用'" @click.stop>
             <input
               type="checkbox"
               :checked="server.enabled"
@@ -335,38 +335,83 @@ onMounted(() => void loadServers())
             />
             <span aria-hidden="true"></span>
           </label>
-          <NButton quaternary circle aria-label="移除 MCP 服务" @click="removeServer(server)">
+        </button>
+        <div v-if="filteredServers.length === 0" class="skill-list__empty">
+          <Cable :size="24" /><strong>没有 MCP 服务</strong><span>新建服务或导入 JSON 配置。</span>
+        </div>
+      </aside>
+
+      <main v-if="selectedServer" class="skill-detail mcp-detail">
+        <header class="skill-detail__header">
+          <div>
+            <span class="skill-detail__path">mcp/{{ selectedServer.id }}</span>
+            <h2>{{ selectedServer.name }}</h2>
+            <p>{{ endpointLabel(selectedServer) }}</p>
+          </div>
+          <NButton
+            danger
+            quaternary
+            circle
+            aria-label="移除 MCP 服务"
+            @click="removeServer(selectedServer)"
+          >
             <template #icon
               ><NIcon :size="15"><Trash2 /></NIcon
             ></template>
           </NButton>
+        </header>
+        <div class="mcp-detail__content">
+          <div class="mcp-detail__status">
+            <span><strong>连接方式</strong>{{ selectedServer.transport }}</span>
+            <span><strong>启用状态</strong>{{ selectedServer.enabled ? '已启用' : '已停用' }}</span>
+            <span
+              ><strong>信任策略</strong
+              >{{ selectedServer.trusted ? '自动批准工具调用' : '每次调用需确认' }}</span
+            >
+          </div>
+          <div class="mcp-detail__actions">
+            <NButton
+              secondary
+              :loading="busyServerId === selectedServer.id"
+              @click="toggleTrust(selectedServer)"
+            >
+              <template #icon
+                ><NIcon :size="14"><ShieldCheck /></NIcon
+              ></template>
+              {{ selectedServer.trusted ? '取消信任' : '标记为可信' }}
+            </NButton>
+            <NButton
+              type="primary"
+              :loading="busyServerId === selectedServer.id"
+              @click="inspectServer(selectedServer)"
+            >
+              <template #icon
+                ><NIcon :size="14"><CheckCircle2 /></NIcon
+              ></template>
+              测试并发现工具
+            </NButton>
+          </div>
+          <section class="mcp-detail__tools">
+            <header>
+              <strong>可用工具</strong
+              ><span>{{ toolsByServer[selectedServer.id]?.length ?? 0 }}</span>
+            </header>
+            <div v-if="toolsByServer[selectedServer.id]?.length" class="mcp-tool-list">
+              <article v-for="tool in toolsByServer[selectedServer.id]" :key="tool.name">
+                <strong>{{ tool.title || tool.name }}</strong>
+                <p>{{ tool.description || '没有描述' }}</p>
+                <small>{{ tool.serverTrusted ? '可信服务 · 自动批准' : '调用前确认' }}</small>
+              </article>
+            </div>
+            <div v-else class="mcp-tools-empty">测试连接后将在这里显示服务提供的工具。</div>
+          </section>
         </div>
-      </article>
-    </div>
-    <div v-else class="mcp-panel__empty">
-      <FileJson :size="25" />
-      <strong>尚未添加 MCP 服务</strong>
-      <span>可以填写本地启动命令、直接粘贴 JSON，或从 JSON 文件导入。</span>
-      <div class="mcp-panel__empty-actions">
-        <NButton type="primary" :disabled="!isNative" @click="openAddDialog('local')">
-          <template #icon
-            ><NIcon :size="15"><Terminal /></NIcon></template
-          >添加本地 MCP
-        </NButton>
-        <NButton secondary :disabled="!isNative" @click="openAddDialog('json')">
-          <template #icon
-            ><NIcon :size="15"><ClipboardPaste /></NIcon></template
-          >粘贴 JSON
-        </NButton>
-      </div>
-      <pre>
-{
-  "mcpServers": {
-    "example": { "command": "npx", "args": ["-y", "@example/mcp-server"] },
-    "remote": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer …" } }
-  }
-}</pre
-      >
+      </main>
+      <main v-else class="skill-detail skill-detail--empty">
+        <FileJson :size="34" />
+        <h2>选择或新建 MCP 服务</h2>
+        <p>查看连接信息、信任策略与可用工具。</p>
+      </main>
     </div>
   </section>
 
@@ -426,9 +471,9 @@ onMounted(() => void loadServers())
     </div>
 
     <p v-if="error" class="skill-error" role="alert"><TriangleAlert :size="15" />{{ error }}</p>
-    <div class="mcp-add-modal__actions">
+    <template #footer>
       <NButton @click="addDialogVisible = false">取消</NButton>
       <NButton type="primary" :loading="loading" @click="submitMcpConfig">添加服务</NButton>
-    </div>
+    </template>
   </NModal>
 </template>

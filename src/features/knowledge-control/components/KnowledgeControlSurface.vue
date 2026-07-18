@@ -1,24 +1,53 @@
 <script setup lang="ts">
-import { BookOpenCheck, ListChecks, RefreshCw, ShieldCheck } from '@lucide/vue'
+import { BookOpenCheck, Database, ListChecks, RefreshCw, ShieldCheck } from '@lucide/vue'
 import { onMounted, ref } from 'vue'
 
 import { loadAiSettings } from '@/models/ai'
 import type { DelegationGrant } from '@/models/governance'
 import type { KnowledgeObject, KnowledgeObjectType } from '@/models/knowledge'
+import type { KnowledgeAsset } from '@/models/knowledgeAsset'
+import type { AiChatHistoryItem } from '@/models/aiChatHistory'
 import type { ViewDefinition, ViewType, ViewWritebackPolicy } from '@/models/view'
 import type { TaskRun } from '@/models/work'
 import type { KnowledgeControlService } from '@/services/KnowledgeControlService'
+import type { KnowledgeObjectDetail } from '@/services/KnowledgeControlService'
+import type {
+  AiConversationImportBatch,
+  AiConversationImportSelection,
+} from '@/services/KnowledgeAssetImporter'
 import KnowledgeObjectsPanel from '@/features/knowledge-control/components/KnowledgeObjectsPanel.vue'
+import KnowledgeObjectDetailModal from '@/features/knowledge-control/components/KnowledgeObjectDetailModal.vue'
+import KnowledgeAssetsPanel from '@/features/knowledge-control/components/KnowledgeAssetsPanel.vue'
+import KnowledgeAssetPreviewModal from '@/features/knowledge-control/components/KnowledgeAssetPreviewModal.vue'
+import AiConversationImportPreviewModal from '@/features/knowledge-control/components/AiConversationImportPreviewModal.vue'
 import TaskRunsPanel from '@/features/knowledge-control/components/TaskRunsPanel.vue'
 import ViewsPanel from '@/features/knowledge-control/components/ViewsPanel.vue'
-import { NButton, NIcon } from '@/ui'
+import { NButton, NIcon, useDialog, useMessage } from '@/ui'
 
-const props = defineProps<{
-  currentDocumentId: string
-  currentDocumentRevision: number
-  getService: () => Promise<KnowledgeControlService>
+type BrowserFile = InstanceType<typeof globalThis.File>
+
+const props = withDefaults(
+  defineProps<{
+    currentDocumentId: string
+    currentDocumentRevision: number
+    getService: () => Promise<KnowledgeControlService>
+    chatHistory?: AiChatHistoryItem[]
+  }>(),
+  { chatHistory: () => [] },
+)
+const emit = defineEmits<{
+  researchAssets: [assets: KnowledgeAsset[]]
 }>()
 const objects = ref<KnowledgeObject[]>([])
+const assets = ref<KnowledgeAsset[]>([])
+const assetImportNotice = ref('')
+const selectedAsset = ref<KnowledgeAsset | null>(null)
+const selectedObjectDetail = ref<KnowledgeObjectDetail | null>(null)
+const showObjectDetail = ref(false)
+const showAssetPreview = ref(false)
+const showAiImportPreview = ref(false)
+const aiImportBatch = ref<AiConversationImportBatch | null>(null)
+const aiImportArchiveName = ref('')
 const views = ref<ViewDefinition[]>([])
 const taskRuns = ref<TaskRun[]>([])
 const objectType = ref<KnowledgeObjectType>('rule')
@@ -34,10 +63,12 @@ const error = ref('')
 const delegationGrant = ref('')
 const activeGrant = ref<DelegationGrant | null>(null)
 const activeDelegationRun = ref<TaskRun | null>(null)
-const activeTab = ref<'knowledge' | 'views' | 'tasks'>('knowledge')
+const activeTab = ref<'knowledge' | 'assets' | 'views' | 'tasks'>('assets')
 const cliExportPath = ref('')
 const cliSubmissionPath = ref('')
 const cliCapabilityToken = ref('')
+const dialog = useDialog()
+const message = useMessage()
 function control(): Promise<KnowledgeControlService> {
   return props.getService()
 }
@@ -45,6 +76,7 @@ function control(): Promise<KnowledgeControlService> {
 async function refreshState(): Promise<void> {
   const state = await (await control()).load()
   objects.value = state.objects
+  assets.value = state.assets ?? []
   views.value = state.views
   taskRuns.value = state.taskRuns
 }
@@ -76,11 +108,15 @@ function delegateRun(run: TaskRun): Promise<void> {
     activeGrant.value = grant
     activeDelegationRun.value = run
     cliCapabilityToken.value = grant.capabilityToken
-    delegationGrant.value = JSON.stringify({
-      delegationId: grant.delegation.id,
-      capabilityToken: grant.capabilityToken,
-      expiresAt: grant.delegation.expiresAt,
-    }, null, 2)
+    delegationGrant.value = JSON.stringify(
+      {
+        delegationId: grant.delegation.id,
+        capabilityToken: grant.capabilityToken,
+        expiresAt: grant.delegation.expiresAt,
+      },
+      null,
+      2,
+    )
   })
 }
 
@@ -91,24 +127,27 @@ function exportCliEnvelope(): Promise<void> {
   if (!grant || !run || !path) {
     return Promise.resolve()
   }
-  return execute(async () =>
-    (await control()).exportCliEnvelope(path, grant, run),
-  )
+  return execute(async () => (await control()).exportCliEnvelope(path, grant, run))
 }
 
 function importCliSubmission(): Promise<void> {
   if (!cliSubmissionPath.value.trim() || !cliCapabilityToken.value.trim()) return Promise.resolve()
-  return execute(async () =>
-    (await control()).importCliSubmission(
-      cliSubmissionPath.value.trim(),
-      cliCapabilityToken.value.trim(),
-    ), true)
+  return execute(
+    async () =>
+      (await control()).importCliSubmission(
+        cliSubmissionPath.value.trim(),
+        cliCapabilityToken.value.trim(),
+      ),
+    true,
+  )
 }
 
 function createObject(): Promise<void> {
   if (!objectTitle.value.trim()) return Promise.resolve()
   return execute(async () => {
-    await (await control()).createKnowledgeObject({
+    await (
+      await control()
+    ).createKnowledgeObject({
       type: objectType.value,
       title: objectTitle.value,
       documentId: props.currentDocumentId,
@@ -118,13 +157,36 @@ function createObject(): Promise<void> {
   }, true)
 }
 
+async function viewKnowledgeObject(object: KnowledgeObject): Promise<void> {
+  selectedObjectDetail.value = null
+  showObjectDetail.value = true
+  await execute(async () => {
+    selectedObjectDetail.value = await (await control()).getKnowledgeObjectDetail(object.id)
+  })
+}
+
+async function saveKnowledgeObjectMetadata(input: {
+  id: string
+  expectedVersion: number
+  category: string
+  tags: string[]
+}): Promise<void> {
+  await execute(async () => {
+    await (await control()).updateKnowledgeObjectMetadata(input)
+    selectedObjectDetail.value = await (await control()).getKnowledgeObjectDetail(input.id)
+    message.success('知识分类与内容已保存')
+  }, true)
+}
+
 function createView(): Promise<void> {
   if (!viewName.value.trim() || (viewType.value === 'query' && !viewQuery.value.trim())) {
     return Promise.resolve()
   }
   return execute(async () => {
     const ai = loadAiSettings()
-    await (await control()).createView({
+    await (
+      await control()
+    ).createView({
       name: viewName.value,
       type: viewType.value,
       query: viewQuery.value,
@@ -138,6 +200,82 @@ function createView(): Promise<void> {
     viewQuery.value = ''
     generationPrompt.value = ''
   }, true)
+}
+
+async function importKnowledgeFile(file: BrowserFile): Promise<void> {
+  assetImportNotice.value = ''
+  await execute(async () => (await control()).importKnowledgeFile(file), true)
+}
+
+async function importAiConversation(conversationId: string): Promise<void> {
+  const conversation = props.chatHistory.find((item) => item.id === conversationId)
+  if (!conversation) return
+  assetImportNotice.value = ''
+  await execute(async () => (await control()).importAiConversation(conversation), true)
+}
+
+async function importAiConversationFile(file: BrowserFile): Promise<void> {
+  assetImportNotice.value = ''
+  let batch: AiConversationImportBatch | null = null
+  await execute(async () => {
+    batch = await (await control()).prepareAiConversationImport(file)
+  })
+  if (!batch) return
+  if (batch.conversations.length === 0) {
+    assetImportNotice.value = batch.failures.join('；') || '没有找到可导入的内容。'
+    return
+  }
+  aiImportBatch.value = batch
+  aiImportArchiveName.value = file.name
+  showAiImportPreview.value = true
+}
+
+async function confirmAiConversationImport(
+  selections: AiConversationImportSelection[],
+): Promise<void> {
+  const batch = aiImportBatch.value
+  if (!batch) return
+  let result: { imported: number; failures: string[] } | null = null
+  await execute(async () => {
+    result = await (
+      await control()
+    ).importAiConversationSelections(selections, batch.failures, aiImportArchiveName.value)
+  }, true)
+  if (!result) return
+  const failedText = result.failures.length
+    ? `，${result.failures.length} 个失败：${result.failures.slice(0, 3).join('；')}`
+    : ''
+  assetImportNotice.value = `已导入 ${result.imported} 项${failedText}`
+  showAiImportPreview.value = false
+  aiImportBatch.value = null
+}
+
+function openOriginalAsset(assetId: string): Promise<void> {
+  return execute(async () => (await control()).openOriginalAsset(assetId))
+}
+
+function viewAsset(asset: KnowledgeAsset): void {
+  selectedAsset.value = asset
+  showAssetPreview.value = true
+}
+
+function confirmDeleteAsset(asset: KnowledgeAsset): void {
+  dialog.warning({
+    title: '删除知识资产',
+    content: `确定删除“${asset.title}”吗？知识资产记录${asset.assetId ? '和保存的原文件' : ''}将被永久删除。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: () => {
+      void execute(async () => {
+        await (await control()).deleteKnowledgeAsset(asset)
+        if (selectedAsset.value?.id === asset.id) {
+          showAssetPreview.value = false
+          selectedAsset.value = null
+        }
+        message.success('知识资产已删除')
+      }, true)
+    },
+  })
 }
 
 function refreshView(view: ViewDefinition): Promise<void> {
@@ -169,12 +307,13 @@ onMounted(load)
   <section class="operations-page knowledge-control-page" aria-label="知识控制">
     <header class="operations-page__header">
       <div>
-        <span class="operations-page__eyebrow"><BookOpenCheck :size="15" />KNOWLEDGE CONTROL</span>
         <h1>知识中心</h1>
-        <p>把重要规则整理成可信知识，再通过视图和任务验收安全地重复使用。</p>
+        <p>管理知识资产、规则、智能视图与任务验收。</p>
       </div>
       <NButton secondary :loading="loading" @click="load">
-        <template #icon><NIcon :size="15"><RefreshCw /></NIcon></template>
+        <template #icon
+          ><NIcon :size="15"><RefreshCw /></NIcon
+        ></template>
         刷新
       </NButton>
     </header>
@@ -185,11 +324,24 @@ onMounted(load)
         <button
           type="button"
           role="tab"
+          :aria-selected="activeTab === 'assets'"
+          :class="{ 'is-active': activeTab === 'assets' }"
+          @click="activeTab = 'assets'"
+        >
+          <Database :size="17" /><span
+            ><strong>知识资产</strong><small>导入文件与 AI 对话</small></span
+          ><em>{{ assets.length }}</em>
+        </button>
+        <button
+          type="button"
+          role="tab"
           :aria-selected="activeTab === 'knowledge'"
           :class="{ 'is-active': activeTab === 'knowledge' }"
           @click="activeTab = 'knowledge'"
         >
-          <ShieldCheck :size="17" /><span><strong>知识规则</strong><small>保存规则、决策和证据</small></span><em>{{ objects.length }}</em>
+          <ShieldCheck :size="17" /><span
+            ><strong>知识规则</strong><small>保存规则、决策和证据</small></span
+          ><em>{{ objects.length }}</em>
         </button>
         <button
           type="button"
@@ -198,7 +350,9 @@ onMounted(load)
           :class="{ 'is-active': activeTab === 'views' }"
           @click="activeTab = 'views'"
         >
-          <BookOpenCheck :size="17" /><span><strong>智能视图</strong><small>汇总和重组已有知识</small></span><em>{{ views.length }}</em>
+          <BookOpenCheck :size="17" /><span
+            ><strong>智能视图</strong><small>汇总和重组已有知识</small></span
+          ><em>{{ views.length }}</em>
         </button>
         <button
           type="button"
@@ -207,27 +361,12 @@ onMounted(load)
           :class="{ 'is-active': activeTab === 'tasks' }"
           @click="activeTab = 'tasks'"
         >
-          <ListChecks :size="17" /><span><strong>任务验收</strong><small>检查结果与外部协作</small></span><em>{{ taskRuns.length }}</em>
+          <ListChecks :size="17" /><span
+            ><strong>任务验收</strong><small>检查结果与外部协作</small></span
+          ><em>{{ taskRuns.length }}</em>
         </button>
       </nav>
 
-      <aside class="surface-guide">
-        <ShieldCheck v-if="activeTab === 'knowledge'" :size="18" />
-        <BookOpenCheck v-else-if="activeTab === 'views'" :size="18" />
-        <ListChecks v-else :size="18" />
-        <div v-if="activeTab === 'knowledge'">
-          <strong>先从一条重要规则开始</strong>
-          <p>知识规则会锚定当前文档，适合保存长期有效的约束、决定或证据来源。</p>
-        </div>
-        <div v-else-if="activeTab === 'views'">
-          <strong>视图不会修改原始文档</strong>
-          <p>它会按条件查询、投影或生成摘要；需要写回时仍会经过明确确认。</p>
-        </div>
-        <div v-else>
-          <strong>任务结果需要独立验收</strong>
-          <p>在这里检查运行结果，或把受限任务交给 CLI Agent；外部工具不能直接改写文档。</p>
-        </div>
-      </aside>
       <KnowledgeObjectsPanel
         v-if="activeTab === 'knowledge'"
         v-model:object-type="objectType"
@@ -235,6 +374,21 @@ onMounted(load)
         :objects="objects"
         :loading="loading"
         @create="createObject"
+        @view="viewKnowledgeObject"
+      />
+      <KnowledgeAssetsPanel
+        v-else-if="activeTab === 'assets'"
+        :assets="assets"
+        :conversations="chatHistory"
+        :loading="loading"
+        :import-notice="assetImportNotice"
+        @import-file="importKnowledgeFile"
+        @import-chat="importAiConversation"
+        @import-chat-file="importAiConversationFile"
+        @view="viewAsset"
+        @open-original="openOriginalAsset"
+        @delete="confirmDeleteAsset"
+        @research="emit('researchAssets', $event)"
       />
       <ViewsPanel
         v-else-if="activeTab === 'views'"
@@ -266,6 +420,30 @@ onMounted(load)
         @export="exportCliEnvelope"
         @import="importCliSubmission"
       />
+      <KnowledgeAssetPreviewModal
+        v-if="showAssetPreview"
+        v-model:show="showAssetPreview"
+        :asset="selectedAsset"
+        @open-original="openOriginalAsset"
+        @delete="confirmDeleteAsset"
+      />
+      <AiConversationImportPreviewModal
+        v-if="aiImportBatch"
+        v-model:show="showAiImportPreview"
+        :candidates="aiImportBatch.conversations"
+        :failures="aiImportBatch.failures"
+        :archive-name="aiImportArchiveName"
+        :loading="loading"
+        @confirm="confirmAiConversationImport"
+      />
     </div>
+
+    <KnowledgeObjectDetailModal
+      v-if="showObjectDetail"
+      v-model:show="showObjectDetail"
+      :detail="selectedObjectDetail"
+      :loading="loading"
+      @save="saveKnowledgeObjectMetadata"
+    />
   </section>
 </template>

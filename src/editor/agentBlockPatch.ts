@@ -9,7 +9,6 @@ import type { TiptapDocumentJson } from '@/models/document'
 export interface ApplyBlockPatchResult {
   ok: boolean
   content?: TiptapDocumentJson
-  plainText?: string
   error?: string
 }
 
@@ -54,7 +53,7 @@ export function applyAgentBlockPatches(
   }
   content.content = blocks
   const normalized = ensureTopLevelBlockIds(content)
-  return { ok: true, content: normalized, plainText: getDocumentPlainText(normalized) }
+  return { ok: true, content: normalized }
 }
 
 function resolvePatchRange(
@@ -80,22 +79,4 @@ function resolvePatchRange(
 function readBlockId(block: JSONContent): string {
   const attrs = block.attrs
   return attrs && typeof attrs.id === 'string' ? attrs.id : ''
-}
-
-export function getDocumentPlainText(content: TiptapDocumentJson): string {
-  return (content.content ?? [])
-    .map((node) => getNodePlainText(node))
-    .filter(Boolean)
-    .join('\n')
-}
-
-function getNodePlainText(node: JSONContent): string {
-  if (typeof node.text === 'string') return node.text
-  if (node.type === 'mathBlock' && typeof node.attrs?.latex === 'string') return node.attrs.latex
-  if (node.type === 'tableBlock' && Array.isArray(node.attrs?.rows)) {
-    return node.attrs.rows
-      .map((row) => (Array.isArray(row) ? row.map((cell) => String(cell ?? '')).join('\t') : ''))
-      .join('\n')
-  }
-  return (node.content ?? []).map((child) => getNodePlainText(child)).join('\n')
 }

@@ -29,7 +29,7 @@ describe('DocumentSidebar', () => {
     ])
 
     expect(wrapper.text()).toContain('2 个页面')
-    await wrapper.get('button[aria-label="group中新建内容"]').trigger('click')
+    await wrapper.get('.document-group .document-card-menu__item').trigger('select')
 
     expect(wrapper.emitted('create-view')).toContainEqual(['group'])
   })
@@ -114,7 +114,7 @@ describe('DocumentSidebar', () => {
     await wrapper.setProps({
       workspaceViews: [{
         id: 'table-1', parentId: 'group', sortOrder: 0, viewType: 'table', title: '项目表',
-        version: 1, createdAt: 1, updatedAt: 2,
+        pinnedAt: null, version: 1, createdAt: 1, updatedAt: 2,
       }],
       activeWorkspaceViewId: 'table-1',
     })
@@ -123,10 +123,29 @@ describe('DocumentSidebar', () => {
     expect(row.text()).toContain('项目表')
     expect(row.text()).toContain('表格')
     await row.get('.document-list__select').trigger('click')
-    await row.get('button[aria-label="项目表中新建内容"]').trigger('click')
+    await row.get('.document-card-menu__item').trigger('select')
 
     expect(wrapper.emitted('select-workspace-view')).toEqual([['table-1']])
     expect(wrapper.emitted('create-view')).toContainEqual(['table-1'])
+  })
+
+  it('routes structured view metadata and pin actions through the shared more menu', async () => {
+    const wrapper = createWrapper([])
+    await wrapper.setProps({
+      workspaceViews: [{
+        id: 'view-1', parentId: null, sortOrder: 0, viewType: 'uml', title: '系统图',
+        pinnedAt: null, version: 1, createdAt: 1, updatedAt: 2,
+      }],
+    })
+
+    const items = wrapper.get('.document-list__item--workspace-view').findAll('.document-card-menu__item')
+    await items.find((item) => item.text() === '置顶')!.trigger('select')
+    await items.find((item) => item.text() === '属性')!.trigger('select')
+    await items.find((item) => item.text() === '重命名')!.trigger('select')
+
+    expect(wrapper.emitted('pin-workspace-view')).toEqual([['view-1']])
+    expect(wrapper.emitted('properties-workspace-view')).toEqual([['view-1']])
+    expect(wrapper.emitted('rename-workspace-view')).toEqual([['view-1']])
   })
 })
 

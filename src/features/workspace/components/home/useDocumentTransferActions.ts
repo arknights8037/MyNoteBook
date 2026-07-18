@@ -84,6 +84,7 @@ export function useDocumentTransferActions(options: DocumentTransferActionsOptio
           parentId: options.getActiveGroupId(),
           content: parsed.content,
           plainText: parsed.plainText,
+          sourceUrl: file.path || file.webkitRelativePath || file.name,
         })
         if (!created) return
 

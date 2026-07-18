@@ -131,6 +131,7 @@ function toSummary(value: StructuredWorkspaceView): StructuredWorkspaceViewSumma
     sortOrder: value.sortOrder,
     viewType: value.viewType,
     title: value.title,
+    pinnedAt: value.pinnedAt,
     version: value.version,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,

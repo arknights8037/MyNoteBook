@@ -8,6 +8,7 @@ import {
   Info,
   Network,
   Pencil,
+  Pin,
   Plus,
   Presentation,
   Table2,
@@ -51,6 +52,7 @@ const props = withDefaults(
     mindMapIds?: Set<string>
     workspaceViewIds?: Set<string>
     workspaceViewTypes?: Record<string, StructuredWorkspaceViewType>
+    workspaceViewPinnedAt?: Record<string, number | null>
     activeMindMapId?: string | null
     activeWorkspaceViewId?: string | null
     busy: boolean
@@ -63,6 +65,7 @@ const props = withDefaults(
     mindMapIds: () => new Set<string>(),
     workspaceViewIds: () => new Set<string>(),
     workspaceViewTypes: () => ({}),
+    workspaceViewPinnedAt: () => ({}),
     activeMindMapId: null,
     activeWorkspaceViewId: null,
   },
@@ -76,6 +79,11 @@ const emit = defineEmits<{
   createChildView: [parentId: DocumentId]
   deleteMindMap: [mindMapId: string]
   deleteWorkspaceView: [viewId: string]
+  renameMindMap: [mindMapId: string]
+  propertiesMindMap: [mindMapId: string]
+  renameWorkspaceView: [viewId: string]
+  propertiesWorkspaceView: [viewId: string]
+  pinWorkspaceView: [viewId: string]
   properties: [document: DocumentSummary]
   rename: [document: DocumentSummary]
   delete: [document: DocumentSummary]
@@ -129,6 +137,18 @@ function deleteContent(id: string): void {
   if (kind === 'mindmap') emit('deleteMindMap', id)
   else if (kind === 'workspace-view') emit('deleteWorkspaceView', id)
 }
+
+function renameContent(id: string): void {
+  const kind = contentKind(id)
+  if (kind === 'mindmap') emit('renameMindMap', id)
+  else if (kind === 'workspace-view') emit('renameWorkspaceView', id)
+}
+
+function showContentProperties(id: string): void {
+  const kind = contentKind(id)
+  if (kind === 'mindmap') emit('propertiesMindMap', id)
+  else if (kind === 'workspace-view') emit('propertiesWorkspaceView', id)
+}
 </script>
 
 <template>
@@ -176,14 +196,6 @@ function deleteContent(id: string): void {
           </button>
 
           <span class="document-list__actions document-list__actions--menu">
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton class="document-list__more" size="tiny" quaternary :aria-label="`${displayTitle(node.document)}中新建内容`" :disabled="busy" @click.stop="emit('createChildView', node.document.id)" @dragstart.stop.prevent>
-                  <template #icon><NIcon :size="14"><Plus /></NIcon></template>
-                </NButton>
-              </template>
-              新建内容
-            </NTooltip>
             <DropdownMenuRoot>
               <DropdownMenuTrigger as-child>
                 <NButton class="document-list__more" size="tiny" quaternary :aria-label="`${displayTitle(node.document)}更多操作`" :disabled="busy" @click.stop @dragstart.stop.prevent>
@@ -200,6 +212,9 @@ function deleteContent(id: string): void {
                     <DropdownMenuItem class="document-card-menu__item document-card-menu__item--danger" @select="emit('delete', node.document)"><Trash2 :size="14" />删除</DropdownMenuItem>
                   </template>
                   <template v-else>
+                    <DropdownMenuItem v-if="contentKind(node.document.id) === 'workspace-view'" class="document-card-menu__item" @select="emit('pinWorkspaceView', node.document.id)"><Pin :size="14" />{{ workspaceViewPinnedAt[node.document.id] !== null && workspaceViewPinnedAt[node.document.id] !== undefined ? '取消置顶' : '置顶' }}</DropdownMenuItem>
+                    <DropdownMenuItem class="document-card-menu__item" @select="showContentProperties(node.document.id)"><Info :size="14" />属性</DropdownMenuItem>
+                    <DropdownMenuItem class="document-card-menu__item" @select="renameContent(node.document.id)"><Pencil :size="14" />重命名</DropdownMenuItem>
                     <DropdownMenuSeparator class="document-card-menu__separator" />
                     <DropdownMenuItem class="document-card-menu__item document-card-menu__item--danger" @select="deleteContent(node.document.id)"><Trash2 :size="14" />删除{{ contentKind(node.document.id) === 'mindmap' ? '思维导图' : '视图' }}</DropdownMenuItem>
                   </template>
@@ -219,6 +234,9 @@ function deleteContent(id: string): void {
             <ContextMenuItem class="document-card-menu__item document-card-menu__item--danger" @select="emit('delete', node.document)"><Trash2 :size="14" />删除</ContextMenuItem>
           </template>
           <template v-else>
+            <ContextMenuItem v-if="contentKind(node.document.id) === 'workspace-view'" class="document-card-menu__item" @select="emit('pinWorkspaceView', node.document.id)"><Pin :size="14" />{{ workspaceViewPinnedAt[node.document.id] !== null && workspaceViewPinnedAt[node.document.id] !== undefined ? '取消置顶' : '置顶' }}</ContextMenuItem>
+            <ContextMenuItem class="document-card-menu__item" @select="showContentProperties(node.document.id)"><Info :size="14" />属性</ContextMenuItem>
+            <ContextMenuItem class="document-card-menu__item" @select="renameContent(node.document.id)"><Pencil :size="14" />重命名</ContextMenuItem>
             <ContextMenuSeparator class="document-card-menu__separator" />
             <ContextMenuItem class="document-card-menu__item document-card-menu__item--danger" @select="deleteContent(node.document.id)"><Trash2 :size="14" />删除{{ contentKind(node.document.id) === 'mindmap' ? '思维导图' : '视图' }}</ContextMenuItem>
           </template>
@@ -237,6 +255,7 @@ function deleteContent(id: string): void {
       :mind-map-ids="mindMapIds"
       :workspace-view-ids="workspaceViewIds"
       :workspace-view-types="workspaceViewTypes"
+      :workspace-view-pinned-at="workspaceViewPinnedAt"
       :active-mind-map-id="activeMindMapId"
       :active-workspace-view-id="activeWorkspaceViewId"
       :busy="busy"
@@ -248,6 +267,11 @@ function deleteContent(id: string): void {
       @create-child-view="emit('createChildView', $event)"
       @delete-mind-map="emit('deleteMindMap', $event)"
       @delete-workspace-view="emit('deleteWorkspaceView', $event)"
+      @rename-mind-map="emit('renameMindMap', $event)"
+      @properties-mind-map="emit('propertiesMindMap', $event)"
+      @rename-workspace-view="emit('renameWorkspaceView', $event)"
+      @properties-workspace-view="emit('propertiesWorkspaceView', $event)"
+      @pin-workspace-view="emit('pinWorkspaceView', $event)"
       @properties="emit('properties', $event)"
       @rename="emit('rename', $event)"
       @delete="emit('delete', $event)"

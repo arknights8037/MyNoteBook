@@ -1,7 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
 
 import { getDefaultDataDirectory } from '@/infrastructure/database/dataDirectory'
-import type { McpResourceDescriptor, McpServerConfig, McpToolDescriptor } from '@/models/mcp'
+import type {
+  McpResourceDescriptor,
+  McpServerConfig,
+  McpServerExposureSettings,
+  McpToolDescriptor,
+} from '@/models/mcp'
 import { loadAppSettings } from '@/models/settings'
 import { runCancellableAgentInvoke } from './AgentToolCancellation'
 
@@ -85,5 +90,20 @@ export async function listMcpResources(serverId?: string): Promise<McpResourceDe
 export async function readMcpResource(serverId: string, uri: string): Promise<unknown> {
   return invoke('read_mcp_resource', {
     input: { dataDirectory: await dataDirectory(), serverId, uri },
+  })
+}
+
+export async function getMcpServerExposure(): Promise<McpServerExposureSettings> {
+  return invoke('get_mcp_server_exposure', {
+    input: { dataDirectory: await dataDirectory() },
+  })
+}
+
+export async function setMcpServerToolExposure(
+  toolName: string,
+  enabled: boolean,
+): Promise<McpServerExposureSettings> {
+  return invoke('set_mcp_server_tool_exposure', {
+    input: { dataDirectory: await dataDirectory(), toolName, enabled },
   })
 }

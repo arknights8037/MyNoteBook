@@ -8,6 +8,8 @@ import type { DocumentBlock } from '@/models/documentBlock'
 import type { DocumentRecord, DocumentSummary } from '@/models/document'
 import type { AgentRepository } from '@/repositories/AgentRepository'
 import type { RegexReplaceExecutor } from '@/services/AgentCommandService'
+import type { CognitiveSessionService } from '@/services/CognitiveSessionService'
+import type { AgentExplicitTarget } from '@/models/agentTarget'
 
 export interface AgentRunDocumentSnapshot {
   id: string
@@ -52,15 +54,29 @@ export interface UseAgentRunOptions {
   createId: () => string
   replaceBlocksByRegex: RegexReplaceExecutor
   notify: { success: (message: string) => void; error: (message: string) => void }
+  getCognitiveSessionService?: () => Promise<CognitiveSessionService>
   document: AgentRunDocumentAdapter
   patches: AgentRunPatchWorkflow
+  explicitTargets?: Readonly<Ref<AgentExplicitTarget[]>>
   workspace?: {
     projectId: Readonly<Ref<string>>
     projectName: Readonly<Ref<string>>
     rootDocumentIds: Readonly<Ref<string[]>>
     conversationId: Readonly<Ref<string | null>>
     ensureConversationId: () => string
+    requestConversationTitle?: (conversationId: string, prompt: string) => void
   }
+}
+
+export interface AgentRunSession {
+  mode: Ref<AiChatMode>
+  prompt: Ref<string>
+  messages: Ref<AiConversationMessage[]>
+  error: Ref<string>
+  documentSnapshot?: AgentRunDocumentSnapshot
+  explicitTargets?: Readonly<Ref<AgentExplicitTarget[]>>
+  background?: boolean
+  workspace?: UseAgentRunOptions['workspace']
 }
 
 export interface AgentRunContinuation {
@@ -75,6 +91,7 @@ export interface AgentRunSnapshot {
   requestedMode: AiChatMode
   settings: AiSettings
   document: AgentRunDocumentSnapshot
+  explicitTargets: AgentExplicitTarget[]
   workspace?: {
     projectId: string
     projectName: string

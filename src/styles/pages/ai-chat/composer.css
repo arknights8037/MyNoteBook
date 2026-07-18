@@ -1,0 +1,281 @@
+.ai-chat-composer {
+  display: grid;
+  padding: 12px;
+  border-top: 0;
+  background: transparent;
+}
+
+.ai-chat-popover--workspace .ai-chat-composer {
+  padding: 4px max(24px, calc((100% - 860px) / 2)) 18px;
+}
+
+.ai-chat-popover--workspace .ai-chat-input-shell {
+  border-color: rgba(120, 105, 78, 0.2);
+  border-radius: 14px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ai-chat-popover--workspace .ai-chat-input-shell:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  box-shadow: none;
+}
+
+.ai-chat-input-shell {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  overflow: visible;
+  border: 1px solid rgba(120, 105, 78, 0.2);
+  border-radius: 14px;
+  padding: 10px 10px 9px;
+  background: transparent;
+  box-shadow: none;
+  transition:
+    border-color 160ms ease,
+    box-shadow 180ms ease;
+}
+
+.ai-chat-input-shell:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  box-shadow: none;
+}
+
+.ai-slash-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 7px);
+  left: 0;
+  z-index: 30;
+  display: grid;
+  max-height: min(326px, 44vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid color-mix(in srgb, var(--color-border-default) 70%, transparent);
+  border-radius: 11px;
+  padding: 4px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 97%, transparent);
+  box-shadow: 0 10px 30px rgb(28 24 17 / 9%);
+}
+
+.ai-slash-menu > button {
+  display: grid;
+  min-height: 42px;
+  grid-template-columns: 19px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 7px;
+  padding: 5px 8px;
+  color: var(--color-text-primary);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ai-slash-menu > button.is-active,
+.ai-slash-menu > button:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+}
+
+.ai-slash-menu > button > span:first-child {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  color: var(--color-text-tertiary);
+  background: transparent;
+}
+
+.ai-slash-menu > button.is-active > span:first-child,
+.ai-slash-menu > button:hover > span:first-child {
+  color: var(--color-text-secondary);
+}
+
+.ai-slash-menu > button > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.ai-slash-menu strong,
+.ai-slash-menu small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-chat-targets {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.ai-chat-target-chip {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 26px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-agent-accent) 24%, var(--color-border-subtle));
+  border-radius: 6px;
+  padding: 3px 5px 3px 8px;
+  color: var(--color-text-secondary);
+  background: var(--color-agent-thinking-bg);
+  font-size: 11px;
+}
+
+.ai-chat-target-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-chat-target-chip > button {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ai-chat-target-chip > button:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+}
+
+.ai-slash-menu strong {
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.ai-slash-menu small {
+  color: var(--color-text-tertiary);
+  font-size: 9px;
+}
+
+.ai-chat-selector--slash {
+  width: 30px;
+  justify-content: center;
+  padding: 0;
+  color: var(--color-agent-accent);
+  background: var(--color-agent-thinking-bg);
+  font-family: var(--font-family-monospace, monospace);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.ai-chat-composer__bar {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ai-chat-composer__toolbar {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.ai-chat-composer textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid rgba(120, 105, 78, 0.22);
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  line-height: 1.55;
+}
+
+.ai-chat-composer textarea {
+  min-height: 70px;
+  max-height: 220px;
+  resize: none;
+  border: 0;
+  border-radius: 0;
+  padding: 4px 6px 2px;
+  background: transparent;
+  outline: none;
+}
+
+.ai-chat-composer__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.ai-chat-composer__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.ai-chat-composer__hint > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ai-chat-composer__command {
+  border-right: 1px solid var(--color-border-subtle);
+  padding-right: 8px;
+  color: var(--color-agent-accent);
+  font-family: var(--font-family-monospace, monospace);
+  font-weight: 650;
+}
+
+.ai-chat-composer__actions button[type='submit'] {
+  display: grid;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  border-color: var(--accent);
+  color: #ffffff;
+  background: var(--accent);
+}
+
+.ai-chat-composer__actions .ai-chat-composer__stop {
+  display: grid;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  color: var(--color-text-on-accent);
+  background: var(--color-text-primary);
+}
+
+.ai-chat-composer__actions .ai-chat-composer__stop:hover:not(:disabled) {
+  color: var(--color-text-on-accent);
+  background: var(--color-status-error);
+}
+
+.ai-chat-composer__actions button[type='submit']:hover:not(:disabled) {
+  color: #ffffff;
+  background: var(--accent-hover);
+}
+
+.ai-chat-composer__actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}

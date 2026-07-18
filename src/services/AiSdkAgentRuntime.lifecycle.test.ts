@@ -6,16 +6,28 @@ import type { AgentToolCall } from '@/models/agentTool'
 const agentHarness = vi.hoisted(() => ({
   resultText: '已完成检查。',
   reasoningDeltas: [] as string[],
+  textDeltas: [] as string[],
   instructions: '',
   options: {} as Record<string, unknown>,
+  repairResult: null as null | {
+    text: string
+    usage: { inputTokens: number; outputTokens: number; totalTokens: number }
+  },
+  streamError: null as Error | null,
   run: null as
     | null
     | ((tools: Record<string, { execute: (args: unknown) => Promise<unknown> }>) => Promise<void>),
 }))
 
 vi.mock('ai', () => ({
-  generateText: vi.fn(),
+  generateText: vi.fn(async () => {
+    if (!agentHarness.repairResult) throw new Error('Unexpected structured repair call')
+    return agentHarness.repairResult
+  }),
   jsonSchema: (schema: unknown) => schema,
+  Output: {
+    object: (options: unknown) => ({ name: 'object', options }),
+  },
   stepCountIs: () => () => false,
   tool: (definition: unknown) => definition,
   ToolLoopAgent: class {
@@ -46,21 +58,34 @@ vi.mock('ai', () => ({
         }) => void
       }
       const tools = this.tools
+      const rejected: Array<(error: Error) => void> = []
+      const derived = <T>(value: T): Promise<T> =>
+        agentHarness.streamError
+          ? new Promise<T>((_resolve, reject) => rejected.push(reject))
+          : Promise.resolve(value)
       async function* fullStream() {
         options.onStepStart?.({ stepNumber: 0 })
+        if (agentHarness.streamError) {
+          rejected.forEach((reject) => reject(new Error('No output generated')))
+          throw agentHarness.streamError
+        }
         for (const delta of agentHarness.reasoningDeltas) {
           yield { type: 'reasoning-delta' as const, id: 'reasoning-1', delta }
+        }
+        for (const text of agentHarness.textDeltas) {
+          yield { type: 'text-delta' as const, id: 'text-1', text }
         }
         await agentHarness.run?.(tools)
         options.onStepEnd?.({ stepNumber: 0, toolCalls: [], finishReason: 'stop' })
       }
       return {
         fullStream: fullStream(),
-        text: Promise.resolve(agentHarness.resultText),
-        steps: Promise.resolve([]),
-        reasoningText: Promise.resolve(agentHarness.reasoningDeltas.join('')),
-        finishReason: Promise.resolve('stop'),
-        usage: Promise.resolve({ inputTokens: 10, outputTokens: 5, totalTokens: 15 }),
+        text: derived(agentHarness.resultText),
+        steps: derived([]),
+        reasoningText: derived(agentHarness.reasoningDeltas.join('')),
+        finishReason: derived('stop'),
+        usage: derived({ inputTokens: 10, outputTokens: 5, totalTokens: 15 }),
+        output: derived(undefined),
       }
     }
   },
@@ -81,11 +106,31 @@ describe('AI SDK Agent tool lifecycle', () => {
   beforeEach(() => {
     agentHarness.resultText = '已完成检查。'
     agentHarness.reasoningDeltas = []
+    agentHarness.textDeltas = []
     agentHarness.instructions = ''
     agentHarness.options = {}
+    agentHarness.repairResult = null
+    agentHarness.streamError = null
     agentHarness.run = async (tools) => {
       await tools.search_documents?.execute({ query: 'Agent loop' })
     }
+  })
+
+  it('settles derived stream promises when the provider request fails', async () => {
+    agentHarness.streamError = new Error('Insufficient Balance')
+
+    await expect(
+      runAiSdkAgent({
+        taskId: 'task-provider-error',
+        prompt: '分析资料',
+        context: '',
+        settings: settings(),
+        systemPrompt: '',
+        createId: () => 'call-provider-error',
+        executeTool: vi.fn(),
+        recordToolCall: vi.fn(),
+      }),
+    ).rejects.toThrow('Insufficient Balance')
   })
 
   it('does not execute a tool when the running audit record cannot be written', async () => {
@@ -140,6 +185,42 @@ describe('AI SDK Agent tool lifecycle', () => {
     )
   })
 
+  it('shows a model-authored auditable decision summary without exposing hidden reasoning', async () => {
+    const progress: Array<{ detail: string; timelineEvent?: { detail: string } }> = []
+    agentHarness.run = async (tools) => {
+      await tools.report_progress?.execute({
+        summary: '目标分组尚未确认',
+        evidence: '用户要求写入 Agent MVP，但当前只有分组名称，没有稳定 ID。',
+        nextAction: '查询文档分组并取得真实 ID。',
+      })
+    }
+
+    await runAiSdkAgent({
+      taskId: 'task-visible-decision',
+      prompt: '写入 Agent MVP',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      createId: () => 'call-visible-decision',
+      executeTool: vi.fn(),
+      recordToolCall: vi.fn(),
+      onProgress: (update) => progress.push(update),
+    })
+
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: '目标分组尚未确认',
+          timelineEvent: expect.objectContaining({
+            detail: expect.stringContaining('下一步：查询文档分组并取得真实 ID。'),
+          }),
+        }),
+      ]),
+    )
+    expect(agentHarness.instructions).toContain('过程透明要求')
+    expect(agentHarness.instructions).toContain('不得填写隐藏思维链')
+  })
+
   it('only exposes policy-allowed tools and forwards the retry limit', async () => {
     agentHarness.run = async (tools) => {
       expect(Object.keys(tools)).toEqual(['submit_document_edits'])
@@ -175,8 +256,10 @@ describe('AI SDK Agent tool lifecycle', () => {
     expect(agentHarness.instructions).toContain('本次 Runtime 实际可用工具：submit_document_edits')
   })
 
-  it('emits model step events around the tool loop', async () => {
-    agentHarness.run = async () => undefined
+  it('emits a visible decision before its tool and a summary decision at the end', async () => {
+    agentHarness.run = async (tools) => {
+      await tools.search_documents?.execute({ query: '制度' })
+    }
     const progress: Array<{ detail: string; timelineEvent?: { kind: string; status: string } }> = []
 
     await runAiSdkAgent({
@@ -191,14 +274,23 @@ describe('AI SDK Agent tool lifecycle', () => {
       onProgress: (update) => progress.push(update),
     })
 
-    expect(progress).toEqual(
+    const events = progress.flatMap((update) =>
+      update.timelineEvent ? [update.timelineEvent] : [],
+    )
+    const decisionIndex = events.findIndex(
+      (event) => event.kind === 'decision' && event.status === 'completed',
+    )
+    const toolIndex = events.findIndex((event) => event.kind === 'tool')
+    expect(decisionIndex).toBeGreaterThanOrEqual(0)
+    expect(toolIndex).toBeGreaterThan(decisionIndex)
+    expect(events[decisionIndex]).toMatchObject({
+      detail: expect.stringContaining('下一步检索知识库'),
+      stepNumber: 1,
+    })
+    expect(events).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          timelineEvent: expect.objectContaining({ kind: 'step_started', status: 'running' }),
-        }),
-        expect.objectContaining({
-          timelineEvent: expect.objectContaining({ kind: 'step_completed', status: 'completed' }),
-        }),
+        expect.objectContaining({ kind: 'summary', status: 'running' }),
+        expect.objectContaining({ kind: 'summary', status: 'completed' }),
       ]),
     )
   })
@@ -229,6 +321,56 @@ describe('AI SDK Agent tool lifecycle', () => {
     await vi.waitFor(() => expect(deltas.join('')).toBe('正在检查相关资料。'))
     releaseToolLoop()
     await run
+  })
+
+  it('streams a natural-language Agent answer without waiting for the run to finish', async () => {
+    let releaseRun!: () => void
+    const runGate = new Promise<void>((resolve) => {
+      releaseRun = resolve
+    })
+    agentHarness.resultText = '这是直接回答。'
+    agentHarness.textDeltas = ['这是', '直接回答。']
+    agentHarness.run = async () => runGate
+    const deltas: string[] = []
+
+    const run = runAiSdkAgent({
+      taskId: 'task-live-content',
+      prompt: '直接回答',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      createId: () => 'call-live-content',
+      executeTool: async () => ({ ok: true }),
+      recordToolCall: async () => undefined,
+      onDelta: (delta, channel) => {
+        if (channel === 'content') deltas.push(delta)
+      },
+    })
+
+    await vi.waitFor(() => expect(deltas.join('')).toBe('这是直接回答。'))
+    releaseRun()
+    await run
+  })
+
+  it('does not stream JSON protocol text as visible Agent content', async () => {
+    agentHarness.resultText = '{"outcome":"no_change","finalAnswer":"完成"}'
+    agentHarness.textDeltas = ['{', '"outcome":"no_change"}']
+    agentHarness.run = async () => undefined
+    const onDelta = vi.fn()
+
+    await runAiSdkAgent({
+      taskId: 'task-hidden-content-protocol',
+      prompt: '检查资料',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      createId: () => 'call-hidden-content-protocol',
+      executeTool: async () => ({ ok: true }),
+      recordToolCall: async () => undefined,
+      onDelta,
+    })
+
+    expect(onDelta).not.toHaveBeenCalled()
   })
 
   it('does not expose streamed structured protocol as reasoning', async () => {
@@ -276,16 +418,17 @@ describe('AI SDK Agent tool lifecycle', () => {
 
   it('automatically retries an explicitly retryable read failure', async () => {
     const progress: Array<{ timelineEvent?: { kind: string } }> = []
-    const executeTool = vi
-      .fn()
-      .mockResolvedValueOnce({
+    const executeTool = vi.fn()
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      executeTool.mockResolvedValueOnce({
         ok: false,
         error: 'database busy',
         errorCode: 'database_busy',
         retryable: true,
         retryAfterMs: 0,
       })
-      .mockResolvedValueOnce({ ok: true, value: [{ title: 'Recovered' }] })
+    }
+    executeTool.mockResolvedValueOnce({ ok: true, value: [{ title: 'Recovered' }] })
 
     await runAiSdkAgent({
       taskId: 'task-read-retry',
@@ -299,12 +442,54 @@ describe('AI SDK Agent tool lifecycle', () => {
       onProgress: (update) => progress.push(update),
     })
 
-    expect(executeTool).toHaveBeenCalledTimes(2)
+    expect(executeTool).toHaveBeenCalledTimes(5)
     expect(progress).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ timelineEvent: expect.objectContaining({ kind: 'retry' }) }),
       ]),
     )
+  })
+
+  it('can submit a corrected proposal after nine earlier tool failures', async () => {
+    let proposalResult: unknown
+    agentHarness.run = async (tools) => {
+      for (let index = 0; index < 9; index += 1) {
+        await tools.search_documents?.execute({ query: `failed-read-${index}` })
+      }
+      proposalResult = await tools.submit_document_edits?.execute({
+        documents: [
+          {
+            documentId: 'doc-1',
+            edits: [
+              {
+                kind: 'replace',
+                targetBlockIds: ['block-1'],
+                content: '修正后的内容',
+                reason: '根据已完成读取提交增量提案',
+              },
+            ],
+          },
+        ],
+        summary: '提交修正后的增量提案',
+      })
+    }
+
+    const result = await runAiSdkAgent({
+      taskId: 'task-failure-headroom',
+      prompt: '读取后提交增量提案',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      createId: (() => {
+        let index = 0
+        return () => `call-failure-headroom-${++index}`
+      })(),
+      executeTool: async () => ({ ok: false, error: 'read failed' }),
+      recordToolCall: async () => undefined,
+    })
+
+    expect(proposalResult).toMatchObject({ proposalCaptured: true })
+    expect(JSON.parse(result.output)).toMatchObject({ outcome: 'proposal' })
   })
 
   it('records a cancelled in-flight tool before rejecting the run', async () => {
@@ -568,6 +753,8 @@ describe('AI SDK Agent tool lifecycle', () => {
   it('runs the same tool loop with an injected cognitive output contract', async () => {
     agentHarness.run = async () => undefined
     agentHarness.resultText = '{"summary":"认知结果","items":[{"kind":"claim","text":"结论"}]}'
+    agentHarness.textDeltas = ['{"summary":"认知', '结果","items":[]}']
+    const progress: string[] = []
 
     const result = await runAiSdkAgent({
       taskId: 'task-cognitive-contract',
@@ -579,6 +766,7 @@ describe('AI SDK Agent tool lifecycle', () => {
       createId: () => 'call-cognitive-contract',
       executeTool: async () => ({ ok: true }),
       recordToolCall: async () => undefined,
+      onProgress: (update) => progress.push(update.detail),
     })
 
     expect(JSON.parse(result.output)).toEqual({
@@ -586,6 +774,42 @@ describe('AI SDK Agent tool lifecycle', () => {
       items: [{ kind: 'claim', text: '结论' }],
     })
     expect(agentHarness.instructions).toContain('cognitive-test v1')
+    expect(agentHarness.instructions).toContain('JSON Schema')
+    expect(agentHarness.instructions).toContain('"required":["summary","items"]')
+    expect(agentHarness.options.output).toMatchObject({
+      name: 'object',
+      options: { name: 'cognitive-test' },
+    })
     expect(agentHarness.instructions).not.toContain('最终回复使用简短自然语言')
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('正在生成结构化结果 · 已接收'),
+        expect.stringContaining('结构化结果接收完成'),
+        expect.stringContaining('结构化结果已校验'),
+      ]),
+    )
+  })
+
+  it('repairs a provider response that ignores structured output without rerunning tools', async () => {
+    agentHarness.resultText = 'The task result is not JSON.'
+    agentHarness.repairResult = {
+      text: '{"summary":"修复后的结果","items":[]}',
+      usage: { inputTokens: 4, outputTokens: 3, totalTokens: 7 },
+    }
+
+    const result = await runAiSdkAgent({
+      taskId: 'task-cognitive-repair',
+      prompt: '测试认知契约修复',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      outputContract: COGNITIVE_TEST_OUTPUT_CONTRACT,
+      createId: () => 'call-cognitive-repair',
+      executeTool: async () => ({ ok: true }),
+      recordToolCall: async () => undefined,
+    })
+
+    expect(JSON.parse(result.output)).toEqual({ summary: '修复后的结果', items: [] })
+    expect(result.usage).toEqual({ inputTokens: 14, outputTokens: 8, totalTokens: 22 })
   })
 })

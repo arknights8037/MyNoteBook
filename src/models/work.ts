@@ -11,6 +11,43 @@ export type TaskRunStatus =
   | 'timed_out'
   | 'stale'
 
+const TASK_RUN_TRANSITIONS: Record<TaskRunStatus, readonly TaskRunStatus[]> = {
+  queued: ['running', 'cancelled', 'stale'],
+  running: [
+    'waiting_input',
+    'waiting_approval',
+    'blocked',
+    'completed',
+    'failed',
+    'cancelled',
+    'timed_out',
+  ],
+  waiting_input: ['running', 'blocked', 'cancelled', 'stale'],
+  waiting_approval: ['running', 'waiting_approval', 'completed', 'blocked', 'cancelled', 'stale'],
+  blocked: ['running', 'waiting_approval', 'blocked', 'completed', 'cancelled', 'stale'],
+  completed: ['stale'],
+  failed: ['queued', 'cancelled'],
+  cancelled: [],
+  timed_out: ['queued', 'cancelled'],
+  stale: ['queued', 'cancelled'],
+}
+
+export function canTransitionTaskRun(
+  currentStatus: TaskRunStatus,
+  nextStatus: TaskRunStatus,
+): boolean {
+  return TASK_RUN_TRANSITIONS[currentStatus].includes(nextStatus)
+}
+
+export function getTaskRunTransitionError(
+  currentStatus: TaskRunStatus,
+  nextStatus: TaskRunStatus,
+): string | null {
+  return canTransitionTaskRun(currentStatus, nextStatus)
+    ? null
+    : `不允许从 ${currentStatus} 转换为 ${nextStatus}。`
+}
+
 export interface AcceptanceCriteria {
   requiredArtifacts?: Array<{ artifactType: string; minCount?: number }>
   minimumEvidence?: number
@@ -91,6 +128,8 @@ export interface ResultVerification {
   checks: VerificationCheck[]
   summary: string
   proposedChangeSetId: string | null
+  confirmationEnvelope: import('./governance').ConfirmationEnvelope
+  confirmationHash: string
   correlationId: string
   createdAt: number
 }

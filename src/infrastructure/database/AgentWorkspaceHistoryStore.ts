@@ -17,7 +17,9 @@ export class SqliteAgentWorkspaceHistoryStore implements AgentWorkspaceHistorySt
   constructor(private readonly getClient: () => Promise<SqlClient> = getDatabase) {}
 
   async load(): Promise<AgentWorkspaceHistoryState | null> {
-    const rows = await (await this.getClient()).select<AgentWorkspaceStateRow>(
+    const rows = await (
+      await this.getClient()
+    ).select<AgentWorkspaceStateRow>(
       `SELECT state_json FROM agent_workspace_state WHERE id = 'current' LIMIT 1`,
     )
     const row = rows[0]
@@ -27,13 +29,15 @@ export class SqliteAgentWorkspaceHistoryStore implements AgentWorkspaceHistorySt
 
   async save(state: AgentWorkspaceHistoryState): Promise<void> {
     const normalized = normalizeAgentWorkspaceHistory(state)
-    await (await this.getClient()).execute(
+    await (
+      await this.getClient()
+    ).execute(
       `INSERT INTO agent_workspace_state (id, state_json, updated_at)
        VALUES ('current', ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          state_json = excluded.state_json,
          updated_at = excluded.updated_at`,
-      [JSON.stringify({ version: 2, ...normalized }), Date.now()],
+      [JSON.stringify({ version: 3, ...normalized }), Date.now()],
     )
   }
 }

@@ -141,6 +141,12 @@ describe('P1 repositories', () => {
       'decision-1',
       'rule-1',
     ])
+    const deleted = await repository.deleteObject('decision-1', 1)
+    expect(deleted).toMatchObject({ ok: true })
+    expect(await repository.getObject('decision-1')).toMatchObject({
+      ok: false,
+      error: { code: 'not-found' },
+    })
   })
 
   it('persists unified TaskRun, Artifact and Evidence with guarded status updates', async () => {
@@ -191,13 +197,22 @@ describe('P1 repositories', () => {
     const staleUpdate = await repository.updateRunStatus({
       id: 'run-1',
       expectedStatus: 'queued',
-      status: 'completed',
+      status: 'cancelled',
+    })
+    const invalidTransition = await repository.updateRunStatus({
+      id: 'run-1',
+      expectedStatus: 'running',
+      status: 'queued',
     })
 
     expect(definition.ok).toBe(true)
     expect(run.ok).toBe(true)
     expect(started.ok && started.value.status).toBe('running')
     expect(staleUpdate).toMatchObject({ ok: false, error: { code: 'revision-conflict' } })
+    expect(invalidTransition).toMatchObject({
+      ok: false,
+      error: { code: 'validation-error' },
+    })
     expect((await repository.listArtifacts('run-1')).ok).toBe(true)
     expect((await repository.listEvidence('run-1')).ok).toBe(true)
   })

@@ -48,6 +48,7 @@ watch(
         class="ui-dialog-card"
         :class="$attrs.class"
         :style="$attrs.style"
+        aria-modal="true"
         @open-auto-focus.prevent
       >
         <DialogDescription class="ui-visually-hidden">{{ title }}对话框</DialogDescription>

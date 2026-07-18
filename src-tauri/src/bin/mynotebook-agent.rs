@@ -46,6 +46,20 @@ struct Invocation {
 enum AgentCommand {
     Submit {
         prompt: String,
+        project_id: Option<String>,
+        branch_id: Option<String>,
+    },
+    Cognitive {
+        mode: String,
+        prompt: String,
+        project_id: Option<String>,
+        branch_id: Option<String>,
+    },
+    Projects,
+    CreateBranch {
+        project_id: String,
+        title: String,
+        parent_conversation_id: Option<String>,
     },
     Get {
         request_id: String,
@@ -53,6 +67,8 @@ enum AgentCommand {
     Decide {
         request_id: String,
         action: String,
+        reply: Option<String>,
+        expected_summary: Option<String>,
     },
     Revise {
         request_id: String,
@@ -63,16 +79,61 @@ enum AgentCommand {
 impl AgentCommand {
     fn into_tool_call(self, token: &str) -> (String, Map<String, Value>) {
         let (name, value) = match self {
-            Self::Submit { prompt } => (
+            Self::Submit {
+                prompt,
+                project_id,
+                branch_id,
+            } => (
                 "submit_agent_request",
-                json!({ "prompt": prompt, "capability_token": token }),
+                json!({
+                    "prompt": prompt,
+                    "project_id": project_id,
+                    "branch_id": branch_id,
+                    "capability_token": token
+                }),
+            ),
+            Self::Cognitive {
+                mode,
+                prompt,
+                project_id,
+                branch_id,
+            } => (
+                "submit_cognitive_request",
+                json!({
+                    "mode": mode,
+                    "prompt": prompt,
+                    "project_id": project_id,
+                    "branch_id": branch_id,
+                    "capability_token": token
+                }),
+            ),
+            Self::Projects => ("list_agent_projects", json!({ "capability_token": token })),
+            Self::CreateBranch {
+                project_id,
+                title,
+                parent_conversation_id,
+            } => (
+                "create_agent_branch",
+                json!({
+                    "project_id": project_id,
+                    "title": title,
+                    "parent_conversation_id": parent_conversation_id,
+                    "capability_token": token
+                }),
             ),
             Self::Get { request_id } => ("get_agent_request", json!({ "request_id": request_id })),
-            Self::Decide { request_id, action } => (
+            Self::Decide {
+                request_id,
+                action,
+                reply,
+                expected_summary,
+            } => (
                 "decide_agent_request",
                 json!({
                     "request_id": request_id,
                     "action": action,
+                    "reply": reply,
+                    "expected_summary": expected_summary,
                     "capability_token": token
                 }),
             ),
@@ -102,6 +163,12 @@ fn parse_invocation(arguments: Vec<String>) -> Result<Invocation, String> {
     let mut prompt = None;
     let mut request_id = None;
     let mut feedback = None;
+    let mut reply = None;
+    let mut expected_summary = None;
+    let mut project_id = None;
+    let mut branch_id = None;
+    let mut title = None;
+    let mut parent_conversation_id = None;
     let mut index = 1;
     while index < arguments.len() {
         let value = arguments
@@ -113,6 +180,12 @@ fn parse_invocation(arguments: Vec<String>) -> Result<Invocation, String> {
             "--prompt" => prompt = Some(value.clone()),
             "--request-id" => request_id = Some(value.clone()),
             "--feedback" => feedback = Some(value.clone()),
+            "--reply" => reply = Some(value.clone()),
+            "--summary" => expected_summary = Some(value.clone()),
+            "--project-id" => project_id = Some(value.clone()),
+            "--branch-id" => branch_id = Some(value.clone()),
+            "--title" => title = Some(value.clone()),
+            "--parent-conversation-id" => parent_conversation_id = Some(value.clone()),
             option => return Err(format!("未知参数：{option}\n{}", usage())),
         }
         index += 2;
@@ -125,6 +198,23 @@ fn parse_invocation(arguments: Vec<String>) -> Result<Invocation, String> {
             prompt: prompt
                 .filter(|value| !value.trim().is_empty())
                 .ok_or_else(|| "submit 需要 --prompt。".to_string())?,
+            project_id: non_empty(project_id),
+            branch_id: non_empty(branch_id),
+        },
+        "research" | "review" | "learning" | "learn" => AgentCommand::Cognitive {
+            mode: command_name,
+            prompt: prompt
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "认知模式命令需要 --prompt。".to_string())?,
+            project_id: non_empty(project_id),
+            branch_id: non_empty(branch_id),
+        },
+        "projects" => AgentCommand::Projects,
+        "branch" => AgentCommand::CreateBranch {
+            project_id: non_empty(project_id)
+                .ok_or_else(|| "branch 需要 --project-id。".to_string())?,
+            title: non_empty(title).ok_or_else(|| "branch 需要 --title。".to_string())?,
+            parent_conversation_id: non_empty(parent_conversation_id),
         },
         "get" => AgentCommand::Get {
             request_id: required_request_id(request_id)?,
@@ -132,6 +222,8 @@ fn parse_invocation(arguments: Vec<String>) -> Result<Invocation, String> {
         "approve" | "reject" => AgentCommand::Decide {
             request_id: required_request_id(request_id)?,
             action: command_name,
+            reply: reply.filter(|value| !value.trim().is_empty()),
+            expected_summary: expected_summary.filter(|value| !value.trim().is_empty()),
         },
         "revise" => AgentCommand::Revise {
             request_id: required_request_id(request_id)?,
@@ -154,6 +246,10 @@ fn required_request_id(value: Option<String>) -> Result<String, String> {
         .ok_or_else(|| "该命令需要 --request-id。".to_string())
 }
 
+fn non_empty(value: Option<String>) -> Option<String> {
+    value.filter(|item| !item.trim().is_empty())
+}
+
 fn default_server_path() -> Result<PathBuf, String> {
     let mut path = env::current_exe().map_err(|error| error.to_string())?;
     path.set_file_name(if cfg!(windows) {
@@ -165,5 +261,5 @@ fn default_server_path() -> Result<PathBuf, String> {
 }
 
 fn usage() -> String {
-    "用法：mynotebook-agent <submit|get|approve|reject|revise> --database-url <sqlite-url> [--prompt <text>] [--request-id <id>] [--feedback <text>] [--server <path>]".to_string()
+    "用法：mynotebook-agent <projects|branch|submit|research|review|learning|get|approve|reject|revise> --database-url <sqlite-url> [--project-id <id>] [--branch-id <id>] [--title <分支标题>] [--parent-conversation-id <id>] [--prompt <text>] [--request-id <id>] [--feedback <text>] [--reply <审批回复>] [--summary <预期 summary>] [--server <path>]".to_string()
 }

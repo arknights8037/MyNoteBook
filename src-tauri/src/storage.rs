@@ -32,6 +32,7 @@ const MANAGED_DATA_ENTRIES: &[&str] = &[
     "assets",
     "skills",
     "mcp-servers.json",
+    "mcp-server-exposure.json",
 ];
 
 #[derive(Serialize)]

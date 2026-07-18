@@ -45,22 +45,67 @@ describe('AgentCommunicationService', () => {
     expect(parameters.at(-1)).toBe('request-1')
   })
 
-  it('reclaims a stale running request that never received a task id', async () => {
+  it('only reclaims a running request after the maximum Runtime window', async () => {
     select.mockResolvedValue([
-      { id: 'request-stale', prompt: '继续同步', status: 'running', task_id: null },
+      {
+        id: 'request-stale',
+        prompt: '检查依据',
+        mode: 'review',
+        status: 'running',
+        task_id: null,
+        project_id: 'project-1',
+        branch_id: 'branch-1',
+        branch_title: '接口审阅',
+        parent_conversation_id: 'conversation-1',
+      },
     ])
 
     const request = await new AgentCommunicationService().claimNext()
 
-    expect(request).toMatchObject({ id: 'request-stale', status: 'running', taskId: null })
-    expect(select).toHaveBeenCalledWith(expect.stringContaining("status = 'running'"), [
-      expect.any(Number),
-    ])
+    expect(request).toMatchObject({
+      id: 'request-stale',
+      mode: 'review',
+      status: 'running',
+      taskId: null,
+      projectId: 'project-1',
+      branchId: 'branch-1',
+      branchTitle: '接口审阅',
+      parentConversationId: 'conversation-1',
+    })
+    const staleBoundary = select.mock.calls[0]?.[1]?.[0] as number
+    expect(Date.now() - staleBoundary).toBeGreaterThanOrEqual(49 * 60 * 1_000)
     expect(execute).toHaveBeenCalledWith(expect.stringContaining('task_id IS NULL'), [
       expect.any(Number),
       'request-stale',
       expect.any(Number),
     ])
+  })
+
+  it('finds an approval decision only for the matching pending task', async () => {
+    const decision = {
+      version: 1,
+      action: 'approve',
+      reply: '已审阅 summary，批准同步。',
+      requestId: 'request-approved',
+      taskId: 'task-1',
+      resultVersion: 1,
+      resultSummary: '更新两篇维护资料。',
+      decidedAt: 2_000,
+    }
+    select.mockResolvedValue([
+      {
+        id: 'request-approved',
+        prompt: '同步知识',
+        status: 'approved',
+        task_id: 'task-1',
+        decision_json: JSON.stringify(decision),
+      },
+    ])
+
+    const request = await new AgentCommunicationService().findDecisionForTask('task-1')
+
+    expect(request?.decision).toEqual(decision)
+    expect(select).toHaveBeenCalledWith(expect.stringContaining('task_id = ?'), ['task-1'])
   })
 
   it('claims a revision only for the pending proposal task and preserves continuation context', async () => {

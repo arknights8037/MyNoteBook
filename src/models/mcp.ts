@@ -38,6 +38,11 @@ export interface McpResourceDescriptor {
   size?: number
 }
 
+export interface McpServerExposureSettings {
+  version: number
+  tools: Record<string, boolean>
+}
+
 export interface AgentExternalTool extends McpToolDescriptor {
   runtimeName: string
   requiresConfirmation: boolean
@@ -57,7 +62,7 @@ export function createMcpRuntimeTools(tools: McpToolDescriptor[]): AgentExternal
       ...tool,
       runtimeName,
       requiresConfirmation: !tool.serverTrusted,
-      maxCallsPerTask: 24,
+      maxCallsPerTask: 32,
       tags: [tool.readOnly ? 'external.read' : 'external.may_write'],
     }
   })

@@ -173,4 +173,18 @@ describe('AgentProtocol', () => {
       'create_document',
     ])
   })
+
+  it('uses the shared write contract to ignore structurally invalid commands', () => {
+    const response = parseAgentResponse({
+      ...baseInput,
+      output: JSON.stringify({
+        commands: [
+          { tool: 'replace_block', blockId: '', content: '替换' },
+          { tool: 'replace_text_by_regex', pattern: '', replacement: '完成' },
+        ],
+      }),
+    })
+
+    expect(response.commands).toEqual([])
+  })
 })

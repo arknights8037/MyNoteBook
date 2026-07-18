@@ -73,7 +73,12 @@ import { useEditorJumpAid } from './composables/useEditorJumpAid'
 import EditorColorPickerPopover from './EditorColorPickerPopover.vue'
 import { assetService, getAssetUrl } from '@/infrastructure/assets/AssetService'
 import type { SelectedBlock } from '@/models/agent'
-import { createInternalDocumentHref, parseInternalDocumentHref } from '@/models/documentLink'
+import {
+  createInternalDocumentHref,
+  isLocalDocumentHref,
+  parseInternalDocumentHref,
+  resolveLocalDocumentHref,
+} from '@/models/documentLink'
 import type { TiptapDocumentJson } from '@/models/document'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@/models/settings'
 import { NButton, NButtonGroup, NIcon, NTooltip } from '@/ui'
@@ -85,7 +90,7 @@ const props = withDefaults(
     autofocus?: boolean
     ariaLabel?: string
     settings?: AppSettings
-    internalDocuments?: Array<{ id: string; title: string }>
+    internalDocuments?: Array<{ id: string; title: string; sourceUrl?: string }>
     documentId?: string
   }>(),
   {
@@ -106,6 +111,7 @@ const emit = defineEmits<{
   destroy: []
   imageError: [message: string]
   openDocument: [documentId: string, blockId?: string]
+  unresolvedDocumentLink: [href: string]
 }>()
 
 const initialContent = computed(() =>
@@ -446,8 +452,15 @@ function handleEditorClick(event: InstanceType<typeof globalThis.MouseEvent>): v
   const target = event.target
   const anchor = target instanceof globalThis.Element ? target.closest('a') : null
   const href = anchor?.getAttribute('href') ?? ''
-  const targetDocument = parseInternalDocumentHref(href)
-  if (!targetDocument) return
+  const targetDocument =
+    parseInternalDocumentHref(href) ?? resolveLocalDocumentHref(href, props.internalDocuments)
+  if (!targetDocument) {
+    if (isLocalDocumentHref(href)) {
+      event.preventDefault()
+      emit('unresolvedDocumentLink', href)
+    }
+    return
+  }
 
   event.preventDefault()
   if (targetDocument.blockId)

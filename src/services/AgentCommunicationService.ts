@@ -3,6 +3,11 @@ import { getDatabase } from '@/infrastructure/database/connection'
 export interface AgentCommunicationRequest {
   id: string
   prompt: string
+  mode: AgentCommunicationMode
+  projectId: string | null
+  branchId: string | null
+  branchTitle: string | null
+  parentConversationId: string | null
   status:
     | 'queued'
     | 'running'
@@ -16,7 +21,10 @@ export interface AgentCommunicationRequest {
   revisionFeedback: string | null
   revisionCount: number
   result: AgentCommunicationResult | null
+  decision: AgentCommunicationDecision | null
 }
+
+export type AgentCommunicationMode = 'agent' | 'research' | 'review' | 'learning'
 
 export interface AgentCommunicationResult {
   version: 1
@@ -24,6 +32,11 @@ export interface AgentCommunicationResult {
   summary: string
   patchCount: number
   targetDocumentIds: string[]
+  cognitive?: {
+    mode: Exclude<AgentCommunicationMode, 'agent'>
+    result: unknown
+    state?: unknown
+  }
   finishReason?: string
   usage?: {
     inputTokens?: number
@@ -32,24 +45,47 @@ export interface AgentCommunicationResult {
   }
 }
 
+export interface AgentCommunicationDecision {
+  version: 1
+  action: 'approve' | 'reject'
+  reply: string
+  requestId: string
+  taskId: string
+  resultVersion: 1 | null
+  resultSummary: string
+  decidedAt: number
+}
+
 interface AgentRequestRow {
   id: string
   prompt: string
+  mode?: AgentCommunicationMode
   status: AgentCommunicationRequest['status']
   task_id: string | null
   previous_task_id?: string | null
   revision_feedback?: string | null
   revision_count?: number
   result_json?: string | null
+  decision_json?: string | null
+  project_id?: string | null
+  branch_id?: string | null
+  branch_title?: string | null
+  parent_conversation_id?: string | null
 }
+
+const STALE_RUNNING_REQUEST_MS = 50 * 60 * 1_000
+const AGENT_REQUEST_SELECT = `id, prompt, mode, status, task_id, previous_task_id,
+  revision_feedback, revision_count, result_json, decision_json, project_id, branch_id,
+  (SELECT title FROM agent_branches WHERE id = agent_requests.branch_id) AS branch_title,
+  (SELECT parent_conversation_id FROM agent_branches WHERE id = agent_requests.branch_id)
+    AS parent_conversation_id`
 
 export class AgentCommunicationService {
   async claimNext(): Promise<AgentCommunicationRequest | null> {
     const database = await getDatabase()
-    const staleRunningBefore = Date.now() - 60_000
+    const staleRunningBefore = Date.now() - STALE_RUNNING_REQUEST_MS
     const rows = await database.select<AgentRequestRow>(
-      `SELECT id, prompt, status, task_id, previous_task_id, revision_feedback,
-              revision_count, result_json FROM agent_requests
+      `SELECT ${AGENT_REQUEST_SELECT} FROM agent_requests
        WHERE previous_task_id IS NULL AND (status = 'queued'
           OR (status = 'running' AND task_id IS NULL AND updated_at < ?))
        ORDER BY created_at ASC LIMIT 1`,
@@ -70,10 +106,9 @@ export class AgentCommunicationService {
 
   async claimRevisionForTask(taskId: string): Promise<AgentCommunicationRequest | null> {
     const database = await getDatabase()
-    const staleRunningBefore = Date.now() - 60_000
+    const staleRunningBefore = Date.now() - STALE_RUNNING_REQUEST_MS
     const rows = await database.select<AgentRequestRow>(
-      `SELECT id, prompt, status, task_id, previous_task_id, revision_feedback,
-              revision_count, result_json FROM agent_requests
+      `SELECT ${AGENT_REQUEST_SELECT} FROM agent_requests
        WHERE previous_task_id = ? AND (
          status = 'queued' OR (status = 'running' AND task_id IS NULL AND updated_at < ?)
        )
@@ -93,12 +128,13 @@ export class AgentCommunicationService {
     return mapRequest({ ...row, status: 'running' })
   }
 
-  async findDecision(): Promise<AgentCommunicationRequest | null> {
+  async findDecisionForTask(taskId: string): Promise<AgentCommunicationRequest | null> {
     const database = await getDatabase()
     const rows = await database.select<AgentRequestRow>(
-      `SELECT id, prompt, status, task_id, previous_task_id, revision_feedback,
-              revision_count, result_json FROM agent_requests
-       WHERE status IN ('approved', 'rejected') ORDER BY updated_at ASC LIMIT 1`,
+      `SELECT ${AGENT_REQUEST_SELECT} FROM agent_requests
+       WHERE task_id = ? AND status IN ('approved', 'rejected')
+       ORDER BY updated_at ASC LIMIT 1`,
+      [taskId],
     )
     return rows[0] ? mapRequest(rows[0]) : null
   }
@@ -106,12 +142,21 @@ export class AgentCommunicationService {
   async findFailedForTask(taskId: string): Promise<AgentCommunicationRequest | null> {
     const database = await getDatabase()
     const rows = await database.select<AgentRequestRow>(
-      `SELECT id, prompt, status, task_id, previous_task_id, revision_feedback,
-              revision_count, result_json FROM agent_requests
+      `SELECT ${AGENT_REQUEST_SELECT} FROM agent_requests
        WHERE task_id = ? AND status = 'failed' ORDER BY updated_at DESC LIMIT 1`,
       [taskId],
     )
     return rows[0] ? mapRequest(rows[0]) : null
+  }
+
+  async listRecentCompleted(limit = 20): Promise<AgentCommunicationRequest[]> {
+    const database = await getDatabase()
+    const rows = await database.select<AgentRequestRow>(
+      `SELECT ${AGENT_REQUEST_SELECT} FROM agent_requests
+       WHERE status = 'completed' ORDER BY completed_at DESC LIMIT ?`,
+      [Math.max(1, Math.min(limit, 100))],
+    )
+    return rows.map(mapRequest)
   }
 
   async markAwaitingReview(
@@ -155,12 +200,18 @@ function mapRequest(row: AgentRequestRow): AgentCommunicationRequest {
   return {
     id: row.id,
     prompt: row.prompt,
+    mode: row.mode ?? 'agent',
+    projectId: row.project_id ?? null,
+    branchId: row.branch_id ?? null,
+    branchTitle: row.branch_title ?? null,
+    parentConversationId: row.parent_conversation_id ?? null,
     status: row.status,
     taskId: row.task_id,
     previousTaskId: row.previous_task_id ?? null,
     revisionFeedback: row.revision_feedback ?? null,
     revisionCount: row.revision_count ?? 0,
     result: parseResult(row.result_json),
+    decision: parseDecision(row.decision_json),
   }
 }
 
@@ -168,6 +219,16 @@ function parseResult(value: string | null | undefined): AgentCommunicationResult
   if (!value) return null
   try {
     const parsed = JSON.parse(value) as AgentCommunicationResult
+    return parsed?.version === 1 ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function parseDecision(value: string | null | undefined): AgentCommunicationDecision | null {
+  if (!value) return null
+  try {
+    const parsed = JSON.parse(value) as AgentCommunicationDecision
     return parsed?.version === 1 ? parsed : null
   } catch {
     return null

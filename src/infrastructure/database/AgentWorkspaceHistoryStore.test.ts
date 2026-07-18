@@ -16,6 +16,7 @@ describe('SqliteAgentWorkspaceHistoryStore', () => {
         id: 'conversation-1',
         projectId: state.activeProjectId,
         title: 'Agent task',
+        createdAt: 10,
         updatedAt: 20,
         messageCount: 1,
         provider: 'openai',
@@ -37,7 +38,7 @@ describe('SqliteAgentWorkspaceHistoryStore', () => {
 
     await expect(store.load()).resolves.toMatchObject({
       projects: [{ workspaceRootIds: ['group-agent-mvp'] }],
-      items: [{ id: 'conversation-1', messageCount: 1, pinnedAt: 30 }],
+      items: [{ id: 'conversation-1', createdAt: 10, messageCount: 1, pinnedAt: 30 }],
     })
   })
 })

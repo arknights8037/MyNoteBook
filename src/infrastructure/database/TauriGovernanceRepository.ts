@@ -1,19 +1,33 @@
 import { invoke } from '@tauri-apps/api/core'
 
-import type { Delegation, DelegateType, DelegationOperation, ExternalSubmission, OutboxMessage } from '@/models/governance'
+import type {
+  Delegation,
+  DelegateType,
+  DelegationOperation,
+  ExternalSubmission,
+  OutboxMessage,
+} from '@/models/governance'
 import { err, normalizeError, ok, type AppResult } from '@/models/result'
 import { loadAppSettings } from '@/models/settings'
 import type { GovernanceRepository } from '@/repositories/GovernanceRepository'
 import type { SqlClient } from '@/repositories/SqlClient'
+import type { ContextBundle, ContextBundleSource } from '@/models/contextBundle'
 
 export class TauriGovernanceRepository implements GovernanceRepository {
   constructor(private readonly sqlClient: SqlClient) {}
 
   async createDelegation(input: {
-    id: string; taskRunId: string; delegateType: DelegateType; externalActorId: string
-    contextBundleId?: string | null; capabilityTokenHash: string
-    allowedOperations: DelegationOperation[]; expiresAt: number; correlationId: string
-    causationId?: string | null; createdAt: number
+    id: string
+    taskRunId: string
+    delegateType: DelegateType
+    externalActorId: string
+    contextBundleId?: string | null
+    capabilityTokenHash: string
+    allowedOperations: DelegationOperation[]
+    expiresAt: number
+    correlationId: string
+    causationId?: string | null
+    createdAt: number
   }): Promise<AppResult<Delegation>> {
     try {
       await invoke('create_delegation', {
@@ -46,36 +60,70 @@ export class TauriGovernanceRepository implements GovernanceRepository {
     }
   }
 
+  async getContextBundle(id: string): Promise<AppResult<ContextBundle>> {
+    try {
+      const rows = await this.sqlClient.select<Record<string, unknown>>(
+        'SELECT * FROM context_bundles WHERE id = ? LIMIT 1',
+        [id],
+      )
+      return rows[0]
+        ? ok(mapContextBundle(rows[0]))
+        : err({ code: 'not-found', message: 'Context Bundle 不存在。' })
+    } catch (error) {
+      return err(normalizeError(error, '无法读取 Context Bundle。'))
+    }
+  }
+
   async submitExternal(input: {
-    delegationId: string; capabilityTokenHash: string; idempotencyKey: string
-    requestHash: string; submission: ExternalSubmission; submittedAt: number
+    delegationId: string
+    capabilityTokenHash: string
+    idempotencyKey: string
+    requestHash: string
+    submission: ExternalSubmission
+    submittedAt: number
   }): Promise<AppResult<{ entityId: string; replayed: boolean }>> {
     try {
-      return ok(await invoke('submit_external_work', {
-        input: {
-          dataDirectory: loadAppSettings().dataDirectory,
-          ...input,
-          submissionJson: JSON.stringify(input.submission),
-          eventId: `${input.delegationId}-${input.idempotencyKey}-event`,
-          outboxId: `${input.delegationId}-${input.idempotencyKey}-outbox`,
-        },
-      }))
+      return ok(
+        await invoke('submit_external_work', {
+          input: {
+            dataDirectory: loadAppSettings().dataDirectory,
+            ...input,
+            submissionJson: JSON.stringify(input.submission),
+            eventId: `${input.delegationId}-${input.idempotencyKey}-event`,
+            outboxId: `${input.delegationId}-${input.idempotencyKey}-outbox`,
+          },
+        }),
+      )
     } catch (error) {
       return err(normalizeError(error, '外部结果提交失败。'))
     }
   }
 
-  async claimOutbox(input: { workerId: string; now: number; leaseMs: number; limit: number }): Promise<AppResult<OutboxMessage[]>> {
+  async claimOutbox(input: {
+    workerId: string
+    now: number
+    leaseMs: number
+    limit: number
+  }): Promise<AppResult<OutboxMessage[]>> {
     try {
-      return ok(await invoke('claim_outbox_messages', {
-        input: { dataDirectory: loadAppSettings().dataDirectory, ...input },
-      }))
+      return ok(
+        await invoke('claim_outbox_messages', {
+          input: { dataDirectory: loadAppSettings().dataDirectory, ...input },
+        }),
+      )
     } catch (error) {
       return err(normalizeError(error, '无法领取 Outbox 消息。'))
     }
   }
 
-  async settleOutbox(input: { id: string; workerId: string; published: boolean; error?: string | null; now: number; retryAt?: number | null }): Promise<AppResult<void>> {
+  async settleOutbox(input: {
+    id: string
+    workerId: string
+    published: boolean
+    error?: string | null
+    now: number
+    retryAt?: number | null
+  }): Promise<AppResult<void>> {
     try {
       await invoke('settle_outbox_message', {
         input: { dataDirectory: loadAppSettings().dataDirectory, ...input },
@@ -108,8 +156,66 @@ function parseOperations(value: unknown): DelegationOperation[] {
   if (typeof value !== 'string') return []
   try {
     const parsed: unknown = JSON.parse(value)
-    return Array.isArray(parsed) ? parsed.filter((item): item is DelegationOperation => typeof item === 'string') : []
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is DelegationOperation => typeof item === 'string')
+      : []
   } catch {
     return []
+  }
+}
+
+function mapContextBundle(row: Record<string, unknown>): ContextBundle {
+  const version = Number(row.version) === 2 ? 2 : 1
+  const sources = parseArray(row.sources_json).map((source) => {
+    const item = source as Partial<ContextBundleSource>
+    return {
+      kind: 'document_block' as const,
+      documentId: String(item.documentId ?? ''),
+      blockId: typeof item.blockId === 'string' ? item.blockId : null,
+      revision: Number(item.revision ?? 0),
+      title: String(item.title ?? ''),
+      contentHash: String(item.contentHash ?? ''),
+      contentSnapshot: typeof item.contentSnapshot === 'string' ? item.contentSnapshot : null,
+    }
+  })
+  return {
+    id: String(row.id),
+    taskId: String(row.task_id),
+    version,
+    scope: parseObject(row.scope_json),
+    permissionSnapshot: parseObject(
+      row.permission_snapshot_json,
+    ) as ContextBundle['permissionSnapshot'],
+    sources,
+    activeRules: parseArray(row.active_rules_json) as Array<Record<string, unknown>>,
+    decisions: parseArray(row.decisions_json) as Array<Record<string, unknown>>,
+    conflicts: parseArray(row.conflicts_json) as Array<Record<string, unknown>>,
+    compiler: parseObject(row.compiler_json) as unknown as ContextBundle['compiler'],
+    snapshotHash: String(row.snapshot_hash),
+    correlationId: String(row.correlation_id),
+    causationId: typeof row.causation_id === 'string' ? row.causation_id : null,
+    createdAt: Number(row.created_at),
+  }
+}
+
+function parseArray(value: unknown): unknown[] {
+  if (typeof value !== 'string') return []
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function parseObject(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'string') return {}
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {}
+  } catch {
+    return {}
   }
 }

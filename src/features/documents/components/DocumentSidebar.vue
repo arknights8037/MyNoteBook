@@ -110,6 +110,11 @@ const emit = defineEmits<{
   'select-mind-map': [mindMapId: string]
   'delete-mind-map': [mindMapId: string]
   'delete-workspace-view': [viewId: string]
+  'rename-mind-map': [mindMapId: string]
+  'properties-mind-map': [mindMapId: string]
+  'rename-workspace-view': [viewId: string]
+  'properties-workspace-view': [viewId: string]
+  'pin-workspace-view': [viewId: string]
   'select-workspace-view': [viewId: string]
   'toggle-document': [documentId: DocumentId]
   properties: [document: DocumentSummary]
@@ -133,6 +138,7 @@ const activeDocumentId = computed(() =>
 const mindMapIds = computed(() => new Set(props.mindMaps.map((mindMap) => mindMap.id)))
 const workspaceViewIds = computed(() => new Set(props.workspaceViews.map((view) => view.id)))
 const workspaceViewTypes = computed(() => Object.fromEntries(props.workspaceViews.map((view) => [view.id, view.viewType])))
+const workspaceViewPinnedAt = computed(() => Object.fromEntries(props.workspaceViews.map((view) => [view.id, view.pinnedAt])))
 const sidebarPages = computed<DocumentSummary[]>(() => [
   ...props.documents,
   ...props.mindMaps.map((mindMap) => ({
@@ -167,7 +173,16 @@ const sidebarPages = computed<DocumentSummary[]>(() => [
     createdAt: workspaceView.createdAt,
     updatedAt: workspaceView.updatedAt,
   })),
-])
+].sort((left, right) => {
+  const leftPinned = workspaceViewPinnedAt.value[left.id] ?? null
+  const rightPinned = workspaceViewPinnedAt.value[right.id] ?? null
+  if (leftPinned !== null || rightPinned !== null) {
+    if (leftPinned === null) return 1
+    if (rightPinned === null) return -1
+    return rightPinned - leftPinned
+  }
+  return left.sortOrder - right.sortOrder || right.updatedAt - left.updatedAt
+}))
 const documentForest = computed(() => buildSidebarDocumentForest(sidebarPages.value))
 const articleGroups = computed(() =>
   props.documents.filter(
@@ -295,43 +310,23 @@ defineExpose({ openFilePicker })
         <NTooltip trigger="hover">
           <template #trigger>
             <NButton size="tiny" quaternary circle aria-label="导入" @click="emit('import')">
-              <template #icon
-                ><NIcon :size="14"><Upload /></NIcon
-              ></template>
+              <template #icon><NIcon :size="14"><Upload /></NIcon></template>
             </NButton>
           </template>
           导入 JSON / Markdown
         </NTooltip>
         <NTooltip trigger="hover">
           <template #trigger>
-            <NButton
-              size="tiny"
-              quaternary
-              circle
-              aria-label="新建分组"
-              :disabled="busy"
-              @click="emit('create-group')"
-            >
-              <template #icon
-                ><NIcon :size="14"><Folder /></NIcon
-              ></template>
+            <NButton size="tiny" quaternary circle aria-label="新建分组" :disabled="busy" @click="emit('create-group')">
+              <template #icon><NIcon :size="14"><Folder /></NIcon></template>
             </NButton>
           </template>
           新建分组
         </NTooltip>
         <NTooltip trigger="hover">
           <template #trigger>
-            <NButton
-              size="tiny"
-              quaternary
-              circle
-              aria-label="新建内容"
-              :disabled="busy"
-              @click="emit('create-view', null)"
-            >
-              <template #icon
-                ><NIcon :size="14"><Plus /></NIcon
-              ></template>
+            <NButton size="tiny" quaternary circle aria-label="新建内容" :disabled="busy" @click="emit('create-view', null)">
+              <template #icon><NIcon :size="14"><Plus /></NIcon></template>
             </NButton>
           </template>
           新建内容
@@ -390,23 +385,6 @@ defineExpose({ openFilePicker })
                 <span v-if="canDropArticleIntoGroup(group.id)" class="document-list__drop-hint"
                   >放入此分组</span
                 >
-                <NTooltip trigger="hover">
-                  <template #trigger>
-                    <NButton
-                      class="document-list__more"
-                      size="tiny"
-                      quaternary
-                      :aria-label="`${displayDocumentTitle(group)}中新建内容`"
-                      :disabled="busy"
-                      @click.stop="emit('create-view', group.id)"
-                    >
-                      <template #icon
-                        ><NIcon :size="14"><Plus /></NIcon
-                      ></template>
-                    </NButton>
-                  </template>
-                  新建内容
-                </NTooltip>
                 <DropdownMenuRoot>
                   <DropdownMenuTrigger as-child>
                     <NButton
@@ -469,6 +447,7 @@ defineExpose({ openFilePicker })
           :mind-map-ids="mindMapIds"
           :workspace-view-ids="workspaceViewIds"
           :workspace-view-types="workspaceViewTypes"
+          :workspace-view-pinned-at="workspaceViewPinnedAt"
           :active-mind-map-id="activeMindMapId"
           :active-workspace-view-id="activeWorkspaceViewId"
           :busy="busy"
@@ -480,6 +459,11 @@ defineExpose({ openFilePicker })
           @create-child-view="emit('create-view', $event)"
           @delete-mind-map="emit('delete-mind-map', $event)"
           @delete-workspace-view="emit('delete-workspace-view', $event)"
+          @rename-mind-map="emit('rename-mind-map', $event)"
+          @properties-mind-map="emit('properties-mind-map', $event)"
+          @rename-workspace-view="emit('rename-workspace-view', $event)"
+          @properties-workspace-view="emit('properties-workspace-view', $event)"
+          @pin-workspace-view="emit('pin-workspace-view', $event)"
           @properties="emit('properties', $event)"
           @rename="emit('rename', $event)"
           @delete="emit('delete', $event)"
@@ -507,6 +491,7 @@ defineExpose({ openFilePicker })
         :mind-map-ids="mindMapIds"
         :workspace-view-ids="workspaceViewIds"
         :workspace-view-types="workspaceViewTypes"
+        :workspace-view-pinned-at="workspaceViewPinnedAt"
         :active-mind-map-id="activeMindMapId"
         :active-workspace-view-id="activeWorkspaceViewId"
         :busy="busy"
@@ -517,6 +502,11 @@ defineExpose({ openFilePicker })
         @create-child-view="emit('create-view', $event)"
         @delete-mind-map="emit('delete-mind-map', $event)"
         @delete-workspace-view="emit('delete-workspace-view', $event)"
+        @rename-mind-map="emit('rename-mind-map', $event)"
+        @properties-mind-map="emit('properties-mind-map', $event)"
+        @rename-workspace-view="emit('rename-workspace-view', $event)"
+        @properties-workspace-view="emit('properties-workspace-view', $event)"
+        @pin-workspace-view="emit('pin-workspace-view', $event)"
         @properties="emit('properties', $event)"
         @rename="emit('rename', $event)"
         @delete="emit('delete', $event)"

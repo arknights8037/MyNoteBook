@@ -54,12 +54,49 @@ describe('CognitiveRunCompiler', () => {
       'BASE',
       'SKILL',
       '当前使用 Learning',
-      '未经用户明确确认',
+      '先让用户解释或作答',
       'TASK',
       'CONTEXT',
       'CONTRACT',
     ].map((part) => prompt.indexOf(part))
     expect(positions).toEqual([...positions].sort((left, right) => left - right))
+  })
+
+  it('binds Review to the shared read-only compiler and review contract', () => {
+    const mode = getCognitiveMode('review')!
+    const spec = compileCognitiveRunSpec({
+      baseExecutionPolicy: createDefaultExecutionPolicy({
+        tokenBudget: 2048,
+        allowedTools: ['read_document', 'replace_block'],
+      }),
+      mode,
+      template: getKnowledgeControlTemplate(mode.defaultTemplateId!),
+      builtInTools: AGENT_TOOL_REGISTRY,
+    })
+
+    expect(spec.outputContractId).toBe('review-result')
+    expect(spec.templateId).toBe('review-findings')
+    expect(spec.executionPolicy.allowedTools).toEqual(['read_document'])
+    expect(spec.executionPolicy.allowWriteProposals).toBe(false)
+  })
+
+  it('binds Learning to a read-only contract without formal write tools', () => {
+    const mode = getCognitiveMode('learning')!
+    const spec = compileCognitiveRunSpec({
+      baseExecutionPolicy: createDefaultExecutionPolicy({
+        tokenBudget: 2048,
+        allowedTools: ['read_document', 'replace_block'],
+      }),
+      mode,
+      template: getKnowledgeControlTemplate(mode.defaultTemplateId!),
+      builtInTools: AGENT_TOOL_REGISTRY,
+    })
+
+    expect(spec.outputContractId).toBe('learning-turn')
+    expect(spec.templateId).toBe('learning-coach')
+    expect(spec.interactionPolicy.requireUserAttempt).toBe(true)
+    expect(spec.executionPolicy.allowedTools).toEqual(['read_document'])
+    expect(spec.executionPolicy.allowWriteProposals).toBe(false)
   })
 })
 

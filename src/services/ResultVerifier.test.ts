@@ -45,11 +45,22 @@ describe('ResultVerifier', () => {
       finalizeVerification,
     } as unknown as WorkRepository
     let index = 0
-    const verifier = new ResultVerifier(repository, (prefix) => `${prefix}-${++index}`, () => 10)
+    const verifier = new ResultVerifier(
+      repository,
+      (prefix) => `${prefix}-${++index}`,
+      () => 10,
+    )
 
     const result = await verifier.verify(run.id)
 
     expect(result.ok).toBe(true)
+    expect(result.ok && result.value.confirmationHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(result.ok && result.value.confirmationEnvelope).toMatchObject({
+      version: 1,
+      task: { id: 'run-1' },
+      artifacts: [{ id: 'artifact-1' }],
+      evidence: [{ id: 'evidence-1' }],
+    })
     expect(finalizeVerification).toHaveBeenCalledWith(
       expect.objectContaining({
         expectedStatus: 'running',
@@ -89,7 +100,11 @@ describe('ResultVerifier', () => {
       })),
       finalizeVerification,
     } as unknown as WorkRepository
-    const verifier = new ResultVerifier(repository, (prefix) => `${prefix}-1`, () => 10)
+    const verifier = new ResultVerifier(
+      repository,
+      (prefix) => `${prefix}-1`,
+      () => 10,
+    )
 
     await verifier.verify(run.id)
 
@@ -98,6 +113,41 @@ describe('ResultVerifier', () => {
         nextStatus: 'blocked',
         proposedChangeSet: null,
         verification: expect.objectContaining({ verdict: 'unverifiable' }),
+      }),
+    )
+  })
+
+  it('blocks confirmation when a referenced Context Bundle cannot be reconstructed', async () => {
+    const run = { ...createRun(), contextBundleId: 'bundle-missing' }
+    const finalizeVerification = vi.fn(async ({ verification }) => ({
+      ok: true as const,
+      value: verification,
+    }))
+    const repository = {
+      getRun: vi.fn(async () => ({ ok: true as const, value: run })),
+      listArtifacts: vi.fn(async () => ({ ok: true as const, value: [] })),
+      listEvidence: vi.fn(async () => ({ ok: true as const, value: [] })),
+      finalizeVerification,
+    } as unknown as WorkRepository
+    const verifier = new ResultVerifier(
+      repository,
+      (prefix) => `${prefix}-1`,
+      () => 10,
+      undefined,
+      async () => null,
+    )
+
+    await verifier.verify(run.id)
+
+    expect(finalizeVerification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nextStatus: 'blocked',
+        verification: expect.objectContaining({
+          verdict: 'unverifiable',
+          checks: expect.arrayContaining([
+            expect.objectContaining({ key: 'context:bundle', verifiable: false }),
+          ]),
+        }),
       }),
     )
   })

@@ -36,6 +36,7 @@ export interface StructuredWorkspaceView {
   sortOrder: number
   viewType: StructuredWorkspaceViewType
   title: string
+  pinnedAt: number | null
   payload: StructuredWorkspaceViewPayload
   schemaVersion: 1
   version: number
@@ -49,6 +50,7 @@ export interface StructuredWorkspaceViewSummary {
   sortOrder: number
   viewType: StructuredWorkspaceViewType
   title: string
+  pinnedAt: number | null
   version: number
   createdAt: number
   updatedAt: number

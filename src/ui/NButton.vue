@@ -7,19 +7,22 @@ withDefaults(
     secondary?: boolean
     text?: boolean
     circle?: boolean
+    danger?: boolean
     disabled?: boolean
     loading?: boolean
+    nativeType?: 'button' | 'submit' | 'reset'
   }>(),
   {
     size: 'medium',
     type: 'default',
+    nativeType: 'button',
   },
 )
 </script>
 
 <template>
   <button
-    type="button"
+    :type="nativeType"
     class="ui-button"
     :class="[
       `ui-button--${size}`,
@@ -29,6 +32,7 @@ withDefaults(
         'ui-button--secondary': secondary,
         'ui-button--text': text,
         'ui-button--circle': circle,
+        'ui-button--danger': danger,
         'ui-button--loading': loading,
       },
     ]"

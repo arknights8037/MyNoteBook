@@ -51,7 +51,7 @@ describe('SidebarDocumentTree', () => {
 
     await rows[0]?.get('.document-list__select').trigger('click')
     await rows[0]?.get('.document-list__toggle').trigger('click')
-    await wrapper.get('button[aria-label="parent中新建内容"]').trigger('click')
+    await rows[0]?.findAll('.document-card-menu__item')[0]?.trigger('select')
 
     expect(wrapper.emitted('select')).toContainEqual(['parent'])
     expect(wrapper.emitted('toggle')).toContainEqual(['parent'])

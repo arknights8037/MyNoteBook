@@ -21,6 +21,7 @@ export interface CreateWorkspaceDocumentOptions {
   documentKind?: DocumentKind
   content?: TiptapDocumentJson
   plainText?: string
+  sourceUrl?: string
 }
 
 export interface DocumentWorkspaceNotifier {

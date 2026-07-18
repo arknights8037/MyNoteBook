@@ -6,6 +6,15 @@ export interface AgentOutputContract<T> {
   validate(value: unknown): T
 }
 
+export function formatAgentOutputContractInstruction(
+  contract: AgentOutputContract<unknown>,
+): string {
+  return [
+    contract.systemInstruction,
+    `必须严格返回符合以下 JSON Schema 的单个 JSON 值。Schema 仅用于约束字段和类型，不得原样复述、不得输出类型占位符：\n${JSON.stringify(contract.jsonSchema)}`,
+  ].join('\n\n')
+}
+
 export function validateAgentOutputContract<T>(
   contract: AgentOutputContract<T>,
   text: string,

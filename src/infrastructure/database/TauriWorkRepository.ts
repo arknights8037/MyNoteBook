@@ -10,6 +10,7 @@ import type {
   WorkArtifact,
   WorkEvidence,
 } from '@/models/work'
+import { getTaskRunTransitionError } from '@/models/work'
 import type { SqlClient } from '@/repositories/SqlClient'
 import type { WorkRepository } from '@/repositories/WorkRepository'
 import { loadAppSettings } from '@/models/settings'
@@ -155,6 +156,10 @@ export class TauriWorkRepository implements WorkRepository {
     startedAt?: number | null
     completedAt?: number | null
   }): Promise<AppResult<TaskRun>> {
+    const transitionError = getTaskRunTransitionError(input.expectedStatus, input.status)
+    if (transitionError) {
+      return err({ code: 'validation-error', message: transitionError })
+    }
     try {
       const result = await this.sqlClient.execute(
         `UPDATE task_runs SET status = ?, output_json = COALESCE(?, output_json), error = ?,
@@ -267,6 +272,10 @@ export class TauriWorkRepository implements WorkRepository {
     expectedStatus: TaskRunStatus
     nextStatus: TaskRunStatus
   }): Promise<AppResult<ResultVerification>> {
+    const transitionError = getTaskRunTransitionError(input.expectedStatus, input.nextStatus)
+    if (transitionError) {
+      return err({ code: 'validation-error', message: transitionError })
+    }
     try {
       await invoke('commit_result_verification', {
         input: {
@@ -276,6 +285,8 @@ export class TauriWorkRepository implements WorkRepository {
           verdict: input.verification.verdict,
           checksJson: JSON.stringify(input.verification.checks),
           summary: input.verification.summary,
+          confirmationEnvelopeJson: JSON.stringify(input.verification.confirmationEnvelope),
+          confirmationHash: input.verification.confirmationHash,
           proposedChangeSet: input.proposedChangeSet
             ? {
                 id: input.proposedChangeSet.id,

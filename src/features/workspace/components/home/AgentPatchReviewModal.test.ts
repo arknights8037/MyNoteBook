@@ -46,6 +46,30 @@ function createPatchSet(patches: BlockPatch[]): AgentPatchSet {
 }
 
 describe('AgentPatchReviewModal', () => {
+  it('renders a focusable scroll region for large approval batches', () => {
+    const patches = Array.from({ length: 40 }, (_, index) => ({
+      ...createPatch(),
+      patchId: `patch-${index + 1}`,
+      blockId: `block-${index + 1}`,
+      targetBlockIds: [`block-${index + 1}`],
+    }))
+    const wrapper = mount(AgentPatchReviewModal, {
+      props: {
+        show: true,
+        task: createTask(),
+        patchSet: createPatchSet(patches),
+        patches,
+        acceptedCount: patches.length,
+        workspace: true,
+      },
+    })
+
+    const review = wrapper.get('section[aria-label="待审批修改列表"]')
+    expect(review.attributes('tabindex')).toBe('0')
+    expect(review.findAll('.agent-patch-card')).toHaveLength(40)
+    expect(wrapper.get('.agent-patch-panel__footer').text()).toContain('40 / 40')
+  })
+
   it('renders an opaque workspace review surface and can collapse without discarding it', async () => {
     const patches = [createPatch()]
     const wrapper = mount(AgentPatchReviewModal, {

@@ -196,6 +196,29 @@ cargo build --release --manifest-path src-tauri/Cargo.toml --bin my-notebook
 
 ## C2：Research 完整闭环
 
+状态：**进行中（2026-07-16，C2.1 与 C2.2 功能已落地，待真实 Provider/Tauri 总验收）**。
+
+### 已完成：C2.1 结构化 Research 运行与消息结果
+
+- `/research` 已绑定 Research Mode、`research-conclusions` v1 模板和 `research-result` v1 Output Contract；运行策略由 Cognitive Compiler 按 tool tag 收紧为只读工具集，不再经过 legacy command/Patch 输出协议。
+- Research contract 已区分 Claim、Evidence、Assumption、Inference、Limitation、Conflict 和 Question，并支持条目间 `supports`、`conflicts_with`、`derives_from`、`relates_to` 关系提案。
+- Evidence 和 `verified` 条目必须带可定位的 document/block/revision/quote 来源；重复条目 ID、自引用或悬空关系会在 Runtime 结果边界被拒绝。
+- 当前 assistant 消息展示结构化摘要、条目类型、验证状态、来源跳转和未解决问题；结果及 mode/template/contract/run/session provenance 随 Agent 对话快照持久化。
+- Tauri 运行会创建并完成 Cognitive Session，session state 保存结构化结果；失败或取消时同步取消 active session。
+
+### 已完成：C2.2 Candidate 确认闭环
+
+- Research 条目会映射为 `candidate` Knowledge Object，并保存多来源、Validation、原始 item、session、run、mode、template 和 output contract provenance；Conflict 作为带 `researchKind=conflict` 的 claim candidate 保存，不扩张数据库 object type。
+- 当前 Research assistant 消息支持逐项接受、编辑后接受、拒绝和保留，candidate id、version、决策状态、来源状态、编辑内容和错误随对话快照持久化。
+- 编辑使用 Knowledge Object 乐观版本更新，增加 candidate version，但不替换原始 generated run、mode、template provenance。
+- 接受前重新读取所有来源文档 revision 和稳定 block；任一来源删除、revision 变化或 block 消失都会追加失败 Validation、标记 `stale` 并阻止批准。
+- 接受只将 candidate 转为 `approved`；不会生成 active Rule/Decision，也不会修改原文。关系提案只有在两端候选都经用户批准后才写入，避免悬空或未确认关系。
+
+### 待完成：C2 总验收
+
+- 使用真实 Provider 和 Tauri 完成 `/research` → 工具循环 → 结构化结果 → 来源定位 → candidate 创建 → 用户确认的纵向 smoke。
+- 在 smoke 中记录编辑后接受的 version/provenance、过期来源拒绝和正式知识写入前后数量，完成后再将 C2 整体标记完成。
+
 ### 工作
 
 - 将 `/research` 绑定 Research Mode、研究结论模板和结构化输出 contract。
@@ -216,6 +239,21 @@ cargo build --release --manifest-path src-tauri/Cargo.toml --bin my-notebook
 
 ## C3：Review
 
+状态：**功能完成（2026-07-16）**。Review 的结构化只读闭环与自动化验收已落地；真实 Provider/Tauri 联合 smoke 可与仍待执行的 C2 总验收一并完成。
+
+### 已完成
+
+- `/review` 已绑定 Review Mode、`review-findings` v1 模板、`review-result` v1 Output Contract 和 Cognitive Session；Provider 只看见按 tag 编译后的只读工具，不能在 Review run 内提交 Patch。
+- Review issue 支持 unsupported claim、missing source、logical gap、conflict、undefined term、missing scope/assumption、outdated information、evidence mismatch 和 ambiguity，并携带严重程度、解释、涉及文本、建议动作与稳定来源。
+- Contract 确定性拒绝单来源 conflict、带来源的 missing_source、无来源却标为 unsupported_claim，以及没有来源的 outdated information/evidence mismatch。
+- Runtime 结果边界会重新读取 document revision 和稳定 block；来源失效时标记原 issue 为 stale，并追加本地生成的 outdated information issue，禁止直接转换为修改。
+- 当前 assistant 消息展示结构化 Review 结果、来源跳转、严重程度、未解决问题和 stale 状态；结果与 mode/template/contract/run/session provenance 随对话持久化。
+- 用户明确点击“处理此问题”后，才将单个 issue 编译为新的 `/edit` 请求，复用现有读取 provenance、Patch 校验与确认流程；Review 自身不修改文档、不创建或接受知识候选。
+- `/find-assumptions`、`/find-conflicts`、`/extract-claims` 作为薄命令绑定同一个 Review Mode 和 contract，只改变任务焦点，不复制分类与校验规则。
+- MCP Server 新增 `submit_cognitive_request`，通过持久化 `mode` 复用桌面 Cognitive Runtime；`get_agent_request` 回传 `result.cognitive`。真实 Tauri/DeepSeek smoke 请求 `agent-request-8195080ca055e74708f2f696` 已完成，终态为 `completed/no_change`、0 Patch，并返回 7 条结构化 Review issue。
+- 委托确认链升级到 Context Bundle v2 与 `ConfirmationEnvelope`：冻结来源正文纳入 hash，CLI 导出不再丢弃 Context Bundle；Verifier 将 frozen input、外部 output、Artifact、Evidence 和 checks 固定成同一份带 hash 的确认材料。前端重复 plain-text projection 已移除，附件、图片和折叠块在没有无损 Markdown codec 前禁止 Agent replace。
+- 真实 smoke 暴露并修复 Provider 忽略 JSON response format 的兼容问题：主 ToolLoopAgent 使用原生 `Output.object`，失败后仅对已有结果执行无工具结构修复，不重跑检索；修复调用 usage 合并进标准结果信封。
+
 ### 工作
 
 - 增加 unsupported claim、missing source、logical gap、conflict、undefined term、missing scope/assumption、outdated information、evidence mismatch 和 ambiguity 类型。
@@ -230,6 +268,18 @@ cargo build --release --manifest-path src-tauri/Cargo.toml --bin my-notebook
 - 过期来源、内部冲突和无来源结论有确定性测试。
 
 ## C4：Learning
+
+状态：**功能完成（2026-07-16）**。Learning 多轮状态机、持久化恢复、只读权限和自动化验收已落地；真实 Provider/Tauri 联合 smoke 可与 C2/C3 一并完成。
+
+### 已完成
+
+- 新增 `LearningSessionState`、`LearningAttempt`、理解状态、0–3 级提示、当前问题、下一步和版本化 `learning-turn` v1 Output Contract。
+- `/learn` 已绑定 Learning Mode、`learning-coach` v1 模板和 Cognitive Session；首次 turn 由本地状态机直接生成解释题，不调用 Provider，因此确定性保持 `not_assessed`、反馈为空、候选理解为空，也不可能提前泄露模型标准答案。
+- 同一 conversation 中的普通用户回复会优先恢复最近的 `waiting_user` Learning Session，使用持久化 state 作为写真源并追加一次真实 Attempt，不从整段聊天或消息数量重新推断状态。
+- 每次理解状态变化必须携带当前用户尝试的可见 evidence；提示只能逐级增加，支持 guided question、hint、counterexample、transfer question、demonstrated 和 needs_review。
+- Learning 输出、Attempt、下一问题、提示级别和临时候选理解记录会显示在当前 assistant 消息并随对话恢复；候选理解只展示，不写 Knowledge Object，也不自动标记“掌握”。
+- Learning Mode 的工具策略为只读，不包含文档或知识写提案工具。运行失败时，已恢复 session 回退为原 `waiting_user` state，不丢失学习进度。
+- SQLite repository 测试验证了 service 重新创建后仍能按 conversation 恢复等待状态；状态机测试验证理解变化基于 Attempt，而不是消息数量。
 
 ### 工作
 

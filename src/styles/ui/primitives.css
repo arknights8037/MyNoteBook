@@ -313,6 +313,10 @@
 }
 
 .ui-dialog-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
   padding: 14px 20px 18px;
   border-top: 1px solid #eeeeeb;
 }

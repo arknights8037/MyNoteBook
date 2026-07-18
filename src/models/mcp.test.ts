@@ -21,7 +21,7 @@ describe('MCP runtime tools', () => {
     expect(runtime[1]?.requiresConfirmation).toBe(false)
     expect(runtime[2]?.requiresConfirmation).toBe(true)
     expect(runtime[2]?.tags).toEqual(['external.read'])
-    expect(runtime[0]?.maxCallsPerTask).toBe(24)
+    expect(runtime[0]?.maxCallsPerTask).toBe(32)
   })
 })
 

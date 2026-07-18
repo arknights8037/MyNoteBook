@@ -107,4 +107,33 @@ describe('AgentEditProposalGuard', () => {
       ),
     ).toThrow('no-op')
   })
+
+  it('rejects Markdown replacement for rich blocks without a lossless codec', () => {
+    const richDocument = {
+      ...readable,
+      blocks: [{ id: 'asset-1', type: 'attachmentBlock', text: '需求.pdf', index: 0 }],
+    }
+
+    expect(() =>
+      validateDocumentEditProvenance(
+        {
+          documents: [
+            {
+              documentId: 'doc-1',
+              edits: [
+                {
+                  kind: 'replace',
+                  targetBlockIds: ['asset-1'],
+                  content: '[需求.pdf](asset://asset-1)',
+                  reason: '更新附件',
+                },
+              ],
+            },
+          ],
+          summary: '更新附件',
+        },
+        [richDocument],
+      ),
+    ).toThrow('不能通过 Markdown Agent Patch 无损替换')
+  })
 })

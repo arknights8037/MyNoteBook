@@ -23,6 +23,7 @@ export interface KnowledgeRepository {
     expectedVersion: number,
     patch: Partial<Omit<CreateKnowledgeObjectInput, 'id' | 'objectType'>>,
   ): Promise<AppResult<KnowledgeObject>>
+  deleteObject(id: string, expectedVersion: number): Promise<AppResult<void>>
   addRelation(input: {
     id: string
     fromObjectId: string

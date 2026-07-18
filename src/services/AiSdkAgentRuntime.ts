@@ -1,8 +1,15 @@
-import { jsonSchema, ToolLoopAgent, stepCountIs, tool, type ToolSet } from 'ai'
+import {
+  generateText,
+  jsonSchema,
+  Output,
+  ToolLoopAgent,
+  stepCountIs,
+  tool,
+  type ToolSet,
+} from 'ai'
 import { z } from 'zod'
 
 import type { AgentToolCall } from '@/models/agentTool'
-import type { AgentTimelineEvent } from '@/models/agentRuntime'
 import { createAiSdkModel } from './AiSdkProvider'
 import {
   createDefaultAgentExecutionPolicy,
@@ -17,115 +24,53 @@ import { resolveProviderCapabilities } from '@/models/providerCapabilities'
 import { throwIfAgentToolAborted } from './AgentToolCancellation'
 import type { AgentToolExecutionResult } from './AgentToolExecutor'
 import { redactSensitiveText, redactSensitiveValue, safeAuditJson } from './SensitiveDataRedaction'
-import { validateAgentOutputContract } from './AgentOutputContract'
-
-const regexCommandSchema = z.object({
-  tool: z.literal('replace_text_by_regex'),
-  pattern: z.string(),
-  replacement: z.string(),
-  flags: z.string().optional(),
-  blockIds: z.array(z.string()).optional(),
-  reason: z.string().optional(),
-})
-
-const replaceBlockCommandSchema = z.object({
-  tool: z.literal('replace_block'),
-  documentId: z.string().min(1).optional(),
-  blockId: z.string().min(1),
-  content: z.string().min(1),
-  reason: z.string().optional(),
-})
-
-const insertBlocksCommandSchema = z.object({
-  tool: z.literal('insert_blocks'),
-  documentId: z.string().min(1).optional(),
-  anchorBlockId: z.string().min(1),
-  position: z.enum(['before', 'after', 'append']),
-  content: z.string().min(1),
-  reason: z.string().optional(),
-})
-
-const createDocumentCommandSchema = z.object({
-  tool: z.literal('create_document'),
-  title: z.string().min(1),
-  content: z.string().min(1),
-  parentDocumentId: z.string().nullable().optional(),
-  reason: z.string().optional(),
-})
-
-const createGroupCommandSchema = z.object({
-  tool: z.literal('create_group'),
-  title: z.string().min(1),
-  initialDocument: z
-    .object({
-      title: z.string().min(1),
-      content: z.string().min(1),
-    })
-    .optional(),
-  reason: z.string().optional(),
-})
-
-const commandSchema = z.discriminatedUnion('tool', [
-  regexCommandSchema,
-  replaceBlockCommandSchema,
-  insertBlocksCommandSchema,
+import {
+  formatAgentOutputContractInstruction,
+  validateAgentOutputContract,
+  type AgentOutputContract,
+} from './AgentOutputContract'
+import {
   createDocumentCommandSchema,
   createGroupCommandSchema,
-])
+  insertBlocksCommandSchema,
+  regexReplaceCommandSchema,
+  replaceBlockCommandSchema,
+  type AgentPatchProposal,
+  type AgentWriteCommand,
+} from './AgentWriteContract'
+import {
+  agentOutputSchema,
+  createCapturedProposalOutput,
+  createNaturalAgentTextOutput,
+  normalizeAgentOutputForTaskIntent,
+  resolveAgentOutputChannels,
+} from './AgentOutputNormalizer'
+import {
+  collectReasoningText,
+  createLiveReasoningEmitter,
+  mergeLanguageModelUsage,
+  projectLanguageModelUsage,
+  samplingParameters,
+} from './AgentStreamSupport'
+import {
+  createToolCallSignature,
+  createToolTimelineEvent,
+  getToolFailureProgressLabel,
+  getToolProgressLabel,
+  isAbortError,
+  normalizeAbortError,
+  policyAllowsToolName,
+  waitForRetry,
+} from './AgentToolLifecycle'
 
-const patchSchema = z
-  .object({
-    documentId: z.string().trim().min(1),
-    operation: z.enum(['replace', 'insert_before', 'insert_after', 'append']),
-    blockId: z.string().trim().min(1),
-    targetBlockIds: z.array(z.string().trim().min(1)).min(1),
-    after: z.string().min(1),
-    reason: z.string().trim().min(1),
-  })
-  .superRefine((patch, context) => {
-    if (new Set(patch.targetBlockIds).size !== patch.targetBlockIds.length) {
-      context.addIssue({
-        code: 'custom',
-        path: ['targetBlockIds'],
-        message: '单个 Patch 的 targetBlockIds 不能包含重复块。',
-      })
-    }
-    if (!patch.targetBlockIds.includes(patch.blockId)) {
-      context.addIssue({
-        code: 'custom',
-        path: ['blockId'],
-        message: 'Patch 的 blockId 必须包含在 targetBlockIds 中。',
-      })
-    }
-    if (patch.operation !== 'replace' && patch.targetBlockIds.length !== 1) {
-      context.addIssue({
-        code: 'custom',
-        path: ['targetBlockIds'],
-        message: '插入 Patch 只能使用一个稳定锚点块。',
-      })
-    }
-  })
-
-const patchBatchSchema = z
-  .array(patchSchema)
-  .max(50)
-  .superRefine((patches, context) => {
-    const targets = new Set<string>()
-    for (const [patchIndex, patch] of patches.entries()) {
-      for (const blockId of patch.targetBlockIds) {
-        const key = `${patch.documentId}:${blockId}`
-        if (targets.has(key)) {
-          context.addIssue({
-            code: 'custom',
-            path: [patchIndex, 'targetBlockIds'],
-            message:
-              '同一批 Patch 不能重复修改同一个目标块；请把该块的替换与补充合并成一个 replace Patch。',
-          })
-        }
-        targets.add(key)
-      }
-    }
-  })
+export {
+  createCapturedProposalOutput,
+  createNaturalAgentTextOutput,
+  normalizeAgentOutputCandidate,
+  normalizeAgentOutputForTaskIntent,
+  parseAiSdkAgentOutput,
+  resolveAgentOutputChannels,
+} from './AgentOutputNormalizer'
 
 const documentEditSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -187,10 +132,7 @@ const documentEditProposalSchema = z
     }
   })
 
-type AgentCommand = z.infer<typeof commandSchema>
-type AgentPatch = z.infer<typeof patchSchema>
-
-function assertDisjointCommandTargets(commands: AgentCommand[]): void {
+function assertDisjointCommandTargets(commands: AgentWriteCommand[]): void {
   const blockCommands = commands.filter(
     (
       command,
@@ -219,40 +161,6 @@ function assertDisjointCommandTargets(commands: AgentCommand[]): void {
   }
 }
 
-const agentOutputSchema = z
-  .object({
-    outcome: z.enum(['proposal', 'no_change', 'blocked']).default('proposal'),
-    commands: z.array(commandSchema).default([]),
-    patches: patchBatchSchema.default([]),
-    finalAnswer: z.string().default(''),
-  })
-  .refine(
-    (value) =>
-      value.outcome !== 'proposal' || value.commands.length > 0 || value.patches.length > 0,
-    {
-      message: 'outcome 为 proposal 时必须返回至少一个 command 或 patch。',
-    },
-  )
-  .refine(
-    (value) =>
-      value.outcome === 'proposal' || (value.commands.length === 0 && value.patches.length === 0),
-    {
-      message: 'outcome 为 no_change 或 blocked 时不能返回 command 或 patch。',
-    },
-  )
-  .refine(
-    (value) => {
-      const creationCount = value.commands.filter(
-        (command) => command.tool === 'create_document' || command.tool === 'create_group',
-      ).length
-      return (
-        creationCount === 0 ||
-        (creationCount === 1 && value.commands.length === 1 && value.patches.length === 0)
-      )
-    },
-    { message: 'create_document 或 create_group 必须作为唯一的写入提案。' },
-  )
-
 export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRuntimeResult> {
   const policy = normalizeExecutionPolicy(
     input.executionPolicy ?? createDefaultAgentExecutionPolicy(input.settings.maxTokens),
@@ -265,17 +173,27 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
   const externalTools = new Map(
     (input.externalTools ?? []).map((definition) => [definition.runtimeName, definition]),
   )
-  const proposedCommands: AgentCommand[] = []
-  const proposedPatches: AgentPatch[] = []
+  const proposedCommands: AgentWriteCommand[] = []
+  const proposedPatches: AgentPatchProposal[] = []
   const inFlightTools = new Set<Promise<unknown>>()
   const failedCallSignatures = new Set<string>()
   const stepStartedAt = new Map<number, number>()
+  const resolvedStepDecisions = new Set<number>()
+  let activeStepNumber = 0
   let failures = 0
 
   const executeTracked = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
     throwIfAgentToolAborted(input.signal)
     const startedAt = Date.now()
     const callId = input.createId()
+    emitToolDecision(input, {
+      callId,
+      toolName: name,
+      args,
+      stepNumber: activeStepNumber,
+      stepStartedAt,
+      resolvedStepDecisions,
+    })
     const runningCall: AgentToolCall = {
       id: callId,
       taskId: input.taskId,
@@ -322,7 +240,7 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       try {
         const maxReadRetries =
           definition?.risk === 'read' || externalDefinition?.readOnly
-            ? Math.min(policy.maxRetries, 2)
+            ? Math.min(policy.maxRetries, 4)
             : 0
         let attempt = 0
         while (attempt <= maxReadRetries) {
@@ -432,6 +350,14 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
   ): Promise<unknown> => {
     const startedAt = Date.now()
     const callId = input.createId()
+    emitToolDecision(input, {
+      callId,
+      toolName: name,
+      args,
+      stepNumber: activeStepNumber,
+      stepStartedAt,
+      resolvedStepDecisions,
+    })
     const runningCall: AgentToolCall = {
       id: callId,
       taskId: input.taskId,
@@ -509,7 +435,7 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
     return value
   }
 
-  const captureCommand = async (command: AgentCommand): Promise<unknown> =>
+  const captureCommand = async (command: AgentWriteCommand): Promise<unknown> =>
     captureProposal(command.tool, command, () => {
       if (proposedPatches.length > 0) throw new Error('commands 和 patches 不能混合提交。')
       const candidate = [...proposedCommands, command]
@@ -632,6 +558,43 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       }),
       execute: (args) => execute('request_authorizer_input', args),
     }),
+    report_progress: tool({
+      description:
+        '向用户显示当前阶段的可审计决策摘要。summary 说明当前判断，evidence 只引用已观察到的事实或工具返回，nextAction 说明下一步；不要写隐藏思维链、逐步内心推理或未经观察的猜测。',
+      inputSchema: z.object({
+        summary: z.string().min(1).max(300),
+        evidence: z.string().min(1).max(500),
+        nextAction: z.string().min(1).max(300),
+      }),
+      execute: async (args) => {
+        const definition = getAgentToolDefinition('report_progress')!
+        const nextCount = (callCounts.get('report_progress') ?? 0) + 1
+        callCounts.set('report_progress', nextCount)
+        if (nextCount > definition.maxCallsPerTask) {
+          return { ok: false, error: '过程摘要超过单任务调用上限。' }
+        }
+        const summary = redactSensitiveText(args.summary)
+        const evidence = redactSensitiveText(args.evidence)
+        const nextAction = redactSensitiveText(args.nextAction)
+        const occurredAt = Date.now()
+        resolvedStepDecisions.add(activeStepNumber)
+        input.onProgress?.({
+          phase: 'planning',
+          toolName: 'report_progress',
+          detail: summary,
+          timelineEvent: {
+            id: `decision:${input.taskId}:${activeStepNumber}`,
+            kind: 'decision',
+            status: 'completed',
+            detail: `${summary}\n依据：${evidence}\n下一步：${nextAction}`,
+            occurredAt: stepStartedAt.get(activeStepNumber) ?? occurredAt,
+            completedAt: occurredAt,
+            stepNumber: activeStepNumber + 1,
+          },
+        })
+        return { ok: true, visibleToUser: true }
+      },
+    }),
     execute_shell: tool({
       description:
         '执行受限的只读 Windows 命令。command 仅可为 Get-Process、Get-Service、Get-Command、Get-Date、git、rg、where.exe、node、pnpm、npm、python、cargo、rustc；args 仍受本机白名单校验。',
@@ -700,10 +663,23 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       }),
       execute: (args) => execute('create_skill_draft', args),
     }),
+    create_mcp_server_draft: tool({
+      description:
+        '用户明确要求添加 MCP 服务时使用。工具会先请求确认，再写入停用且未信任的配置草稿；不会连接、启动或加载该服务。不要把令牌、密码、Cookie 或 Authorization header 放入参数。',
+      inputSchema: z.object({
+        name: z.string().min(1).max(120),
+        transport: z.enum(['stdio', 'http']),
+        command: z.string().min(1).max(1_000).optional(),
+        args: z.array(z.string().max(2_000)).max(64).optional(),
+        cwd: z.string().min(1).max(2_000).optional(),
+        url: z.string().url().max(4_000).optional(),
+      }),
+      execute: (args) => execute('create_mcp_server_draft', args),
+    }),
     replace_text_by_regex: tool({
       description:
         '提交一个正则文本替换提案，进入用户确认队列；不会立即写入。仅在已经读取并确认目标范围后调用。',
-      inputSchema: regexCommandSchema.omit({ tool: true }),
+      inputSchema: regexReplaceCommandSchema.omit({ tool: true }),
       execute: (args) => captureCommand({ tool: 'replace_text_by_regex', ...args }),
     }),
     replace_block: tool({
@@ -780,7 +756,8 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       input.outputContract
         ? ''
         : '最终回复使用简短自然语言。成功提交提案工具后不要再次输出 JSON、工具参数或重复正文；没有写入建议时直接回答、说明限制或提出必要问题。',
-      input.outputContract?.systemInstruction ?? '',
+      input.outputContract ? formatAgentOutputContractInstruction(input.outputContract) : '',
+      '过程透明要求：开始执行时先调用 report_progress；每次获得会改变后续动作的关键 Observation 后，在调用下一个业务工具或生成最终结果前再次调用 report_progress；改变计划或准备提交提案时也必须报告。summary、evidence、nextAction 会作为三个自然段直接展示给用户，因此要具体说明正在做什么、刚得到什么以及接下来做什么。只写可审计的决策摘要，不得填写隐藏思维链、逐步内心推理或无法从上下文验证的猜测。',
     ]
       .filter(Boolean)
       .join('\n\n'),
@@ -789,7 +766,13 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
     stopWhen: stepCountIs(policy.maxToolRounds),
     maxRetries: policy.maxRetries,
     maxOutputTokens: resolveAgentOutputTokenLimit(input.settings.maxTokens, policy),
+    ...(input.outputContract
+      ? {
+          output: createAgentStructuredOutput(input.outputContract),
+        }
+      : {}),
     onStepStart: ({ stepNumber }) => {
+      activeStepNumber = stepNumber
       const displayStep = stepNumber + 1
       const occurredAt = Date.now()
       stepStartedAt.set(stepNumber, occurredAt)
@@ -800,8 +783,8 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
             ? '第 1 轮：正在判断任务和所需资料'
             : `第 ${displayStep} 轮：正在根据工具结果判断下一步`,
         timelineEvent: {
-          id: `step:${input.taskId}:${stepNumber}`,
-          kind: 'step_started',
+          id: `decision:${input.taskId}:${stepNumber}`,
+          kind: 'decision',
           status: 'running',
           detail:
             displayStep === 1 ? '正在判断任务和所需资料' : '正在根据上一轮 Observation 判断下一步',
@@ -812,19 +795,18 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       })
     },
     onStepEnd: ({ stepNumber, toolCalls, finishReason }) => {
+      if (toolCalls.length > 0) return
       const displayStep = stepNumber + 1
       const detail =
-        toolCalls.length > 0
-          ? `已完成判断并发起 ${toolCalls.length} 个工具调用`
-          : finishReason === 'stop'
-            ? '已完成判断，准备整理最终结果'
-            : `本轮结束：${finishReason}`
+        finishReason === 'stop'
+          ? '信息已足够；下一步不再调用工具，整理最终 summary。'
+          : `本轮未调用工具，结束原因：${finishReason}`
       input.onProgress?.({
         phase: 'planning',
         detail: `第 ${displayStep} 轮：${detail}`,
         timelineEvent: {
-          id: `step:${input.taskId}:${stepNumber}`,
-          kind: 'step_completed',
+          id: `decision:${input.taskId}:${stepNumber}`,
+          kind: 'decision',
           status: 'completed',
           detail,
           occurredAt: stepStartedAt.get(stepNumber) ?? Date.now(),
@@ -837,21 +819,52 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
   })
   input.onProgress?.({ phase: 'planning', detail: '正在判断需要读取哪些资料' })
   const liveReasoning = createLiveReasoningEmitter((delta) => input.onDelta?.(delta, 'reasoning'))
+  const liveContent = createLiveReasoningEmitter((delta) => input.onDelta?.(delta, 'content'))
   let result: {
     text: string
     steps: Array<{ reasoningText?: string }>
     reasoningText?: string
     finishReason: string
     usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number }
+    structuredOutput?: unknown
   }
+  let streamResult: Awaited<ReturnType<typeof agent.stream>> | null = null
+  let structuredCharacterCount = 0
+  let lastStructuredProgressAt = 0
+  const structuredStartedAt = Date.now()
   try {
-    const streamResult = await agent.stream({
+    streamResult = await agent.stream({
       prompt: [input.prompt, input.context ? `\n当前上下文：\n${input.context}` : ''].join(''),
       abortSignal: input.signal,
       timeout: { totalMs: policy.maxDurationMs },
     })
     for await (const part of streamResult.fullStream) {
       if (part.type === 'reasoning-delta') liveReasoning.push(part.delta)
+      if (!input.outputContract && part.type === 'text-delta') {
+        liveContent.push(String(Reflect.get(part, 'text') ?? Reflect.get(part, 'delta') ?? ''))
+      }
+      if (input.outputContract && part.type === 'text-delta') {
+        const delta = String(Reflect.get(part, 'text') ?? Reflect.get(part, 'delta') ?? '')
+        structuredCharacterCount += delta.length
+        const now = Date.now()
+        if (structuredCharacterCount === delta.length || now - lastStructuredProgressAt >= 500) {
+          lastStructuredProgressAt = now
+          emitStructuredOutputProgress(
+            input,
+            structuredCharacterCount,
+            structuredStartedAt,
+            'streaming',
+          )
+        }
+      }
+    }
+    if (input.outputContract) {
+      emitStructuredOutputProgress(
+        input,
+        structuredCharacterCount,
+        structuredStartedAt,
+        'validating',
+      )
     }
     const [text, steps, reasoningText, finishReason, usage] = await Promise.all([
       streamResult.text,
@@ -860,8 +873,17 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       streamResult.finishReason,
       streamResult.usage,
     ])
-    result = { text, steps, reasoningText, finishReason, usage }
+    let structuredOutput: unknown
+    if (input.outputContract) {
+      try {
+        structuredOutput = await streamResult.output
+      } catch {
+        structuredOutput = undefined
+      }
+    }
+    result = { text, steps, reasoningText, finishReason, usage, structuredOutput }
   } catch (error) {
+    if (streamResult) await settleStreamResult(streamResult)
     if (inFlightTools.size > 0) await Promise.allSettled([...inFlightTools])
     if (input.signal?.aborted || isAbortError(error)) {
       throw normalizeAbortError(input.signal?.reason ?? error)
@@ -874,8 +896,29 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
   if (channelOutput.reasoningForDisplay && !liveReasoning.hasEmitted()) {
     input.onDelta?.(channelOutput.reasoningForDisplay, 'reasoning')
   }
+  emitSummaryProgress(input, 'running')
   if (input.outputContract) {
-    const validated = validateAgentOutputContract(input.outputContract, result.text, reasoningText)
+    let validated: unknown
+    try {
+      validated =
+        result.structuredOutput === undefined
+          ? validateAgentOutputContract(input.outputContract, result.text, reasoningText)
+          : input.outputContract.validate(result.structuredOutput)
+    } catch (error) {
+      const repaired = await repairAgentOutputContract({
+        contract: input.outputContract,
+        text: result.text,
+        reasoningText,
+        settings: input.settings,
+        signal: input.signal,
+        maxRetries: policy.maxRetries,
+        initialError: error,
+      })
+      validated = repaired.value
+      result.usage = mergeLanguageModelUsage(result.usage, repaired.usage)
+    }
+    emitStructuredOutputProgress(input, structuredCharacterCount, structuredStartedAt, 'completed')
+    emitSummaryProgress(input, 'completed')
     return {
       output: JSON.stringify(validated),
       rounds: result.steps.length,
@@ -884,7 +927,6 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
       usage: projectLanguageModelUsage(result.usage),
     }
   }
-  input.onProgress?.({ phase: 'finalizing', detail: '正在整理可确认的修改' })
   let parsedOutput =
     proposedCommands.length > 0 || proposedPatches.length > 0
       ? createCapturedProposalOutput({
@@ -907,6 +949,7 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
     })
   }
   const output = JSON.stringify(parsedOutput)
+  emitSummaryProgress(input, 'completed')
   return {
     output,
     rounds: result.steps.length,
@@ -916,408 +959,157 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
   }
 }
 
-function createLiveReasoningEmitter(emit: (delta: string) => void): {
-  push: (delta: string) => void
-  hasEmitted: () => boolean
-} {
-  let decision: 'pending' | 'display' | 'suppress' = 'pending'
-  let pending = ''
-  let emitted = false
-  return {
-    push(delta) {
-      if (!delta || decision === 'suppress') return
-      if (decision === 'display') {
-        emitted = true
-        emit(delta)
-        return
-      }
-      pending += delta
-      const trimmed = pending.trimStart()
-      if (!trimmed) return
-      if (/^(?:\{|\[|```(?:json)?)/i.test(trimmed)) {
-        decision = 'suppress'
-        pending = ''
-        return
-      }
-      decision = 'display'
-      emitted = true
-      emit(pending)
-      pending = ''
-    },
-    hasEmitted: () => emitted,
-  }
-}
-
-function projectLanguageModelUsage(usage?: {
-  inputTokens?: number
-  outputTokens?: number
-  totalTokens?: number
-}) {
-  if (!usage) return undefined
-  return {
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    totalTokens: usage.totalTokens,
-  }
-}
-
-function samplingParameters(settings: AiSettings, temperature = settings.temperature) {
-  const capabilities = resolveProviderCapabilities(settings.provider, settings.model)
-  return {
-    ...(capabilities.temperature ? { temperature } : {}),
-    ...(capabilities.topP ? { topP: settings.topP } : {}),
-  }
-}
-
-function collectReasoningText(result: {
-  reasoningText?: string
-  steps: Array<{ reasoningText?: string }>
-}): string {
-  const stepReasoning = result.steps
-    .map((step) => step.reasoningText?.trim() ?? '')
-    .filter(Boolean)
-    .join('\n\n')
-  return stepReasoning || result.reasoningText?.trim() || ''
-}
-
-export function resolveAgentOutputChannels(text: string, reasoningText: string) {
-  const textOutput = normalizeAgentOutputCandidate(text)
-  const reasoningOutput = normalizeAgentOutputCandidate(reasoningText)
-  return {
-    output: textOutput ?? reasoningOutput,
-    reasoningForDisplay: reasoningOutput ? '' : reasoningText.trim(),
-  }
-}
-
-export function createNaturalAgentTextOutput(value: string): z.infer<typeof agentOutputSchema> {
-  const text = value.trim()
-  const looksLikeIncompleteProtocol =
-    /^```(?:json)?\s*(?:\{|\[)/i.test(text) ||
-    /^(?:\{|\[)/.test(text) ||
-    /"(?:outcome|commands|patches|finalAnswer)"\s*:/.test(text)
-  if (!text || looksLikeIncompleteProtocol) {
-    return agentOutputSchema.parse({
-      outcome: 'blocked',
-      commands: [],
-      patches: [],
-      finalAnswer: text
-        ? '模型没有完成本次结构化提案；未执行任何写入，请重试。'
-        : '模型没有返回最终答复；未执行任何写入，请重试。',
-    })
-  }
-  return agentOutputSchema.parse({
-    outcome: 'no_change',
-    commands: [],
-    patches: [],
-    finalAnswer: text.slice(0, 24_000),
-  })
-}
-
-export function createCapturedProposalOutput(input: {
-  commands: AgentCommand[]
-  patches: AgentPatch[]
-  text: string
-  structuredOutput?: z.infer<typeof agentOutputSchema> | null
-}): z.infer<typeof agentOutputSchema> {
-  const plainText = input.text.trim()
-  const usablePlainText =
-    plainText && !/^\s*(?:```(?:json)?\s*)?\{/i.test(plainText) ? plainText.slice(0, 4_000) : ''
-  const hasCreation = input.commands.some(
-    (command) => command.tool === 'create_document' || command.tool === 'create_group',
-  )
-  return agentOutputSchema.parse({
-    outcome: 'proposal',
-    commands: input.commands,
-    patches: input.patches,
-    finalAnswer:
-      input.structuredOutput?.finalAnswer.trim() ||
-      usablePlainText ||
-      (hasCreation ? '已生成创建提案，等待确认后写入。' : '已生成修改提案，等待确认后写入。'),
-  })
-}
-
-export function normalizeAgentOutputCandidate(
-  value: string,
-): z.infer<typeof agentOutputSchema> | null {
-  const trimmed = value
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/, '')
-  let bestOutput: z.infer<typeof agentOutputSchema> | null = null
-  let bestPriority = -1
-  for (const jsonObject of extractBalancedJsonObjects(trimmed)) {
-    try {
-      const parsedJson = JSON.parse(jsonObject) as Record<string, unknown>
-      const normalized = normalizeParsedAgentOutput(parsedJson)
-      if (!normalized) continue
-      const priority = hasStructuredAgentEnvelope(parsedJson) ? 2 : 1
-      if (priority >= bestPriority) {
-        bestOutput = normalized
-        bestPriority = priority
-      }
-    } catch {
-      // DeepSeek 等兼容模型可能在合法对象后继续输出解释或示例；继续寻找下一个对象。
-    }
-  }
-  return bestOutput
-}
-
-function hasStructuredAgentEnvelope(parsedJson: Record<string, unknown>): boolean {
-  const outputObject =
-    [parsedJson.result, parsedJson.output, parsedJson.response].find(isRecord) ?? parsedJson
-  return [
-    'outcome',
-    'commands',
-    'actions',
-    'patches',
-    'changes',
-    'finalAnswer',
-    'final_answer',
-  ].some((field) => Object.hasOwn(outputObject, field))
-}
-
-function normalizeParsedAgentOutput(
-  parsedJson: Record<string, unknown>,
-): z.infer<typeof agentOutputSchema> | null {
-  const nestedOutput = [parsedJson.result, parsedJson.output, parsedJson.response].find(isRecord)
-  const outputObject = nestedOutput ?? parsedJson
-  if (
-    Object.hasOwn(outputObject, 'tool') ||
-    ![
-      'outcome',
-      'commands',
-      'actions',
-      'patches',
-      'changes',
-      'finalAnswer',
-      'final_answer',
-      'answer',
-      'message',
-      'content',
-      'text',
-    ].some((field) => Object.hasOwn(outputObject, field))
-  ) {
-    return null
-  }
-  const candidate = { ...outputObject }
-  if (!Array.isArray(candidate.commands) && Array.isArray(candidate.actions)) {
-    candidate.commands = candidate.actions
-  }
-  if (!Array.isArray(candidate.patches) && Array.isArray(candidate.changes)) {
-    candidate.patches = candidate.changes
-  }
-  candidate.commands = Array.isArray(candidate.commands) ? candidate.commands : []
-  candidate.patches = Array.isArray(candidate.patches) ? candidate.patches : []
-  if (typeof candidate.finalAnswer !== 'string') {
-    candidate.finalAnswer = firstString(
-      candidate.final_answer,
-      candidate.answer,
-      candidate.message,
-      candidate.content,
-      candidate.text,
+async function settleStreamResult(streamResult: object): Promise<void> {
+  const pending = ['text', 'steps', 'reasoningText', 'finishReason', 'usage', 'output']
+    .map((key) => Reflect.get(streamResult, key))
+    .filter((value): value is PromiseLike<unknown> =>
+      Boolean(value && typeof value.then === 'function'),
     )
-  }
-  if (
-    candidate.outcome !== 'proposal' &&
-    candidate.outcome !== 'no_change' &&
-    candidate.outcome !== 'blocked'
-  ) {
-    candidate.outcome =
-      candidate.commands.length > 0 || candidate.patches.length > 0 ? 'proposal' : 'no_change'
-  }
-  if (Array.isArray(candidate.patches) && candidate.patches.length > 0) {
-    candidate.commands = []
-    candidate.patches = candidate.patches.map((patch) => {
-      if (!patch || typeof patch !== 'object') return patch
-      const fields = patch as Record<string, unknown>
-      const blockId = firstString(fields.blockId, fields.block_id)
-      return {
-        ...fields,
-        operation: fields.operation === 'update' ? 'replace' : fields.operation,
-        blockId,
-        targetBlockIds:
-          Array.isArray(fields.targetBlockIds) && fields.targetBlockIds.length > 0
-            ? fields.targetBlockIds
-            : Array.isArray(fields.target_block_ids) && fields.target_block_ids.length > 0
-              ? fields.target_block_ids
-              : blockId
-                ? [blockId]
-                : fields.targetBlockIds,
-        after:
-          typeof fields.after === 'string' && fields.after.length > 0
-            ? fields.after
-            : typeof fields.value === 'string'
-              ? fields.value
-              : firstString(fields.new_content, fields.content, fields.after),
-      }
-    })
-  } else if (Array.isArray(candidate.commands)) {
-    candidate.commands = candidate.commands.map((command) => {
-      if (!command || typeof command !== 'object') return command
-      const fields = command as Record<string, unknown>
-      return fields.tool === undefined && typeof fields.type === 'string'
-        ? { ...fields, tool: fields.type }
-        : fields
-    })
-  }
-  const parsed = agentOutputSchema.safeParse(candidate)
-  return parsed.success ? parsed.data : null
+  await Promise.allSettled(pending)
 }
 
-function extractBalancedJsonObjects(value: string): string[] {
-  const objects: string[] = []
-  let start = -1
-  let depth = 0
-  let inString = false
-  let escaped = false
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index]
-    if (inString) {
-      if (escaped) escaped = false
-      else if (character === '\\') escaped = true
-      else if (character === '"') inString = false
-      continue
-    }
-    if (character === '"' && depth > 0) {
-      inString = true
-    } else if (character === '{') {
-      if (depth === 0) start = index
-      depth += 1
-    } else if (character === '}' && depth > 0) {
-      depth -= 1
-      if (depth === 0 && start >= 0) {
-        objects.push(value.slice(start, index + 1))
-        start = -1
-      }
-    }
-  }
-  return objects
-}
-
-export function normalizeAgentOutputForTaskIntent(
-  output: z.infer<typeof agentOutputSchema>,
-  _prompt: string,
-  intent: AgentRuntimeInput['intent'] = 'default',
-): z.infer<typeof agentOutputSchema> {
-  if (intent === 'plan' || intent === 'research') {
-    return agentOutputSchema.parse({
-      outcome: 'no_change',
-      commands: [],
-      patches: [],
-      finalAnswer: output.finalAnswer,
-    })
-  }
-  return output
-}
-
-function getToolProgressLabel(name: string, completed: boolean): string {
-  const labels: Record<string, [string, string]> = {
-    get_current_document: ['正在读取当前页面', '已读取当前页面'],
-    get_selected_blocks: ['正在确认选中的内容', '已确认选中的内容'],
-    get_document_outline: ['正在查看页面结构', '已查看页面结构'],
-    search_documents: ['正在知识库中查找资料', '已完成知识库检索'],
-    list_document_groups: ['正在查找文档分组', '已找到文档分组'],
-    read_document: ['正在阅读相关资料', '已读取相关资料'],
-    find_blocks_by_regex: ['正在定位需要修改的内容', '已定位需要修改的内容'],
-    read_skill_file: ['正在读取技能资料', '已读取技能资料'],
-    request_authorizer_input: ['正在等待授权人决策', '已收到授权人回答'],
-    execute_shell: ['正在执行受限本机命令', '受限本机命令已完成'],
-    inspect_environment_paths: ['正在检查环境路径', '已检查环境路径'],
-    discover_local_tools: ['正在发现本机工具', '已发现本机工具'],
-    get_system_info: ['正在读取系统信息', '已读取系统信息'],
-    create_automation_draft: ['正在确认自动化草稿', '已创建自动化草稿'],
-    create_skill_draft: ['正在确认 Skill 草稿', '已创建 Skill 草稿'],
-    replace_text_by_regex: ['正在提交文本替换提案', '文本替换提案已就绪'],
-    replace_block: ['正在提交块修改提案', '块修改提案已就绪'],
-    insert_blocks: ['正在提交内容插入提案', '内容插入提案已就绪'],
-    create_document: ['正在生成文档提案', '文档提案已就绪'],
-    create_group: ['正在生成分组提案', '分组提案已就绪'],
-    submit_document_edits: ['正在提交多文档修改提案', '多文档修改提案已就绪'],
-  }
-  return labels[name]?.[completed ? 1 : 0] ?? (completed ? '工具调用已完成' : '正在调用工具')
-}
-
-function getToolFailureProgressLabel(name: string): string {
-  return `${getToolProgressLabel(name, false).replace(/^正在/, '')}失败`
-}
-
-function policyAllowsToolName(
-  name: string,
-  policy: ReturnType<typeof normalizeExecutionPolicy>,
-): boolean {
-  return (
-    policy.allowedTools.includes(name) ||
-    (name.startsWith('mcp__') && policy.allowedTools.includes('mcp:*'))
-  )
-}
-
-function createToolTimelineEvent(call: AgentToolCall, detail: string): AgentTimelineEvent {
-  return {
-    id: `tool:${call.id}`,
-    kind: 'tool',
-    status:
-      call.status === 'running' ? 'running' : call.status === 'completed' ? 'completed' : 'failed',
+function emitStructuredOutputProgress(
+  input: AgentRuntimeInput,
+  characterCount: number,
+  occurredAt: number,
+  status: 'streaming' | 'validating' | 'completed',
+): void {
+  const detail =
+    status === 'streaming'
+      ? `正在生成结构化结果 · 已接收 ${characterCount.toLocaleString()} 字符`
+      : status === 'validating'
+        ? `结构化结果接收完成 · ${characterCount.toLocaleString()} 字符，正在校验`
+        : `结构化结果已校验 · ${characterCount.toLocaleString()} 字符`
+  input.onProgress?.({
+    phase: 'finalizing',
     detail,
-    occurredAt: call.startedAt,
-    completedAt: call.completedAt,
-    toolCallId: call.id,
-  }
-}
-
-function createToolCallSignature(name: string, args: Record<string, unknown>): string {
-  return `${name}:${stableJson(args)}`
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
-  if (value && typeof value === 'object') {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
-      .join(',')}}`
-  }
-  return JSON.stringify(value) ?? 'null'
-}
-
-function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) throw normalizeAbortError(signal.reason)
-  return new Promise((resolve, reject) => {
-    const handleAbort = () => {
-      globalThis.clearTimeout(timeout)
-      reject(normalizeAbortError(signal?.reason))
-    }
-    const timeout = globalThis.setTimeout(() => {
-      signal?.removeEventListener('abort', handleAbort)
-      resolve()
-    }, delayMs)
-    signal?.addEventListener('abort', handleAbort, { once: true })
+    timelineEvent: {
+      id: `structured-output:${input.taskId}`,
+      kind: 'summary',
+      status: status === 'completed' ? 'completed' : 'running',
+      detail,
+      occurredAt,
+      completedAt: status === 'completed' ? Date.now() : null,
+    },
   })
 }
 
-export function parseAiSdkAgentOutput(value: string): z.infer<typeof agentOutputSchema> {
-  const normalized = normalizeAgentOutputCandidate(value)
-  if (normalized) return normalized
-  throw new Error('Agent 最终输出不符合 Patch schema。')
+function emitToolDecision(
+  input: AgentRuntimeInput,
+  decision: {
+    callId: string
+    toolName: string
+    args: Record<string, unknown>
+    stepNumber: number
+    stepStartedAt: Map<number, number>
+    resolvedStepDecisions: Set<number>
+  },
+): void {
+  const firstDecisionInStep = !decision.resolvedStepDecisions.has(decision.stepNumber)
+  decision.resolvedStepDecisions.add(decision.stepNumber)
+  const occurredAt = Date.now()
+  input.onProgress?.({
+    phase: 'planning',
+    toolName: decision.toolName,
+    detail: createToolDecisionSummary(decision.toolName, decision.args),
+    timelineEvent: {
+      id: firstDecisionInStep
+        ? `decision:${input.taskId}:${decision.stepNumber}`
+        : `decision:${input.taskId}:${decision.stepNumber}:${decision.callId}`,
+      kind: 'decision',
+      status: 'completed',
+      detail: createToolDecisionSummary(decision.toolName, decision.args),
+      occurredAt:
+        (firstDecisionInStep && decision.stepStartedAt.get(decision.stepNumber)) ?? occurredAt,
+      completedAt: occurredAt,
+      stepNumber: decision.stepNumber + 1,
+    },
+  })
 }
 
-function firstString(...values: unknown[]): string {
-  return (
-    values.find((value): value is string => typeof value === 'string' && value.trim().length > 0) ??
-    ''
-  )
+function createToolDecisionSummary(toolName: string, args: Record<string, unknown>): string {
+  const query = typeof args.query === 'string' ? redactSensitiveText(args.query).slice(0, 120) : ''
+  const documentId =
+    typeof args.documentId === 'string' ? redactSensitiveText(args.documentId).slice(0, 80) : ''
+  if (toolName === 'search_documents') {
+    return query
+      ? `下一步检索知识库，查询“${query}”，确认相关资料。`
+      : '下一步检索知识库，定位相关资料。'
+  }
+  if (toolName === 'read_document') {
+    return documentId
+      ? `下一步读取文档 ${documentId}，核对正文与稳定来源。`
+      : '下一步读取目标文档，核对正文与稳定来源。'
+  }
+  if (toolName === 'get_current_document') return '下一步读取当前文档，建立本轮判断上下文。'
+  if (toolName === 'get_selected_blocks') return '下一步读取当前选区，确认用户指定范围。'
+  if (toolName === 'get_document_outline') return '下一步读取文档大纲，确认结构和目标位置。'
+  if (toolName === 'request_authorizer_input') return '下一步请求授权人决策，获得继续执行所需信息。'
+  const label = getToolProgressLabel(toolName, false).replace(/^正在/, '')
+  return `下一步${label}，获取继续判断所需的 Observation。`
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
+function emitSummaryProgress(input: AgentRuntimeInput, status: 'running' | 'completed'): void {
+  const occurredAt = Date.now()
+  input.onProgress?.({
+    phase: 'finalizing',
+    detail: status === 'running' ? '正在生成最终 summary' : '最终 summary 已生成',
+    timelineEvent: {
+      id: `summary:${input.taskId}`,
+      kind: 'summary',
+      status,
+      detail: status === 'running' ? '汇总决策、工具 Observation 与结论。' : '已完成结果汇总。',
+      occurredAt,
+      completedAt: status === 'completed' ? occurredAt : null,
+    },
+  })
 }
 
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === 'AbortError'
+function createAgentStructuredOutput(contract: AgentOutputContract<unknown>) {
+  return Output.object({
+    schema: jsonSchema(contract.jsonSchema),
+    name: contract.id.replace(/[^a-zA-Z0-9_-]/g, '_'),
+    description: `${contract.id} v${contract.version} structured result`,
+  })
 }
 
-function normalizeAbortError(reason: unknown): Error {
-  if (reason instanceof Error && reason.name === 'AbortError') return reason
-  const error = new Error('Agent Provider 请求已取消。')
-  error.name = 'AbortError'
-  return error
+async function repairAgentOutputContract(input: {
+  contract: AgentOutputContract<unknown>
+  text: string
+  reasoningText: string
+  settings: AiSettings
+  signal?: AbortSignal
+  maxRetries: number
+  initialError: unknown
+}): Promise<{
+  value: unknown
+  usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number }
+}> {
+  let lastError = input.initialError
+  const attempts = Math.max(1, Math.min(input.maxRetries, 2))
+  const source = [input.text, input.reasoningText].filter((value) => value.trim()).join('\n\n')
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const repaired = await generateText({
+        model: createAiSdkModel(input.settings),
+        system: formatAgentOutputContractInstruction(input.contract),
+        prompt: [
+          '将下面的原始任务结果转换为 contract 要求的单个 JSON 对象。',
+          '只整理已有信息；不要调用工具、补造来源或输出解释。',
+          `原始任务结果：\n${source.slice(0, 24_000)}`,
+        ].join('\n\n'),
+        maxRetries: 0,
+        maxOutputTokens: input.settings.maxTokens,
+        abortSignal: input.signal,
+        ...samplingParameters(input.settings),
+      })
+      return {
+        value: validateAgentOutputContract(input.contract, repaired.text),
+        usage: repaired.usage,
+      }
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw lastError
 }

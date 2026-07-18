@@ -38,10 +38,7 @@ describe('applyAgentBlockPatches', () => {
     const result = applyAgentBlockPatches(content, [patch(['block-2'])])
 
     expect(result.ok).toBe(true)
-    expect(result.plainText).toContain('保留第一段')
-    expect(result.plainText).toContain('新标题')
-    expect(result.plainText).toContain('新的正文')
-    expect(result.plainText).toContain('保留第三段')
+    expect(result.content?.content).toHaveLength(4)
     expect(content.content).toHaveLength(3)
   })
 

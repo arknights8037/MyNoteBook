@@ -77,6 +77,6 @@ const nodeViewKey = computed(() => {
     :data-node-view-key="nodeViewKey"
     v-bind="wrapperAttributes"
   >
-    <NodeViewContent :key="nodeViewKey" :as="contentTag" :class="contentClass" />
+    <NodeViewContent :as="contentTag" :class="contentClass" />
   </NodeViewWrapper>
 </template>

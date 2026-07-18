@@ -3,7 +3,7 @@ import { validateWorkspaceViewPayload, type StructuredWorkspaceView, type Struct
 import type { SqlClient } from '@/repositories/SqlClient'
 import type { WorkspaceViewRepository } from '@/repositories/WorkspaceViewRepository'
 
-interface Row extends Record<string, unknown> { id: string; parent_id: string | null; sort_order: number; view_type: StructuredWorkspaceViewType; title: string; payload_json: string; schema_version: number; version: number; created_at: number; updated_at: number }
+interface Row extends Record<string, unknown> { id: string; parent_id: string | null; sort_order: number; view_type: StructuredWorkspaceViewType; title: string; pinned_at: number | null; payload_json: string; schema_version: number; version: number; created_at: number; updated_at: number }
 
 export class TauriWorkspaceViewRepository implements WorkspaceViewRepository {
   constructor(private readonly sql: SqlClient) {}
@@ -24,8 +24,8 @@ export class TauriWorkspaceViewRepository implements WorkspaceViewRepository {
   }
   async list(): Promise<AppResult<StructuredWorkspaceViewSummary[]>> {
     try {
-      const rows = await this.sql.select<Row>('SELECT * FROM workspace_views ORDER BY updated_at DESC, id ASC')
-      return ok(rows.map((row) => ({ id: row.id, parentId: row.parent_id ?? null, sortOrder: Number(row.sort_order ?? 0), viewType: row.view_type, title: row.title, version: Number(row.version), createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) })))
+      const rows = await this.sql.select<Row>('SELECT * FROM workspace_views ORDER BY pinned_at DESC NULLS LAST, updated_at DESC, id ASC')
+      return ok(rows.map((row) => ({ id: row.id, parentId: row.parent_id ?? null, sortOrder: Number(row.sort_order ?? 0), viewType: row.view_type, title: row.title, pinnedAt: row.pinned_at == null ? null : Number(row.pinned_at), version: Number(row.version), createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) })))
     } catch (error) { return err(normalizeError(error, '无法列出工作空间视图。')) }
   }
   async update(input: { id: string; expectedVersion: number; title: string; payload: StructuredWorkspaceViewPayload; updatedAt?: number }): Promise<AppResult<StructuredWorkspaceView>> {
@@ -47,6 +47,13 @@ export class TauriWorkspaceViewRepository implements WorkspaceViewRepository {
       return this.get(input.id)
     } catch (error) { return err(normalizeError(error, '无法移动视图。')) }
   }
+  async setPinned(input: { id: string; pinnedAt: number | null }): Promise<AppResult<StructuredWorkspaceView>> {
+    try {
+      const result = await this.sql.execute('UPDATE workspace_views SET pinned_at = ? WHERE id = ?', [input.pinnedAt, input.id])
+      if (result.rowsAffected !== 1) return err({ code: 'not-found', message: '视图不存在。' })
+      return this.get(input.id)
+    } catch (error) { return err(normalizeError(error, '无法更新视图置顶状态。')) }
+  }
   async delete(id: string): Promise<AppResult<void>> {
     try {
       const result = await this.sql.execute('DELETE FROM workspace_views WHERE id = ?', [id])
@@ -64,6 +71,6 @@ function map(row: Row): AppResult<StructuredWorkspaceView> {
   try {
     const payload = JSON.parse(row.payload_json) as StructuredWorkspaceViewPayload
     const invalid = validate(row.title, row.view_type, payload)
-    return invalid ? err({ code: 'validation-error', message: invalid }) : ok({ id: row.id, parentId: row.parent_id ?? null, sortOrder: Number(row.sort_order ?? 0), viewType: row.view_type, title: row.title, payload, schemaVersion: 1, version: Number(row.version), createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) })
+    return invalid ? err({ code: 'validation-error', message: invalid }) : ok({ id: row.id, parentId: row.parent_id ?? null, sortOrder: Number(row.sort_order ?? 0), viewType: row.view_type, title: row.title, pinnedAt: row.pinned_at == null ? null : Number(row.pinned_at), payload, schemaVersion: 1, version: Number(row.version), createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) })
   } catch (error) { return err({ code: 'validation-error', message: '视图 JSON 无法解析。', cause: error }) }
 }

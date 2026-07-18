@@ -27,4 +27,38 @@ describe('DelegationService', () => {
       capabilityTokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     }))
   })
+
+  it('expands a high-level completion with the result submitted last', async () => {
+    const submitExternal = vi.fn(async (input) => ({
+      ok: true as const,
+      value: { entityId: input.submission.entityId, replayed: false },
+    }))
+    const service = new DelegationService(
+      { submitExternal } as unknown as GovernanceRepository,
+      () => 'id',
+      () => 200,
+    )
+
+    await service.submitCompletion('delegation-1', 'secret', 'complete-1', {
+      version: 1,
+      artifacts: [
+        { type: 'artifact', entityId: 'artifact-1', artifactType: 'report', name: '报告', content: {} },
+      ],
+      evidence: [
+        { type: 'evidence', entityId: 'evidence-1', evidenceType: 'test', claim: '测试通过' },
+      ],
+      result: { type: 'result', entityId: 'result-1', output: { summary: '完成' } },
+    })
+
+    expect(submitExternal.mock.calls.map(([input]) => input.submission.type)).toEqual([
+      'artifact',
+      'evidence',
+      'result',
+    ])
+    expect(submitExternal.mock.calls.map(([input]) => input.idempotencyKey)).toEqual([
+      'complete-1:0:artifact',
+      'complete-1:1:evidence',
+      'complete-1:2:result',
+    ])
+  })
 })

@@ -173,7 +173,7 @@ export class TauriKnowledgeRepository implements KnowledgeRepository {
     patch: Partial<Omit<CreateKnowledgeObjectInput, 'id' | 'objectType'>>,
   ): Promise<AppResult<KnowledgeObject>> {
     const current = await this.getObject(id)
-    if (!current.ok) return current
+    if (!current.ok) return err(current.error)
     if (current.value.version !== expectedVersion) {
       return err({ code: 'revision-conflict', message: '知识对象版本已变化。' })
     }
@@ -253,6 +253,37 @@ export class TauriKnowledgeRepository implements KnowledgeRepository {
       return this.getObject(id)
     } catch (error) {
       return err(normalizeError(error, '无法更新知识对象。'))
+    }
+  }
+
+  async deleteObject(id: string, expectedVersion: number): Promise<AppResult<void>> {
+    const current = await this.getObject(id)
+    if (!current.ok) return current
+    if (current.value.version !== expectedVersion) {
+      return err({ code: 'revision-conflict', message: '知识对象版本已变化。' })
+    }
+    try {
+      await this.sqlClient.execute(
+        'DELETE FROM knowledge_object_relations WHERE from_object_id = ? OR to_object_id = ?',
+        [id, id],
+      )
+      await this.sqlClient.execute(
+        'DELETE FROM knowledge_object_sources WHERE knowledge_object_id = ?',
+        [id],
+      )
+      await this.sqlClient.execute(
+        'DELETE FROM knowledge_validations WHERE knowledge_object_id = ?',
+        [id],
+      )
+      const result = await this.sqlClient.execute(
+        'DELETE FROM knowledge_objects WHERE id = ? AND version = ?',
+        [id, expectedVersion],
+      )
+      return result.rowsAffected === 1
+        ? ok(undefined)
+        : err({ code: 'revision-conflict', message: '知识对象不存在或版本已变化。' })
+    } catch (error) {
+      return err(normalizeError(error, '无法删除知识对象。'))
     }
   }
 

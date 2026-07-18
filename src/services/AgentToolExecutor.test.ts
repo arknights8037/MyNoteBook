@@ -95,23 +95,42 @@ describe('AgentToolExecutor', () => {
 
   it('lists mind maps and reads a bounded subtree through the application reader', async () => {
     const listMindMaps = vi.fn(async () => [
-      { id: 'map-1', title: '规划', rootNodeId: 'root', nodeCount: 3, version: 2, createdAt: 1, updatedAt: 2 },
+      {
+        id: 'map-1',
+        title: '规划',
+        rootNodeId: 'root',
+        nodeCount: 3,
+        version: 2,
+        createdAt: 1,
+        updatedAt: 2,
+      },
     ])
     const readMindMap = vi.fn(async (_id, query) => ({
-      mindMapId: 'map-1', title: '规划', version: 2, returnedNodes: 1, truncated: true,
+      mindMapId: 'map-1',
+      title: '规划',
+      version: 2,
+      returnedNodes: 1,
+      truncated: true,
       root: { id: 'root', text: '规划', children: [] },
       query,
     }))
 
-    await expect(executeAgentTool(
-      { name: 'list_mind_maps', arguments: {} },
-      { ...context, listMindMaps, readMindMap },
-    )).resolves.toMatchObject({ ok: true, value: [{ id: 'map-1', nodeCount: 3 }] })
-    await expect(executeAgentTool(
-      { name: 'read_mind_map', arguments: { mindMapId: 'map-1', depth: 1, maxNodes: 20 } },
-      { ...context, listMindMaps, readMindMap },
-    )).resolves.toMatchObject({ ok: true, value: { version: 2, truncated: true } })
-    expect(readMindMap).toHaveBeenCalledWith('map-1', expect.objectContaining({ depth: 1, maxNodes: 20 }))
+    await expect(
+      executeAgentTool(
+        { name: 'list_mind_maps', arguments: {} },
+        { ...context, listMindMaps, readMindMap },
+      ),
+    ).resolves.toMatchObject({ ok: true, value: [{ id: 'map-1', nodeCount: 3 }] })
+    await expect(
+      executeAgentTool(
+        { name: 'read_mind_map', arguments: { mindMapId: 'map-1', depth: 1, maxNodes: 20 } },
+        { ...context, listMindMaps, readMindMap },
+      ),
+    ).resolves.toMatchObject({ ok: true, value: { version: 2, truncated: true } })
+    expect(readMindMap).toHaveBeenCalledWith(
+      'map-1',
+      expect.objectContaining({ depth: 1, maxNodes: 20 }),
+    )
   })
 
   it('searches the configured workspace by default', async () => {
@@ -433,5 +452,38 @@ describe('AgentToolExecutor', () => {
       ),
     ).resolves.toEqual({ ok: true, value: { created: false, reason: '用户取消创建。' } })
     expect(createSkillDraft).not.toHaveBeenCalled()
+  })
+
+  it('creates a disabled MCP draft only after inline authorization', async () => {
+    const createMcpServerDraft = vi.fn(async (input) => ({ ...input, created: true }))
+    const requestAuthorizerInput = vi.fn(async () => '创建停用草稿')
+
+    await expect(
+      executeAgentTool(
+        {
+          name: 'create_mcp_server_draft',
+          arguments: {
+            name: '项目工具',
+            transport: 'http',
+            url: 'https://mcp.example.test/service',
+          },
+        },
+        { ...context, requestAuthorizerInput, createMcpServerDraft },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { created: true, name: '项目工具', transport: 'http' },
+    })
+    expect(requestAuthorizerInput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.stringContaining('停用且未信任'),
+        options: ['创建停用草稿', '取消'],
+      }),
+    )
+    expect(createMcpServerDraft).toHaveBeenCalledWith({
+      name: '项目工具',
+      transport: 'http',
+      url: 'https://mcp.example.test/service',
+    })
   })
 })

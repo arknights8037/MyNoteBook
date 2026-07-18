@@ -30,6 +30,7 @@ describe('AiSystemPrompt', () => {
     expect(prompt).toContain('request_authorizer_input')
     expect(prompt).toContain('discover_local_tools')
     expect(prompt).toContain('create_automation_draft')
+    expect(prompt).toContain('create_mcp_server_draft')
     expect(prompt).toContain('create_skill_draft')
     expect(prompt).toContain('mcp__')
     for (const tool of AGENT_TOOL_REGISTRY) {
@@ -68,6 +69,7 @@ describe('AiSystemPrompt', () => {
     expect(prompt).toContain('references/style.md')
     expect(prompt).toContain('read_skill_file')
     expect(prompt).toContain('create_automation_draft')
+    expect(prompt).toContain('create_mcp_server_draft')
     expect(prompt).toContain('create_skill_draft')
     expect(prompt).toContain('只创建停用草稿')
     expect(prompt).toContain('不能扩大系统工具权限')

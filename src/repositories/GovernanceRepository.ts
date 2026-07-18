@@ -1,4 +1,5 @@
 import type { AppResult } from '@/models/result'
+import type { ContextBundle } from '@/models/contextBundle'
 import type { DelegateType, Delegation, DelegationOperation, ExternalSubmission, OutboxMessage } from '@/models/governance'
 
 export interface GovernanceRepository {
@@ -16,6 +17,7 @@ export interface GovernanceRepository {
     createdAt: number
   }): Promise<AppResult<Delegation>>
   getDelegation(id: string): Promise<AppResult<Delegation>>
+  getContextBundle(id: string): Promise<AppResult<ContextBundle>>
   submitExternal(input: {
     delegationId: string
     capabilityTokenHash: string

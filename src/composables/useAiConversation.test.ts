@@ -16,6 +16,10 @@ function createConversation(
     running?: boolean
     notify?: (message: string) => void
     persistedState?: AgentWorkspaceHistoryState
+    generateTitle?: (
+      prompt: string,
+      settings: ReturnType<typeof createAiSettings>,
+    ) => Promise<string>
   } = {},
 ) {
   const scope = effectScope()
@@ -32,6 +36,7 @@ function createConversation(
       stop,
       notify: options.notify,
       historyStore: memoryHistoryStore(options.persistedState),
+      generateTitle: options.generateTitle,
     }),
   )!
 
@@ -152,10 +157,7 @@ describe('useAiConversation', () => {
 
   it('creates configured projects and keeps pinned conversations first', async () => {
     const state = createEmptyAgentWorkspaceHistory()
-    state.items = [
-      historyItem('older', 10),
-      historyItem('newer', 20),
-    ]
+    state.items = [historyItem('older', 10), historyItem('newer', 20)]
     const notify = vi.fn()
     const { conversation, scope } = createConversation({ persistedState: state, notify })
     await Promise.resolve()
@@ -172,6 +174,57 @@ describe('useAiConversation', () => {
     expect(notify).toHaveBeenCalledWith('项目“StudioSite”已创建')
     expect(conversation.toggleProjectPin(conversation.activeProjectId.value)).toBe(true)
     expect(conversation.projects.value[0]).toMatchObject({ name: 'StudioSite' })
+    scope.stop()
+  })
+
+  it('keeps creation order and timestamps unchanged when an old conversation is opened', async () => {
+    const state = createEmptyAgentWorkspaceHistory()
+    state.items = [historyItem('older', 10), historyItem('newer', 20)]
+    const { conversation, scope } = createConversation({ persistedState: state })
+    await Promise.resolve()
+
+    expect(conversation.selectHistory('older')).toBe(true)
+    await Promise.resolve()
+    await vi.runAllTimersAsync()
+
+    expect(conversation.history.value.map((item) => item.id)).toEqual(['newer', 'older'])
+    expect(conversation.history.value.find((item) => item.id === 'older')?.updatedAt).toBe(10)
+    scope.stop()
+  })
+
+  it('updates message activity without moving a conversation from its creation position', async () => {
+    const state = createEmptyAgentWorkspaceHistory()
+    state.items = [historyItem('older', 10), historyItem('newer', 20)]
+    const { conversation, scope } = createConversation({ persistedState: state })
+    await Promise.resolve()
+    vi.setSystemTime(100)
+
+    expect(conversation.selectHistory('older')).toBe(true)
+    conversation.messages.value.push(message('older-follow-up', 'user', '继续处理', 'agent'))
+    conversation.flushHistory()
+
+    expect(conversation.history.value.map((item) => item.id)).toEqual(['newer', 'older'])
+    expect(conversation.history.value.find((item) => item.id === 'older')?.updatedAt).toBe(100)
+    scope.stop()
+  })
+
+  it('runs one background title task for a new conversation', async () => {
+    const generateTitle = vi.fn(async () => '自动生成标题')
+    const { conversation, scope } = createConversation({ generateTitle })
+    await Promise.resolve()
+    const conversationId = conversation.ensureConversationId()
+
+    conversation.requestConversationTitle(conversationId, '修复对话历史')
+    conversation.requestConversationTitle(conversationId, '不应重复')
+    await Promise.resolve()
+    conversation.messages.value = [message('user-1', 'user', '修复对话历史', 'agent')]
+    conversation.flushHistory()
+
+    expect(generateTitle).toHaveBeenCalledOnce()
+    expect(conversation.history.value[0]).toMatchObject({
+      id: conversationId,
+      title: '自动生成标题',
+    })
     scope.stop()
   })
 
@@ -200,6 +253,103 @@ describe('useAiConversation', () => {
     expect(conversation.startTask(DEFAULT_AGENT_PROJECT_ID)).toBe(true)
     expect(conversation.activeProjectId.value).toBe(DEFAULT_AGENT_PROJECT_ID)
     expect(conversation.messages.value).toEqual([])
+    scope.stop()
+  })
+
+  it('moves an ungrouped task into a project and adopts its workspace', async () => {
+    const state = createEmptyAgentWorkspaceHistory()
+    state.projects[0]!.workspaceRootIds = ['group-policy']
+    state.items = [
+      {
+        ...historyItem('loose-task', 10),
+        projectId: UNGROUPED_AGENT_PROJECT_ID,
+      },
+    ]
+    const notify = vi.fn()
+    const { conversation, scope } = createConversation({ persistedState: state, notify })
+    await Promise.resolve()
+
+    expect(conversation.selectHistory('loose-task')).toBe(true)
+    expect(conversation.activeProject.value).toBeNull()
+    expect(conversation.moveHistoryToProject('loose-task', DEFAULT_AGENT_PROJECT_ID)).toBe(true)
+
+    expect(conversation.currentHistoryId.value).toBe('loose-task')
+    expect(conversation.history.value[0]).toMatchObject({
+      id: 'loose-task',
+      projectId: DEFAULT_AGENT_PROJECT_ID,
+    })
+    expect(conversation.activeProject.value?.workspaceRootIds).toEqual(['group-policy'])
+    expect(conversation.messages.value[0]?.content).toBe('loose-task')
+    expect(notify).toHaveBeenCalledWith('任务已加入“Agent MVP”，资料视野已更新')
+    scope.stop()
+  })
+
+  it('persists a detached A2A task without switching the active conversation', async () => {
+    const { conversation, scope } = createConversation()
+    await Promise.resolve()
+    conversation.messages.value = [message('active', 'user', '当前对话')]
+    conversation.currentHistoryId.value = 'active-history'
+
+    expect(
+      conversation.saveDetachedTask({
+        id: 'a2a-request-1',
+        parentConversationId: 'conversation-parent',
+        title: 'A2A · 同步项目文档',
+        messages: [
+          message('a2a-user', 'user', '同步项目文档', 'agent'),
+          message('a2a-assistant', 'assistant', '已完成同步', 'agent'),
+        ],
+      }),
+    ).toBe(true)
+
+    expect(conversation.currentHistoryId.value).toBe('active-history')
+    expect(conversation.messages.value).toEqual([message('active', 'user', '当前对话')])
+    expect(conversation.history.value[0]).toMatchObject({
+      id: 'a2a-request-1',
+      projectId: UNGROUPED_AGENT_PROJECT_ID,
+      title: 'A2A · 同步项目文档',
+      messageCount: 2,
+      parentConversationId: 'conversation-parent',
+    })
+    scope.stop()
+  })
+
+  it('repairs a legacy A2A message pair that leaked into an active conversation', async () => {
+    const state = createEmptyAgentWorkspaceHistory()
+    state.items = [
+      {
+        ...historyItem('active-history', 10),
+        messages: [
+          message('original', 'user', '原对话内容', 'agent'),
+          message('leaked-user', 'user', '同步文档', 'agent'),
+          message('leaked-assistant', 'assistant', '同步完成', 'agent'),
+        ],
+        messageCount: 3,
+      },
+    ]
+    const { conversation, scope } = createConversation({ persistedState: state })
+    await Promise.resolve()
+    expect(conversation.selectHistory('active-history')).toBe(true)
+
+    expect(
+      conversation.migrateLeakedTask({
+        id: 'a2a-request-legacy',
+        title: 'A2A · 同步文档',
+        prompt: '同步文档',
+      }),
+    ).toBe(true)
+
+    expect(conversation.currentHistoryId.value).toBe('active-history')
+    expect(conversation.messages.value.map((item) => item.id)).toEqual(['original'])
+    expect(
+      conversation.history.value.find((item) => item.id === 'active-history')?.messageCount,
+    ).toBe(1)
+    expect(
+      conversation.history.value.find((item) => item.id === 'a2a-request-legacy'),
+    ).toMatchObject({
+      projectId: UNGROUPED_AGENT_PROJECT_ID,
+      messageCount: 2,
+    })
     scope.stop()
   })
 
@@ -241,6 +391,7 @@ function historyItem(id: string, updatedAt: number) {
     id,
     projectId: DEFAULT_AGENT_PROJECT_ID,
     title: id,
+    createdAt: updatedAt,
     updatedAt,
     messageCount: 1,
     provider: 'openai-compatible',

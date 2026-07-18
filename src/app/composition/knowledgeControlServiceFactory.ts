@@ -7,6 +7,7 @@ import { createGovernanceRepository } from '@/infrastructure/database/governance
 import { createKnowledgeRepository } from '@/infrastructure/database/knowledgeRepositoryFactory'
 import { createViewRepository } from '@/infrastructure/database/viewRepositoryFactory'
 import { createWorkRepository } from '@/infrastructure/database/workRepositoryFactory'
+import { assetService } from '@/infrastructure/assets/AssetService'
 
 export async function createKnowledgeControlService(): Promise<KnowledgeControlService> {
   const [knowledge, views, work, documents, governance] = await Promise.all([
@@ -26,5 +27,6 @@ export async function createKnowledgeControlService(): Promise<KnowledgeControlS
     createEntityId,
     Date.now,
     new GeneratedViewAiExecutor(),
+    assetService,
   )
 }

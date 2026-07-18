@@ -3,6 +3,7 @@ import type { AiChatMode } from '@/models/aiChatMode'
 import type { AiSettings } from '@/models/ai'
 import type { AgentRunDocumentSnapshot, AgentRunSnapshot } from './types'
 import { createDefaultAgentExecutionPolicy } from '@/services/AgentToolRegistry'
+import type { AgentExplicitTarget } from '@/models/agentTarget'
 
 export interface AgentEditPlan {
   task: AgentTask
@@ -16,6 +17,7 @@ export function captureAgentRunSnapshot(input: {
   requestedMode: AiChatMode
   settings: AiSettings
   document: AgentRunDocumentSnapshot
+  explicitTargets?: AgentExplicitTarget[]
   workspace?: AgentRunSnapshot['workspace']
 }): AgentRunSnapshot {
   return {
@@ -23,6 +25,7 @@ export function captureAgentRunSnapshot(input: {
     requestedMode: input.requestedMode,
     settings: cloneSettings(input.settings),
     document: cloneDocumentSnapshot(input.document),
+    explicitTargets: (input.explicitTargets ?? []).map((target) => ({ ...target })),
     workspace: {
       projectId: input.workspace?.projectId ?? '',
       projectName: input.workspace?.projectName ?? '未分组 Agent 项目',

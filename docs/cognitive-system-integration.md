@@ -1,6 +1,6 @@
 # 认知系统集成设计
 
-> 实现状态（2026-07-15）：C1 最小认知内核已落地，包括版本化 Mode/Template Registry、`CognitiveRunSpec`、Tool Tags 权限编译、可插拔 `AgentOutputContract<T>`、Cognitive Session、Knowledge Candidate 扩展、多来源和 Validation。`/research`、`/review` 尚未绑定这些契约，结构化结果 UI 与候选确认属于 C2/C3。
+> 实现状态（2026-07-16）：C1 最小认知内核、C2 Research、C3 Review 和 C4 Learning 功能已落地。Learning 使用 `waiting_user` Cognitive Session 跨 run 保存 Attempt、当前问题、提示层级与理解状态；首次不直接给答案，状态变化必须有用户尝试 evidence，候选理解不写正式知识。真实 Provider/Tauri 联合 smoke 仍待执行。
 
 ## 1. 目标
 

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import AiChatPanel from './AiChatPanel.vue'
 import { createAiSettings } from '@/models/ai'
+import { UNGROUPED_AGENT_PROJECT_ID } from '@/models/aiChatHistory'
 import type { AgentRuntimeViewState } from '@/models/agentRuntime'
 
 function runtimeState(status: AgentRuntimeViewState['status'] = 'running'): AgentRuntimeViewState {
@@ -41,10 +42,10 @@ function runtimeState(status: AgentRuntimeViewState['status'] = 'running'): Agen
     ],
     timelineEvents: [
       {
-        id: 'step:task-1:0',
-        kind: 'step_completed',
+        id: 'decision:task-1:0',
+        kind: 'decision',
         status: 'completed',
-        detail: '已确定先检索相关制度',
+        detail: '下一步检索知识库，查询“差旅报销”，确认相关资料。',
         occurredAt: 1_050,
         completedAt: 1_100,
         stepNumber: 1,
@@ -60,6 +61,7 @@ function runtimeState(status: AgentRuntimeViewState['status'] = 'running'): Agen
       },
     ],
     authorizationRequest: null,
+    summary: status === 'completed' ? '已完成差旅制度检索并生成处理建议。' : '',
   }
 }
 
@@ -92,6 +94,7 @@ function createWrapper(state = runtimeState()) {
           role: 'assistant',
           mode: 'agent',
           content: isActive ? '' : '已根据制度完成处理。',
+          agentRuntime: isActive ? undefined : state,
           status: isActive ? 'streaming' : 'done',
         },
       ],
@@ -106,7 +109,7 @@ function createWrapper(state = runtimeState()) {
       renderMarkdownMessage: (markdown: string) => markdown,
     },
     global: {
-      stubs: { Teleport: true },
+      stubs: { Teleport: { template: '<div><slot /></div>' } },
     },
   })
 }
@@ -114,6 +117,37 @@ function createWrapper(state = runtimeState()) {
 describe('AiChatPanel runtime visibility', () => {
   beforeEach(() => {
     globalThis.localStorage?.removeItem('my-notebook:agent-history-collapsed')
+  })
+
+  it('selects an explicit target from the @ file menu', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+    await wrapper.setProps({
+      prompt: '@制',
+      targetOptions: [
+        { kind: 'document', id: 'policy-1', title: '差旅制度', subtitle: '知识库页面' },
+      ],
+    })
+
+    await wrapper.get('.ai-target-menu button').trigger('click')
+
+    expect(wrapper.emitted('select-target')?.at(-1)).toEqual([
+      { kind: 'document', id: 'policy-1', title: '差旅制度', subtitle: '知识库页面' },
+    ])
+    expect(wrapper.emitted('update:prompt')?.at(-1)).toEqual(['@差旅制度 '])
+  })
+
+  it('shows and clears one item from the multi-target mode', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+    await wrapper.setProps({
+      explicitTargets: [
+        { kind: 'knowledge_asset', id: 'asset-1', title: '季度复盘.pdf' },
+        { kind: 'knowledge_asset', id: 'asset-2', title: '客户访谈.docx' },
+      ],
+    })
+
+    expect(wrapper.findAll('.ai-chat-target-chip')).toHaveLength(2)
+    await wrapper.findAll('.ai-chat-target-chip button')[0]!.trigger('click')
+    expect(wrapper.emitted('clear-target')?.at(-1)).toEqual(['asset-1'])
   })
 
   it('shows the live loop inside the current assistant message', () => {
@@ -125,9 +159,11 @@ describe('AiChatPanel runtime visibility', () => {
     expect(wrapper.get('.ai-agent-tool-list').text()).toContain('搜索知识库')
     expect(wrapper.get('.ai-agent-tool-list').text()).toContain('search_documents')
     expect(wrapper.get('.ai-agent-tool-list').text()).toContain('差旅报销')
-    expect(wrapper.get('.ai-agent-timeline').text()).toContain('第 1 轮完成')
-    expect(wrapper.get('.ai-agent-timeline').text()).toContain('已确定先检索相关制度')
+    expect(wrapper.get('.ai-agent-timeline').text()).toContain('第 1 轮决策')
+    expect(wrapper.get('.ai-agent-timeline').text()).toContain('下一步检索知识库')
     expect(wrapper.get('.ai-agent-tool-step').attributes('open')).toBeUndefined()
+    expect(wrapper.get('.ai-agent-loop__trace').attributes('open')).toBe('')
+    expect(wrapper.get('.ai-agent-timeline__narrative').text()).toContain('下一步检索知识库')
     expect(wrapper.find('.ai-chat-message__waiting').exists()).toBe(false)
   })
 
@@ -135,10 +171,338 @@ describe('AiChatPanel runtime visibility', () => {
     const wrapper = createWrapper(runtimeState('completed'))
 
     expect(wrapper.get('.ai-agent-loop').text()).toContain('已完成')
+    expect(wrapper.get('.ai-agent-loop__header').text()).toContain('执行了 1.5 秒')
+    expect(wrapper.get('.ai-agent-loop__trace').attributes('open')).toBeUndefined()
+    expect(wrapper.get('.ai-agent-loop__trace-summary').text()).toContain('已完成差旅制度检索')
     expect(wrapper.get('.ai-agent-loop').text()).toContain('2 轮')
+    expect(wrapper.get('.ai-agent-timeline__decision .ai-agent-timeline__kind').text()).toBe('判断')
+    expect(wrapper.get('.ai-agent-tool-step .ai-agent-timeline__kind').text()).toBe('工具')
+    expect(wrapper.get('.ai-agent-tool-step__preview').text()).toContain('输出')
     expect(wrapper.get('.ai-agent-tool-step__preview').text()).toContain('差旅制度')
     expect(wrapper.get('.ai-agent-tool-step__status').text()).toContain('返回 1 项')
     expect(wrapper.find('button[aria-label="停止 Agent"]').exists()).toBe(false)
+  })
+
+  it('opens an internal document directly from a tool result', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+
+    await wrapper.get('.ai-agent-tool-results__document').trigger('click')
+
+    expect(wrapper.emitted('open-source')?.at(-1)).toEqual(['policy-1', null])
+    expect(wrapper.get('.ai-agent-tool-results__document').text()).toContain('差旅制度')
+  })
+
+  it('keeps an earlier Agent reply expandable after a newer reply becomes active', async () => {
+    const previousState = runtimeState('completed')
+    const activeState = runtimeState('running')
+    const wrapper = createWrapper(activeState)
+    await wrapper.setProps({
+      messages: [
+        { id: 'u1', role: 'user', mode: 'agent', content: '第一次任务', status: 'done' },
+        {
+          id: 'a1',
+          role: 'assistant',
+          mode: 'agent',
+          content: '第一次完成',
+          agentRuntime: previousState,
+          status: 'done',
+        },
+        { id: 'u2', role: 'user', mode: 'agent', content: '第二次任务', status: 'done' },
+        {
+          id: 'a2',
+          role: 'assistant',
+          mode: 'agent',
+          content: '',
+          status: 'streaming',
+        },
+      ],
+    })
+
+    const loops = wrapper.findAll('.ai-agent-loop')
+    expect(loops).toHaveLength(2)
+    expect(loops[0]!.text()).toContain('执行了 1.5 秒')
+    expect(loops[0]!.get('.ai-agent-loop__trace').attributes('open')).toBeUndefined()
+    expect(loops[1]!.get('.ai-agent-loop__trace').attributes('open')).toBe('')
+  })
+
+  it('renders MCP web search results as links and keeps raw JSON secondary', () => {
+    const state = runtimeState('completed')
+    state.toolCalls[0] = {
+      ...state.toolCalls[0]!,
+      toolName: 'mcp__exa__web_search_exa',
+      argumentsJson: JSON.stringify({ query: 'agent loop UX' }),
+      resultJson: JSON.stringify({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              results: [
+                {
+                  title: 'Agent loop UX guide',
+                  url: 'https://example.com/agent-loop',
+                  text: 'Use narrative progress around tool calls.',
+                },
+              ],
+            }),
+          },
+        ],
+      }),
+    }
+    const wrapper = createWrapper(state)
+
+    expect(wrapper.get('.ai-agent-tool-step__fields').text()).toContain('搜索内容')
+    expect(wrapper.get('.ai-agent-tool-step__copy strong').text()).toContain('Exa · 网页搜索')
+    expect(wrapper.get('.ai-agent-tool-results a').attributes('href')).toBe(
+      'https://example.com/agent-loop',
+    )
+    expect(wrapper.get('.ai-agent-tool-results').text()).toContain('Agent loop UX guide')
+    expect(wrapper.get('.ai-agent-tool-step__raw').attributes('open')).toBeUndefined()
+  })
+
+  it('renders structured research items and opens their stable source', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+    const messages = [...wrapper.props('messages')]
+    messages[1] = {
+      ...messages[1]!,
+      content: '调研完成。',
+      researchResult: {
+        summary: '制度存在明确差异。',
+        items: [
+          {
+            id: 'E1',
+            kind: 'evidence',
+            title: '审批范围',
+            content: '制度要求跨部门审批。',
+            confidence: 0.95,
+            validationStatus: 'verified',
+            validationMessage: '来源 revision 与读取时一致。',
+            sources: [
+              { documentId: 'policy-1', blockId: 'block-7', revision: 4, quote: '需跨部门审批' },
+            ],
+          },
+        ],
+        relations: [
+          {
+            fromItemId: 'E1',
+            relationType: 'supports',
+            toItemId: 'E1',
+            explanation: '来源内容支持该发现。',
+          },
+        ],
+        unresolvedQuestions: ['新制度何时生效？'],
+      },
+      researchCandidates: [
+        {
+          itemId: 'E1',
+          candidateId: 'candidate-1',
+          version: 1,
+          decision: 'pending',
+          sourceState: 'fresh',
+          title: '审批范围',
+          content: '制度要求跨部门审批。',
+          error: '',
+        },
+      ],
+    }
+    await wrapper.setProps({ messages })
+
+    expect(wrapper.get('.ai-research-result__header').text()).toContain('/research')
+    expect(wrapper.get('.ai-structured-result__summary').text()).toContain('制度存在明确差异')
+    expect(wrapper.get('.ai-research-result').text()).toContain('证据')
+    expect(wrapper.get('.ai-research-result').text()).toContain('已定位来源')
+    expect(wrapper.get('.ai-research-result__validation').text()).toContain('置信度 95%')
+    expect(wrapper.get('.ai-research-result__relations').text()).toContain('E1支持E1')
+    expect(wrapper.get('.ai-research-result__questions').text()).toContain('新制度何时生效')
+    await wrapper.get('.ai-research-result__sources button').trigger('click')
+    expect(wrapper.emitted('open-source')?.at(-1)).toEqual(['policy-1', 'block-7'])
+    expect(wrapper.get('.ai-research-candidate__decision').text()).toContain('等待确认 · v1')
+    await wrapper.get('.ai-research-candidate__decision button').trigger('click')
+    expect(wrapper.emitted('research-candidate-action')?.at(-1)).toEqual([
+      {
+        messageId: 'message-assistant',
+        itemId: 'E1',
+        candidateId: 'candidate-1',
+        expectedVersion: 1,
+        action: 'approve',
+      },
+    ])
+  })
+
+  it('submits edited candidate content as an explicit approval', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+    const messages = [...wrapper.props('messages')]
+    messages[1] = {
+      ...messages[1]!,
+      researchResult: {
+        summary: '调研摘要',
+        items: [
+          {
+            id: 'C1',
+            kind: 'claim',
+            title: '原标题',
+            content: '原内容',
+            confidence: null,
+            validationStatus: 'unverified',
+            validationMessage: '无来源',
+            sources: [],
+          },
+        ],
+        relations: [],
+        unresolvedQuestions: [],
+      },
+      researchCandidates: [
+        {
+          itemId: 'C1',
+          candidateId: 'candidate-1',
+          version: 2,
+          decision: 'kept',
+          sourceState: 'unverified',
+          title: '原标题',
+          content: '原内容',
+          error: '',
+        },
+      ],
+    }
+    await wrapper.setProps({ messages })
+    const buttons = wrapper.findAll('.ai-research-candidate__decision button')
+    await buttons.find((button) => button.text().includes('编辑'))!.trigger('click')
+    await wrapper.get('input[aria-label="候选标题"]').setValue('修订标题')
+    await wrapper.get('textarea[aria-label="候选内容"]').setValue('修订内容')
+    await wrapper.get('.ai-research-candidate__editor').trigger('submit')
+
+    expect(wrapper.emitted('research-candidate-action')?.at(-1)).toEqual([
+      {
+        messageId: 'message-assistant',
+        itemId: 'C1',
+        candidateId: 'candidate-1',
+        expectedVersion: 2,
+        action: 'approve',
+        title: '修订标题',
+        content: '修订内容',
+      },
+    ])
+  })
+
+  it('renders read-only Review issues and explicitly requests Patch handling', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+    const messages = [...wrapper.props('messages')]
+    messages[1] = {
+      ...messages[1]!,
+      content: '审阅完成。',
+      reviewResult: {
+        summary: '发现证据不匹配。',
+        issues: [
+          {
+            id: 'I1',
+            issueType: 'evidence_mismatch',
+            severity: 'error',
+            title: '结论超出证据范围',
+            explanation: '证据只覆盖部分场景。',
+            affectedText: '适用于所有场景',
+            suggestedAction: '收窄结论范围。',
+            sources: [
+              { documentId: 'policy-1', blockId: 'block-7', revision: 4, quote: '部分场景' },
+            ],
+            sourceState: 'fresh',
+          },
+        ],
+        unresolvedQuestions: ['是否存在补充证据？'],
+      },
+      cognitiveProvenance: {
+        sessionId: 'review-session',
+        runId: 'review-run',
+        modeId: 'review',
+        modeVersion: 1,
+        templateId: 'review-findings',
+        templateVersion: 1,
+        outputContractId: 'review-result',
+        createdAt: 10,
+      },
+    }
+    await wrapper.setProps({ messages })
+
+    expect(wrapper.get('.ai-review-result').text()).toContain('证据不匹配')
+    expect(wrapper.get('.ai-review-result__header').text()).toContain('/review')
+    expect(wrapper.get('.ai-review-result').text()).toContain('严重度 高')
+    expect(wrapper.get('.ai-review-result__suggestion').text()).toContain('建议收窄结论范围')
+    expect(wrapper.get('.ai-review-result__questions').text()).toContain('是否存在补充证据')
+    await wrapper.get('.ai-review-result__sources button').trigger('click')
+    expect(wrapper.emitted('open-source')?.at(-1)).toEqual(['policy-1', 'block-7'])
+    await wrapper.get('.ai-review-result__actions button').trigger('click')
+    expect(wrapper.emitted('resolve-review-issue')?.at(-1)).toEqual([
+      {
+        messageId: 'message-assistant',
+        issue: messages[1]!.reviewResult!.issues[0],
+      },
+    ])
+  })
+
+  it('renders evidenced Learning feedback, next prompt and non-persisted understanding candidate', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+    const messages = [...wrapper.props('messages')]
+    messages[1] = {
+      ...messages[1]!,
+      content: '已分析本轮尝试。',
+      learningResult: {
+        phase: 'waiting_user',
+        feedback: {
+          correctPoints: ['理解了微任务优先级'],
+          omissions: ['尚未说明渲染时机'],
+          misconceptions: [],
+        },
+        understandingState: 'partial',
+        evidence: '用户明确提到微任务队列会先清空。',
+        nextPrompt: { kind: 'guided_question', content: '渲染在哪一步发生？', hintLevel: 1 },
+        candidateUnderstanding: {
+          title: '事件循环的阶段顺序',
+          content: '用户已能说明任务队列的基本顺序。',
+          confidence: 0.72,
+        },
+      },
+      learningState: {
+        version: 1,
+        topic: '事件循环',
+        currentPrompt: '渲染在哪一步发生？',
+        promptKind: 'guided_question',
+        hintLevel: 1,
+        attempts: [
+          {
+            id: 'attempt-1',
+            response: '微任务先执行',
+            feedback: {
+              correctPoints: ['理解了微任务优先级'],
+              omissions: ['尚未说明渲染时机'],
+              misconceptions: [],
+            },
+            understandingState: 'partial',
+            evidence: '用户明确提到微任务队列会先清空。',
+            createdAt: 10,
+          },
+        ],
+        understandingState: 'partial',
+        nextStep: 'continue',
+      },
+      cognitiveProvenance: {
+        sessionId: 'learning-session',
+        runId: 'learning-run',
+        modeId: 'learning',
+        modeVersion: 1,
+        templateId: 'learning-coach',
+        templateVersion: 1,
+        outputContractId: 'learning-turn',
+        createdAt: 10,
+      },
+    }
+    await wrapper.setProps({ messages })
+
+    expect(wrapper.get('.ai-learning-result__header').text()).toContain('/learning')
+    expect(wrapper.get('.ai-learning-result').text()).toContain('部分理解 · 1 次尝试')
+    expect(wrapper.get('.ai-learning-result__feedback .is-correct').text()).toContain('已掌握')
+    expect(wrapper.get('.ai-learning-result__feedback .is-omission').text()).toContain('仍有遗漏')
+    expect(wrapper.get('.ai-learning-result__feedback').text()).toContain('尚未说明渲染时机')
+    expect(wrapper.get('.ai-learning-result__evidence').text()).toContain('用户明确提到')
+    expect(wrapper.get('.ai-learning-result__next').text()).toContain('渲染在哪一步发生')
+    expect(wrapper.get('.ai-learning-result__candidate').text()).toContain('未写入正式知识')
   })
 
   it('opens the slash menu and selects plan mode with the keyboard', async () => {
@@ -225,6 +589,41 @@ describe('AiChatPanel runtime visibility', () => {
     expect(wrapper.emitted('new-task')?.at(-1)).toEqual(['project-1'])
   })
 
+  it('offers project workspace choices for an ungrouped task', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+    await wrapper.setProps({
+      docked: true,
+      currentProjectId: UNGROUPED_AGENT_PROJECT_ID,
+      projects: [
+        {
+          id: 'project-1',
+          name: '制度项目',
+          workspaceRootIds: ['group-policy', 'group-expense'],
+          pinnedAt: null,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+      chatHistory: [
+        {
+          id: 'history-loose',
+          projectId: UNGROUPED_AGENT_PROJECT_ID,
+          title: '未分组调研',
+          updatedAt: 2,
+          messageCount: 2,
+          provider: 'openai',
+          model: 'test-model',
+          pinnedAt: null,
+        },
+      ],
+    })
+
+    await wrapper.get('button[aria-label="将任务加入项目：未分组调研"]').trigger('click')
+    expect(wrapper.get('.ai-chat-history-move-menu').text()).toContain('2 个资料分组')
+    await wrapper.get('.ai-chat-history-move-menu__item').trigger('click')
+    expect(wrapper.emitted('move-history')?.at(-1)).toEqual(['history-loose', 'project-1'])
+  })
+
   it('creates a project together with its document workspace', async () => {
     const wrapper = createWrapper(runtimeState('completed'))
     await wrapper.setProps({
@@ -243,7 +642,7 @@ describe('AiChatPanel runtime visibility', () => {
       'value',
       'StudioSite',
     )
-    await wrapper.get('.ai-chat-project-dialog').trigger('submit')
+    await wrapper.get('.ai-chat-project-dialog__form').trigger('submit')
 
     expect(wrapper.emitted('create-project')?.at(-1)).toEqual([
       { name: 'StudioSite', workspaceRootIds: ['group-studio'] },
@@ -267,7 +666,7 @@ describe('AiChatPanel runtime visibility', () => {
     })
 
     await wrapper.get('button[aria-label="新建 Agent 项目"]').trigger('click')
-    await wrapper.get('.ai-chat-project-dialog').trigger('submit')
+    await wrapper.get('.ai-chat-project-dialog__form').trigger('submit')
 
     expect(wrapper.emitted('create-project')?.at(-1)).toEqual([
       { name: '新项目 2', workspaceRootIds: [] },

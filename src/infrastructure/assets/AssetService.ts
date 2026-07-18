@@ -33,6 +33,7 @@ export interface AssetService {
   findAsset(assetId: string): Promise<AssetRecord | null>
   resolveAssetUrl(assetIdOrUrl: string): Promise<string>
   openAsset(assetIdOrUrl: string): Promise<void>
+  deleteAsset(assetIdOrUrl: string): Promise<void>
 }
 
 export class TauriAssetService implements AssetService {
@@ -144,6 +145,18 @@ export class TauriAssetService implements AssetService {
       relativePath: asset.relativePath,
     })
     await openPath(path)
+  }
+
+  async deleteAsset(assetIdOrUrl: string): Promise<void> {
+    const asset = await this.findAsset(assetIdOrUrl)
+    if (!asset) return
+
+    const database = await getDatabase()
+    await database.execute('DELETE FROM assets WHERE id = ?', [asset.id])
+    await invoke('remove_asset_file', {
+      dataDirectory: loadAppSettings().dataDirectory,
+      relativePath: asset.relativePath,
+    }).catch(() => undefined)
   }
 }
 

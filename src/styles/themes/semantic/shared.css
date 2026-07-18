@@ -175,8 +175,28 @@ body,
 .topbar__text-button,
 .topbar__icon-button,
 .block-control-handle {
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   background: transparent;
+}
+
+.ui-button--danger {
+  border-color: transparent;
+  color: var(--color-status-error);
+  background: transparent;
+}
+
+.ui-button--danger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-status-error) 18%, transparent);
+  color: var(--color-status-error);
+  background: color-mix(in srgb, var(--color-status-error) 8%, transparent);
+}
+
+.ui-button .n-button__icon,
+.ui-button .n-button__content,
+.ui-button .ui-icon,
+.ui-button svg {
+  color: inherit;
+  stroke: currentColor;
 }
 
 .ui-input__prefix,
@@ -218,6 +238,11 @@ body,
 .ui-select[data-disabled],
 .document-list__select:disabled {
   color: var(--color-text-disabled);
+}
+
+.ui-button--primary:disabled {
+  color: var(--color-text-on-accent);
+  background: var(--color-accent-primary);
 }
 
 :root[data-theme-mode='dark'] .settings-nav__item,

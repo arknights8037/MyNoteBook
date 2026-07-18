@@ -1,10 +1,11 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import type { Editor } from '@tiptap/vue-3'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { nextTick } from 'vue'
 
 import EditorShell from './EditorShell.vue'
 import { clearRetainedBlock, hasRetainedBlock } from './blockClipboard'
+import { BLOCK_TYPE_REGISTRY } from './blockTypeRegistry'
 import type { TiptapDocumentJson } from '@/models/document'
 import { DEFAULT_APP_SETTINGS } from '@/models/settings'
 
@@ -16,6 +17,21 @@ interface EditorShellExpose {
   pasteRetainedBlock: () => void
   setContextBlockPosition: (position: number) => void
 }
+
+beforeAll(() => {
+  if (!globalThis.Range.prototype.getClientRects) {
+    Object.defineProperty(globalThis.Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [],
+    })
+  }
+  if (!globalThis.Range.prototype.getBoundingClientRect) {
+    Object.defineProperty(globalThis.Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => new DOMRect(),
+    })
+  }
+})
 
 describe('EditorShell context transactions', () => {
   beforeEach(() => clearRetainedBlock())
@@ -61,6 +77,38 @@ describe('EditorShell context transactions', () => {
     wrapper.unmount()
   })
 
+  it('keeps block content visible when converting between heading levels', async () => {
+    const wrapper = mount(EditorShell, {
+      attachTo: document.body,
+      props: {
+        modelValue: {
+          type: 'doc',
+          content: [
+            {
+              type: 'heading',
+              attrs: { level: 1 },
+              content: [{ type: 'text', text: '保留内容' }],
+            },
+          ],
+        },
+      },
+      global: { stubs: { BubbleMenu: { template: '<div><slot /></div>' } } },
+    })
+    await nextTick()
+    await flushPromises()
+
+    const shell = wrapper.vm as unknown as EditorShellExpose
+    const heading = BLOCK_TYPE_REGISTRY.find((blockType) => blockType.id === 'heading-2')
+    shell.editor?.commands.setTextSelection(1)
+    heading?.transform?.(shell.editor as Editor)
+    await nextTick()
+    await flushPromises()
+
+    expect(shell.getJSON()?.content?.[0]?.attrs?.level).toBe(2)
+    expect(wrapper.get('.editor-shell__content h2').text()).toBe('保留内容')
+    wrapper.unmount()
+  })
+
   it('creates navigable knowledge-base links and applies editor preferences', async () => {
     const wrapper = mount(EditorShell, {
       attachTo: document.body,
@@ -92,6 +140,55 @@ describe('EditorShell context transactions', () => {
 
     await wrapper.get('a[href="#document=target-1"]').trigger('click')
     expect(wrapper.emitted('openDocument')).toEqual([['target-1']])
+    wrapper.unmount()
+  })
+
+  it('opens imported disk links inside the knowledge base', async () => {
+    const wrapper = mount(EditorShell, {
+      attachTo: document.body,
+      props: {
+        modelValue: {
+          type: 'doc',
+          content: [{
+            type: 'paragraph',
+            content: [{ type: 'text', text: '目标', marks: [{ type: 'link', attrs: { href: 'file:///C:/notes/target.md' } }] }],
+          }],
+        },
+        internalDocuments: [{ id: 'target-2', title: '另一标题', sourceUrl: 'target.md' }],
+      },
+      global: { stubs: { BubbleMenu: { template: '<div><slot /></div>' } } },
+    })
+    await nextTick()
+    await flushPromises()
+
+    await wrapper.get('a[href="file:///C:/notes/target.md"]').trigger('click')
+
+    expect(wrapper.emitted('openDocument')).toEqual([['target-2']])
+    expect(wrapper.emitted('unresolvedDocumentLink')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('blocks unresolved disk links instead of handing them to the browser', async () => {
+    const wrapper = mount(EditorShell, {
+      attachTo: document.body,
+      props: {
+        modelValue: {
+          type: 'doc',
+          content: [{
+            type: 'paragraph',
+            content: [{ type: 'text', text: '缺失', marks: [{ type: 'link', attrs: { href: 'missing.md' } }] }],
+          }],
+        },
+      },
+      global: { stubs: { BubbleMenu: { template: '<div><slot /></div>' } } },
+    })
+    await nextTick()
+    await flushPromises()
+
+    await wrapper.get('a[href="missing.md"]').trigger('click')
+
+    expect(wrapper.emitted('openDocument')).toBeUndefined()
+    expect(wrapper.emitted('unresolvedDocumentLink')).toEqual([['missing.md']])
     wrapper.unmount()
   })
 

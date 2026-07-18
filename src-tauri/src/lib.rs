@@ -10,6 +10,7 @@ mod document_core;
 mod domain_events;
 mod governance;
 mod mcp;
+pub mod mcp_server_exposure;
 mod secret_store;
 mod sensitive_data;
 mod skills;
@@ -157,6 +158,36 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0023_add_workspace_view_tree_position.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 24,
+            description: "add_agent_request_mode",
+            sql: include_str!("../migrations/0024_add_agent_request_mode.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 25,
+            description: "add_confirmation_envelope",
+            sql: include_str!("../migrations/0025_add_confirmation_envelope.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 26,
+            description: "add_workspace_view_pinning",
+            sql: include_str!("../migrations/0026_add_workspace_view_pinning.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 27,
+            description: "add_agent_request_decision",
+            sql: include_str!("../migrations/0027_add_agent_request_decision.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 28,
+            description: "add_agent_a2a_routing",
+            sql: include_str!("../migrations/0028_add_agent_a2a_routing.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -194,6 +225,8 @@ pub fn run() {
             mcp::call_mcp_tool,
             mcp::list_mcp_resources,
             mcp::read_mcp_resource,
+            mcp_server_exposure::get_mcp_server_exposure,
+            mcp_server_exposure::set_mcp_server_tool_exposure,
             agent_repository::save_agent_patch_set,
             agent_repository::save_agent_context_bundle,
             agent_repository::apply_agent_patch_set,

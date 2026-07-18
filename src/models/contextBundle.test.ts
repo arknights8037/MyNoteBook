@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { compileContextBundle } from './contextBundle'
 import { createDefaultExecutionPolicy } from './executionPolicy'
 
-describe('Context Bundle v1', () => {
+describe('Context Bundle v2', () => {
   it('produces a stable snapshot hash from versioned sources and execution policy', async () => {
     const input = {
       id: 'bundle-1',
@@ -39,6 +39,8 @@ describe('Context Bundle v1', () => {
       documentId: 'doc-1',
       blockId: 'block-1',
       revision: 4,
+      contentSnapshot: '必须经过审批。',
     })
+    expect(first.version).toBe(2)
   })
 })

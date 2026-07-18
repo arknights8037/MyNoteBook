@@ -3,6 +3,7 @@ import type { DocumentRecord, DocumentSummary } from '@/models/document'
 import type { MindMapSubtreeQuery, MindMapSubtreeResult, MindMapSummary } from '@/models/mindMap'
 import type { AgentAuthorizationRequest } from '@/models/agentRuntime'
 import type { AutomationTriggerConfig, AutomationTriggerType } from '@/models/automation'
+import type { McpTransport } from '@/models/mcp'
 import { getAgentToolDefinition } from './AgentToolRegistry'
 import { throwIfAgentToolAborted } from './AgentToolCancellation'
 import {
@@ -66,6 +67,14 @@ export interface AgentToolExecutionContext {
     name: string
     description: string
     instructions: string
+  }) => Promise<unknown>
+  createMcpServerDraft?: (input: {
+    name: string
+    transport: McpTransport
+    command?: string
+    args?: string[]
+    cwd?: string
+    url?: string
   }) => Promise<unknown>
 }
 
@@ -392,6 +401,38 @@ export async function executeAgentTool(
           value: await context.createSkillDraft({ name, description, instructions }),
         }
       }
+      case 'create_mcp_server_draft': {
+        if (!context.createMcpServerDraft) {
+          return { ok: false, error: '当前环境未提供 MCP 草稿创建器。' }
+        }
+        const name = readRequiredString(request.arguments.name, 'name')
+        const transport = readMcpTransport(request.arguments.transport)
+        const command = readOptionalString(request.arguments.command, 'command')
+        const args = readStringArray(request.arguments.args, 'args', 64)
+        const cwd = readOptionalString(request.arguments.cwd, 'cwd')
+        const url = readOptionalString(request.arguments.url, 'url')
+        if (transport === 'stdio' && !command) throw new Error('stdio MCP 必须提供 command。')
+        if (transport === 'http' && !url) throw new Error('HTTP MCP 必须提供 url。')
+        const endpoint = transport === 'stdio' ? `${command} ${args.join(' ')}`.trim() : url!
+        const confirmed = await confirmDraftCreation(
+          context,
+          `添加 MCP 服务草稿“${name}”？`,
+          `${transport}：${endpoint}。配置将保持停用且未信任，不会在本次任务中连接或加载。`,
+        )
+        if (!confirmed) return { ok: true, value: { created: false, reason: '用户取消创建。' } }
+        throwIfAgentToolAborted(request.signal)
+        return {
+          ok: true,
+          value: await context.createMcpServerDraft({
+            name,
+            transport,
+            ...(command ? { command } : {}),
+            ...(args.length ? { args } : {}),
+            ...(cwd ? { cwd } : {}),
+            ...(url ? { url } : {}),
+          }),
+        }
+      }
       default:
         return { ok: false, error: `工具 ${definition.name} 尚未接入执行器。` }
     }
@@ -483,6 +524,11 @@ async function confirmDraftCreation(
 function readAutomationTriggerType(value: unknown): AutomationTriggerType {
   if (value === 'manual' || value === 'interval' || value === 'daily') return value
   throw new Error('工具参数 triggerType 必须是 manual、interval 或 daily。')
+}
+
+function readMcpTransport(value: unknown): McpTransport {
+  if (value === 'stdio' || value === 'http') return value
+  throw new Error('工具参数 transport 必须是 stdio 或 http。')
 }
 
 function readAutomationTriggerConfig(

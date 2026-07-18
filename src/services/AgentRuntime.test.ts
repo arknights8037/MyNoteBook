@@ -7,7 +7,7 @@ import {
   normalizeAgentOutputForTaskIntent,
   parseAiSdkAgentOutput,
   resolveAgentOutputChannels,
-} from './AiSdkAgentRuntime'
+} from './AgentOutputNormalizer'
 
 describe('AI SDK Agent runtime output', () => {
   it('wraps an ordinary natural-language completion without a JSON repair round', () => {

@@ -70,6 +70,36 @@ describe('buildAgentRunContext', () => {
     expect(adapter.searchDocuments).not.toHaveBeenCalled()
     expect(adapter.listDocumentBlocks).not.toHaveBeenCalled()
   })
+
+  it('injects an explicitly targeted knowledge asset into a research context', async () => {
+    const snapshot = createSnapshot([])
+    snapshot.explicitTargets = [
+      {
+        kind: 'knowledge_asset',
+        id: 'asset-1',
+        title: '季度复盘.pdf',
+        content: '营收增长来自续费率改善，但样本只覆盖企业客户。',
+      },
+      {
+        kind: 'knowledge_asset',
+        id: 'asset-2',
+        title: '客户访谈.docx',
+        content: '中小客户认为续费流程仍然复杂。',
+      },
+    ]
+
+    const context = await buildAgentRunContext({
+      snapshot,
+      mode: 'agent',
+      document: createAdapter(),
+    })
+
+    expect(context.text).toContain('显式目标数量：2')
+    expect(context.text).toContain('目标 1：季度复盘.pdf')
+    expect(context.text).toContain('目标 2：客户访谈.docx')
+    expect(context.text).toContain('营收增长来自续费率改善')
+    expect(context.text).toContain('不得伪造 Evidence 来源')
+  })
 })
 
 function createSnapshot(documents: DocumentSummary[]): AgentRunSnapshot {
@@ -79,6 +109,7 @@ function createSnapshot(documents: DocumentSummary[]): AgentRunSnapshot {
     prompt: '发布流程中的灰度验证是什么？',
     requestedMode: 'ask',
     settings,
+    explicitTargets: [],
     document: {
       id: 'doc-1',
       title: '当前文档',
@@ -86,6 +117,7 @@ function createSnapshot(documents: DocumentSummary[]): AgentRunSnapshot {
       sourceUrl: '',
       author: '',
       text: '当前文档正文',
+      markdown: '当前文档正文',
       revision: 1,
       blocks: [{ id: 'b1', type: 'paragraph', text: '当前文档正文', index: 0 }],
       selectedBlocks: [],
