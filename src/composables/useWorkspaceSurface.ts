@@ -1,111 +1,72 @@
 import { computed, ref } from 'vue'
 
-import type { WorkspaceSurface } from '@/features/documents/components/DocumentSidebar.vue'
+import type { WorkspaceSurface } from '@/models/workspace/workspaceSurface'
+
+type AiPanelMode = 'closed' | 'docked' | 'workspace'
+type PrimarySurface = Exclude<WorkspaceSurface, 'agent'>
 
 export function useWorkspaceSurface() {
-  const showAiChat = ref(true)
-  const aiChatFullscreen = ref(true)
-  const showSettings = ref(false)
-  const showPluginSkills = ref(false)
-  const showAutomations = ref(false)
-  const showAudit = ref(false)
-  const showKnowledgeControl = ref(false)
+  const primarySurface = ref<PrimarySurface>('document')
+  const aiPanelMode = ref<AiPanelMode>('workspace')
 
-  const activeSurface = computed<WorkspaceSurface>(() => {
-    if (showSettings.value) return 'settings'
-    if (showPluginSkills.value) return 'plugins'
-    if (showAutomations.value) return 'automations'
-    if (showAudit.value) return 'audit'
-    if (showKnowledgeControl.value) return 'knowledge'
-    if (showAiChat.value && aiChatFullscreen.value) return 'agent'
-    return 'document'
-  })
+  const showAiChat = computed(() => aiPanelMode.value !== 'closed')
+  const aiChatFullscreen = computed(() => aiPanelMode.value === 'workspace')
+  const showSettings = computed(() => primarySurface.value === 'settings')
+  const showPluginSkills = computed(() => primarySurface.value === 'plugins')
+  const showAutomations = computed(() => primarySurface.value === 'automations')
+  const showAudit = computed(() => primarySurface.value === 'audit')
+  const showKnowledgeControl = computed(() => primarySurface.value === 'knowledge')
+  const activeSurface = computed<WorkspaceSurface>(() =>
+    aiPanelMode.value === 'workspace' ? 'agent' : primarySurface.value,
+  )
+
+  function openPrimarySurface(surface: PrimarySurface): void {
+    primarySurface.value = surface
+    aiPanelMode.value = 'closed'
+  }
 
   function openAgentWorkspace(): void {
-    showSettings.value = false
-    showPluginSkills.value = false
-    showAutomations.value = false
-    showAudit.value = false
-    showKnowledgeControl.value = false
-    showAiChat.value = true
-    aiChatFullscreen.value = true
+    primarySurface.value = 'document'
+    aiPanelMode.value = 'workspace'
   }
 
   function openSettingsSurface(): void {
-    showPluginSkills.value = false
-    showAutomations.value = false
-    showAudit.value = false
-    showKnowledgeControl.value = false
-    showAiChat.value = false
-    aiChatFullscreen.value = false
-    showSettings.value = true
+    openPrimarySurface('settings')
   }
 
   function openPluginSkillsSurface(): void {
-    showSettings.value = false
-    showAutomations.value = false
-    showAudit.value = false
-    showKnowledgeControl.value = false
-    showAiChat.value = false
-    aiChatFullscreen.value = false
-    showPluginSkills.value = true
+    openPrimarySurface('plugins')
   }
 
   function openAutomationsSurface(): void {
-    showSettings.value = false
-    showPluginSkills.value = false
-    showAudit.value = false
-    showKnowledgeControl.value = false
-    showAiChat.value = false
-    aiChatFullscreen.value = false
-    showAutomations.value = true
+    openPrimarySurface('automations')
   }
 
   function openAuditSurface(): void {
-    showSettings.value = false
-    showPluginSkills.value = false
-    showAutomations.value = false
-    showAiChat.value = false
-    aiChatFullscreen.value = false
-    showAudit.value = true
-    showKnowledgeControl.value = false
+    openPrimarySurface('audit')
   }
 
   function openKnowledgeControlSurface(): void {
-    showSettings.value = false
-    showPluginSkills.value = false
-    showAutomations.value = false
-    showAudit.value = false
-    showAiChat.value = false
-    aiChatFullscreen.value = false
-    showKnowledgeControl.value = true
+    openPrimarySurface('knowledge')
   }
 
   function openDocumentSurface(): void {
-    showSettings.value = false
-    showPluginSkills.value = false
-    showAutomations.value = false
-    showAudit.value = false
-    showKnowledgeControl.value = false
-    showAiChat.value = false
-    aiChatFullscreen.value = false
+    openPrimarySurface('document')
   }
 
   function closeAiChat(): void {
-    showAiChat.value = false
-    aiChatFullscreen.value = false
+    if (aiPanelMode.value === 'workspace') primarySurface.value = 'document'
+    aiPanelMode.value = 'closed'
   }
 
   function setAiChatWorkspace(workspace: boolean): void {
-    showAiChat.value = true
-    aiChatFullscreen.value = workspace
     if (workspace) {
-      showSettings.value = false
-      showPluginSkills.value = false
-      showAutomations.value = false
-      showAudit.value = false
-      showKnowledgeControl.value = false
+      primarySurface.value = 'document'
+      aiPanelMode.value = 'workspace'
+      return
     }
+    if (activeSurface.value === 'agent') primarySurface.value = 'document'
+    aiPanelMode.value = 'docked'
   }
 
   return {

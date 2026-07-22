@@ -8,7 +8,7 @@ import {
   type MindMapLink,
   type MindMapNode,
   type MindMapSourceRef,
-} from '@/models/mindMap'
+} from '@/models/workspace/mindMap'
 
 interface MindElixirMetadata {
   sourceRefs?: MindMapSourceRef[]

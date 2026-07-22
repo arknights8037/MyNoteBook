@@ -1,12 +1,12 @@
-import type { AgentPatchSet, AgentTask, SelectedBlock } from '@/models/agent'
-import type { KnowledgeSource } from '@/models/knowledgeRetrieval'
-import type { AiChatMode } from '@/models/aiChatMode'
+import type { AgentPatchSet, AgentTask, SelectedBlock } from '@/models/agent/agent'
+import type { KnowledgeSource } from '@/models/knowledge/knowledgeRetrieval'
+import type { AiChatMode } from '@/models/ai/aiChatMode'
 import {
   createAgentCommandPatches,
   type RegexReplaceExecutor,
-} from '@/services/AgentCommandService'
-import { parseAgentResponse } from '@/services/AgentProtocol'
-import { normalizeDocumentTitle } from '@/features/documents/documentPresentation'
+} from '@/services/agent/AgentCommandService'
+import { parseAgentResponse } from '@/services/agent/AgentProtocol'
+import { normalizeDocumentTitle } from '@/models/documents/documentPresentation'
 import type { AgentRunSnapshot } from './types'
 
 export type AgentRunOutcome = 'proposal' | 'no_change' | 'blocked'

@@ -25,7 +25,7 @@ import {
 } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 
-import type { InstalledSkill, SkillFileEntry } from '@/models/skill'
+import type { InstalledSkill, SkillFileEntry } from '@/models/integrations/skill'
 import { listBuiltinPlugins } from '@/plugins/pluginRegistry'
 import {
   createSkill,
@@ -36,11 +36,16 @@ import {
   removeInstalledSkill,
   setSkillEnabled,
   writeSkillFile,
-} from '@/services/SkillService'
+} from '@/services/integrations/SkillService'
 import { NButton, NIcon, NInput, NModal } from '@/ui'
 import { useMessage } from '@/ui/services'
 import McpServersPanel from '@/features/integrations/mcp/components/McpServersPanel.vue'
 import McpServerExposurePanel from '@/features/integrations/mcp/components/McpServerExposurePanel.vue'
+import type { McpClientPort } from '@/services/ports/McpClientPort'
+
+withDefaults(defineProps<{ mcpClient: McpClientPort; contextNavigation?: boolean }>(), {
+  contextNavigation: false,
+})
 
 const plugins = listBuiltinPlugins()
 const message = useMessage()
@@ -51,7 +56,9 @@ const fileContent = ref('')
 const fileDraft = ref('')
 const query = ref('')
 const filter = ref<'all' | 'enabled' | 'invalid'>('all')
-const activeTab = ref<'skills' | 'mcp' | 'mcp-server' | 'builtin'>('skills')
+const activeTab = defineModel<'skills' | 'mcp' | 'mcp-server' | 'builtin'>('tab', {
+  default: 'skills',
+})
 const filterOptions: Array<{ value: 'all' | 'enabled' | 'invalid'; label: string }> = [
   { value: 'all', label: '全部' },
   { value: 'enabled', label: '已启用' },
@@ -401,7 +408,7 @@ onMounted(() => void loadSkills())
     </header>
 
     <div class="plugin-skills-page__content">
-      <nav class="surface-tabs" role="tablist" aria-label="扩展类型">
+      <nav v-if="!contextNavigation" class="surface-tabs" role="tablist" aria-label="扩展类型">
         <button
           v-for="tab in extensionTabs"
           :key="tab.id"
@@ -428,8 +435,12 @@ onMounted(() => void loadSkills())
         </div>
       </aside>
 
-      <McpServersPanel v-if="activeTab === 'mcp'" ref="mcpPanel" />
-      <McpServerExposurePanel v-else-if="activeTab === 'mcp-server'" ref="mcpServerPanel" />
+      <McpServersPanel v-if="activeTab === 'mcp'" ref="mcpPanel" :client="mcpClient" />
+      <McpServerExposurePanel
+        v-else-if="activeTab === 'mcp-server'"
+        ref="mcpServerPanel"
+        :client="mcpClient"
+      />
       <section v-else-if="activeTab === 'skills'" class="skill-library" aria-label="本地技能库">
         <div class="skill-library__toolbar">
           <NInput v-model:value="query" size="small" clearable placeholder="搜索技能">

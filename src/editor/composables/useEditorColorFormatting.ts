@@ -1,7 +1,7 @@
 import type { Editor } from '@tiptap/vue-3'
 import { ref, type Ref } from 'vue'
 
-import { loadRecentColors, rememberRecentColor } from '../recentColors'
+import { loadRecentColors, rememberRecentColor } from '@/editor/formatting/recentColors'
 
 export const TEXT_COLOR_SWATCHES = [
   '#111827',

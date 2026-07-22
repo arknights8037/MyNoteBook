@@ -24,7 +24,7 @@ import type {
   ResearchResult,
   ReviewIssue,
   ReviewIssueType,
-} from '@/models/cognitive'
+} from '@/models/cognitive/cognitive'
 import type { AiChatPanelMessage } from './aiChatPanelTypes'
 
 defineProps<{

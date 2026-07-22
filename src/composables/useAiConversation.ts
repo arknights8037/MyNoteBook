@@ -1,11 +1,11 @@
 import { getCurrentScope, onScopeDispose, ref, watch, type Ref } from 'vue'
 
 import { useAiChatHistory } from './useAiChatHistory'
-import type { AiSettings } from '@/models/ai'
-import type { AiChatHistoryMessage } from '@/models/aiChatHistory'
-import type { AiChatMode } from '@/models/aiChatMode'
-import type { KnowledgeSource } from '@/models/knowledgeRetrieval'
-import type { AgentWorkspaceHistoryStore } from '@/infrastructure/database/AgentWorkspaceHistoryStore'
+import type { AiSettings } from '@/models/ai/ai'
+import type { AiChatHistoryMessage } from '@/models/ai/aiChatHistory'
+import type { AiChatMode } from '@/models/ai/aiChatMode'
+import type { KnowledgeSource } from '@/models/knowledge/knowledgeRetrieval'
+import type { AgentWorkspaceHistoryStore } from '@/repositories/agent/AgentWorkspaceHistoryStore'
 
 export interface AiConversationMessage extends AiChatHistoryMessage {
   sources?: KnowledgeSource[]

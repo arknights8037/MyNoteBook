@@ -12,18 +12,18 @@ import type {
   DocumentWorkspaceNotifier,
   DocumentWorkspaceSettings,
 } from '@/composables/documentWorkspace/types'
-import { ensureTopLevelBlockIds } from '@/editor/blockId'
-import { parseEditorContentJson } from '@/editor/editorContent'
-import { createInitialDocumentContent } from '@/editor/documentTemplate'
-import { normalizeDocumentTitle } from '@/features/documents/documentPresentation'
-import { createEntityId } from '@/models/id'
+import { ensureTopLevelBlockIds } from '@/editor/blocks/blockId'
+import { parseEditorContentJson } from '@/editor/core/editorContent'
+import { createInitialDocumentContent } from '@/editor/io/documentTemplate'
+import { normalizeDocumentTitle } from '@/models/documents/documentPresentation'
+import { createEntityId } from '@/models/shared/id'
 import type {
   DocumentId,
   DocumentRecord,
   TiptapDocumentJson,
-} from '@/models/document'
-import type { AppError } from '@/models/result'
-import { DocumentService } from '@/services/DocumentService'
+} from '@/models/documents/document'
+import type { AppError } from '@/models/shared/result'
+import { DocumentService } from '@/services/documents/DocumentService'
 
 export type {
   CreateWorkspaceDocumentOptions,

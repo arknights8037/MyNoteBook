@@ -23,15 +23,15 @@ import {
 } from 'reka-ui'
 import { computed, nextTick, ref } from 'vue'
 
-import type { AiProvider, AiReasoningEffort, AiSettings } from '@/models/ai'
-import type { AiChatMode, AiSelectorOption } from '@/models/aiChatMode'
-import type { AgentExplicitTarget, AgentTargetOption } from '@/models/agentTarget'
+import type { AiProvider, AiReasoningEffort, AiSettings } from '@/models/ai/ai'
+import type { AiChatMode, AiSelectorOption } from '@/models/ai/aiChatMode'
+import type { AgentExplicitTarget, AgentTargetOption } from '@/models/agent/agentTarget'
 import {
   filterAgentSlashCommands,
   resolveAgentSlashCommand,
   type AgentSlashCommand,
-} from '@/models/agentSlashCommand'
-import { resolveProviderCapabilities } from '@/models/providerCapabilities'
+} from '@/models/agent/agentSlashCommand'
+import { resolveProviderCapabilities } from '@/models/agent/providerCapabilities'
 
 type BrowserEvent = InstanceType<typeof globalThis.Event>
 type BrowserKeyboardEvent = InstanceType<typeof globalThis.KeyboardEvent>

@@ -1,7 +1,7 @@
 import { computed, getCurrentScope, onScopeDispose, ref, watch, type Ref } from 'vue'
 
-import type { DocumentId, DocumentSummary } from '@/models/document'
-import { displayDocumentTitle } from '@/features/documents/documentPresentation'
+import type { DocumentId, DocumentSummary } from '@/models/documents/document'
+import { displayDocumentTitle } from '@/models/documents/documentPresentation'
 
 interface DocumentSearchOptions {
   documents: Ref<DocumentSummary[]>

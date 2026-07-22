@@ -1,21 +1,17 @@
-import { createAutomationRepository } from '@/infrastructure/database/automationRepositoryFactory'
-import { AgentResourceDraftService } from '@/services/AgentResourceDraftService'
-import { AutomationService } from '@/services/AutomationService'
-import {
-  importMcpConfigText,
-  listMcpServers,
-  setMcpServerEnabled,
-  setMcpServerTrusted,
-} from '@/services/McpService'
+import { createAutomationRepository } from '@/infrastructure/database/automation/automationRepositoryFactory'
+import { AgentResourceDraftService } from '@/services/agent/AgentResourceDraftService'
+import { AutomationService } from '@/services/automation/AutomationService'
+import type { McpClientPort } from '@/services/ports/McpClientPort'
 import {
   createSkill,
   readSkillFile,
   setSkillEnabled,
   writeSkillFile,
-} from '@/services/SkillService'
+} from '@/services/integrations/SkillService'
 
 export async function createAgentResourceDraftService(
   createId: (prefix: string) => string,
+  mcpClient: McpClientPort,
 ): Promise<AgentResourceDraftService> {
   const automations = new AutomationService(await createAutomationRepository(), createId)
   return new AgentResourceDraftService(
@@ -27,10 +23,10 @@ export async function createAgentResourceDraftService(
       writeFile: writeSkillFile,
     },
     {
-      list: listMcpServers,
-      importText: importMcpConfigText,
-      setEnabled: setMcpServerEnabled,
-      setTrusted: setMcpServerTrusted,
+      list: () => mcpClient.listServers(),
+      importText: (content) => mcpClient.importConfigText(content),
+      setEnabled: (serverId, enabled) => mcpClient.setServerEnabled(serverId, enabled),
+      setTrusted: (serverId, trusted) => mcpClient.setServerTrusted(serverId, trusted),
     },
   )
 }

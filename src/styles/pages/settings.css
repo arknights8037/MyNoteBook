@@ -179,6 +179,10 @@
   overflow: hidden;
 }
 
+.settings-layout--context-navigation {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .settings-nav {
   display: flex;
   min-height: 0;

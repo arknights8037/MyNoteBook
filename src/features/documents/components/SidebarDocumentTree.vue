@@ -29,9 +29,9 @@ import {
   DropdownMenuTrigger,
 } from 'reka-ui'
 
-import type { SidebarDocumentNode } from '@/features/documents/documentTree'
-import type { DocumentId, DocumentSummary } from '@/models/document'
-import type { StructuredWorkspaceViewType } from '@/models/workspaceView'
+import type { SidebarDocumentNode } from '@/models/documents/documentTree'
+import type { DocumentId, DocumentSummary } from '@/models/documents/document'
+import type { StructuredWorkspaceViewType } from '@/models/workspace/workspaceView'
 import NButton from '@/ui/NButton.vue'
 import NIcon from '@/ui/NIcon.vue'
 import NTooltip from '@/ui/NTooltip.vue'

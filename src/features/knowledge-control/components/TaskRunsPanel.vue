@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { CheckCircle2, ShieldCheck, SquareTerminal } from '@lucide/vue'
-import type { TaskRun } from '@/models/work'
+import type { TaskRun } from '@/models/knowledge/work'
 import { NButton, NIcon } from '@/ui'
 
 defineProps<{

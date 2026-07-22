@@ -1,13 +1,8 @@
-import { open } from '@tauri-apps/plugin-dialog'
 import { ref, type Ref, type ShallowRef } from 'vue'
 
-import { closeDatabase } from '@/infrastructure/database/connection'
-import {
-  getDefaultDataDirectory,
-  migrateDataDirectory,
-} from '@/infrastructure/database/dataDirectory'
-import { saveAppSettings, type AppSettings } from '@/models/settings'
-import type { DocumentService } from '@/services/DocumentService'
+import { saveAppSettings, type AppSettings } from '@/models/settings/settings'
+import type { DocumentService } from '@/services/documents/DocumentService'
+import type { DataDirectoryPort } from '@/services/ports/DataDirectoryPort'
 
 interface DataDirectoryAutosave {
   flushBeforeDocumentChange: () => Promise<{ ok: boolean }>
@@ -25,6 +20,7 @@ interface UseDataDirectorySettingsOptions {
   requestAuthorization: (title: string, description: string) => Promise<boolean>
   initializeDocuments: () => Promise<void>
   message: DataDirectoryMessage
+  dataDirectoryPort: DataDirectoryPort
 }
 
 export function useDataDirectorySettings(options: UseDataDirectorySettingsOptions) {
@@ -33,7 +29,7 @@ export function useDataDirectorySettings(options: UseDataDirectorySettingsOption
 
   async function initializeDefaultDataDirectory(): Promise<void> {
     try {
-      defaultDataDirectory.value = await getDefaultDataDirectory()
+      defaultDataDirectory.value = await options.dataDirectoryPort.getDefaultDirectory()
     } catch {
       // Browser development builds do not expose native Tauri paths.
     }
@@ -46,14 +42,10 @@ export function useDataDirectorySettings(options: UseDataDirectorySettingsOption
     )
     if (!authorized) return
 
-    const selected = await open({
-      title: '选择知识库数据目录',
-      directory: true,
-      multiple: false,
-      defaultPath:
-        (options.settings.value.dataDirectory ?? defaultDataDirectory.value) || undefined,
-    })
-    if (typeof selected !== 'string' || !selected.trim()) return
+    const selected = await options.dataDirectoryPort.chooseDirectory(
+      (options.settings.value.dataDirectory ?? defaultDataDirectory.value) || undefined,
+    )
+    if (!selected) return
     if (selected === options.settings.value.dataDirectory) return
     await changeDataDirectory(selected)
   }
@@ -81,8 +73,8 @@ export function useDataDirectorySettings(options: UseDataDirectorySettingsOption
         return
       }
 
-      await closeDatabase()
-      const change = await migrateDataDirectory(
+      await options.dataDirectoryPort.closeDatabase()
+      const change = await options.dataDirectoryPort.migrate(
         previousSettings.dataDirectory,
         destinationDirectory,
       )

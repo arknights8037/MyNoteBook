@@ -2,7 +2,7 @@
 import { Keyboard, RotateCcw } from '@lucide/vue'
 
 import { NButton, NIcon } from '@/ui'
-import { DEFAULT_SHORTCUTS } from '@/models/settings'
+import { DEFAULT_SHORTCUTS } from '@/models/settings/settings'
 import { useSettingsSectionContext } from './settingsSectionContext'
 
 const {

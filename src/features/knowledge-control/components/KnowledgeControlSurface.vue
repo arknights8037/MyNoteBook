@@ -2,19 +2,19 @@
 import { BookOpenCheck, Database, ListChecks, RefreshCw, ShieldCheck } from '@lucide/vue'
 import { onMounted, ref } from 'vue'
 
-import { loadAiSettings } from '@/models/ai'
-import type { DelegationGrant } from '@/models/governance'
-import type { KnowledgeObject, KnowledgeObjectType } from '@/models/knowledge'
-import type { KnowledgeAsset } from '@/models/knowledgeAsset'
-import type { AiChatHistoryItem } from '@/models/aiChatHistory'
-import type { ViewDefinition, ViewType, ViewWritebackPolicy } from '@/models/view'
-import type { TaskRun } from '@/models/work'
-import type { KnowledgeControlService } from '@/services/KnowledgeControlService'
-import type { KnowledgeObjectDetail } from '@/services/KnowledgeControlService'
+import { loadAiSettings } from '@/models/ai/ai'
+import type { DelegationGrant } from '@/models/knowledge/governance'
+import type { KnowledgeObject, KnowledgeObjectType } from '@/models/knowledge/knowledge'
+import type { KnowledgeAsset } from '@/models/knowledge/knowledgeAsset'
+import type { AiChatHistoryItem } from '@/models/ai/aiChatHistory'
+import type { ViewDefinition, ViewType, ViewWritebackPolicy } from '@/models/knowledge/view'
+import type { TaskRun } from '@/models/knowledge/work'
+import type { KnowledgeControlService } from '@/services/knowledge/KnowledgeControlService'
+import type { KnowledgeObjectDetail } from '@/services/knowledge/KnowledgeControlService'
 import type {
   AiConversationImportBatch,
   AiConversationImportSelection,
-} from '@/services/KnowledgeAssetImporter'
+} from '@/services/knowledge/KnowledgeAssetImporter'
 import KnowledgeObjectsPanel from '@/features/knowledge-control/components/KnowledgeObjectsPanel.vue'
 import KnowledgeObjectDetailModal from '@/features/knowledge-control/components/KnowledgeObjectDetailModal.vue'
 import KnowledgeAssetsPanel from '@/features/knowledge-control/components/KnowledgeAssetsPanel.vue'
@@ -32,8 +32,9 @@ const props = withDefaults(
     currentDocumentRevision: number
     getService: () => Promise<KnowledgeControlService>
     chatHistory?: AiChatHistoryItem[]
+    contextNavigation?: boolean
   }>(),
-  { chatHistory: () => [] },
+  { chatHistory: () => [], contextNavigation: false },
 )
 const emit = defineEmits<{
   researchAssets: [assets: KnowledgeAsset[]]
@@ -63,7 +64,9 @@ const error = ref('')
 const delegationGrant = ref('')
 const activeGrant = ref<DelegationGrant | null>(null)
 const activeDelegationRun = ref<TaskRun | null>(null)
-const activeTab = ref<'knowledge' | 'assets' | 'views' | 'tasks'>('assets')
+const activeTab = defineModel<'knowledge' | 'assets' | 'views' | 'tasks'>('tab', {
+  default: 'assets',
+})
 const cliExportPath = ref('')
 const cliSubmissionPath = ref('')
 const cliCapabilityToken = ref('')
@@ -320,7 +323,7 @@ onMounted(load)
 
     <div class="operations-page__content p1-domain-grid">
       <p v-if="error" class="operations-error" role="alert">{{ error }}</p>
-      <nav class="surface-tabs" role="tablist" aria-label="知识中心功能">
+      <nav v-if="!contextNavigation" class="surface-tabs" role="tablist" aria-label="知识中心功能">
         <button
           type="button"
           role="tab"

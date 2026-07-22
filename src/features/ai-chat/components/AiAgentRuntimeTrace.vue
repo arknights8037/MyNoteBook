@@ -13,13 +13,13 @@ import {
 } from '@lucide/vue'
 import { onBeforeUnmount, ref, watch } from 'vue'
 
-import type { AgentRuntimeViewState, AgentTimelineEvent } from '@/models/agentRuntime'
+import type { AgentRuntimeViewState, AgentTimelineEvent } from '@/models/agent/agentRuntime'
 import {
   parseAgentToolPayload,
   presentAgentToolCall,
   type AgentToolDisplayField,
   type AgentToolDisplayItem,
-} from '@/services/AgentToolPresentation'
+} from '@/services/agent/AgentToolPresentation'
 
 const props = defineProps<{
   state: AgentRuntimeViewState

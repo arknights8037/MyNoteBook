@@ -2,8 +2,8 @@
 import { BookOpenCheck, CheckCircle2, Link2, ShieldCheck } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 
-import type { KnowledgeObject } from '@/models/knowledge'
-import type { KnowledgeObjectDetail } from '@/services/KnowledgeControlService'
+import type { KnowledgeObject } from '@/models/knowledge/knowledge'
+import type { KnowledgeObjectDetail } from '@/services/knowledge/KnowledgeControlService'
 import { NButton, NModal } from '@/ui'
 
 const show = defineModel<boolean>('show', { required: true })

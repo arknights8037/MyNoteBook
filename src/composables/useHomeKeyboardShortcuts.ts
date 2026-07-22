@@ -1,6 +1,6 @@
 import type { Ref } from 'vue'
 
-import { matchesShortcut, type AppSettings } from '@/models/settings'
+import { matchesShortcut, type AppSettings } from '@/models/settings/settings'
 
 type BrowserKeyboardEvent = InstanceType<typeof globalThis.KeyboardEvent>
 

@@ -1,7 +1,7 @@
 import { ref, type Ref } from 'vue'
 
-import { updateActiveAiProfile, type AiProvider, type AiSettings } from '@/models/ai'
-import { loadAiApiKey, saveAiApiKey } from '@/services/AiSecretService'
+import { updateActiveAiProfile, type AiProvider, type AiSettings } from '@/models/ai/ai'
+import { loadAiApiKey, saveAiApiKey } from '@/services/ai/AiSecretService'
 
 export type AiSecretStatus = 'idle' | 'loading' | 'loaded' | 'failed'
 

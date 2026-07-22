@@ -3,6 +3,7 @@
 @import './layout/workspace.css';
 @import './components/document-sidebar.css';
 @import './components/editor-topbar.css';
+@import './components/workspace-chrome.css';
 @import './editor/editor-core.css';
 @import './editor/table-blocks.css';
 @import './editor/content-blocks.css';

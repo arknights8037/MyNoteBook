@@ -1,9 +1,9 @@
-import { createAgentTask, findRelevantBlocksForInstruction, type AgentTask, type SelectedBlock } from '@/models/agent'
-import type { AiChatMode } from '@/models/aiChatMode'
-import type { AiSettings } from '@/models/ai'
+import { createAgentTask, findRelevantBlocksForInstruction, type AgentTask, type SelectedBlock } from '@/models/agent/agent'
+import type { AiChatMode } from '@/models/ai/aiChatMode'
+import type { AiSettings } from '@/models/ai/ai'
 import type { AgentRunDocumentSnapshot, AgentRunSnapshot } from './types'
-import { createDefaultAgentExecutionPolicy } from '@/services/AgentToolRegistry'
-import type { AgentExplicitTarget } from '@/models/agentTarget'
+import { createDefaultAgentExecutionPolicy } from '@/services/agent/AgentToolRegistry'
+import type { AgentExplicitTarget } from '@/models/agent/agentTarget'
 
 export interface AgentEditPlan {
   task: AgentTask

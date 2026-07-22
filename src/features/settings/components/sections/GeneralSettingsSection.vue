@@ -3,7 +3,7 @@ import { MousePointer2 } from '@lucide/vue'
 import { SwitchRoot, SwitchThumb } from 'reka-ui'
 
 import { NSelect } from '@/ui'
-import type { AppSettings } from '@/models/settings'
+import type { AppSettings } from '@/models/settings/settings'
 import { useSettingsSectionContext } from './settingsSectionContext'
 
 const { settings, startupOptions, newDocumentOptions, update } = useSettingsSectionContext()

@@ -2,20 +2,22 @@
 import { Download, GitBranch, Presentation, Save, Share2, Table2 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import { createWorkspaceViewService } from '@/app/composition/workspaceViewServiceFactory'
-import { applyTableFieldsToRows } from '@/editor/tableFields'
+import { applyTableFieldsToRows } from '@/editor/blocks/tableFields'
 import type {
   StructuredWorkspaceView,
   StructuredWorkspaceViewPayload,
   StructuredWorkspaceViewSummary,
-} from '@/models/workspaceView'
-import type { WorkspaceViewService } from '@/services/WorkspaceViewService'
+} from '@/models/workspace/workspaceView'
+import type { WorkspaceViewService } from '@/services/workspace/WorkspaceViewService'
 import { NButton, NDrawer, NDrawerContent, NIcon, NTooltip } from '@/ui'
 import SlidesViewEditor from './SlidesViewEditor.vue'
 import TableViewEditor from './TableViewEditor.vue'
 import UmlViewEditor from './UmlViewEditor.vue'
 
-const props = defineProps<{ viewId: string }>()
+const props = defineProps<{
+  viewId: string
+  getService: () => Promise<WorkspaceViewService>
+}>()
 const emit = defineEmits<{ saved: [summary: StructuredWorkspaceViewSummary] }>()
 
 const view = ref<StructuredWorkspaceView | null>(null)
@@ -42,7 +44,7 @@ const inspectorValue = computed(() =>
     : '',
 )
 
-const service = () => (servicePromise ??= createWorkspaceViewService())
+const service = () => (servicePromise ??= props.getService())
 
 async function load(id: string): Promise<void> {
   const current = ++generation
@@ -103,7 +105,9 @@ async function runSave(): Promise<void> {
     }
 
     status.value = '正在保存'
-    const result = await (await service()).update({
+    const result = await (
+      await service()
+    ).update({
       id: current.id,
       expectedVersion: current.version,
       title,
@@ -219,7 +223,9 @@ onBeforeUnmount(() => {
         />
       </div>
       <div class="topbar__actions">
-        <span><NIcon :size="14"><Save /></NIcon>{{ status }}</span>
+        <span
+          ><NIcon :size="14"><Save /></NIcon>{{ status }}</span
+        >
         <NTooltip trigger="hover">
           <template #trigger>
             <NButton
@@ -230,7 +236,9 @@ onBeforeUnmount(() => {
               :disabled="!view || !payload"
               @click="exportView"
             >
-              <template #icon><NIcon :size="19"><Download /></NIcon></template>
+              <template #icon
+                ><NIcon :size="19"><Download /></NIcon
+              ></template>
             </NButton>
           </template>
           导出当前视图
@@ -245,7 +253,9 @@ onBeforeUnmount(() => {
               :disabled="!view"
               @click="showInspector = true"
             >
-              <template #icon><NIcon :size="19"><Share2 /></NIcon></template>
+              <template #icon
+                ><NIcon :size="19"><Share2 /></NIcon
+              ></template>
             </NButton>
           </template>
           开发面板
@@ -261,9 +271,18 @@ onBeforeUnmount(() => {
 
     <NDrawer v-model:show="showInspector" :width="420" placement="right">
       <NDrawerContent class="editor-inspector-content" title="开发面板" closable>
-        <section v-if="error"><h2>Error</h2><p>{{ error }}</p></section>
-        <section><h2>Autosave</h2><p>状态：{{ status }}</p></section>
-        <section><h2>View payload</h2><pre>{{ inspectorValue }}</pre></section>
+        <section v-if="error">
+          <h2>Error</h2>
+          <p>{{ error }}</p>
+        </section>
+        <section>
+          <h2>Autosave</h2>
+          <p>状态：{{ status }}</p>
+        </section>
+        <section>
+          <h2>View payload</h2>
+          <pre>{{ inspectorValue }}</pre>
+        </section>
       </NDrawerContent>
     </NDrawer>
   </section>

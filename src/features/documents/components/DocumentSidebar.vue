@@ -1,25 +1,18 @@
 <script setup lang="ts">
 import {
   Archive,
-  Blocks,
-  Bot,
-  CalendarClock,
   ChevronDown,
   ChevronRight,
   Ellipsis,
   Folder,
   FolderOpen,
   Info,
-  BookOpenCheck,
-  ClipboardList,
   Pencil,
   Plus,
   RotateCcw,
   Search,
-  Settings,
   Trash2,
   Upload,
-  View,
 } from '@lucide/vue'
 import {
   ContextMenuContent,
@@ -39,28 +32,21 @@ import SidebarDocumentTree from './SidebarDocumentTree.vue'
 import {
   displayDocumentTitle,
   formatDocumentUpdatedAt,
-} from '@/features/documents/documentPresentation'
+} from '@/models/documents/documentPresentation'
 import {
   buildSidebarDocumentForest,
   countSidebarDocumentNodes,
-} from '@/features/documents/documentTree'
-import type { DocumentId, DocumentSummary } from '@/models/document'
-import type { MindMapSummary } from '@/models/mindMap'
-import type { StructuredWorkspaceViewSummary } from '@/models/workspaceView'
+} from '@/models/documents/documentTree'
+import type { DocumentId, DocumentSummary } from '@/models/documents/document'
+import type { MindMapSummary } from '@/models/workspace/mindMap'
+import type { DocumentSidebarView, WorkspaceSurface } from '@/models/workspace/workspaceSurface'
+import type { StructuredWorkspaceViewSummary } from '@/models/workspace/workspaceView'
 import NButton from '@/ui/NButton.vue'
-import NButtonGroup from '@/ui/NButtonGroup.vue'
 import NIcon from '@/ui/NIcon.vue'
 import NTooltip from '@/ui/NTooltip.vue'
 
-export type SidebarView = 'documents' | 'trash'
-export type WorkspaceSurface =
-  | 'agent'
-  | 'document'
-  | 'plugins'
-  | 'automations'
-  | 'audit'
-  | 'knowledge'
-  | 'settings'
+export type SidebarView = DocumentSidebarView
+export type { WorkspaceSurface } from '@/models/workspace/workspaceSurface'
 type BrowserEvent = InstanceType<typeof globalThis.Event>
 type BrowserDragEvent = InstanceType<typeof globalThis.DragEvent>
 type BrowserInputElement = InstanceType<typeof globalThis.HTMLInputElement>
@@ -222,116 +208,27 @@ defineExpose({ openFilePicker })
 <template>
   <aside class="document-sidebar" aria-label="文档管理">
     <header class="sidebar-brand">
-      <button
-        type="button"
-        class="sidebar-brand__home"
-        aria-label="打开 Agent Work"
-        @click="emit('agent')"
-      >
-        <span class="sidebar-brand__mark" aria-hidden="true"><Bot :size="17" /></span>
-        <strong>myNoteBook</strong>
+      <button type="button" class="sidebar-search-trigger" @click="emit('search')">
+        <Search :size="15" />
+        <span>搜索空间内容</span>
+        <kbd>Ctrl K</kbd>
       </button>
-      <NTooltip trigger="hover">
-        <template #trigger>
-          <NButton
-            class="sidebar-quickbar__button"
-            quaternary
-            circle
-            aria-label="搜索"
-            @click="emit('search')"
-          >
-            <template #icon
-              ><NIcon :size="21"><Search /></NIcon
-            ></template>
-          </NButton>
-        </template>
-        搜索
-      </NTooltip>
     </header>
 
-    <nav class="sidebar-primary-nav" aria-label="工作区导航">
-      <button
-        type="button"
-        class="sidebar-primary-nav__item"
-        :class="{ 'sidebar-primary-nav__item--active': activeSurface === 'agent' }"
-        @click="emit('agent')"
-      >
-        <Bot :size="18" /><span>Agent Work</span>
+    <div v-if="view === 'documents'" class="context-sidebar__actions context-sidebar__actions--documents">
+      <button type="button" :disabled="busy" @click="emit('create-group')">
+        <Folder :size="15" /><span>新建分组</span>
       </button>
-      <button
-        type="button"
-        class="sidebar-primary-nav__item"
-        :class="{ 'sidebar-primary-nav__item--active': activeSurface === 'knowledge' }"
-        @click="emit('knowledge')"
-      >
-        <BookOpenCheck :size="18" /><span>知识控制</span>
+      <button type="button" :disabled="busy" @click="emit('create-view', null)">
+        <Plus :size="15" /><span>新建内容</span>
       </button>
-      <button type="button" class="sidebar-primary-nav__item" @click="emit('new-view')">
-        <View :size="18" /><span>新建视图</span
-        ><Plus class="sidebar-primary-nav__trailing" :size="15" />
+      <button type="button" @click="emit('import')">
+        <Upload :size="15" /><span>导入文档</span>
       </button>
-      <button
-        type="button"
-        class="sidebar-primary-nav__item"
-        :class="{ 'sidebar-primary-nav__item--active': activeSurface === 'plugins' }"
-        @click="emit('plugins')"
-      >
-        <Blocks :size="18" /><span>插件技能</span>
-      </button>
-      <button
-        type="button"
-        class="sidebar-primary-nav__item"
-        :class="{ 'sidebar-primary-nav__item--active': activeSurface === 'automations' }"
-        @click="emit('automations')"
-      >
-        <CalendarClock :size="18" /><span>自动化任务</span>
-      </button>
-      <button
-        type="button"
-        class="sidebar-primary-nav__item"
-        :class="{ 'sidebar-primary-nav__item--active': activeSurface === 'audit' }"
-        @click="emit('audit')"
-      >
-        <ClipboardList :size="18" /><span>审计记录</span>
-      </button>
-      <button
-        type="button"
-        class="sidebar-primary-nav__item"
-        :class="{ 'sidebar-primary-nav__item--active': activeSurface === 'settings' }"
-        @click="emit('settings')"
-      >
-        <Settings :size="18" /><span>设置</span>
-      </button>
-    </nav>
+    </div>
 
     <div class="sidebar-section-heading">
-      <span>空间</span>
-      <NButtonGroup class="sidebar-section-heading__actions">
-        <NTooltip trigger="hover">
-          <template #trigger>
-            <NButton size="tiny" quaternary circle aria-label="导入" @click="emit('import')">
-              <template #icon><NIcon :size="14"><Upload /></NIcon></template>
-            </NButton>
-          </template>
-          导入 JSON / Markdown
-        </NTooltip>
-        <NTooltip trigger="hover">
-          <template #trigger>
-            <NButton size="tiny" quaternary circle aria-label="新建分组" :disabled="busy" @click="emit('create-group')">
-              <template #icon><NIcon :size="14"><Folder /></NIcon></template>
-            </NButton>
-          </template>
-          新建分组
-        </NTooltip>
-        <NTooltip trigger="hover">
-          <template #trigger>
-            <NButton size="tiny" quaternary circle aria-label="新建内容" :disabled="busy" @click="emit('create-view', null)">
-              <template #icon><NIcon :size="14"><Plus /></NIcon></template>
-            </NButton>
-          </template>
-          新建内容
-        </NTooltip>
-      </NButtonGroup>
+      <span>{{ view === 'trash' ? '回收站' : '空间资源' }}</span>
     </div>
     <input
       ref="fileInput"

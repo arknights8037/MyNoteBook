@@ -3,8 +3,8 @@ import { Bot, DownloadCloud } from '@lucide/vue'
 import { computed } from 'vue'
 
 import { NButton, NIcon, NInput, NSelect } from '@/ui'
-import { AI_PROVIDER_CONFIGS, type AiProvider } from '@/models/ai'
-import { resolveProviderCapabilities } from '@/models/providerCapabilities'
+import { AI_PROVIDER_CONFIGS, type AiProvider } from '@/models/ai/ai'
+import { resolveProviderCapabilities } from '@/models/agent/providerCapabilities'
 import { useSettingsSectionContext } from './settingsSectionContext'
 
 const {

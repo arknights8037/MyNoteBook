@@ -1,4 +1,4 @@
-import type { AgentPatchSet, AgentTask } from '@/models/agent'
+import type { AgentPatchSet, AgentTask } from '@/models/agent/agent'
 import type { UseAgentRunOptions } from './types'
 import type { AgentRunOutcome } from './agentRunResult'
 

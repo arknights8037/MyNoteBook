@@ -1,14 +1,14 @@
 import { ref, type Ref } from 'vue'
 
 import type { UseDocumentAutosaveReturn } from '@/composables/useDocumentAutosave'
-import { createEmptyDocumentContent } from '@/editor/documentTemplate'
+import { createEmptyDocumentContent } from '@/editor/io/documentTemplate'
 import {
   displayDocumentTitle,
   normalizeDocumentTitle,
-} from '@/features/documents/documentPresentation'
-import type { DocumentId, DocumentRecord, DocumentSummary } from '@/models/document'
-import type { AppError } from '@/models/result'
-import type { DocumentService } from '@/services/DocumentService'
+} from '@/models/documents/documentPresentation'
+import type { DocumentId, DocumentRecord, DocumentSummary } from '@/models/documents/document'
+import type { AppError } from '@/models/shared/result'
+import type { DocumentService } from '@/services/documents/DocumentService'
 import type { CreateWorkspaceDocumentOptions, DocumentWorkspaceNotifier } from './types'
 
 interface UseDocumentTreeActionsOptions {

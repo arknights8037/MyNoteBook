@@ -5,10 +5,10 @@ import {
   displayDocumentTitle,
   normalizeDocumentTitle,
   parseDocumentTags,
-} from '@/features/documents/documentPresentation'
-import type { DocumentId, DocumentRecord, DocumentSummary } from '@/models/document'
-import type { AppError } from '@/models/result'
-import type { DocumentService } from '@/services/DocumentService'
+} from '@/models/documents/documentPresentation'
+import type { DocumentId, DocumentRecord, DocumentSummary } from '@/models/documents/document'
+import type { AppError } from '@/models/shared/result'
+import type { DocumentService } from '@/services/documents/DocumentService'
 import type { DocumentWorkspaceNotifier } from './types'
 
 interface UseDocumentMetadataOptions {

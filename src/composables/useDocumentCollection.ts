@@ -1,12 +1,12 @@
 import { computed, ref, type Ref } from 'vue'
 
-import type { DocumentId, DocumentRecord, DocumentSummary } from '@/models/document'
+import type { DocumentId, DocumentRecord, DocumentSummary } from '@/models/documents/document'
 import {
   buildSidebarDocumentForest,
   countSidebarDocumentNodes,
   type SidebarDocumentNode,
-} from '@/features/documents/documentTree'
-import { mergeDocumentRecord, removeDocumentSummaries } from '@/features/documents/documentListState'
+} from '@/models/documents/documentTree'
+import { mergeDocumentRecord, removeDocumentSummaries } from '@/models/documents/documentListState'
 
 export function useDocumentCollection() {
   const documents = ref<DocumentSummary[]>([])

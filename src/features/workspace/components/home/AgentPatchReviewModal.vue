@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { Check, ChevronDown, FileDiff, FilePlus2, FolderPlus, ShieldCheck, X } from '@lucide/vue'
 
 import { NButton } from '@/ui'
-import type { AgentPatchSet, AgentTask, BlockPatch } from '@/models/agent'
+import type { AgentPatchSet, AgentTask, BlockPatch } from '@/models/agent/agent'
 
 type BrowserEvent = InstanceType<typeof globalThis.Event>
 type BrowserInput = InstanceType<typeof globalThis.HTMLInputElement>

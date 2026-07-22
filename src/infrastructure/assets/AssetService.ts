@@ -1,10 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
 import { openPath } from '@tauri-apps/plugin-opener'
 
-import { getDatabase } from '@/infrastructure/database/connection'
-import { loadAppSettings } from '@/models/settings'
-import { ASSET_URL_PREFIX, createAssetUrl, parseAssetUrl, type AssetRecord } from '@/models/asset'
-import type { DocumentId } from '@/models/document'
+import { getDatabase } from '@/infrastructure/database/shared/connection'
+import { loadAppSettings } from '@/models/settings/settings'
+import { ASSET_URL_PREFIX, parseAssetUrl, type AssetRecord } from '@/models/documents/asset'
+import type { DocumentId } from '@/models/documents/document'
+import type { AssetPort } from '@/services/ports/AssetPort'
 
 interface AssetRow extends Record<string, unknown> {
   id: string
@@ -28,15 +29,7 @@ interface StoreAssetDataUrlResult {
   contentHash: string
 }
 
-export interface AssetService {
-  storeFile(file: File, documentId?: DocumentId | null): Promise<AssetRecord>
-  findAsset(assetId: string): Promise<AssetRecord | null>
-  resolveAssetUrl(assetIdOrUrl: string): Promise<string>
-  openAsset(assetIdOrUrl: string): Promise<void>
-  deleteAsset(assetIdOrUrl: string): Promise<void>
-}
-
-export class TauriAssetService implements AssetService {
+export class TauriAssetService implements AssetPort {
   async storeFile(file: File, documentId: DocumentId | null = null): Promise<AssetRecord> {
     const id = createAssetId()
     const dataUrl = await readFileAsDataUrl(file)
@@ -160,17 +153,7 @@ export class TauriAssetService implements AssetService {
   }
 }
 
-export const assetService = new TauriAssetService()
-
-export function getAssetDisplayName(
-  asset: Pick<AssetRecord, 'originalName' | 'id'> | null,
-): string {
-  return asset?.originalName?.trim() || asset?.id || '附件'
-}
-
-export function getAssetUrl(assetId: string): string {
-  return createAssetUrl(assetId)
-}
+export const tauriAssetService = new TauriAssetService()
 
 function mapAssetRow(row: AssetRow): AssetRecord {
   return {

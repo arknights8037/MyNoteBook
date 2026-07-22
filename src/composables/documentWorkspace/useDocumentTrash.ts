@@ -1,11 +1,11 @@
 import { toValue, type MaybeRefOrGetter, type Ref } from 'vue'
 
 import type { UseDocumentAutosaveReturn } from '@/composables/useDocumentAutosave'
-import { displayDocumentTitle } from '@/features/documents/documentPresentation'
-import { collectArticleDescendants } from '@/features/documents/documentTree'
-import type { DocumentId, DocumentRecord, DocumentSummary } from '@/models/document'
-import type { AppError } from '@/models/result'
-import type { DocumentService } from '@/services/DocumentService'
+import { displayDocumentTitle } from '@/models/documents/documentPresentation'
+import { collectArticleDescendants } from '@/models/documents/documentTree'
+import type { DocumentId, DocumentRecord, DocumentSummary } from '@/models/documents/document'
+import type { AppError } from '@/models/shared/result'
+import type { DocumentService } from '@/services/documents/DocumentService'
 import type {
   CreateWorkspaceDocumentOptions,
   DocumentWorkspaceConfirmation,

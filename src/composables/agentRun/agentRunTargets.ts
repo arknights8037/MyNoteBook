@@ -1,4 +1,4 @@
-import type { AgentExplicitTarget } from '@/models/agentTarget'
+import type { AgentExplicitTarget } from '@/models/agent/agentTarget'
 import type { AgentRunDocumentAdapter, AgentRunDocumentSnapshot, AgentRunSnapshot } from './types'
 import { markdownFromCanonicalBlock } from './agentRunSupport'
 

@@ -11,8 +11,8 @@ import {
   updateActiveAiProfile,
   type AiProvider,
   type AiReasoningEffort,
-} from '@/models/ai'
-import { AI_MODE_OPTIONS, type AiChatMode, type AiSelectorOption } from '@/models/aiChatMode'
+} from '@/models/ai/ai'
+import { AI_MODE_OPTIONS, type AiChatMode, type AiSelectorOption } from '@/models/ai/aiChatMode'
 
 const AI_REASONING_OPTIONS: Array<AiSelectorOption<AiReasoningEffort>> = [
   { value: 'auto', label: '自动', description: '按模型默认策略' },

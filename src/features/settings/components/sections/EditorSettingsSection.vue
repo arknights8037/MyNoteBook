@@ -3,7 +3,7 @@ import { RotateCcw, Type } from '@lucide/vue'
 import { SwitchRoot, SwitchThumb } from 'reka-ui'
 
 import { NButton, NIcon, NSelect } from '@/ui'
-import type { AppSettings } from '@/models/settings'
+import type { AppSettings } from '@/models/settings/settings'
 import { useSettingsSectionContext } from './settingsSectionContext'
 
 const {

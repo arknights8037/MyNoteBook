@@ -2,19 +2,19 @@
 import { Download, Network, Save, Share2 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import { createMindMapService } from '@/app/composition/mindMapServiceFactory'
 import {
   mindMapToDirectionalText,
   type MindMapContent,
   type MindMapDocument,
   type MindMapSummary,
-} from '@/models/mindMap'
-import type { MindMapService } from '@/services/MindMapService'
+} from '@/models/workspace/mindMap'
+import type { MindMapService } from '@/services/workspace/MindMapService'
 import { NButton, NDrawer, NDrawerContent, NIcon, NTooltip } from '@/ui'
 import MindMapEditor from './MindMapEditor.vue'
 
 const props = defineProps<{
   mindMapId: string
+  getService: () => Promise<MindMapService>
 }>()
 const emit = defineEmits<{
   saved: [summary: MindMapSummary]
@@ -40,7 +40,7 @@ const directionalText = computed(() => {
 })
 
 function service(): Promise<MindMapService> {
-  return (servicePromise ??= createMindMapService())
+  return (servicePromise ??= props.getService())
 }
 
 async function load(id: string): Promise<void> {
@@ -110,14 +110,17 @@ async function runSave(): Promise<void> {
         return
       }
       status.value = '正在保存'
-      const result = await (await service()).update({
+      const result = await (
+        await service()
+      ).update({
         id: current.id,
         expectedVersion: current.version,
         title,
         content,
       })
       if (!result.ok) {
-        status.value = result.error.code === 'revision-conflict' ? '版本冲突，请重新打开' : '保存失败'
+        status.value =
+          result.error.code === 'revision-conflict' ? '版本冲突，请重新打开' : '保存失败'
         throw new Error(result.error.message)
       }
       persistedRevision = capturedRevision
@@ -157,7 +160,12 @@ async function exportMindMap(format: 'json' | 'text' = 'json'): Promise<void> {
     const suffix = format === 'json' ? 'mindmap.json' : 'mindmap.txt'
     const path = await save({
       defaultPath: `${safeFileName(document.value.title)}.${suffix}`,
-      filters: [{ name: format === 'json' ? '思维导图 JSON' : 'AI 指向性文本', extensions: [format === 'json' ? 'json' : 'txt'] }],
+      filters: [
+        {
+          name: format === 'json' ? '思维导图 JSON' : 'AI 指向性文本',
+          extensions: [format === 'json' ? 'json' : 'txt'],
+        },
+      ],
     })
     if (!path) return
     const value = { ...document.value, content: draftContent.value }
@@ -205,16 +213,32 @@ onBeforeUnmount(() => {
         </span>
         <NTooltip trigger="hover">
           <template #trigger>
-            <NButton class="topbar__icon-button" quaternary circle aria-label="导出思维导图" @click="exportMindMap('json')">
-              <template #icon><NIcon :size="19"><Download /></NIcon></template>
+            <NButton
+              class="topbar__icon-button"
+              quaternary
+              circle
+              aria-label="导出思维导图"
+              @click="exportMindMap('json')"
+            >
+              <template #icon
+                ><NIcon :size="19"><Download /></NIcon
+              ></template>
             </NButton>
           </template>
           导出思维导图 JSON
         </NTooltip>
         <NTooltip trigger="hover">
           <template #trigger>
-            <NButton class="topbar__icon-button" quaternary circle aria-label="开发面板" @click="showInspector = true">
-              <template #icon><NIcon :size="19"><Share2 /></NIcon></template>
+            <NButton
+              class="topbar__icon-button"
+              quaternary
+              circle
+              aria-label="开发面板"
+              @click="showInspector = true"
+            >
+              <template #icon
+                ><NIcon :size="19"><Share2 /></NIcon
+              ></template>
             </NButton>
           </template>
           开发面板
@@ -233,10 +257,23 @@ onBeforeUnmount(() => {
     <div v-else-if="loading" class="mind-map-workspace-view__empty">正在加载思维导图…</div>
     <NDrawer v-model:show="showInspector" :width="420" placement="right">
       <NDrawerContent class="editor-inspector-content" title="开发面板" closable>
-        <section v-if="error"><h2>Error</h2><p>{{ error }}</p></section>
-        <section><h2>Autosave</h2><p>状态：{{ status }}</p></section>
-        <section><h2>AI 指向性文本</h2><pre>{{ directionalText }}</pre><NButton size="small" secondary @click="exportMindMap('text')">导出文本</NButton></section>
-        <section><h2>JSON</h2><pre>{{ draftContent ? JSON.stringify(draftContent, null, 2) : '' }}</pre></section>
+        <section v-if="error">
+          <h2>Error</h2>
+          <p>{{ error }}</p>
+        </section>
+        <section>
+          <h2>Autosave</h2>
+          <p>状态：{{ status }}</p>
+        </section>
+        <section>
+          <h2>AI 指向性文本</h2>
+          <pre>{{ directionalText }}</pre>
+          <NButton size="small" secondary @click="exportMindMap('text')">导出文本</NButton>
+        </section>
+        <section>
+          <h2>JSON</h2>
+          <pre>{{ draftContent ? JSON.stringify(draftContent, null, 2) : '' }}</pre>
+        </section>
       </NDrawerContent>
     </NDrawer>
   </section>

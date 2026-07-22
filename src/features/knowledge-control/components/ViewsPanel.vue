@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { BookOpenCheck } from '@lucide/vue'
-import type { ViewDefinition, ViewType, ViewWritebackPolicy } from '@/models/view'
+import type { ViewDefinition, ViewType, ViewWritebackPolicy } from '@/models/knowledge/view'
 import { NButton, NSelect } from '@/ui'
 
 defineProps<{

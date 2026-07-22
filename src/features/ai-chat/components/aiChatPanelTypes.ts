@@ -1,5 +1,5 @@
-import type { AiChatMode, AiChatRole, AiChatStatus } from '@/models/aiChatMode'
-import type { AgentRuntimeViewState } from '@/models/agentRuntime'
+import type { AiChatMode, AiChatRole, AiChatStatus } from '@/models/ai/aiChatMode'
+import type { AgentRuntimeViewState } from '@/models/agent/agentRuntime'
 import type {
   CognitiveResultProvenance,
   LearningSessionState,
@@ -7,8 +7,8 @@ import type {
   ResearchCandidateRef,
   ResearchResult,
   ReviewResult,
-} from '@/models/cognitive'
-import type { KnowledgeSource } from '@/models/knowledgeRetrieval'
+} from '@/models/cognitive/cognitive'
+import type { KnowledgeSource } from '@/models/knowledge/knowledgeRetrieval'
 
 export interface AiChatPanelMessage {
   id: string

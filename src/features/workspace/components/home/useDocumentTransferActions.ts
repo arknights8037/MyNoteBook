@@ -7,9 +7,9 @@ import type {
   DocumentRecord,
   DocumentSummary,
   TiptapDocumentJson,
-} from '@/models/document'
-import type { AppError } from '@/models/result'
-import type { DocumentTransferService } from '@/services/DocumentTransferService'
+} from '@/models/documents/document'
+import type { AppError } from '@/models/shared/result'
+import type { DocumentTransferService } from '@/services/documents/DocumentTransferService'
 import type { DocumentImportFormat } from '@/features/documents/documentFile'
 import type { DocumentSidebarExpose, EditorShellExpose, MarkdownFileInput } from './homePageTypes'
 
@@ -148,7 +148,7 @@ export function useDocumentTransferActions(options: DocumentTransferActionsOptio
     }
 
     const [{ ensureTopLevelBlockIds }, documentTransfer] = await Promise.all([
-      import('@/editor/blockId'),
+      import('@/editor/blocks/blockId'),
       options.getDocumentTransfer(),
     ])
     return documentTransfer.prepareExport({

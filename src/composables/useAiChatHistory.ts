@@ -1,23 +1,25 @@
 import { computed, ref, type Ref } from 'vue'
 
-import type { AgentProject, AiChatHistoryMessage, AiChatHistoryItem } from '@/models/aiChatHistory'
+import type { AgentProject, AiChatHistoryMessage, AiChatHistoryItem } from '@/models/ai/aiChatHistory'
 import {
   createEmptyAgentWorkspaceHistory,
   normalizeAgentWorkspaceHistory,
   purgeLegacyAgentHistoryStorage,
   UNGROUPED_AGENT_PROJECT_ID,
-} from '@/models/aiChatHistory'
-import type { AiSettings } from '@/models/ai'
-import {
-  createAgentWorkspaceHistoryStore,
-  type AgentWorkspaceHistoryStore,
-} from '@/infrastructure/database/AgentWorkspaceHistoryStore'
+} from '@/models/ai/aiChatHistory'
+import type { AiSettings } from '@/models/ai/ai'
+import type { AgentWorkspaceHistoryStore } from '@/repositories/agent/AgentWorkspaceHistoryStore'
+
+const transientHistoryStore: AgentWorkspaceHistoryStore = {
+  load: async () => null,
+  save: async () => undefined,
+}
 
 export function useAiChatHistory(
   messages: Ref<AiChatHistoryMessage[]>,
   settings: Ref<AiSettings>,
   createId: () => string,
-  store: AgentWorkspaceHistoryStore = createAgentWorkspaceHistoryStore(),
+  store: AgentWorkspaceHistoryStore = transientHistoryStore,
 ) {
   purgeLegacyAgentHistoryStorage()
   const initial = createEmptyAgentWorkspaceHistory()

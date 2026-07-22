@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { TableViewPayload } from '@/models/workspaceView'
-import VueMuteTableEditor from '@/editor/VueMuteTableEditor.vue'
-import { applyTableFieldsToRows, normalizeTableFields, syncTableFieldsFromHeader } from '@/editor/tableFields'
-import { normalizeTableRows } from '@/editor/structuredBlocks'
+import type { TableViewPayload } from '@/models/workspace/workspaceView'
+import VueMuteTableEditor from '@/editor/components/VueMuteTableEditor.vue'
+import { applyTableFieldsToRows, normalizeTableFields, syncTableFieldsFromHeader } from '@/editor/blocks/tableFields'
+import { normalizeTableRows } from '@/editor/blocks/structuredBlocks'
 
 const props = defineProps<{ payload: TableViewPayload }>()
 const emit = defineEmits<{ update: [payload: TableViewPayload] }>()

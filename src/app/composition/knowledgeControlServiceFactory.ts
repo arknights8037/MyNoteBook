@@ -1,13 +1,13 @@
-import { createEntityId } from '@/models/id'
-import { GeneratedViewAiExecutor } from '@/services/GeneratedViewAiExecutor'
-import { KnowledgeControlService } from '@/services/KnowledgeControlService'
+import { createEntityId } from '@/models/shared/id'
+import { GeneratedViewAiExecutor } from '@/services/workspace/GeneratedViewAiExecutor'
+import { KnowledgeControlService } from '@/services/knowledge/KnowledgeControlService'
 import { tauriCliAgentFilePort } from '@/infrastructure/transfer/tauriCliAgentFilePort'
-import { createDocumentRepository } from '@/infrastructure/database/documentRepositoryFactory'
-import { createGovernanceRepository } from '@/infrastructure/database/governanceRepositoryFactory'
-import { createKnowledgeRepository } from '@/infrastructure/database/knowledgeRepositoryFactory'
-import { createViewRepository } from '@/infrastructure/database/viewRepositoryFactory'
-import { createWorkRepository } from '@/infrastructure/database/workRepositoryFactory'
-import { assetService } from '@/infrastructure/assets/AssetService'
+import { createDocumentRepository } from '@/infrastructure/database/documents/documentRepositoryFactory'
+import { createGovernanceRepository } from '@/infrastructure/database/knowledge/governanceRepositoryFactory'
+import { createKnowledgeRepository } from '@/infrastructure/database/knowledge/knowledgeRepositoryFactory'
+import { createViewRepository } from '@/infrastructure/database/knowledge/viewRepositoryFactory'
+import { createWorkRepository } from '@/infrastructure/database/knowledge/workRepositoryFactory'
+import { tauriAssetService } from '@/infrastructure/assets/AssetService'
 
 export async function createKnowledgeControlService(): Promise<KnowledgeControlService> {
   const [knowledge, views, work, documents, governance] = await Promise.all([
@@ -27,6 +27,6 @@ export async function createKnowledgeControlService(): Promise<KnowledgeControlS
     createEntityId,
     Date.now,
     new GeneratedViewAiExecutor(),
-    assetService,
+    tauriAssetService,
   )
 }

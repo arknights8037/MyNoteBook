@@ -3,7 +3,7 @@ import type {
   DocumentKind,
   DocumentSummary,
   TiptapDocumentJson,
-} from '@/models/document'
+} from '@/models/documents/document'
 
 export interface DocumentWorkspaceSettings {
   autosaveDelay: number

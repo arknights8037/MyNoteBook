@@ -1,63 +1,45 @@
 import { ref } from 'vue'
 
-import { resolveAgentSlashCommand } from '@/models/agentSlashCommand'
-import type { AgentRuntimeResult } from '@/services/AgentRuntime'
-import { appendKnowledgeSources, type KnowledgeSource } from '@/models/knowledgeRetrieval'
-import {
-  buildAiPrompt,
-  inferAiAgentIntent,
-  resolveAiExecutionMode,
-} from '@/services/AiPromptPolicy'
-import { normalizeDocumentTitle } from '@/features/documents/documentPresentation'
+import type { AgentRuntimeResult } from '@/services/agent/AgentRuntime'
+import { appendKnowledgeSources, type KnowledgeSource } from '@/models/knowledge/knowledgeRetrieval'
+import { buildAiPrompt } from '@/services/ai/AiPromptPolicy'
+import { normalizeDocumentTitle } from '@/models/documents/documentPresentation'
 import { buildAgentRunContext } from './agentRun/agentRunContext'
-import { createPersistedAgentTask, persistAgentRunResult } from './agentRun/agentRunPersistence'
+import { persistAgentRunResult } from './agentRun/agentRunPersistence'
 import type { AgentRunOutcome } from './agentRun/agentRunResult'
-import type { AgentCommunicationResult } from '@/services/AgentCommunicationService'
-import {
-  captureAgentRunSnapshot,
-  createAgentEditPlan,
-  type AgentEditPlan,
-} from './agentRun/agentRunSnapshot'
+import type { AgentCommunicationResult } from '@/services/agent/AgentCommunicationService'
 import type { AgentRunContinuation, AgentRunSession, UseAgentRunOptions } from './agentRun/types'
-import { compileContextBundle } from '@/models/contextBundle'
-import { auditConfiguredModelParameters } from '@/models/providerCapabilities'
-import { prepareAgentRunExecution } from '@/services/AgentRunExecution'
-import { resolveAgentOutputTokenLimit } from '@/services/AgentToolRegistry'
-import { createMindMapService } from '@/app/composition/mindMapServiceFactory'
-import type { MindMapService } from '@/services/MindMapService'
+import { compileContextBundle } from '@/models/agent/contextBundle'
+import { auditConfiguredModelParameters } from '@/models/agent/providerCapabilities'
+import { prepareAgentRunExecution } from '@/services/agent/AgentRunExecution'
+import { resolveAgentOutputTokenLimit } from '@/services/agent/AgentToolRegistry'
 import type {
   CognitiveResultProvenance,
-  CognitiveSession,
-  LearningSessionState,
   LearningTurnResult,
   ResearchCandidateRef,
   ResearchResult,
   ReviewResult,
-} from '@/models/cognitive'
-import { prepareCognitiveRun } from '@/services/CognitiveRunService'
+} from '@/models/cognitive/cognitive'
+import { prepareCognitiveRun } from '@/services/cognitive/CognitiveRunService'
 import {
-  applyLearningTurn,
   compileLearningStateContext,
   createInitialLearningTurn,
-  createLearningSessionState,
-  parseLearningSessionState,
-} from '@/services/LearningSessionStateService'
-import { formatAiErrorMessage } from '@/services/AiErrorMessage'
+} from '@/services/cognitive/LearningSessionStateService'
+import { formatAiErrorMessage } from '@/services/ai/AiErrorMessage'
 import {
   buildContinuationPrompt,
   compileConversationContinuationContext,
   createPersistableRuntimeSnapshot,
-  getModeLabel,
   projectKnowledgeForBundle,
   resolveWorkspaceDocumentIds,
-  restrictToolsForIntent,
   selectRelevantApprovedKnowledge,
 } from './agentRun/agentRunSupport'
-import {
-  hydrateCanonicalDocumentSnapshot,
-  hydrateExplicitDocumentTargets,
-} from './agentRun/agentRunTargets'
 import { createAgentRunRuntimeController } from './agentRun/agentRunRuntimeController'
+import {
+  describeAgentRunCompletion,
+  resolveCognitiveIntentResult,
+} from './agentRun/agentRunIntentStrategy'
+import { prepareAgentRun } from './agentRun/agentRunPreparation'
 
 export {
   compileConversationContinuationContext,
@@ -65,6 +47,7 @@ export {
 } from './agentRun/agentRunSupport'
 
 export type {
+  AgentRunServiceDependencies,
   AgentRunDocumentAdapter,
   AgentRunDocumentSnapshot,
   AgentRunPatchWorkflow,
@@ -75,8 +58,7 @@ export type {
 
 export function useAgentRun(options: UseAgentRunOptions) {
   let abortController: AbortController | null = null
-  let mindMapService: Promise<MindMapService> | null = null
-  const mapsControl = () => (mindMapService ??= createMindMapService())
+  let runActive = false
   const runtime = createAgentRunRuntimeController(options.createId)
   const {
     runtimeState,
@@ -84,20 +66,18 @@ export function useAgentRun(options: UseAgentRunOptions) {
     answerAuthorization,
     cancelPendingAuthorization,
     applyProgressUpdate,
-    appendTimelineStatus,
-    settleRunningTimelineEvents,
+    recordExecutionResult,
+    setSummary,
   } = runtime
   const lastTaskId = ref<string | null>(null)
   const lastRunIssue = ref('')
   const lastRunReport = ref<AgentCommunicationResult | null>(null)
   const activeConversationId = ref<string | null>(null)
-  const hasCognitivePersistence = () =>
-    Boolean(options.getCognitiveSessionService) || Reflect.has(globalThis, '__TAURI_INTERNALS__')
+  const hasCognitivePersistence = () => Boolean(options.services?.getCognitiveSessionService)
   const getCognitiveSessionService = async () => {
-    if (options.getCognitiveSessionService) return options.getCognitiveSessionService()
-    const { createCognitiveSessionService } =
-      await import('@/app/composition/cognitiveSessionServiceFactory')
-    return createCognitiveSessionService()
+    const provider = options.services?.getCognitiveSessionService
+    if (!provider) throw new Error('当前运行环境未提供 Cognitive Session 持久化服务。')
+    return provider()
   }
 
   async function run(
@@ -112,7 +92,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
     }
     const basePrompt = promptOverride?.trim() || runContext.prompt.value.trim()
     const prompt = continuation ? buildContinuationPrompt(basePrompt, continuation) : basePrompt
-    if (options.isRunning.value) {
+    if (runActive) {
       lastRunIssue.value = 'Agent Runtime 已有任务正在运行。'
       return
     }
@@ -123,48 +103,50 @@ export function useAgentRun(options: UseAgentRunOptions) {
     lastTaskId.value = null
     lastRunIssue.value = ''
     lastRunReport.value = null
+    const runId = options.createId()
+    runActive = true
+    abortController = new AbortController()
+    runtime.start({ runId, goal: prompt, detail: '正在准备 Agent 任务' })
 
     const originalPrompt = prompt
-    const priorConversationMessages = [...runContext.messages.value]
-    const slashCommand = resolveAgentSlashCommand(originalPrompt)
-    if (slashCommand) runContext.mode.value = slashCommand.command.mode
-    const conversationId =
-      runContext.workspace?.ensureConversationId() ??
-      runContext.workspace?.conversationId.value ??
-      ''
+    let prepared
+    try {
+      prepared = await prepareAgentRun({
+        originalPrompt,
+        continuation,
+        session,
+        runContext,
+        options,
+        hasCognitivePersistence: hasCognitivePersistence(),
+        getCognitiveSessionService,
+      })
+    } catch (error) {
+      const message = formatAiErrorMessage(error)
+      failRun(message)
+      runtime.fail(message)
+      runActive = false
+      abortController = null
+      return
+    }
+    if (!prepared.ok) {
+      failRun(prepared.error)
+      runtime.fail(prepared.error)
+      runActive = false
+      abortController = null
+      return
+    }
+    const {
+      snapshot,
+      slashCommand,
+      priorConversationMessages,
+      conversationId,
+      mode,
+      editPlan,
+      resumedLearningSession,
+    } = prepared.value
+    const { agentIntent, learningStateBeforeRun, learningUserAttempt } = prepared.value
+    let { cognitiveSession, learningState } = prepared.value
     activeConversationId.value = conversationId || null
-
-    // Capture before the first await so navigation and settings edits cannot retarget this run.
-    const snapshot = captureAgentRunSnapshot({
-      prompt: slashCommand?.prompt ?? originalPrompt,
-      requestedMode: slashCommand?.command.mode ?? runContext.mode.value,
-      settings: options.settings.value,
-      document: session?.documentSnapshot ?? options.document.captureSnapshot(),
-      explicitTargets: session?.explicitTargets?.value ?? options.explicitTargets?.value ?? [],
-      workspace: {
-        projectId: runContext.workspace?.projectId.value ?? '',
-        projectName: runContext.workspace?.projectName.value ?? '未分组 Agent 项目',
-        rootDocumentIds: [...(runContext.workspace?.rootDocumentIds.value ?? [])],
-        conversationId,
-      },
-    })
-    const activeDocumentId = snapshot.document.id
-    const hydratedTargets = await hydrateExplicitDocumentTargets(snapshot, options.document)
-    if (!hydratedTargets.ok) {
-      failRun(hydratedTargets.error)
-      return
-    }
-    snapshot.explicitTargets = hydratedTargets.targets
-    if (!(await options.ensureSecretLoaded())) {
-      failRun('密钥库在 3 秒内未就绪，请稍后重试或在 AI 设置中重新填写 API Key。')
-      return
-    }
-    // Secret loading may populate the active key; all non-secret run settings stay frozen.
-    snapshot.settings.apiKey ||= options.settings.value.apiKey
-    if (!snapshot.settings.model.trim()) {
-      failRun('请先在 AI 设置中获取或填写模型。')
-      return
-    }
 
     const [
       { runAiMarkdownCompletion },
@@ -175,17 +157,14 @@ export function useAgentRun(options: UseAgentRunOptions) {
       { loadEnabledSkillPrompt },
       { formatAgentRunSummary, resolveAgentRunResult },
     ] = await Promise.all([
-      import('@/services/AiMarkdownService'),
-      import('@/services/AiSystemPrompt'),
-      import('@/services/AgentRuntime'),
-      import('@/services/AgentToolExecutor'),
-      import('@/services/RustAgentToolService'),
-      import('@/services/SkillService'),
+      import('@/services/ai/AiMarkdownService'),
+      import('@/services/ai/AiSystemPrompt'),
+      import('@/services/agent/AgentRuntime'),
+      import('@/services/agent/AgentToolExecutor'),
+      import('@/services/agent/RustAgentToolService'),
+      import('@/services/integrations/SkillService'),
       import('./agentRun/agentRunResult'),
     ])
-    const mode = resolveAiExecutionMode(snapshot.requestedMode, snapshot.prompt)
-    let agentIntent = slashCommand?.command.intent ?? inferAiAgentIntent(snapshot.prompt)
-    let editPlan: AgentEditPlan | null = null
     let sources: KnowledgeSource[] = []
     let agentRounds = 0
     let agentToolCallCount = 0
@@ -193,13 +172,8 @@ export function useAgentRun(options: UseAgentRunOptions) {
     let researchResult: ResearchResult | null = null
     let reviewResult: ReviewResult | null = null
     let learningResult: LearningTurnResult | null = null
-    let learningState: LearningSessionState | null = null
-    let learningStateBeforeRun: LearningSessionState | null = null
-    let learningUserAttempt: string | null = null
-    let resumedLearningSession = false
     let agentTaskResultPersisted = false
     let researchCandidates: ResearchCandidateRef[] = []
-    let cognitiveSession: CognitiveSession | null = null
     const workspaceDocumentIds = resolveWorkspaceDocumentIds(
       snapshot.document.documents,
       snapshot.workspace?.rootDocumentIds ?? [],
@@ -216,84 +190,10 @@ export function useAgentRun(options: UseAgentRunOptions) {
       }
     >()
     const { parseReadDocumentProvenance, validateDocumentEditProvenance } =
-      await import('@/services/AgentEditProposalGuard')
+      await import('@/services/agent/AgentEditProposalGuard')
     const taskApprovedMcpServerIds = new Set<string>()
 
-    if (!slashCommand && mode === 'agent' && conversationId && hasCognitivePersistence()) {
-      const listed = await (await getCognitiveSessionService()).listByConversation(conversationId)
-      if (!listed.ok) {
-        failRun(listed.error.message)
-        return
-      }
-      const waiting = listed.value.find(
-        (session) => session.modeId === 'learning' && session.status === 'waiting_user',
-      )
-      if (waiting) {
-        const restored = parseLearningSessionState(waiting.state)
-        if (!restored) {
-          failRun('Learning Session 状态已损坏，无法继续本次学习。')
-          return
-        }
-        agentIntent = 'learning'
-        cognitiveSession = waiting
-        learningState = restored
-        learningStateBeforeRun = restored
-        learningUserAttempt = snapshot.prompt
-        resumedLearningSession = true
-      }
-    }
-    if (agentIntent === 'learning' && !learningState) {
-      learningState = createLearningSessionState(snapshot.prompt)
-      learningStateBeforeRun = learningState
-    }
-
-    if (snapshot.requestedMode === 'auto') {
-      options.notify.success(`Auto 已选择 ${getModeLabel(mode)} 处理本次任务`)
-    }
-
-    if (mode === 'edit' || mode === 'agent') {
-      const flushResult = await options.document.flushBeforeEdit()
-      if (!flushResult.ok) {
-        failRun('当前文档保存失败，暂不能发起 Agent 修改。')
-        return
-      }
-      if (snapshot.document.id === activeDocumentId) {
-        snapshot.document.revision = flushResult.revision ?? snapshot.document.revision
-        snapshot.explicitTargets = snapshot.explicitTargets.map((target) =>
-          target.kind === 'document' && target.id === activeDocumentId
-            ? {
-                ...target,
-                revision: snapshot.document.revision ?? undefined,
-                content: target.content?.replace(
-                  /revision=(?:unknown|\d+)/g,
-                  `revision=${snapshot.document.revision ?? 'unknown'}`,
-                ),
-              }
-            : target,
-        )
-      }
-      snapshot.document = await hydrateCanonicalDocumentSnapshot(snapshot.document, options.document)
-      editPlan = createAgentEditPlan({ snapshot, mode, createId: options.createId })
-      if (!editPlan) {
-        failRun('当前文档还没有可修改的块或版本信息。')
-        return
-      }
-      restrictToolsForIntent(editPlan.task.executionPolicy, agentIntent)
-      if (continuation) {
-        editPlan.task.causationId = continuation.previousTaskId
-        editPlan.task.executionPolicy.allowedTools = ['submit_document_edits']
-        editPlan.task.executionPolicy.maxToolRounds = Math.min(
-          editPlan.task.executionPolicy.maxToolRounds,
-          10,
-        )
-      }
-      const persistenceError = await createPersistedAgentTask(editPlan.task, options)
-      if (persistenceError) {
-        failRun(persistenceError)
-        return
-      }
-      lastTaskId.value = editPlan.task.id
-    }
+    if (editPlan) lastTaskId.value = editPlan.task.id
 
     const assistantMessage = {
       id: options.createId(),
@@ -318,19 +218,9 @@ export function useAgentRun(options: UseAgentRunOptions) {
     options.isRunning.value = true
     runContext.workspace?.requestConversationTitle?.(conversationId, snapshot.prompt)
     runContext.error.value = ''
-    abortController = new AbortController()
-    runtimeState.value = {
-      status: 'running',
-      phase: 'preparing',
-      detail: mode === 'agent' ? '正在准备 Agent 任务' : '正在准备文档上下文',
-      startedAt: Date.now(),
-      completedAt: null,
-      rounds: 0,
-      toolCalls: [],
-      timelineEvents: [],
-      authorizationRequest: null,
-      summary: '',
-    }
+    runtime.beginExecution(
+      mode === 'agent' ? '正在准备 Agent 任务' : '正在准备文档上下文',
+    )
     const syncRuntimeMessage = (): void => {
       const message = runContext.messages.value[assistantIndex]
       if (!message || message.role !== 'assistant') return
@@ -374,10 +264,10 @@ export function useAgentRun(options: UseAgentRunOptions) {
         instructions: '',
         skills: [],
       }))
-      const effectiveKnowledge = Reflect.has(globalThis, '__TAURI_INTERNALS__')
-        ? await import('@/infrastructure/database/knowledgeRepositoryFactory')
-            .then(async ({ createKnowledgeRepository }) => {
-              const repository = await createKnowledgeRepository()
+      const effectiveKnowledge = options.services?.getKnowledgeRepository
+        ? await options.services
+            .getKnowledgeRepository()
+            .then(async (repository) => {
               const result = await repository.listObjects({
                 types: ['rule', 'decision'],
                 documentId: snapshot.document.id,
@@ -388,10 +278,10 @@ export function useAgentRun(options: UseAgentRunOptions) {
             })
             .catch(() => [])
         : []
-      const approvedReferenceKnowledge = Reflect.has(globalThis, '__TAURI_INTERNALS__')
-        ? await import('@/infrastructure/database/knowledgeRepositoryFactory')
-            .then(async ({ createKnowledgeRepository }) => {
-              const repository = await createKnowledgeRepository()
+      const approvedReferenceKnowledge = options.services?.getKnowledgeRepository
+        ? await options.services
+            .getKnowledgeRepository()
+            .then(async (repository) => {
               const result = await repository.listObjects({
                 types: [
                   'claim',
@@ -506,11 +396,12 @@ export function useAgentRun(options: UseAgentRunOptions) {
         editPlan.task.contextBundleId = contextBundle.id
       }
       const mcpRuntimeTools =
-        mode === 'agent'
-          ? await import('@/services/McpService')
-              .then(async ({ listMcpTools }) => {
-                const { createMcpRuntimeTools } = await import('@/models/mcp')
-                return createMcpRuntimeTools(await listMcpTools())
+        mode === 'agent' && options.services?.mcpClient
+          ? await options.services.mcpClient
+              .listTools()
+              .then(async (tools) => {
+                const { createMcpRuntimeTools } = await import('@/models/integrations/mcp')
+                return createMcpRuntimeTools(tools)
               })
               .catch(() => [])
           : []
@@ -609,9 +500,13 @@ export function useAgentRun(options: UseAgentRunOptions) {
           currentMessage.content += delta
         }
       }
-      runtimeState.value.phase = 'planning'
-      runtimeState.value.detail =
-        mode === 'agent' ? '正在规划任务' : mode === 'edit' ? '正在生成修改提案' : '正在生成回答'
+      runtime.beginExecution(
+        mode === 'agent'
+          ? '正在规划任务'
+          : mode === 'edit'
+            ? '正在生成修改提案'
+            : '正在生成回答',
+      )
       const output =
         agentIntent === 'learning' &&
         !resumedLearningSession &&
@@ -658,10 +553,11 @@ export function useAgentRun(options: UseAgentRunOptions) {
                       }
                     }
                     try {
-                      const { callMcpTool } = await import('@/services/McpService')
+                      const mcpClient = options.services?.mcpClient
+                      if (!mcpClient) throw new Error('当前运行环境未提供 MCP Client。')
                       return {
                         ok: true,
-                        value: await callMcpTool(
+                        value: await mcpClient.callTool(
                           externalTool.serverId,
                           externalTool.name,
                           request.arguments,
@@ -694,12 +590,16 @@ export function useAgentRun(options: UseAgentRunOptions) {
                     searchDocuments: options.document.searchDocuments,
                     readDocument: options.document.readDocument,
                     listMindMaps: async () => {
-                      const result = await (await mapsControl()).list()
+                      const provider = options.services?.getMindMapService
+                      if (!provider) throw new Error('当前运行环境未提供思维导图服务。')
+                      const result = await (await provider()).list()
                       if (!result.ok) throw new Error(result.error.message)
                       return result.value
                     },
                     readMindMap: async (mindMapId, query) => {
-                      const result = await (await mapsControl()).readSubtree(mindMapId, query)
+                      const provider = options.services?.getMindMapService
+                      if (!provider) throw new Error('当前运行环境未提供思维导图服务。')
+                      const result = await (await provider()).readSubtree(mindMapId, query)
                       if (!result.ok) {
                         if (result.error.code === 'not-found') return null
                         throw new Error(result.error.message)
@@ -745,21 +645,21 @@ export function useAgentRun(options: UseAgentRunOptions) {
                     requestAuthorizerInput: (request) =>
                       waitForAuthorizerInput(request, editPlan.task),
                     createAutomationDraft: async (input) => {
-                      const { createAgentResourceDraftService } =
-                        await import('@/app/composition/agentResourceDraftServiceFactory')
-                      const service = await createAgentResourceDraftService(options.createId)
+                      const provider = options.services?.getAgentResourceDraftService
+                      if (!provider) throw new Error('当前运行环境未提供 Agent 资源草稿服务。')
+                      const service = await provider()
                       return service.createAutomationDraft(input)
                     },
                     createSkillDraft: async (input) => {
-                      const { createAgentResourceDraftService } =
-                        await import('@/app/composition/agentResourceDraftServiceFactory')
-                      const service = await createAgentResourceDraftService(options.createId)
+                      const provider = options.services?.getAgentResourceDraftService
+                      if (!provider) throw new Error('当前运行环境未提供 Agent 资源草稿服务。')
+                      const service = await provider()
                       return service.createSkillDraft(input)
                     },
                     createMcpServerDraft: async (input) => {
-                      const { createAgentResourceDraftService } =
-                        await import('@/app/composition/agentResourceDraftServiceFactory')
-                      const service = await createAgentResourceDraftService(options.createId)
+                      const provider = options.services?.getAgentResourceDraftService
+                      if (!provider) throw new Error('当前运行环境未提供 Agent 资源草稿服务。')
+                      const service = await provider()
                       return service.createMcpServerDraft(input)
                     },
                   })
@@ -775,8 +675,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
                   finishReason: result.finishReason,
                   usage: result.usage,
                 }
-                runtimeState.value.rounds = result.rounds
-                runtimeState.value.toolCalls = result.toolCalls
+                recordExecutionResult({ rounds: result.rounds, toolCalls: result.toolCalls })
                 return result.output
               })
             : await runAiMarkdownCompletion({
@@ -795,35 +694,21 @@ export function useAgentRun(options: UseAgentRunOptions) {
       if ((mode === 'edit' || mode === 'agent') && editPlan) {
         if (cognitiveRun) {
           const structuredResult = cognitiveRun.outputContract.validate(JSON.parse(output))
-          if (agentIntent === 'research') {
-            researchResult = structuredResult as ResearchResult
-            summary = researchResult.summary
-          } else if (agentIntent === 'review') {
-            const { validateReviewResultSources } = await import('@/services/ReviewResultService')
-            reviewResult = await validateReviewResultSources({
-              result: structuredResult as ReviewResult,
-              reader: {
-                readDocument: options.document.readDocument,
-                listDocumentBlocks: options.document.listDocumentBlocks,
-              },
-              createId: options.createId,
-            })
-            summary = reviewResult.summary
-          } else if (agentIntent === 'learning' && learningState) {
-            learningResult = structuredResult as LearningTurnResult
-            const applied = applyLearningTurn({
-              state: learningState,
-              userAttempt: learningUserAttempt,
-              turn: learningResult,
-              createId: options.createId,
-            })
-            if (!applied.ok) throw new Error(applied.error.message)
-            learningState = applied.value
-            summary =
-              learningResult.understandingState === 'not_assessed'
-                ? learningResult.nextPrompt.content
-                : `已分析本轮尝试：${learningResult.feedback.correctPoints.length} 个正确点、${learningResult.feedback.omissions.length} 个遗漏、${learningResult.feedback.misconceptions.length} 个误解。`
-          }
+          const resolved = await resolveCognitiveIntentResult(agentIntent, {
+            structuredResult,
+            learningState,
+            learningUserAttempt,
+            document: {
+              readDocument: options.document.readDocument,
+              listDocumentBlocks: options.document.listDocumentBlocks,
+            },
+            createId: options.createId,
+          })
+          researchResult = resolved.researchResult
+          reviewResult = resolved.reviewResult
+          learningResult = resolved.learningResult
+          learningState = resolved.learningState ?? learningState
+          summary = resolved.summary
           outcome = 'no_change'
         } else {
           const result = await resolveAgentRunResult({
@@ -893,12 +778,13 @@ export function useAgentRun(options: UseAgentRunOptions) {
           outputContractId: cognitiveRun.spec.outputContractId,
           createdAt: Date.now(),
         }
-        if (researchResult && Reflect.has(globalThis, '__TAURI_INTERNALS__')) {
-          const { createResearchCandidateService } =
-            await import('@/app/composition/researchCandidateServiceFactory')
+        if (researchResult && options.services?.getResearchCandidateService) {
           const created = await (
-            await createResearchCandidateService((prefix) => `${prefix}-${options.createId()}`)
-          ).createFromResult({ result: researchResult, provenance: cognitiveProvenance })
+            await options.services.getResearchCandidateService()
+          ).createFromResult({
+            result: researchResult,
+            provenance: cognitiveProvenance,
+          })
           if (!created.ok) throw new Error(created.error.message)
           researchCandidates = created.value
         }
@@ -917,13 +803,14 @@ export function useAgentRun(options: UseAgentRunOptions) {
                 })
               : currentMessage.content
         currentMessage.status = 'done'
-        runtimeState.value.summary =
+        setSummary(
           summary.trim() ||
-          (outcome === 'proposal'
-            ? '已生成待确认的修改提案。'
-            : outcome === 'blocked'
-              ? '现有信息不足，任务暂时无法继续。'
-              : '任务已完成。')
+            (outcome === 'proposal'
+              ? '已生成待确认的修改提案。'
+              : outcome === 'blocked'
+                ? '现有信息不足，任务暂时无法继续。'
+                : '任务已完成。'),
+        )
         if (researchResult && cognitiveProvenance) {
           currentMessage.researchResult = researchResult
           currentMessage.cognitiveProvenance = cognitiveProvenance
@@ -1007,25 +894,13 @@ export function useAgentRun(options: UseAgentRunOptions) {
           await options.document.openDocumentForReview(patchTargetDocumentId)
         }
       }
-      runtimeState.value.status = 'completed'
-      runtimeState.value.phase = 'completed'
-      runtimeState.value.detail = patchSet
-        ? '修改提案已准备，等待确认'
-        : slashCommand?.command.intent === 'plan'
-          ? '计划已完成'
-          : agentIntent === 'research'
-            ? '调研已完成'
-            : agentIntent === 'review'
-              ? '审阅已完成'
-              : agentIntent === 'learning'
-                ? learningResult?.phase === 'waiting_user'
-                  ? '等待你的尝试'
-                  : '学习阶段已完成'
-                : '任务已完成'
-      runtimeState.value.completedAt = Date.now()
-      runtimeState.value.authorizationRequest = null
-      settleRunningTimelineEvents('completed')
-      appendTimelineStatus('completed', runtimeState.value.detail)
+      const completionDetail = describeAgentRunCompletion({
+        hasPatchSet: Boolean(patchSet),
+        slashIntent: slashCommand?.command.intent,
+        intent: agentIntent,
+        learningResult,
+      })
+      runtime.complete(completionDetail)
       syncRuntimeMessage()
     } catch (error) {
       const aborted = (error as { name?: string }).name === 'AbortError'
@@ -1071,18 +946,13 @@ export function useAgentRun(options: UseAgentRunOptions) {
           currentMessage.content = runContext.error.value || currentMessage.content
         }
       }
-      runtimeState.value.status = aborted ? 'cancelled' : 'failed'
-      runtimeState.value.phase = aborted ? 'cancelled' : 'failed'
-      runtimeState.value.detail = aborted ? '任务已停止' : runContext.error.value || '任务失败'
-      runtimeState.value.completedAt = Date.now()
-      runtimeState.value.authorizationRequest = null
-      settleRunningTimelineEvents(aborted ? 'completed' : 'failed')
-      appendTimelineStatus(aborted ? 'completed' : 'failed', runtimeState.value.detail)
-      runtimeState.value.summary ||= runtimeState.value.detail
+      if (aborted) runtime.cancel('任务已停止')
+      else runtime.fail(runContext.error.value || '任务失败')
       syncRuntimeMessage()
     } finally {
       cancelPendingAuthorization('Agent 任务已经结束。')
       options.isRunning.value = false
+      runActive = false
       abortController = null
     }
   }
@@ -1102,6 +972,8 @@ export function useAgentRun(options: UseAgentRunOptions) {
     stop,
     answerAuthorization,
     runtimeState,
+    lifecycleState: runtime.lifecycleState,
+    runEvents: runtime.runEvents,
     lastTaskId,
     lastRunIssue,
     lastRunReport,

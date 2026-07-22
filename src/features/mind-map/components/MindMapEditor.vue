@@ -20,8 +20,8 @@ import {
 } from 'reka-ui'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-import type { MindMapContent } from '@/models/mindMap'
-import { createEntityId } from '@/models/id'
+import type { MindMapContent } from '@/models/workspace/mindMap'
+import { createEntityId } from '@/models/shared/id'
 import { fromMindElixirData, toMindElixirData } from '@/features/mind-map/mindElixirAdapter'
 
 const props = defineProps<{

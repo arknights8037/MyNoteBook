@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { parseMermaidFlowNodes, renameMermaidNode, type UmlViewPayload } from '@/models/workspaceView'
+import { parseMermaidFlowNodes, renameMermaidNode, type UmlViewPayload } from '@/models/workspace/workspaceView'
 import MermaidPreview from './MermaidPreview.vue'
 const props = defineProps<{ payload: UmlViewPayload }>()
 const emit = defineEmits<{ update: [payload: UmlViewPayload] }>()

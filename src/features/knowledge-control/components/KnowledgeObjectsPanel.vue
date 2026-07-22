@@ -2,7 +2,7 @@
 import { BookOpenCheck, Filter, Search, ShieldCheck } from '@lucide/vue'
 import { computed, ref } from 'vue'
 
-import type { KnowledgeObject, KnowledgeObjectStatus, KnowledgeObjectType } from '@/models/knowledge'
+import type { KnowledgeObject, KnowledgeObjectStatus, KnowledgeObjectType } from '@/models/knowledge/knowledge'
 import { NButton, NSelect } from '@/ui'
 
 const props = defineProps<{

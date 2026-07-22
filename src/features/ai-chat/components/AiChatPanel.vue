@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { ref, toRefs, watch } from 'vue'
 
-import type { AiProvider, AiReasoningEffort, AiSettings } from '@/models/ai'
-import type { AgentProject } from '@/models/aiChatHistory'
-import type { AgentRuntimeViewState } from '@/models/agentRuntime'
-import type { ReviewIssue } from '@/models/cognitive'
-import type { AiChatMode, AiSelectorOption } from '@/models/aiChatMode'
-import type { AgentExplicitTarget, AgentTargetOption } from '@/models/agentTarget'
+import type { AiProvider, AiReasoningEffort, AiSettings } from '@/models/ai/ai'
+import type { AgentProject } from '@/models/ai/aiChatHistory'
+import type { AgentRuntimeViewState } from '@/models/agent/agentRuntime'
+import type { ReviewIssue } from '@/models/cognitive/cognitive'
+import type { AiChatMode, AiSelectorOption } from '@/models/ai/aiChatMode'
+import type { AgentExplicitTarget, AgentTargetOption } from '@/models/agent/agentTarget'
 import AiChatComposer from './AiChatComposer.vue'
 import AiChatHistorySidebar from './AiChatHistorySidebar.vue'
 import AiChatMessageList from './AiChatMessageList.vue'
@@ -50,6 +50,8 @@ const props = withDefaults(
     renderMarkdownMessage: (markdown: string) => string
     targetOptions?: AgentTargetOption[]
     explicitTargets?: AgentExplicitTarget[]
+    externalNavigation?: boolean
+    projectCreateRequest?: number
   }>(),
   {
     chatHistory: () => [],
@@ -62,6 +64,8 @@ const props = withDefaults(
     docked: false,
     targetOptions: () => [],
     explicitTargets: () => [],
+    externalNavigation: false,
+    projectCreateRequest: 0,
   },
 )
 
@@ -151,6 +155,13 @@ watch(historyCollapsed, (collapsed) => {
     // Storage is optional in embedded/webview privacy modes.
   }
 })
+
+watch(
+  () => props.projectCreateRequest,
+  (request, previousRequest) => {
+    if (request > previousRequest) showProjectCreator.value = true
+  },
+)
 </script>
 
 <template>
@@ -192,10 +203,13 @@ watch(historyCollapsed, (collapsed) => {
 
     <div
       class="ai-chat-popover__body"
-      :class="{ 'ai-chat-popover__body--history-collapsed': historyCollapsed }"
+      :class="{
+        'ai-chat-popover__body--history-collapsed': historyCollapsed && !externalNavigation,
+        'ai-chat-popover__body--external-navigation': externalNavigation,
+      }"
     >
       <AiChatHistorySidebar
-        v-if="workspace || docked"
+        v-if="(workspace || docked) && !externalNavigation"
         :collapsed="historyCollapsed"
         :chat-history="chatHistory"
         :projects="projects"

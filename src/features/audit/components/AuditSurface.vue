@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { ClipboardList, RefreshCw, Search } from '@lucide/vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
-import type { AuditCategory, AuditEntry } from '@/models/audit'
-import type { AuditRepository } from '@/repositories/AuditRepository'
+import type { AuditCategory, AuditEntry } from '@/models/shared/audit'
+import type { AuditRepository } from '@/repositories/audit/AuditRepository'
 import { NButton, NIcon, NSelect } from '@/ui'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   getRepository: () => Promise<AuditRepository>
-}>()
+  contextNavigation?: boolean
+}>(), { contextNavigation: false })
 
 const entries = ref<AuditEntry[]>([])
-const category = ref<AuditCategory | 'all'>('all')
+const category = defineModel<AuditCategory | 'all'>('category', { default: 'all' })
 const search = ref('')
 const loading = ref(false)
 const error = ref('')
@@ -88,6 +89,7 @@ function formatDetails(value: string | null): string {
 }
 
 onMounted(load)
+watch(category, () => void load())
 </script>
 
 <template>
@@ -124,7 +126,7 @@ onMounted(load)
             @keyup.enter="load"
           />
         </label>
-        <NSelect v-model:value="category" :options="categoryOptions" @update:value="load" />
+        <NSelect v-if="!contextNavigation" v-model:value="category" :options="categoryOptions" @update:value="load" />
       </div>
       <p v-if="error" class="operations-error" role="alert">{{ error }}</p>
       <div class="audit-table" role="table" aria-label="审计事件列表">

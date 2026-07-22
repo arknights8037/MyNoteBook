@@ -6,8 +6,8 @@ import type {
   AiConversationImportMode,
   AiConversationImportSelection,
   ImportedAiConversationFile,
-} from '@/services/KnowledgeAssetImporter'
-import { renderAiMarkdown } from '@/services/AiMarkdownRenderer'
+} from '@/services/knowledge/KnowledgeAssetImporter'
+import { renderAiMarkdown } from '@/services/ai/AiMarkdownRenderer'
 import { NButton, NIcon, NModal } from '@/ui'
 
 const props = defineProps<{

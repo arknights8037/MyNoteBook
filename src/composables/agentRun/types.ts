@@ -1,15 +1,32 @@
 import type { Ref } from 'vue'
 
 import type { AiConversationMessage } from '../useAiConversation'
-import type { AgentPatchSet, AgentTask, SelectedBlock } from '@/models/agent'
-import type { AiSettings } from '@/models/ai'
-import type { AiChatMode } from '@/models/aiChatMode'
-import type { DocumentBlock } from '@/models/documentBlock'
-import type { DocumentRecord, DocumentSummary } from '@/models/document'
-import type { AgentRepository } from '@/repositories/AgentRepository'
-import type { RegexReplaceExecutor } from '@/services/AgentCommandService'
-import type { CognitiveSessionService } from '@/services/CognitiveSessionService'
-import type { AgentExplicitTarget } from '@/models/agentTarget'
+import type { AgentPatchSet, AgentTask, SelectedBlock } from '@/models/agent/agent'
+import type { AiSettings } from '@/models/ai/ai'
+import type { AiChatMode } from '@/models/ai/aiChatMode'
+import type { DocumentBlock } from '@/models/documents/documentBlock'
+import type { DocumentRecord, DocumentSummary } from '@/models/documents/document'
+import type { AgentRepository } from '@/repositories/agent/AgentRepository'
+import type { RegexReplaceExecutor } from '@/services/agent/AgentCommandService'
+import type { CognitiveSessionService } from '@/services/cognitive/CognitiveSessionService'
+import type { AgentExplicitTarget } from '@/models/agent/agentTarget'
+import type { KnowledgeRepository } from '@/repositories/knowledge/KnowledgeRepository'
+import type { AgentResourceDraftService } from '@/services/agent/AgentResourceDraftService'
+import type { MindMapService } from '@/services/workspace/MindMapService'
+import type { ResearchCandidateService } from '@/services/cognitive/ResearchCandidateService'
+import type { AgentWorkspaceHistoryStore } from '@/repositories/agent/AgentWorkspaceHistoryStore'
+import type { McpClientPort } from '@/services/ports/McpClientPort'
+
+export interface AgentRunServiceDependencies {
+  getCognitiveSessionService?: () => Promise<CognitiveSessionService>
+  getMindMapService?: () => Promise<MindMapService>
+  getKnowledgeRepository?: () => Promise<KnowledgeRepository>
+  getAgentResourceDraftService?: () => Promise<AgentResourceDraftService>
+  getResearchCandidateService?: () => Promise<ResearchCandidateService>
+  getAgentRepository?: () => Promise<AgentRepository>
+  agentWorkspaceHistoryStore?: AgentWorkspaceHistoryStore
+  mcpClient?: McpClientPort
+}
 
 export interface AgentRunDocumentSnapshot {
   id: string
@@ -54,7 +71,7 @@ export interface UseAgentRunOptions {
   createId: () => string
   replaceBlocksByRegex: RegexReplaceExecutor
   notify: { success: (message: string) => void; error: (message: string) => void }
-  getCognitiveSessionService?: () => Promise<CognitiveSessionService>
+  services?: AgentRunServiceDependencies
   document: AgentRunDocumentAdapter
   patches: AgentRunPatchWorkflow
   explicitTargets?: Readonly<Ref<AgentExplicitTarget[]>>

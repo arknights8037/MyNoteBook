@@ -11,7 +11,7 @@ import {
   SlidersHorizontal,
   Type,
 } from '@lucide/vue'
-import { computed, nextTick, onMounted, ref, toRef } from 'vue'
+import { computed, nextTick, onMounted, ref, toRef, watch } from 'vue'
 
 import { NButton, NIcon } from '@/ui'
 import {
@@ -20,23 +20,23 @@ import {
   shortcutFromKeyboardEvent,
   type AppSettings,
   type ShortcutAction,
-} from '@/models/settings'
+} from '@/models/settings/settings'
 import {
   applyAiProviderDefaults,
   createAiSettings,
   updateActiveAiProfile,
   type AiProvider,
   type AiSettings,
-} from '@/models/ai'
+} from '@/models/ai/ai'
 import {
   getThemeDisplayName,
   getResolvedTheme,
   THEME_DEFINITIONS,
   THEME_OPTIONS,
   type ThemePreference,
-} from '@/services/theme'
-import { loadSystemFonts } from '@/services/systemFonts'
-import { fetchAiModelOptions } from '@/services/AiModelService'
+} from '@/services/appearance/theme'
+import { loadSystemFonts } from '@/services/appearance/systemFonts'
+import { fetchAiModelOptions } from '@/services/ai/AiModelService'
 import AiSettingsSection from './sections/AiSettingsSection.vue'
 import AppearanceSettingsSection from './sections/AppearanceSettingsSection.vue'
 import DataSettingsSection from './sections/DataSettingsSection.vue'
@@ -56,11 +56,13 @@ const props = withDefaults(
     aiSettings?: AiSettings
     defaultDataDirectory?: string
     dataBusy?: boolean
+    contextNavigation?: boolean
   }>(),
   {
     aiSettings: () => createAiSettings('openai'),
     defaultDataDirectory: '',
     dataBusy: false,
+    contextNavigation: false,
   },
 )
 
@@ -74,7 +76,7 @@ const emit = defineEmits<{
   restoreDataDirectory: []
 }>()
 
-const activeSection = ref('general')
+const activeSection = defineModel<string>('section', { default: 'general' })
 const settingsBody = ref<BrowserHTMLElement | null>(null)
 const recordingShortcut = ref<ShortcutAction | null>(null)
 const systemFonts = ref<string[]>([])
@@ -372,6 +374,10 @@ async function scrollToSection(sectionId: string): Promise<void> {
   }
 }
 
+watch(activeSection, (sectionId) => {
+  if (props.contextNavigation) void scrollToSection(sectionId)
+})
+
 function prioritizeFonts(fonts: string[], preferredFonts: string[]): string[] {
   const fontSet = new Set(fonts)
   return [
@@ -490,8 +496,8 @@ onMounted(async () => {
       </NButton>
     </header>
 
-    <div class="settings-layout">
-      <nav class="settings-nav" aria-label="设置分类">
+    <div class="settings-layout" :class="{ 'settings-layout--context-navigation': contextNavigation }">
+      <nav v-if="!contextNavigation" class="settings-nav" aria-label="设置分类">
         <button
           v-for="item in navigation"
           :key="item.id"

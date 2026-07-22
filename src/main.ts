@@ -2,12 +2,14 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { createApp, nextTick } from 'vue'
 
 import App from './App.vue'
+import { ASSET_PORT_KEY } from '@/editor/core/assetPortContext'
+import { tauriAssetService } from './infrastructure/assets/AssetService'
 import './styles/global.css'
-import { applyTheme, getThemePreference } from './services/theme'
+import { applyTheme, getThemePreference } from '@/services/appearance/theme'
 
 applyTheme(getThemePreference())
 performance.mark('notebook:vue-start')
-createApp(App).mount('#app')
+createApp(App).provide(ASSET_PORT_KEY, tauriAssetService).mount('#app')
 performance.mark('notebook:vue-mounted')
 
 async function revealMainWindow(): Promise<void> {

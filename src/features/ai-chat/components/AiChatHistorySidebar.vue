@@ -22,7 +22,7 @@ import {
 } from 'reka-ui'
 import { computed, ref } from 'vue'
 
-import { UNGROUPED_AGENT_PROJECT_ID, type AgentProject } from '@/models/aiChatHistory'
+import { UNGROUPED_AGENT_PROJECT_ID, type AgentProject } from '@/models/ai/aiChatHistory'
 import type { AiChatPanelHistoryItem, AiChatWorkspaceOption } from './aiChatPanelTypes'
 
 type BrowserEvent = InstanceType<typeof globalThis.Event>

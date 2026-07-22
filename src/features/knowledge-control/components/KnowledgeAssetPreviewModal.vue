@@ -2,8 +2,8 @@
 import { ExternalLink, FileText, MessageSquare, Trash2 } from '@lucide/vue'
 import { computed } from 'vue'
 
-import type { KnowledgeAsset } from '@/models/knowledgeAsset'
-import { renderAiMarkdown } from '@/services/AiMarkdownRenderer'
+import type { KnowledgeAsset } from '@/models/knowledge/knowledgeAsset'
+import { renderAiMarkdown } from '@/services/ai/AiMarkdownRenderer'
 import { NButton, NIcon, NModal } from '@/ui'
 
 const show = defineModel<boolean>('show', { required: true })

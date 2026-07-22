@@ -1,6 +1,6 @@
 import { ref, watch, type Ref } from 'vue'
 
-import type { AppSettings } from '@/models/settings'
+import type { AppSettings } from '@/models/settings/settings'
 
 export type PasswordHasher = (value: string) => Promise<string>
 

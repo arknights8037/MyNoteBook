@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 
 import { NButton, NModal } from '@/ui'
-import type { AgentAuthorizationRequest } from '@/models/agentRuntime'
+import type { AgentAuthorizationRequest } from '@/models/agent/agentRuntime'
 
 const props = defineProps<{
   request: AgentAuthorizationRequest

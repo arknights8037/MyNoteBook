@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { save } from '@tauri-apps/plugin-dialog'
 
-import type { DocumentTransferFilePort } from '@/services/DocumentTransferService'
+import type { DocumentTransferFilePort } from '@/services/documents/DocumentTransferService'
 
 export const tauriDocumentTransferFilePort: DocumentTransferFilePort = {
   async chooseSavePath(options) {

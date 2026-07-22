@@ -16,20 +16,13 @@ import {
 } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 
-import type { McpServerConfig, McpToolDescriptor } from '@/models/mcp'
-import {
-  importMcpConfig,
-  importMcpConfigText,
-  listMcpServers,
-  listMcpTools,
-  removeMcpServer,
-  setMcpServerEnabled,
-  setMcpServerTrusted,
-} from '@/services/McpService'
+import type { McpServerConfig, McpToolDescriptor } from '@/models/integrations/mcp'
+import type { McpClientPort } from '@/services/ports/McpClientPort'
 import { NButton, NIcon, NInput, NModal } from '@/ui'
 import { useMessage } from '@/ui/services'
 
 const message = useMessage()
+const props = defineProps<{ client: McpClientPort }>()
 const servers = ref<McpServerConfig[]>([])
 const toolsByServer = ref<Record<string, McpToolDescriptor[]>>({})
 const busyServerId = ref('')
@@ -81,7 +74,7 @@ async function loadServers(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    servers.value = await listMcpServers()
+    servers.value = await props.client.listServers()
     if (!servers.value.some((server) => server.id === selectedServerId.value)) {
       selectedServerId.value = servers.value[0]?.id ?? ''
     }
@@ -103,7 +96,7 @@ async function chooseConfig(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    servers.value = await importMcpConfig(selected)
+    servers.value = await props.client.importConfig(selected)
     selectedServerId.value = servers.value[0]?.id ?? ''
     message.success(`已导入 MCP 配置，共 ${servers.value.length} 个服务`)
   } catch (importError) {
@@ -162,7 +155,7 @@ async function submitMcpConfig(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    servers.value = await importMcpConfigText(content)
+    servers.value = await props.client.importConfigText(content)
     selectedServerId.value = servers.value[0]?.id ?? ''
     addDialogVisible.value = false
     message.success(`已添加 MCP 配置，共 ${servers.value.length} 个服务`)
@@ -191,7 +184,7 @@ async function toggleServer(server: McpServerConfig, event: BrowserEvent): Promi
   busyServerId.value = server.id
   error.value = ''
   try {
-    const updated = await setMcpServerEnabled(server.id, enabled)
+    const updated = await props.client.setServerEnabled(server.id, enabled)
     Object.assign(server, updated)
     message.success(enabled ? `已启用 ${server.name}` : `已停用 ${server.name}`)
   } catch (toggleError) {
@@ -215,7 +208,7 @@ async function toggleTrust(server: McpServerConfig): Promise<void> {
   busyServerId.value = server.id
   error.value = ''
   try {
-    const updated = await setMcpServerTrusted(server.id, trusted)
+    const updated = await props.client.setServerTrusted(server.id, trusted)
     Object.assign(server, updated)
     message.success(trusted ? `已信任 ${server.name}` : `已取消信任 ${server.name}`)
   } catch (trustError) {
@@ -229,7 +222,7 @@ async function inspectServer(server: McpServerConfig): Promise<void> {
   busyServerId.value = server.id
   error.value = ''
   try {
-    const tools = await listMcpTools(server.id)
+    const tools = await props.client.listTools(server.id)
     toolsByServer.value = { ...toolsByServer.value, [server.id]: tools }
     message.success(`连接成功，发现 ${tools.length} 个工具`)
   } catch (inspectError) {
@@ -243,7 +236,7 @@ async function removeServer(server: McpServerConfig): Promise<void> {
   if (!globalThis.confirm(`移除 MCP 服务“${server.name}”？`)) return
   busyServerId.value = server.id
   try {
-    await removeMcpServer(server.id)
+    await props.client.removeServer(server.id)
     servers.value = servers.value.filter((item) => item.id !== server.id)
     if (selectedServerId.value === server.id) selectedServerId.value = servers.value[0]?.id ?? ''
     message.success('MCP 服务已移除')

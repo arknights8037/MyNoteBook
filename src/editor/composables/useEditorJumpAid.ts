@@ -15,9 +15,9 @@ import {
   collectEditorOutlineItems,
   filterEditorOutlineItems,
   type EditorOutlineItem,
-} from '../editorOutline'
-import type { TiptapDocumentJson } from '@/models/document'
-import type { AppSettings } from '@/models/settings'
+} from '@/editor/core/editorOutline'
+import type { TiptapDocumentJson } from '@/models/documents/document'
+import type { AppSettings } from '@/models/settings/settings'
 
 type JumpAidSettings = Pick<
   AppSettings,

@@ -1,7 +1,7 @@
-import type { AiChatMode, AiChatRole, AiChatStatus } from '@/models/aiChatMode'
-import type { DocumentId, DocumentKind, TiptapDocumentJson } from '@/models/document'
-import type { KnowledgeSource } from '@/models/knowledgeRetrieval'
-import type { SelectedBlock } from '@/models/agent'
+import type { AiChatMode, AiChatRole, AiChatStatus } from '@/models/ai/aiChatMode'
+import type { DocumentId, DocumentKind, TiptapDocumentJson } from '@/models/documents/document'
+import type { KnowledgeSource } from '@/models/knowledge/knowledgeRetrieval'
+import type { SelectedBlock } from '@/models/agent/agent'
 
 export interface EditorShellExpose {
   getJSON: () => TiptapDocumentJson | undefined

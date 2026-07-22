@@ -1,11 +1,11 @@
-import type { AiChatMode } from '@/models/aiChatMode'
-import type { SelectedBlock } from '@/models/agent'
+import type { AiChatMode } from '@/models/ai/aiChatMode'
+import type { SelectedBlock } from '@/models/agent/agent'
 import {
   anchorKnowledgeRetrievalResult,
   buildKnowledgeRetrievalContext,
   type KnowledgeSource,
-} from '@/models/knowledgeRetrieval'
-import { normalizeDocumentTitle } from '@/features/documents/documentPresentation'
+} from '@/models/knowledge/knowledgeRetrieval'
+import { normalizeDocumentTitle } from '@/models/documents/documentPresentation'
 import type { AgentRunDocumentAdapter, AgentRunSnapshot } from './types'
 
 export async function buildAgentRunContext(input: {

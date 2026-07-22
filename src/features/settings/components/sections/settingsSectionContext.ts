@@ -1,8 +1,8 @@
 import { inject, provide, type ComputedRef, type InjectionKey, type Ref } from 'vue'
 
-import type { AiProvider, AiSettings } from '@/models/ai'
-import type { AppSettings, ShortcutAction } from '@/models/settings'
-import type { ThemeDefinition, ThemePreference } from '@/services/theme'
+import type { AiProvider, AiSettings } from '@/models/ai/ai'
+import type { AppSettings, ShortcutAction } from '@/models/settings/settings'
+import type { ThemeDefinition, ThemePreference } from '@/services/appearance/theme'
 
 export interface SettingsSelectOption {
   label: string

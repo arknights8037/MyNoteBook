@@ -2,15 +2,16 @@
 import { CalendarClock, CirclePlay, Plus, RefreshCw, Trash2 } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 
-import type { AutomationRun, AutomationTask, AutomationTriggerType } from '@/models/automation'
-import type { AutomationService } from '@/services/AutomationService'
+import type { AutomationRun, AutomationTask, AutomationTriggerType } from '@/models/automation/automation'
+import type { AutomationService } from '@/services/automation/AutomationService'
 import { NButton, NIcon, NSelect } from '@/ui'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   currentDocumentId: string
   currentDocumentTitle: string
   getService: () => Promise<AutomationService>
-}>()
+  contextNavigation?: boolean
+}>(), { contextNavigation: false })
 
 const tasks = ref<AutomationTask[]>([])
 const runs = ref<AutomationRun[]>([])
@@ -22,7 +23,7 @@ const draftTrigger = ref<AutomationTriggerType>('manual')
 const draftIntervalMinutes = ref(60)
 const draftDailyTime = ref('09:00')
 const bindCurrentDocument = ref(true)
-const activeTab = ref<'tasks' | 'runs'>('tasks')
+const activeTab = defineModel<'tasks' | 'runs'>('tab', { default: 'tasks' })
 const showComposer = ref(false)
 type BrowserEvent = InstanceType<typeof globalThis.Event>
 type BrowserInputElement = InstanceType<typeof globalThis.HTMLInputElement>
@@ -157,7 +158,7 @@ onMounted(load)
     </header>
 
     <div class="operations-page__content">
-      <nav class="surface-tabs surface-tabs--compact" role="tablist" aria-label="自动化页面">
+      <nav v-if="!contextNavigation" class="surface-tabs surface-tabs--compact" role="tablist" aria-label="自动化页面">
         <button
           type="button"
           role="tab"

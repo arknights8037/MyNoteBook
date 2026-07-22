@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import SettingsSurface from '@/features/settings/components/SettingsSurface.vue'
-import type { AiSettings } from '@/models/ai'
-import type { AppSettings } from '@/models/settings'
+import type { AiSettings } from '@/models/ai/ai'
+import type { AppSettings } from '@/models/settings/settings'
 
 defineProps<{
   settings: AppSettings

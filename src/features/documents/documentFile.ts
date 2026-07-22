@@ -3,4 +3,4 @@ export {
   inferDocumentImportFormat,
   type DocumentExportFormat,
   type DocumentImportFormat,
-} from '@/models/documentTransfer'
+} from '@/models/documents/documentTransfer'

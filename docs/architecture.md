@@ -41,6 +41,8 @@ Vue/Tiptap 编辑状态
 ```text
 用户消息或 Slash Command
   -> useAgentRun
+  -> AgentRun Command / Event / Reducer
+  -> Plan scheduler + intent strategy
   -> Context Bundle + ExecutionPolicy
   -> AI SDK ToolLoopAgent
   -> 内置 Tools / MCP / Skills
@@ -102,6 +104,20 @@ Rust command 应立即委托给对应模块。数据库访问必须复用 `datab
 
 依赖方向为：composition → feature/page → composable/service → repository/model。`models` 不依赖 Vue、service 或 Tauri；可复用 service 不应直接选择基础设施实现。
 
+### 前端目录约束
+
+扁平层只用于模块入口，业务文件必须继续按领域放入二级目录：
+
+| 区域 | 二级模块 |
+| --- | --- |
+| `src/services` | `agent`、`ai`、`automation`、`cognitive`、`documents`、`knowledge`、`integrations`、`security`、`workspace`、`appearance`、`ports` |
+| `src/models` | `agent`、`ai`、`automation`、`cognitive`、`documents`、`knowledge`、`integrations`、`workspace`、`settings`、`shared` |
+| `src/repositories` | `agent`、`audit`、`automation`、`cognitive`、`documents`、`knowledge`、`workspace`、`shared` |
+| `src/editor` | `components`、`blocks`、`core`、`commands`、`formatting`、`io`、`composables` |
+| `src/infrastructure/database` | `agent`、`audit`、`automation`、`cognitive`、`documents`、`knowledge`、`workspace`、`shared` |
+
+跨模块引用统一使用 `@/` 别名，模块内部不通过旧目录位置建立隐式耦合。前端单元与集成测试保存在 `tests/frontend`，目录结构镜像 `src`，并与源码一起纳入版本控制和 lint。
+
 ## 5. 当前公共能力
 
 ### Agent 与 AI
@@ -140,7 +156,7 @@ Rust command 应立即委托给对应模块。数据库访问必须复用 `datab
 - Runtime 已支持可插拔 `AgentOutputContract<T>`，旧 command/Patch 协议保持非认知运行默认；Research 使用独立结构化 contract，不进入旧写入结果解析。
 - Tool Tags 已在运行前编译成 `ExecutionPolicy.allowedTools`，Runtime 热路径仍只检查稳定工具名；Mode/Template/Skill 不能扩大基础策略。
 - Knowledge Object 已扩展研究候选所需类型、正文、结构化数据、认知 provenance、多来源、Validation 和 rejected 状态；候选 UI 会在接受前重新验证来源 revision 和稳定 block，并只将显式接受项转为 `approved`。
-- Agent tool trace 尚未绑定并持久化到每条聊天消息；切换历史不能恢复完整 loop。
+- Run lifecycle、Plan、运行级事件和 tool timeline 已绑定 assistant 消息并持久化；规范工具审计仍保存在独立数据库表中。
 - P1/P2 自动化测试及 G0 smoke 已覆盖真实 Windows 数据副本升级、真实 Provider、stdio/Streamable HTTP MCP、真实 CLI 与隔离故障恢复边界。
 
 这些偏差的处理顺序以 [后续开发路线图](roadmap.md) 为准。

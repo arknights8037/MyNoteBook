@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NButton, NInput, NModal } from '@/ui'
-import type { DocumentSummary } from '@/models/document'
+import type { DocumentSummary } from '@/models/documents/document'
 
 defineProps<{
   renamingDocument: DocumentSummary | null

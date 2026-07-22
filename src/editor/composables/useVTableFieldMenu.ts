@@ -6,8 +6,8 @@ import {
   normalizeEnumOptions,
   type TableField,
   type TableFieldType,
-} from '../tableFields'
-import { getTableColumnLabel, type TableCellAddress } from '../tableOperations'
+} from '@/editor/blocks/tableFields'
+import { getTableColumnLabel, type TableCellAddress } from '@/editor/blocks/tableOperations'
 
 interface FieldMenuState {
   open: boolean

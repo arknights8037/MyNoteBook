@@ -2,7 +2,7 @@
 import { FileText, Folder, Search } from '@lucide/vue'
 
 import { NIcon, NInput, NModal } from '@/ui'
-import type { DocumentSummary } from '@/models/document'
+import type { DocumentSummary } from '@/models/documents/document'
 
 defineProps<{
   results: DocumentSummary[]

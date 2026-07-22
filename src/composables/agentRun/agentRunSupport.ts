@@ -1,10 +1,10 @@
-import { exportTiptapBlockToMarkdown } from '@/editor/documentExport'
-import type { AgentRuntimeViewState } from '@/models/agentRuntime'
-import type { AgentRunIntent } from '@/models/agentSlashCommand'
-import { AI_MODE_OPTIONS, type AiChatMode } from '@/models/aiChatMode'
-import type { DocumentSummary } from '@/models/document'
-import type { ExecutionPolicy } from '@/models/executionPolicy'
-import type { KnowledgeObject } from '@/models/knowledge'
+import { exportTiptapBlockToMarkdown } from '@/editor/io/documentExport'
+import type { AgentRuntimeViewState } from '@/models/agent/agentRuntime'
+import type { AgentRunIntent } from '@/models/agent/agentSlashCommand'
+import { AI_MODE_OPTIONS, type AiChatMode } from '@/models/ai/aiChatMode'
+import type { DocumentSummary } from '@/models/documents/document'
+import type { ExecutionPolicy } from '@/models/agent/executionPolicy'
+import type { KnowledgeObject } from '@/models/knowledge/knowledge'
 import type { AiConversationMessage } from '../useAiConversation'
 import type { AgentRunContinuation } from './types'
 
@@ -19,6 +19,15 @@ export function createPersistableRuntimeSnapshot(
       resultJson: call.resultJson ? compactRuntimePayload(call.resultJson, 'result') : null,
     })),
     timelineEvents: state.timelineEvents.slice(0, 128).map((event) => ({ ...event })),
+    lifecycle: {
+      ...state.lifecycle,
+      plan: state.lifecycle.plan.slice(0, 64).map((step) => ({
+        ...step,
+        dependsOn: [...step.dependsOn],
+      })),
+      pendingApproval: null,
+    },
+    runEvents: state.runEvents.slice(0, 256).map((event) => ({ ...event })),
     authorizationRequest: null,
   }
 }

@@ -1,8 +1,8 @@
 import { nextTick, type Ref } from 'vue'
 
 import type { UseAiConversationReturn } from '@/composables/useAiConversation'
-import type { AppError } from '@/models/result'
-import type { DocumentId, DocumentRecord } from '@/models/document'
+import type { AppError } from '@/models/shared/result'
+import type { DocumentId, DocumentRecord } from '@/models/documents/document'
 import type { UseDocumentAutosaveReturn } from '@/composables/useDocumentAutosave'
 import type { CreateWorkspaceDocumentOptions } from '@/composables/useDocumentWorkspace'
 import type { EditorShellExpose } from './homePageTypes'
@@ -83,7 +83,7 @@ export function useHomeAiMessageActions(options: HomeAiMessageActionsOptions) {
         return
       }
 
-      const { parseMarkdownDocument } = await import('@/editor/markdownImport')
+      const { parseMarkdownDocument } = await import('@/editor/io/markdownImport')
       const imported = parseMarkdownDocument(markdown, 'AI 回复')
       const created = await options.createDocument(imported.title, {
         parentId: options.currentDocumentId.value,

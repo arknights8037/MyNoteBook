@@ -1,14 +1,14 @@
 import { onBeforeUnmount, ref, toValue, type MaybeRefOrGetter, type Ref } from 'vue'
 
-import { serializeEditorContent } from '@/editor/editorContent'
+import { serializeEditorContent } from '@/editor/core/editorContent'
 import type {
   DocumentId,
   DocumentKind,
   DocumentRecord,
   SaveDocumentInput,
   TiptapDocumentJson,
-} from '@/models/document'
-import { err, ok, type AppError, type AppResult } from '@/models/result'
+} from '@/models/documents/document'
+import { err, ok, type AppError, type AppResult } from '@/models/shared/result'
 
 export type AutosaveStatus = 'saved' | 'dirty' | 'saving' | 'error'
 

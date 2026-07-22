@@ -2,8 +2,8 @@
 import { AlertTriangle, CheckCircle2, Eye, RefreshCw, ShieldAlert } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 
-import type { McpServerExposureSettings } from '@/models/mcp'
-import { getMcpServerExposure, setMcpServerToolExposure } from '@/services/McpService'
+import type { McpServerExposureSettings } from '@/models/integrations/mcp'
+import type { McpClientPort } from '@/services/ports/McpClientPort'
 import { NButton, NIcon } from '@/ui'
 import { useMessage } from '@/ui/services'
 
@@ -98,6 +98,7 @@ const tools: ExposureTool[] = [
 ]
 
 const message = useMessage()
+const props = defineProps<{ client: McpClientPort }>()
 const isNative = Reflect.has(globalThis, '__TAURI_INTERNALS__')
 const settings = ref<McpServerExposureSettings>({
   version: 1,
@@ -117,7 +118,7 @@ async function loadSettings(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    settings.value = await getMcpServerExposure()
+    settings.value = await props.client.getServerExposure()
   } catch (loadError) {
     error.value = errorMessage(loadError)
   } finally {
@@ -132,7 +133,7 @@ async function toggleTool(tool: ExposureTool, event: BrowserEvent): Promise<void
   changingTool.value = tool.name
   error.value = ''
   try {
-    settings.value = await setMcpServerToolExposure(tool.name, enabled)
+    settings.value = await props.client.setServerToolExposure(tool.name, enabled)
     message.success(`${tool.name} 已${enabled ? '暴露' : '关闭'}，将在下次 MCP Server 连接时生效`)
   } catch (toggleError) {
     settings.value.tools[tool.name] = previous

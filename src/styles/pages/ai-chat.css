@@ -135,6 +135,11 @@
   grid-template-columns: 48px minmax(0, 1fr);
 }
 
+.ai-chat-popover--workspace .ai-chat-popover__body--external-navigation,
+.ai-chat-popover--docked .ai-chat-popover__body--external-navigation {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .ai-chat-popover__main {
   display: grid;
   min-width: 0;

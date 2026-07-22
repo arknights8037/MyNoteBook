@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Plus, Trash2 } from '@lucide/vue'
-import type { SlidePage, SlidesViewPayload, SlideTemplateId } from '@/models/workspaceView'
+import type { SlidePage, SlidesViewPayload, SlideTemplateId } from '@/models/workspace/workspaceView'
 const props = defineProps<{ payload: SlidesViewPayload }>()
 const emit = defineEmits<{ update: [payload: SlidesViewPayload] }>()
 const templates: Array<{ id: SlideTemplateId; label: string; slots: string[] }> = [

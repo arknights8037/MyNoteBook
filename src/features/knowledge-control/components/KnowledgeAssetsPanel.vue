@@ -16,8 +16,8 @@ import {
 } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 
-import type { AiChatHistoryItem } from '@/models/aiChatHistory'
-import type { KnowledgeAsset } from '@/models/knowledgeAsset'
+import type { AiChatHistoryItem } from '@/models/ai/aiChatHistory'
+import type { KnowledgeAsset } from '@/models/knowledge/knowledgeAsset'
 import { NButton, NIcon, NSelect } from '@/ui'
 
 type BrowserFile = InstanceType<typeof globalThis.File>

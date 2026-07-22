@@ -6,10 +6,10 @@ import {
   type AgentTask,
   type BlockPatch,
   type SelectedBlock,
-} from '@/models/agent'
-import type { DocumentId, DocumentRecord, TiptapDocumentJson } from '@/models/document'
-import { createEntityId } from '@/models/id'
-import type { AgentRepository } from '@/repositories/AgentRepository'
+} from '@/models/agent/agent'
+import type { DocumentId, DocumentRecord, TiptapDocumentJson } from '@/models/documents/document'
+import { createEntityId } from '@/models/shared/id'
+import type { AgentRepository } from '@/repositories/agent/AgentRepository'
 
 export interface AgentPatchDocumentSnapshot {
   id: DocumentId
@@ -58,9 +58,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
 
   async function getAgentRepository(): Promise<AgentRepository> {
     if (options.createRepository) return options.createRepository()
-    const { createAgentRepository } =
-      await import('@/infrastructure/database/agentRepositoryFactory')
-    return createAgentRepository()
+    throw new Error('当前运行环境未提供 Agent Repository。')
   }
 
   async function restoreForDocument(
@@ -174,7 +172,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
         await reportPendingAgentError(validation.error ?? '创建提案校验失败。')
         return
       }
-      const { parseMarkdownDocument } = await import('@/editor/markdownImport')
+      const { parseMarkdownDocument } = await import('@/editor/io/markdownImport')
       const repository = await getAgentRepository()
       const applied =
         creationPatch.operation === 'create_group'
@@ -238,7 +236,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
       patchesByDocument.set(patch.documentId, documentPatches)
     }
 
-    const { applyAgentBlockPatches } = await import('@/editor/agentBlockPatch')
+    const { applyAgentBlockPatches } = await import('@/editor/commands/agentBlockPatch')
     const batchId = createTransactionId()
     const documentMutations = []
     for (const [documentId, documentPatches] of patchesByDocument) {
