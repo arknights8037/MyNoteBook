@@ -2,42 +2,10 @@
   display: grid;
   height: 100%;
   min-height: 0;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   background: #fbfbfa;
   contain: layout paint;
-}
-
-.settings-page__header {
-  display: grid;
-  min-height: 92px;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: center;
-  padding: 18px 34px;
-  border-bottom: 1px solid #ecece8;
-  background: #ffffff;
-  transition:
-    border-color 220ms ease,
-    background-color 220ms ease;
-}
-
-.settings-page__header p,
-.settings-page__header h1 {
-  margin: 0;
-}
-
-.settings-page__header p {
-  margin-bottom: 3px;
-  color: #9a9a96;
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.settings-page__header h1 {
-  font-size: 24px;
 }
 
 .settings-page__body {

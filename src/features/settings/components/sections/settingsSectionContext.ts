@@ -31,6 +31,7 @@ export interface SettingsSectionContext {
   aiModelSelectOptions: ComputedRef<SettingsSelectOption[]>
   shortcutConflicts: ComputedRef<Record<string, number>>
   widthOptions: SettingsSelectOption[]
+  maxTabsOptions: SettingsSelectOption[]
   fontSizeOptions: SettingsSelectOption[]
   lineHeightOptions: SettingsSelectOption[]
   jumpAidOptions: SettingsSelectOption[]

@@ -37,6 +37,7 @@ url = "2"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_LibraryLoader"] }
 
 [dev-dependencies]
 axum = "0.8"

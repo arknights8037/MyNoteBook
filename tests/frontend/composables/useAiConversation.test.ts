@@ -16,6 +16,7 @@ function createConversation(
     running?: boolean
     notify?: (message: string) => void
     persistedState?: AgentWorkspaceHistoryState
+    persistHistory?: boolean
     generateTitle?: (
       prompt: string,
       settings: ReturnType<typeof createAiSettings>,
@@ -37,6 +38,8 @@ function createConversation(
       notify: options.notify,
       historyStore: memoryHistoryStore(options.persistedState),
       generateTitle: options.generateTitle,
+      persistHistory:
+        options.persistHistory === undefined ? undefined : ref(options.persistHistory),
     }),
   )!
 
@@ -64,6 +67,18 @@ describe('useAiConversation', () => {
     expect(conversation.messages.value).toEqual([])
     expect(error.value).toBe('')
     scope.stop()
+  })
+
+  it('keeps an auxiliary conversation out of history while persistence is disabled', async () => {
+    const { conversation, scope } = createConversation({ persistHistory: false })
+    conversation.messages.value = [message('temporary', 'user', '临时文档辅助任务')]
+
+    await Promise.resolve()
+    await vi.runAllTimersAsync()
+
+    expect(conversation.history.value).toEqual([])
+    scope.stop()
+    expect(conversation.history.value).toEqual([])
   })
 
   it('forks at a message without sharing the current history id', () => {

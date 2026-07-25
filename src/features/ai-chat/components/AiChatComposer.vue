@@ -1,9 +1,7 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import {
   AtSign,
   Bot,
-  Check,
-  ChevronDown,
   Database,
   FilePlus2,
   FileText,
@@ -14,24 +12,16 @@ import {
   Square,
   X,
 } from '@lucide/vue'
-import {
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuPortal,
-  DropdownMenuRoot,
-  DropdownMenuTrigger,
-} from 'reka-ui'
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, toRef } from 'vue'
 
 import type { AiProvider, AiReasoningEffort, AiSettings } from '@/models/ai/ai'
 import type { AiChatMode, AiSelectorOption } from '@/models/ai/aiChatMode'
 import type { AgentExplicitTarget, AgentTargetOption } from '@/models/agent/agentTarget'
-import {
-  filterAgentSlashCommands,
-  resolveAgentSlashCommand,
-  type AgentSlashCommand,
-} from '@/models/agent/agentSlashCommand'
+import type { AgentSlashCommand } from '@/models/agent/agentSlashCommand'
 import { resolveProviderCapabilities } from '@/models/agent/providerCapabilities'
+
+import AiChatComposerDropdown from './AiChatComposerDropdown.vue'
+import { useComposerMenus } from './useComposerMenus'
 
 type BrowserEvent = InstanceType<typeof globalThis.Event>
 type BrowserKeyboardEvent = InstanceType<typeof globalThis.KeyboardEvent>
@@ -70,44 +60,51 @@ const emit = defineEmits<{
 }>()
 
 const composerElement = ref<BrowserTextAreaElement | null>(null)
-const slashSelectedIndex = ref(0)
-const slashMenuDismissed = ref(false)
-const targetSelectedIndex = ref(0)
-const targetMenuDismissed = ref(false)
 
 const providerCapabilities = computed(() =>
   resolveProviderCapabilities(props.settings.provider, props.settings.model),
 )
-const slashCommands = computed(() =>
-  slashMenuDismissed.value ? [] : filterAgentSlashCommands(props.prompt),
+
+const menus = useComposerMenus({
+  prompt: toRef(props, 'prompt'),
+  targetOptions: toRef(props, 'targetOptions'),
+  explicitTargets: toRef(props, 'explicitTargets'),
+  focusComposer: () => composerElement.value?.focus(),
+})
+
+// --- Dropdown option adapters ---
+
+const modeDropdownOptions = computed(() =>
+  props.modeOptions.map((option) => ({
+    value: option.value,
+    label: option.label,
+    description: option.description,
+  })),
 )
-const activeSlashCommand = computed(() => resolveAgentSlashCommand(props.prompt)?.command ?? null)
-const targetQuery = computed(() => {
-  const match = props.prompt.match(/(?:^|\s)@([^\s@]*)$/)
-  return match?.[1]?.toLocaleLowerCase() ?? null
-})
-const filteredTargetOptions = computed(() => {
-  if (targetMenuDismissed.value || targetQuery.value === null) return []
-  return props.targetOptions
-    .filter(
-      (option) =>
-        !props.explicitTargets.some(
-          (target) => target.kind === option.kind && target.id === option.id,
-        ),
-    )
-    .filter((option) =>
-      `${option.title} ${option.subtitle}`.toLocaleLowerCase().includes(targetQuery.value ?? ''),
-    )
-    .slice(0, 8)
-})
+const providerDropdownOptions = computed(() =>
+  props.providerOptions.map((option) => ({
+    value: option.value,
+    label: option.label,
+    description: option.description,
+  })),
+)
+const modelDropdownOptions = computed(() =>
+  props.modelOptions.map((model) => ({ value: model, label: model })),
+)
+const reasoningDropdownOptions = computed(() =>
+  props.reasoningOptions.map((option) => ({
+    value: option.value,
+    label: option.label,
+    description: option.description,
+  })),
+)
+
+// --- Event handlers ---
 
 function updatePrompt(event: BrowserEvent): void {
   const target = event.target as BrowserTextAreaElement | null
   emit('update:prompt', target?.value ?? '')
-  slashMenuDismissed.value = false
-  slashSelectedIndex.value = 0
-  targetMenuDismissed.value = false
-  targetSelectedIndex.value = 0
+  menus.resetMenus()
   resizeComposer(target)
 }
 
@@ -118,47 +115,13 @@ function resizeComposer(target: BrowserTextAreaElement | null): void {
 }
 
 function handleComposerKeydown(event: BrowserKeyboardEvent): void {
-  if (filteredTargetOptions.value.length > 0) {
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault()
-      const direction = event.key === 'ArrowDown' ? 1 : -1
-      targetSelectedIndex.value =
-        (targetSelectedIndex.value + direction + filteredTargetOptions.value.length) %
-        filteredTargetOptions.value.length
-      return
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      targetMenuDismissed.value = true
-      return
-    }
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-      event.preventDefault()
-      const target = filteredTargetOptions.value[targetSelectedIndex.value]
-      if (target) selectTarget(target)
-      return
-    }
-  }
-  if (slashCommands.value.length > 0) {
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault()
-      const direction = event.key === 'ArrowDown' ? 1 : -1
-      slashSelectedIndex.value =
-        (slashSelectedIndex.value + direction + slashCommands.value.length) %
-        slashCommands.value.length
-      return
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      slashMenuDismissed.value = true
-      return
-    }
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-      event.preventDefault()
-      const command = slashCommands.value[slashSelectedIndex.value]
-      if (command) selectSlashCommand(command)
-      return
-    }
+  if (
+    menus.handleMenuKeydown(event, {
+      onSelectTarget: selectTarget,
+      onSelectSlashCommand: selectSlashCommand,
+    })
+  ) {
+    return
   }
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
   event.preventDefault()
@@ -166,11 +129,7 @@ function handleComposerKeydown(event: BrowserKeyboardEvent): void {
 }
 
 function openTargetMenu(): void {
-  const separator = props.prompt && !props.prompt.endsWith(' ') ? ' ' : ''
-  emit('update:prompt', `${props.prompt}${separator}@`)
-  targetMenuDismissed.value = false
-  targetSelectedIndex.value = 0
-  void nextTick(() => composerElement.value?.focus())
+  emit('update:prompt', menus.openTargetMenu(props.prompt))
 }
 
 function selectTarget(target: AgentTargetOption): void {
@@ -180,22 +139,18 @@ function selectTarget(target: AgentTargetOption): void {
   })
   emit('update:prompt', nextPrompt)
   emit('select-target', target)
-  targetMenuDismissed.value = true
-  void nextTick(() => composerElement.value?.focus())
+  menus.dismissTargetMenu()
 }
 
 function openSlashMenu(): void {
   emit('update:prompt', '/')
-  slashMenuDismissed.value = false
-  slashSelectedIndex.value = 0
-  void nextTick(() => composerElement.value?.focus())
+  menus.openSlashMenu()
 }
 
 function selectSlashCommand(command: AgentSlashCommand): void {
   emit('select-mode', command.mode)
   emit('update:prompt', `/${command.name} `)
-  slashMenuDismissed.value = true
-  void nextTick(() => composerElement.value?.focus())
+  menus.dismissSlashMenu()
 }
 
 function slashCommandIcon(command: AgentSlashCommand) {
@@ -214,19 +169,19 @@ function slashCommandIcon(command: AgentSlashCommand) {
   <form class="ai-chat-composer" @submit.prevent="emit('run')">
     <div class="ai-chat-input-shell">
       <div
-        v-if="filteredTargetOptions.length"
+        v-if="menus.filteredTargetOptions.value.length"
         class="ai-slash-menu ai-target-menu"
         role="listbox"
         aria-label="选择目标文件"
       >
         <button
-          v-for="(target, index) in filteredTargetOptions"
+          v-for="(target, index) in menus.filteredTargetOptions.value"
           :key="`${target.kind}:${target.id}`"
           type="button"
           role="option"
-          :aria-selected="targetSelectedIndex === index"
-          :class="{ 'is-active': targetSelectedIndex === index }"
-          @mouseenter="targetSelectedIndex = index"
+          :aria-selected="menus.targetSelectedIndex.value === index"
+          :class="{ 'is-active': menus.targetSelectedIndex.value === index }"
+          @mouseenter="menus.targetSelectedIndex.value = index"
           @click="selectTarget(target)"
         >
           <span><FileText :size="16" /></span>
@@ -236,16 +191,21 @@ function slashCommandIcon(command: AgentSlashCommand) {
           >
         </button>
       </div>
-      <div v-if="slashCommands.length" class="ai-slash-menu" role="listbox" aria-label="Agent 功能">
+      <div
+        v-if="menus.slashCommands.value.length"
+        class="ai-slash-menu"
+        role="listbox"
+        aria-label="Agent 功能"
+      >
         <span class="ui-visually-hidden">使用上下方向键选择，Enter 确认</span>
         <button
-          v-for="(command, index) in slashCommands"
+          v-for="(command, index) in menus.slashCommands.value"
           :key="command.name"
           type="button"
           role="option"
-          :aria-selected="slashSelectedIndex === index"
-          :class="{ 'is-active': slashSelectedIndex === index }"
-          @mouseenter="slashSelectedIndex = index"
+          :aria-selected="menus.slashSelectedIndex.value === index"
+          :class="{ 'is-active': menus.slashSelectedIndex.value === index }"
+          @mouseenter="menus.slashSelectedIndex.value = index"
           @click="selectSlashCommand(command)"
         >
           <span><component :is="slashCommandIcon(command)" :size="16" /></span>
@@ -259,7 +219,7 @@ function slashCommandIcon(command: AgentSlashCommand) {
         ref="composerElement"
         :value="prompt"
         rows="3"
-        :placeholder="activeSlashCommand?.placeholder || promptPlaceholder"
+        :placeholder="menus.activeSlashCommand.value?.placeholder || promptPlaceholder"
         aria-label="AI 输入"
         @input="updatePrompt"
         @keydown="handleComposerKeydown"
@@ -304,114 +264,35 @@ function slashCommandIcon(command: AgentSlashCommand) {
           >
             <AtSign :size="15" />
           </button>
-          <DropdownMenuRoot>
-            <DropdownMenuTrigger as-child>
-              <button type="button" class="ai-chat-selector ai-chat-selector--primary">
-                <span>{{ modeLabel }}</span
-                ><ChevronDown :size="13" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuPortal>
-              <DropdownMenuContent class="ai-chat-menu" align="start" :side-offset="6">
-                <DropdownMenuItem
-                  v-for="option in modeOptions"
-                  :key="option.value"
-                  class="ai-chat-menu__item"
-                  :class="{ 'ai-chat-menu__item--active': mode === option.value }"
-                  @select="emit('select-mode', option.value)"
-                >
-                  <span class="ai-chat-menu__item-copy"
-                    ><strong>{{ option.label }}</strong
-                    ><small>{{ option.description }}</small></span
-                  >
-                  <Check v-if="mode === option.value" :size="15" />
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenuPortal>
-          </DropdownMenuRoot>
 
-          <DropdownMenuRoot>
-            <DropdownMenuTrigger as-child>
-              <button type="button" class="ai-chat-selector">
-                <span>{{ providerLabel }}</span
-                ><ChevronDown :size="13" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuPortal>
-              <DropdownMenuContent class="ai-chat-menu" align="start" :side-offset="6">
-                <DropdownMenuItem
-                  v-for="option in providerOptions"
-                  :key="option.value"
-                  class="ai-chat-menu__item"
-                  :class="{ 'ai-chat-menu__item--active': settings.provider === option.value }"
-                  @select="emit('select-provider', option.value)"
-                >
-                  <span class="ai-chat-menu__item-copy"
-                    ><strong>{{ option.label }}</strong
-                    ><small>{{ option.description }}</small></span
-                  >
-                  <Check v-if="settings.provider === option.value" :size="15" />
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenuPortal>
-          </DropdownMenuRoot>
-
-          <DropdownMenuRoot>
-            <DropdownMenuTrigger as-child>
-              <button type="button" class="ai-chat-selector ai-chat-selector--model">
-                <span>{{ settings.model || '选择模型' }}</span
-                ><ChevronDown :size="13" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuPortal>
-              <DropdownMenuContent
-                class="ai-chat-menu ai-chat-menu--model"
-                align="start"
-                :side-offset="6"
-              >
-                <DropdownMenuItem
-                  v-for="model in modelOptions"
-                  :key="model"
-                  class="ai-chat-menu__item"
-                  :class="{ 'ai-chat-menu__item--active': settings.model === model }"
-                  @select="emit('select-model', model)"
-                >
-                  <span class="ai-chat-menu__item-copy"
-                    ><strong>{{ model }}</strong></span
-                  >
-                  <Check v-if="settings.model === model" :size="15" />
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenuPortal>
-          </DropdownMenuRoot>
-
-          <DropdownMenuRoot v-if="providerCapabilities.reasoningEffort">
-            <DropdownMenuTrigger as-child>
-              <button type="button" class="ai-chat-selector">
-                <span>{{ reasoningLabel }}</span
-                ><ChevronDown :size="13" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuPortal>
-              <DropdownMenuContent class="ai-chat-menu" align="start" :side-offset="6">
-                <DropdownMenuItem
-                  v-for="option in reasoningOptions"
-                  :key="option.value"
-                  class="ai-chat-menu__item"
-                  :class="{
-                    'ai-chat-menu__item--active': settings.reasoningEffort === option.value,
-                  }"
-                  @select="emit('select-reasoning', option.value)"
-                >
-                  <span class="ai-chat-menu__item-copy"
-                    ><strong>{{ option.label }}</strong
-                    ><small>{{ option.description }}</small></span
-                  >
-                  <Check v-if="settings.reasoningEffort === option.value" :size="15" />
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenuPortal>
-          </DropdownMenuRoot>
+          <AiChatComposerDropdown
+            :options="modeDropdownOptions"
+            :selected="mode"
+            :trigger-label="modeLabel"
+            trigger-class="ai-chat-selector--primary"
+            @select="emit('select-mode', $event as AiChatMode)"
+          />
+          <AiChatComposerDropdown
+            :options="providerDropdownOptions"
+            :selected="settings.provider"
+            :trigger-label="providerLabel"
+            @select="emit('select-provider', $event as AiProvider)"
+          />
+          <AiChatComposerDropdown
+            :options="modelDropdownOptions"
+            :selected="settings.model"
+            :trigger-label="settings.model || '选择模型'"
+            trigger-class="ai-chat-selector--model"
+            menu-class="ai-chat-menu--model"
+            @select="emit('select-model', $event)"
+          />
+          <AiChatComposerDropdown
+            v-if="providerCapabilities.reasoningEffort"
+            :options="reasoningDropdownOptions"
+            :selected="settings.reasoningEffort"
+            :trigger-label="reasoningLabel"
+            @select="emit('select-reasoning', $event as AiReasoningEffort)"
+          />
         </div>
 
         <div class="ai-chat-composer__actions">
@@ -438,8 +319,9 @@ function slashCommandIcon(command: AgentSlashCommand) {
         </div>
       </div>
       <p class="ai-chat-composer__hint">
-        <span v-if="activeSlashCommand" class="ai-chat-composer__command"
-          >/{{ activeSlashCommand.name }} · {{ activeSlashCommand.label }}</span
+        <span v-if="menus.activeSlashCommand.value" class="ai-chat-composer__command"
+          >/{{ menus.activeSlashCommand.value.name }} ·
+          {{ menus.activeSlashCommand.value.label }}</span
         >
         <span><Database :size="13" />已装载当前页面与 {{ knowledgeSourceCount }} 篇知识库资料</span>
       </p>

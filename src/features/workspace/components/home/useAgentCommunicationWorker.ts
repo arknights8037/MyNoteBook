@@ -1,4 +1,4 @@
-import { ref, type Ref } from 'vue'
+import { computed, ref, type Ref } from 'vue'
 
 import type { AgentPatchSet, AgentTask } from '@/models/agent/agent'
 import type { AiChatMode } from '@/models/ai/aiChatMode'
@@ -12,6 +12,14 @@ import type {
   AgentRunDocumentSnapshot,
   useAgentRun,
 } from '@/composables/useAgentRun'
+
+export interface ActiveA2aTask {
+  id: string
+  title: string
+  prompt: string
+  status: 'running' | 'completed' | 'failed'
+  detail?: string
+}
 
 interface AgentCommunicationWorkerOptions {
   getService: () => Promise<AgentCommunicationService>
@@ -27,6 +35,7 @@ interface AgentCommunicationWorkerOptions {
   acceptAllPatches: () => Promise<void>
   rejectPatches: () => Promise<void>
   notifyError: (message: string) => void
+  createId: () => string
 }
 
 export function useAgentCommunicationWorker(options: AgentCommunicationWorkerOptions) {
@@ -35,6 +44,9 @@ export function useAgentCommunicationWorker(options: AgentCommunicationWorkerOpt
   let polling = false
   let checkedLegacyLeaks = false
   const service = () => (servicePromise ??= options.getService())
+
+  const activeA2aTask = ref<ActiveA2aTask | null>(null)
+  const hasActiveA2aTask = computed(() => activeA2aTask.value !== null)
 
   async function poll(): Promise<void> {
     if (polling || options.aiIsRunning.value || options.isApplyingPatches.value) return
@@ -114,9 +126,27 @@ export function useAgentCommunicationWorker(options: AgentCommunicationWorkerOpt
           error instanceof Error ? error.message : String(error),
         )
       }
+      if (activeA2aTask.value && activeA2aTask.value.status === 'running') {
+        activeA2aTask.value = {
+          ...activeA2aTask.value,
+          status: 'failed',
+          detail: error instanceof Error ? error.message : String(error),
+        }
+      }
       options.notifyError(error instanceof Error ? error.message : String(error))
     } finally {
       polling = false
+      if (activeA2aTask.value && activeA2aTask.value.status !== 'running') {
+        const completedTask = activeA2aTask.value
+        setTimeout(() => {
+          if (
+            activeA2aTask.value?.id === completedTask.id &&
+            activeA2aTask.value.status !== 'running'
+          ) {
+            activeA2aTask.value = null
+          }
+        }, 5_000)
+      }
     }
   }
 
@@ -140,6 +170,32 @@ export function useAgentCommunicationWorker(options: AgentCommunicationWorkerOpt
     const detachedConversationId = ref<string | null>(routedConversationId)
     const documentSnapshot = await options.createDocumentSnapshot()
 
+    const taskTitle = request.branchTitle ?? `A2A · ${request.prompt}`
+    activeA2aTask.value = {
+      id: routedConversationId,
+      title: taskTitle,
+      prompt: runtimePrompt,
+      status: 'running',
+    }
+    if (detachedMessages.value.length === 0) {
+      detachedMessages.value = [
+        {
+          id: options.createId(),
+          role: 'user' as const,
+          content: runtimePrompt,
+          mode: 'agent' as const,
+          status: 'done' as const,
+        },
+      ]
+    }
+    options.conversation.saveDetachedTask({
+      id: routedConversationId,
+      projectId: detachedProject?.id ?? request.projectId,
+      parentConversationId: request.parentConversationId,
+      title: taskTitle,
+      messages: detachedMessages.value,
+    })
+
     await options.agentRun.run(runtimePrompt, continuation, {
       mode: ref<AiChatMode>('agent'),
       prompt: ref(runtimePrompt),
@@ -160,9 +216,27 @@ export function useAgentCommunicationWorker(options: AgentCommunicationWorkerOpt
       id: routedConversationId,
       projectId: detachedProject?.id ?? request.projectId ?? undefined,
       parentConversationId: request.parentConversationId,
-      title: request.branchTitle ?? `A2A · ${request.prompt}`,
+      title: taskTitle,
       messages: detachedMessages.value,
     })
+
+    const finalStatus =
+      options.pendingTask.value
+        ? 'completed'
+        : options.agentRun.runtimeState.value.status === 'failed' ||
+            options.agentRun.runtimeState.value.status === 'cancelled'
+          ? 'failed'
+          : 'completed'
+    activeA2aTask.value = {
+      id: routedConversationId,
+      title: taskTitle,
+      prompt: runtimePrompt,
+      status: finalStatus,
+      detail:
+        options.agentRun.runtimeState.value.detail ||
+        detachedError.value ||
+        undefined,
+    }
 
     const taskId = options.agentRun.lastTaskId.value
     const result = options.agentRun.lastRunReport.value
@@ -227,7 +301,7 @@ export function useAgentCommunicationWorker(options: AgentCommunicationWorkerOpt
     timer = null
   }
 
-  return { poll, start, stop }
+  return { poll, start, stop, activeA2aTask, hasActiveA2aTask }
 }
 
 function toPrompt(request: AgentCommunicationRequest): string {

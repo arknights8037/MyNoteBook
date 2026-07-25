@@ -26,9 +26,10 @@
 
 ### 幻灯片
 
-- canonical 数据由页面、受限模板、slot 内容和背景枚举组成。
-- 人类只能选择模板并填写 slot，不接受任意 HTML/CSS。
-- 当前支持 JSON 导出，尚未接入 Agent 创建和修改工具。
+- canonical 数据改为单文件 Slidev Markdown；每页使用 `nbId` frontmatter 保持稳定身份，文本框位置使用 Slidev 原生 `dragPos` 与 `<v-drag>` 表达，不再维护平行的模板/slot JSON。
+- 人类编辑器提供页面新增、复制、删除、重排，标题与正文双击编辑，浮动文本框新增、编辑、拖动与缩放，演讲者备注、源码模式和本地演示模式。默认页面使用 Slidev `default` layout；高级 Slidev 内容可保留并转入源码模式编辑。
+- 旧的页面/模板/slot payload 在 repository 读取时自动投影为 Slidev Markdown，首次保存后按新格式持久化。导出格式为 `.md`。
+- 当前已接入 `@slidev/parser` 和 Slidev CLI 依赖；第一阶段完成人类编辑器，Agent 创建、修改和跨内容转换工具仍属于下一阶段。
 
 ### UML / 流程图
 
@@ -51,7 +52,7 @@
 
 ## Agent 边界
 
-当前已具备供 Agent 复用的结构：稳定 ID、类型化 payload、验证器、revision、树位置和语义操作 schema。思维导图读取已经进入 Agent 工具；幻灯片、UML 和表格的 Agent read/create/edit/convert 工具仍属于下一阶段。
+当前已具备供 Agent 复用的结构：稳定 ID、类型化 payload、验证器、revision、树位置和语义操作 schema。思维导图读取已经进入 Agent 工具；幻灯片现在以 Slidev Markdown 和稳定 `nbId` 为边界，UML 和表格维持既有 canonical payload。三类视图的 Agent read/create/edit/convert 工具仍属于下一阶段。
 
 后续接入必须遵守现有 Agent Runtime：先读取 canonical 来源和 revision，再生成目标或修改提案；写入必须经过本地 schema 校验、能力范围检查和用户确认，不允许模型直接写 SQLite，也不做静默跨视图同步。
 

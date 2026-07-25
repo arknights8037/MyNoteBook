@@ -345,7 +345,7 @@ onMounted(() => void loadSkills())
     <header class="plugin-skills-page__header">
       <div>
         <span class="plugin-skills-page__eyebrow"><Sparkles :size="14" /> AGENT EXTENSIONS</span>
-        <h1>插件与技能</h1>
+        <h1>插件技能</h1>
         <p>兼容标准 SKILL.md 目录，并让 Agent 按需读取下属脚本、资料和资源。</p>
       </div>
       <div v-if="activeTab === 'skills'" class="plugin-skills-page__header-actions">

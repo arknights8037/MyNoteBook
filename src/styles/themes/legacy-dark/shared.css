@@ -1,12 +1,24 @@
 :root[data-theme='legacy-dark'] {
   color: #dededb;
-  background: #20201f;
-  color-scheme: dark;
+  background: transparent;
+  --workspace-shell-background: transparent;
+  --workspace-nav-divider: #5e5e5a;
 }
 
-:root[data-theme='legacy-dark'] body,
-:root[data-theme='legacy-dark'] .app-shell,
-:root[data-theme='legacy-dark'] .editor-workspace,
+:root[data-theme='legacy-dark'] body {
+  background: transparent;
+}
+
+:root[data-theme='legacy-dark'] .app-shell {
+  color: #dededb;
+  background: var(--workspace-shell-background);
+}
+
+:root[data-theme='legacy-dark'] .editor-workspace {
+  color: #dededb;
+  background: transparent;
+}
+
 :root[data-theme='legacy-dark'] .document-workspace,
 :root[data-theme='legacy-dark'] .editor-panel,
 :root[data-theme='legacy-dark'] .editor-shell,
@@ -15,12 +27,14 @@
   background: #20201f;
 }
 
+:root[data-theme='legacy-dark'] .activity-rail__panel,
+:root[data-theme='legacy-dark'] .activity-rail__brand,
 :root[data-theme='legacy-dark'] .document-sidebar,
 :root[data-theme='legacy-dark'] .settings-nav,
 :root[data-theme='legacy-dark'] .editor-inspector,
 :root[data-theme='legacy-dark'] .ui-drawer {
-  border-color: #373735;
-  background: #262625;
+  border-color: var(--workspace-nav-divider);
+  background: var(--workspace-menu-glass);
 }
 
 :root[data-theme='legacy-dark'] .topbar,
@@ -49,6 +63,21 @@
 :root[data-theme='legacy-dark'] .ai-chat-composer,
 :root[data-theme='legacy-dark'] .document-sidebar {
   border-color: #3a3a37;
+}
+
+:root[data-theme='legacy-dark'] .document-sidebar {
+  border-right: 0;
+}
+
+:root[data-theme='legacy-dark'] .activity-rail {
+  border-right-color: var(--workspace-nav-divider);
+}
+
+:root[data-theme='legacy-dark'] .workspace-tabs,
+:root[data-theme='legacy-dark'] .workspace-tab,
+:root[data-theme='legacy-dark'] .ai-chat-popover--docked,
+:root[data-theme='legacy-dark'] .ai-chat-history {
+  border-color: var(--workspace-nav-divider);
 }
 
 :root[data-theme='legacy-dark'] .settings-section__header > span,
@@ -122,6 +151,11 @@
 
 :root[data-theme='legacy-dark'] .ai-chat-popover__messages {
   background: #242423;
+}
+
+:root[data-theme='legacy-dark'] .ai-chat-popover--workspace,
+:root[data-theme='legacy-dark'] .ai-chat-popover--workspace .ai-chat-popover__messages {
+  background: #20201f;
 }
 
 :root[data-theme='legacy-dark'] .ai-chat-message--user .markdown-preview {

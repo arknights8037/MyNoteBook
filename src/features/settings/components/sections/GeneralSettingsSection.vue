@@ -6,7 +6,8 @@ import { NSelect } from '@/ui'
 import type { AppSettings } from '@/models/settings/settings'
 import { useSettingsSectionContext } from './settingsSectionContext'
 
-const { settings, startupOptions, newDocumentOptions, update } = useSettingsSectionContext()
+const { settings, startupOptions, newDocumentOptions, maxTabsOptions, update } =
+  useSettingsSectionContext()
 </script>
 
 <template>
@@ -35,6 +36,14 @@ const { settings, startupOptions, newDocumentOptions, update } = useSettingsSect
           @update:value="
             update('newDocumentLocation', $event as AppSettings['newDocumentLocation'])
           "
+        />
+      </div>
+      <div class="settings-row">
+        <span><strong>最大 Tab 数</strong><small>控制工作区同时保留的页面 Tab 数。</small></span>
+        <NSelect
+          :value="String(settings.maxTabs)"
+          :options="maxTabsOptions"
+          @update:value="update('maxTabs', Number($event))"
         />
       </div>
       <div class="settings-row settings-row--switch">

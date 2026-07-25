@@ -1,6 +1,7 @@
 import { err, normalizeError, ok, type AppResult } from '@/models/shared/result'
 import {
   validateWorkspaceViewPayload,
+  normalizeWorkspaceViewPayload,
   type StructuredWorkspaceView,
   type StructuredWorkspaceViewPayload,
   type StructuredWorkspaceViewSummary,
@@ -184,10 +185,11 @@ function validate(
 }
 function map(row: Row): AppResult<StructuredWorkspaceView> {
   try {
-    const payload = parseJsonStrict<StructuredWorkspaceViewPayload>(
+    const rawPayload = parseJsonStrict<unknown>(
       row.payload_json,
       '工作空间视图数据',
     )
+    const payload = normalizeWorkspaceViewPayload(row.view_type, rawPayload)
     const invalid = validate(row.title, row.view_type, payload)
     return invalid
       ? err({ code: 'validation-error', message: invalid })

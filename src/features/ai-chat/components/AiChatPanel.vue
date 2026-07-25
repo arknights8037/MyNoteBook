@@ -96,6 +96,7 @@ const emit = defineEmits<{
   'resolve-review-issue': [input: { messageId: string; issue: ReviewIssue }]
   'select-history': [historyId: string]
   'delete-history': [historyId: string]
+  'delete-project': [projectId: string]
   'select-project': [projectId: string]
   'create-project': [input: { name: string; workspaceRootIds: string[] }]
   'new-task': [projectId: string | null]
@@ -171,13 +172,16 @@ watch(
     :class="{
       'ai-chat-popover--workspace': workspace,
       'ai-chat-popover--docked': docked && !workspace,
+      'ai-chat-popover--headerless': workspace && externalNavigation,
     }"
     :style="floatingWindowStyle"
     aria-label="AI 聊天"
   >
     <AiChatPanelHeader
+      v-if="!(workspace && externalNavigation)"
       :workspace="workspace"
       :docked="docked"
+      :external-navigation="externalNavigation"
       :history-collapsed="historyCollapsed"
       :chat-history="chatHistory"
       :provider-label="providerLabel"
@@ -221,6 +225,7 @@ watch(
         @create-project="showProjectCreator = true"
         @select-history="emit('select-history', $event)"
         @delete-history="emit('delete-history', $event)"
+        @delete-project="emit('delete-project', $event)"
         @select-project="emit('select-project', $event)"
         @new-task="emit('new-task', $event)"
         @pin-project="emit('pin-project', $event)"

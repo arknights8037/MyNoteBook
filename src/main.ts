@@ -6,8 +6,11 @@ import { ASSET_PORT_KEY } from '@/editor/core/assetPortContext'
 import { tauriAssetService } from './infrastructure/assets/AssetService'
 import './styles/global.css'
 import { applyTheme, getThemePreference } from '@/services/appearance/theme'
+import { applyApplicationTypography } from '@/services/appearance/applicationTypography'
+import { loadAppSettings } from '@/models/settings/settings'
 
 applyTheme(getThemePreference())
+applyApplicationTypography(loadAppSettings())
 performance.mark('notebook:vue-start')
 createApp(App).provide(ASSET_PORT_KEY, tauriAssetService).mount('#app')
 performance.mark('notebook:vue-mounted')

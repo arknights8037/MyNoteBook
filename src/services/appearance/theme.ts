@@ -87,7 +87,10 @@ export function applyTheme(preferenceOrTheme: ThemePreference): ThemeId {
   root.dataset.theme = resolvedTheme
   root.dataset.themePreference = preferenceOrTheme
   root.dataset.themeMode = theme.mode
-  root.style.colorScheme = theme.mode
+  // Keep the transparent WebView canvas on the light composition path.
+  // Switching the root canvas to `dark` makes WebView2 insert an opaque gray
+  // backing layer, which hides the native Acrylic effect behind the sidebar.
+  root.style.colorScheme = 'light'
 
   for (const [name, value] of Object.entries(getThemeCssVariables(theme))) {
     root.style.setProperty(name, value)

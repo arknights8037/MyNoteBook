@@ -1,17 +1,13 @@
 <script setup lang="ts">
 import {
   ArrowDown,
-  BookOpen,
   Brain,
   ChevronDown,
   Copy,
-  Database,
-  FileText,
   GitFork,
   LoaderCircle,
   Pencil,
   RotateCcw,
-  Sparkles,
 } from '@lucide/vue'
 import { computed, nextTick, ref, watch } from 'vue'
 
@@ -63,12 +59,6 @@ const emit = defineEmits<{
   'use-prompt': [prompt: string]
 }>()
 
-const quickPrompts = [
-  { label: '提炼要点', prompt: '请提炼当前页面的核心观点，并用 3–5 条要点说明。' },
-  { label: '查找关联资料', prompt: '请从知识库中找出与当前页面最相关的资料，并说明关联原因。' },
-  { label: '提取行动项', prompt: '请从当前页面提取待办、决策和后续行动项。' },
-  { label: '整理为提纲', prompt: '请将当前页面整理成层级清晰的 Markdown 提纲。' },
-]
 const messagesElement = ref<BrowserHTMLElement | null>(null)
 const isFollowingOutput = ref(true)
 let shouldKeepMessagesAtBottom = true
@@ -174,32 +164,9 @@ watch(
     @scroll="handleMessagesScroll"
   >
     <section v-if="messages.length === 0" class="ai-chat-welcome">
-      <div class="ai-chat-welcome__mark"><Sparkles :size="21" /></div>
       <div class="ai-chat-welcome__copy">
-        <p>开始一次基于知识库的协作</p>
-        <span>我会结合当前页面与已收录资料回答；需要改写时切换到 Edit。</span>
-      </div>
-      <div class="ai-chat-context-card" aria-label="当前知识上下文">
-        <div class="ai-chat-context-card__title"><Database :size="15" />知识上下文</div>
-        <div class="ai-chat-context-card__row">
-          <FileText :size="14" />
-          <span class="ai-chat-context-card__document">{{
-            currentDocumentTitle || '未命名页面'
-          }}</span>
-        </div>
-        <div class="ai-chat-context-card__meta">
-          <BookOpen :size="14" />已连接 {{ knowledgeSourceCount }} 篇资料
-        </div>
-      </div>
-      <div class="ai-chat-quick-prompts" aria-label="常用任务">
-        <button
-          v-for="quickPrompt in quickPrompts"
-          :key="quickPrompt.label"
-          type="button"
-          @click="useQuickPrompt(quickPrompt.prompt)"
-        >
-          {{ quickPrompt.label }}
-        </button>
+        <p class="ai-chat-welcome__headline">今天，我们从哪里开始？</p>
+        <span>告诉我你想做什么，我来帮你规划下一步。</span>
       </div>
     </section>
     <article

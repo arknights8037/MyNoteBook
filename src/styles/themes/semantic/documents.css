@@ -1,16 +1,34 @@
 .document-list__item {
-  color: var(--color-text-secondary);
+  color: var(--workspace-glass-text-secondary, var(--color-text-secondary));
   background: transparent;
 }
 
 .document-list__item:hover {
-  background: color-mix(in srgb, var(--color-bg-hover) 76%, transparent);
+  color: var(--workspace-glass-text-primary, var(--color-text-primary));
+  background: var(--workspace-glass-hover, var(--color-bg-hover));
+}
+
+.settings-nav__item {
+  color: var(--workspace-glass-text-secondary, var(--color-text-secondary));
+  background: transparent;
+}
+
+.settings-nav__item:hover {
+  color: var(--workspace-glass-text-primary, var(--color-text-primary));
+  background: var(--workspace-glass-hover, var(--color-bg-hover));
 }
 
 .document-list__item--active,
 .settings-nav__item--active {
-  color: var(--color-text-primary);
-  background: color-mix(in srgb, var(--color-bg-selected) 68%, transparent);
+  color: var(--workspace-glass-text-primary, var(--color-text-primary));
+  background: var(--workspace-glass-selected, var(--color-bg-selected));
+}
+
+.document-list__meta,
+.document-list__empty,
+.document-list__subheading,
+.settings-nav__hint {
+  color: var(--workspace-glass-text-muted, var(--color-text-tertiary));
 }
 
 .document-list__item--active {

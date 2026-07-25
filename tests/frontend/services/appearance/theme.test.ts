@@ -45,13 +45,13 @@ describe('theme service', () => {
     })
   })
 
-  it('updates root dataset, color scheme, and css variables', () => {
+  it('updates root theme data while keeping the transparent canvas on the light composition path', () => {
     applyTheme('nord-dark')
 
     expect(document.documentElement.dataset.theme).toBe('nord-dark')
     expect(document.documentElement.dataset.themePreference).toBe('nord-dark')
     expect(document.documentElement.dataset.themeMode).toBe('dark')
-    expect(document.documentElement.style.colorScheme).toBe('dark')
+    expect(document.documentElement.style.colorScheme).toBe('light')
     expect(
       document.documentElement.style.getPropertyValue('--color-bg-app').trim(),
     ).toBe(THEME_DEFINITIONS['nord-dark'].colors.background.app)

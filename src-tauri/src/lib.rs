@@ -1,4 +1,79 @@
+use tauri::Manager;
 use tauri_plugin_sql::{Migration, MigrationKind};
+
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Graphics::Dwm::{
+    DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct AccentPolicy {
+    state: u32,
+    flags: u32,
+    color: u32,
+    animation_id: u32,
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct WindowCompositionAttributeData {
+    attribute: u32,
+    data: *mut core::ffi::c_void,
+    size: usize,
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn apply_fixed_light_acrylic(hwnd: *mut core::ffi::c_void) {
+    type SetWindowCompositionAttributeFn = unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut WindowCompositionAttributeData,
+    ) -> i32;
+    const DWMWA_SYSTEMBACKDROP_TYPE: u32 = 38;
+    const DWMSBT_NONE: u32 = 1;
+    const WCA_ACCENT_POLICY: u32 = 19;
+    const ACCENT_ENABLE_ACRYLICBLURBEHIND: u32 = 4;
+    // GradientColor is encoded as AABBGGRR. Keep the native tint deliberately
+    // light: Windows supplies the real desktop blur while CSS owns the visible
+    // navigation tint and text contrast.
+    const BASE_ACRYLIC_TINT: u32 = 0x20F3F3F3;
+
+    let user32 = LoadLibraryA(c"user32.dll".as_ptr() as *const u8);
+    if user32.is_null() {
+        return;
+    }
+    let Some(procedure) = GetProcAddress(
+        user32,
+        c"SetWindowCompositionAttribute".as_ptr() as *const u8,
+    ) else {
+        return;
+    };
+    let set_window_composition_attribute: SetWindowCompositionAttributeFn =
+        core::mem::transmute(procedure);
+
+    let backdrop = DWMSBT_NONE;
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_SYSTEMBACKDROP_TYPE,
+        &backdrop as *const _ as *const core::ffi::c_void,
+        core::mem::size_of_val(&backdrop) as u32,
+    );
+
+    let mut policy = AccentPolicy {
+        state: ACCENT_ENABLE_ACRYLICBLURBEHIND,
+        flags: 0,
+        color: BASE_ACRYLIC_TINT,
+        animation_id: 0,
+    };
+    let mut data = WindowCompositionAttributeData {
+        attribute: WCA_ACCENT_POLICY,
+        data: &mut policy as *mut _ as *mut core::ffi::c_void,
+        size: core::mem::size_of_val(&policy),
+    };
+    let _ = set_window_composition_attribute(hwnd, &mut data);
+}
 
 mod agent_cancellation;
 mod agent_repository;
@@ -194,6 +269,24 @@ fn migrations() -> Vec<Migration> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                let hwnd = window.hwnd()?.0 as *mut core::ffi::c_void;
+                let corner_preference = DWMWCP_ROUND;
+                unsafe {
+                    apply_fixed_light_acrylic(hwnd);
+                    DwmSetWindowAttribute(
+                        hwnd,
+                        DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+                        &corner_preference as *const _ as *const core::ffi::c_void,
+                        core::mem::size_of_val(&corner_preference) as u32,
+                    );
+                }
+            }
+
+            Ok(())
+        })
         .manage(secret_store::AiSecretState::default())
         .invoke_handler(tauri::generate_handler![
             storage::get_system_fonts,
@@ -264,7 +357,14 @@ pub fn run() {
                 })
                 .build(),
         )
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::DECORATIONS,
+                )
+                .build(),
+        )
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())

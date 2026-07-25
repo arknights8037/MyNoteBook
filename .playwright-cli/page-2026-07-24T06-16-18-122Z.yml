@@ -1,0 +1,31 @@
+- generic [ref=f1e3]:
+  - complementary [ref=f1e4]:
+    - generic [ref=f1e5]:
+      - strong [ref=f1e6]: 1 页
+      - button "新增幻灯片" [ref=f1e7] [cursor=pointer]
+    - button "1 Slidev 可视化演示 双击标题或正文开始编辑。" [ref=f1e9] [cursor=pointer]:
+      - generic [ref=f1e10]: "1"
+      - generic [ref=f1e11]:
+        - strong [ref=f1e12]: Slidev 可视化演示
+        - generic [ref=f1e13]: 双击标题或正文开始编辑。
+  - main [ref=f1e14]:
+    - generic [ref=f1e15]:
+      - button "新增" [ref=f1e16] [cursor=pointer]
+      - button "复制" [ref=f1e18] [cursor=pointer]
+      - button "上移页面" [disabled] [ref=f1e22]
+      - button "下移页面" [disabled] [ref=f1e25]
+      - button "删除页面" [disabled] [ref=f1e28]
+      - button "文本框" [ref=f1e33] [cursor=pointer]
+      - button "源码" [ref=f1e36] [cursor=pointer]
+      - button "演示" [ref=f1e41] [cursor=pointer]
+    - generic [ref=f1e45]:
+      - generic [ref=f1e46]:
+        - heading "Slidev 可视化演示" [level=1] [ref=f1e47]
+        - generic "双击编辑正文" [ref=f1e48]:
+          - paragraph [ref=f1e49]: 双击标题或正文开始编辑。
+      - article [ref=f1e53]:
+        - textbox "文本框内容" [active] [ref=f1e54]: 双击编辑文本框
+    - generic [ref=f1e50]:
+      - generic [ref=f1e51]: 演讲者备注
+      - textbox "演讲者备注" [ref=f1e52]:
+        - /placeholder: 仅演讲者可见的提示…

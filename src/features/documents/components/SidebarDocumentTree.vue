@@ -35,6 +35,7 @@ import type { StructuredWorkspaceViewType } from '@/models/workspace/workspaceVi
 import NButton from '@/ui/NButton.vue'
 import NIcon from '@/ui/NIcon.vue'
 import NTooltip from '@/ui/NTooltip.vue'
+import SearchHighlight from '@/components/SearchHighlight.vue'
 
 defineOptions({ name: 'SidebarDocumentTree' })
 
@@ -44,6 +45,7 @@ type ContentKind = 'document' | 'mindmap' | 'workspace-view'
 const props = withDefaults(
   defineProps<{
     nodes: SidebarDocumentNode[]
+    filterQuery?: string
     currentDocumentId: DocumentId
     collapsedDocumentIds: Set<DocumentId>
     draggedArticleId: DocumentId | null
@@ -60,6 +62,7 @@ const props = withDefaults(
   }>(),
   {
     depth: 0,
+    filterQuery: '',
     draggedMindMapId: null,
     draggedWorkspaceViewId: null,
     mindMapIds: () => new Set<string>(),
@@ -188,7 +191,7 @@ function showContentProperties(id: string): void {
             <component :is="viewIcon(node.document.id)" v-else-if="contentKind(node.document.id) === 'workspace-view'" :size="16" />
             <FileText v-else :size="16" />
             <span class="document-list__main">
-              <NTooltip trigger="hover"><template #trigger><span class="document-list__title">{{ displayTitle(node.document) }}</span></template>{{ displayTitle(node.document) }}</NTooltip>
+              <NTooltip trigger="hover"><template #trigger><span class="document-list__title"><SearchHighlight :text="displayTitle(node.document)" :query="filterQuery" /></span></template>{{ displayTitle(node.document) }}</NTooltip>
               <span v-if="contentKind(node.document.id) !== 'document' || node.children.length > 0" class="document-list__meta">
                 {{ contentKind(node.document.id) === 'document' ? `${node.children.length} 个子页面` : node.document.description }}
               </span>
@@ -247,6 +250,7 @@ function showContentProperties(id: string): void {
     <SidebarDocumentTree
       v-if="node.children.length > 0 && !collapsedDocumentIds.has(node.document.id)"
       :nodes="node.children"
+      :filter-query="filterQuery"
       :current-document-id="currentDocumentId"
       :collapsed-document-ids="collapsedDocumentIds"
       :dragged-article-id="draggedArticleId"

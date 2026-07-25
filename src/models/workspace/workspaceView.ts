@@ -1,19 +1,19 @@
 import { createDefaultTableRows, normalizeTableRows } from '@/editor/blocks/structuredBlocks'
 import { normalizeTableFields, type TableField } from '@/editor/blocks/tableFields'
+import {
+  convertLegacySlidesToSlidev,
+  createDefaultSlidevSource,
+  validateSlidevSource,
+  type LegacySlidePage,
+} from '@/models/workspace/slidevDeck'
 
 export type StructuredWorkspaceViewType = 'slides' | 'uml' | 'table'
-export type SlideTemplateId = 'cover' | 'section' | 'title-content' | 'two-column' | 'big-number' | 'quote' | 'summary'
-
-export interface SlidePage {
-  id: string
-  templateId: SlideTemplateId
-  slots: Record<string, string | string[]>
-  background: 'plain' | 'dark' | 'gradient'
-}
 
 export interface SlidesViewPayload {
   type: 'slides'
-  pages: SlidePage[]
+  format: 'slidev'
+  source: string
+  assetIds: string[]
 }
 
 export interface UmlViewPayload {
@@ -60,7 +60,7 @@ export type WorkspaceViewOperation =
   | { type: 'replace_payload'; payload: StructuredWorkspaceViewPayload }
   | { type: 'rename_mermaid_node'; nodeId: string; label: string }
   | { type: 'set_table_cell'; row: number; column: number; value: string }
-  | { type: 'set_slide_slot'; pageId: string; slot: string; value: string | string[] }
+  | { type: 'set_slidev_source'; source: string }
 
 export function createDefaultWorkspaceViewPayload(
   type: StructuredWorkspaceViewType,
@@ -69,7 +69,9 @@ export function createDefaultWorkspaceViewPayload(
   if (type === 'slides') {
     return {
       type,
-      pages: [{ id: createId('slide'), templateId: 'cover', slots: { title: '新幻灯片', subtitle: '填写副标题' }, background: 'gradient' }],
+      format: 'slidev',
+      source: createDefaultSlidevSource(createId),
+      assetIds: [],
     }
   }
   if (type === 'uml') {
@@ -81,10 +83,7 @@ export function createDefaultWorkspaceViewPayload(
 
 export function validateWorkspaceViewPayload(payload: StructuredWorkspaceViewPayload): string | null {
   if (payload.type === 'slides') {
-    if (!payload.pages.length) return '幻灯片至少需要一页。'
-    if (payload.pages.length > 200) return '幻灯片不能超过 200 页。'
-    if (new Set(payload.pages.map((page) => page.id)).size !== payload.pages.length) return '幻灯片页面 ID 重复。'
-    return null
+    return validateSlidevSource(payload.source)
   }
   if (payload.type === 'uml') {
     if (!/^\s*(?:flowchart|graph)\s+(?:LR|RL|TB|BT)\b/m.test(payload.source)) return '第一期 UML 只支持 Mermaid flowchart。'
@@ -112,11 +111,41 @@ export function applyWorkspaceViewOperation(
     rows[operation.row][operation.column] = operation.value
     return { ...payload, rows, fields: normalizeTableFields(payload.fields, rows) }
   }
-  if (operation.type === 'set_slide_slot' && payload.type === 'slides') {
-    if (!payload.pages.some((page) => page.id === operation.pageId)) throw new Error('幻灯片页面不存在。')
-    return { ...payload, pages: payload.pages.map((page) => page.id === operation.pageId ? { ...page, slots: { ...page.slots, [operation.slot]: operation.value } } : page) }
+  if (operation.type === 'set_slidev_source' && payload.type === 'slides') {
+    return { ...payload, source: operation.source }
   }
   throw new Error('操作与目标视图类型不匹配。')
+}
+
+export function normalizeWorkspaceViewPayload(
+  type: StructuredWorkspaceViewType,
+  value: unknown,
+  createId: (prefix: string) => string = (prefix) => `${prefix}-${globalThis.crypto.randomUUID()}`,
+): StructuredWorkspaceViewPayload {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return createDefaultWorkspaceViewPayload(type, createId)
+  }
+  const payload = value as Record<string, unknown>
+  if (type === 'slides') {
+    if (payload.format === 'slidev' && typeof payload.source === 'string') {
+      return {
+        type: 'slides',
+        format: 'slidev',
+        source: payload.source,
+        assetIds: Array.isArray(payload.assetIds)
+          ? payload.assetIds.filter((id): id is string => typeof id === 'string')
+          : [],
+      }
+    }
+    const pages = Array.isArray(payload.pages) ? (payload.pages as LegacySlidePage[]) : []
+    return {
+      type: 'slides',
+      format: 'slidev',
+      source: convertLegacySlidesToSlidev(pages, createId),
+      assetIds: [],
+    }
+  }
+  return value as StructuredWorkspaceViewPayload
 }
 
 export interface MermaidSemanticNode { id: string; label: string }

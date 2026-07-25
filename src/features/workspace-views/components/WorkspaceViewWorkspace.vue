@@ -182,9 +182,9 @@ function serializeForExport(
     }
   }
   return {
-    content: JSON.stringify({ ...currentView, payload: currentPayload }, null, 2),
-    extension: 'json',
-    label: '幻灯片 JSON',
+    content: currentPayload.source,
+    extension: 'md',
+    label: 'Slidev Markdown',
   }
 }
 

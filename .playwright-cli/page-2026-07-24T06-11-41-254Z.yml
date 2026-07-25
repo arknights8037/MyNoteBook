@@ -1,0 +1,72 @@
+- generic [ref=e2]:
+  - main [ref=e9]:
+    - generic [ref=e10]:
+      - complementary "主功能区" [ref=e11]:
+        - button "打开 Agent Work" [ref=e12] [cursor=pointer]:
+          - strong [ref=e14]: PrismKnowledge
+        - generic [ref=e15]:
+          - navigation "工作区" [ref=e16]:
+            - button "Agent Work" [ref=e17] [cursor=pointer]
+            - button "文档与视图" [active] [ref=e22] [cursor=pointer]
+            - button "知识控制" [ref=e27] [cursor=pointer]
+            - button "插件技能" [ref=e32] [cursor=pointer]
+            - button "自动化任务" [ref=e37] [cursor=pointer]
+            - button "审计记录" [ref=e43] [cursor=pointer]
+          - button "设置" [ref=e48] [cursor=pointer]
+      - complementary "文档管理":
+        - generic:
+          - generic:
+            - textbox "筛选文档列表":
+              - /placeholder: 筛选列表… Ctrl+K 全局搜索
+            - generic: Ctrl K
+        - generic:
+          - button "新建分组"
+          - button "新建内容"
+          - button "导入文档"
+        - generic: 空间资源
+        - button "Choose File"
+        - generic:
+          - paragraph: 暂无文档
+        - generic:
+          - button "回收站"
+      - generic [ref=e87]:
+        - generic "打开的页面" [ref=e88]:
+          - tablist [ref=e89]:
+            - tab "Agent Work 关闭 Agent Work" [ref=e90] [cursor=pointer]:
+              - generic [ref=e94]: Agent Work
+              - button "关闭 Agent Work" [ref=e96]
+          - button "新建内容" [ref=e100] [cursor=pointer]
+          - generic [ref=e103]: "|"
+          - generic "窗口控制" [ref=e104]:
+            - button "最小化窗口" [ref=e105]
+            - button "最大化窗口" [ref=e107]
+            - button "关闭窗口" [ref=e110]
+        - generic [ref=e170]:
+          - generic [ref=e171]:
+            - button "编辑文档标题" [disabled] [ref=e173]: 未命名文档
+            - generic [ref=e174]:
+              - generic [ref=e175]: 加载失败
+              - button "新建子页面" [disabled] [ref=e178]
+              - button "分享" [ref=e182] [cursor=pointer]
+              - button "插入图片" [disabled] [ref=e184]
+              - button "插入附件" [disabled] [ref=e191]
+              - button "评论" [ref=e197] [cursor=pointer]
+              - button "更多" [ref=e202] [cursor=pointer]
+              - button "开发面板" [ref=e209] [cursor=pointer]
+              - button "搜索" [ref=e218] [cursor=pointer]
+          - generic [ref=e224]:
+            - button [ref=e225]
+            - button [ref=e226]
+            - generic "文档编辑器" [ref=e228]:
+              - heading "未命名文档" [level=1] [ref=e230]
+              - paragraph [ref=e233]
+      - complementary "帮助入口" [ref=e235]:
+        - button "AI" [ref=e236] [cursor=pointer]
+  - alert [ref=e242]: Notification Cannot read properties of undefined (reading 'invoke')
+  - alert [ref=e243]: Notification Cannot read properties of undefined (reading 'invoke')
+  - region "Notifications (F8)":
+    - list [ref=e162]:
+      - listitem [ref=e244]:
+        - generic [ref=e245]: Cannot read properties of undefined (reading 'invoke')
+      - listitem [ref=e246]:
+        - generic [ref=e247]: Cannot read properties of undefined (reading 'invoke')

@@ -13,6 +13,7 @@ import {
   Search,
   Trash2,
   Upload,
+  X,
 } from '@lucide/vue'
 import {
   ContextMenuContent,
@@ -26,9 +27,12 @@ import {
   DropdownMenuRoot,
   DropdownMenuTrigger,
 } from 'reka-ui'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+
+import { matchesFilter } from '@/models/shared/searchHighlight'
 
 import SidebarDocumentTree from './SidebarDocumentTree.vue'
+import SearchHighlight from '@/components/SearchHighlight.vue'
 import {
   displayDocumentTitle,
   formatDocumentUpdatedAt,
@@ -118,6 +122,62 @@ const emit = defineEmits<{
 }>()
 
 const fileInput = ref<BrowserInputElement | null>(null)
+const filterQuery = ref('')
+const filterInputRef = ref<HTMLInputElement | null>(null)
+
+function handleFilterKeydown(event: KeyboardEvent): void {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault()
+    emit('search')
+    return
+  }
+  if (event.key === 'Escape' && filterQuery.value) {
+    filterQuery.value = ''
+  }
+}
+
+function clearFilter(): void {
+  filterQuery.value = ''
+  filterInputRef.value?.focus()
+}
+
+// When filtering, auto-expand all groups so matches are visible
+watch(filterQuery, (query) => {
+  if (query.trim()) {
+    for (const group of articleGroups.value) {
+      if (collapsedGroupIds.has(group.id)) {
+        emit('toggle-group', group.id)
+      }
+    }
+  }
+})
+
+const normalizedFilter = computed(() => filterQuery.value.trim().toLocaleLowerCase())
+const isFiltering = computed(() => normalizedFilter.value.length > 0)
+
+function documentMatchesQuery(document: DocumentSummary): boolean {
+  const q = normalizedFilter.value
+  if (!q) return true
+  return matchesFilter(displayDocumentTitle(document), q) ||
+    matchesFilter(document.description, q) ||
+    document.tags.some((tag) => matchesFilter(tag, q))
+}
+
+function groupHasMatch(group: DocumentSummary): boolean {
+  if (documentMatchesQuery(group)) return true
+  const children = getGroupArticleNodes(group.id)
+  return children.some((node) => documentMatchesQuery(node.document))
+}
+
+const filteredArticleGroups = computed(() => {
+  if (!isFiltering.value) return articleGroups.value
+  return articleGroups.value.filter(groupHasMatch)
+})
+
+const filteredUngroupedNodes = computed(() => {
+  if (!isFiltering.value) return ungroupedArticleNodes.value
+  return ungroupedArticleNodes.value.filter((node) => documentMatchesQuery(node.document))
+})
 const activeDocumentId = computed(() =>
   props.activeMindMapId || props.activeWorkspaceViewId ? '' : props.currentDocumentId,
 )
@@ -208,11 +268,28 @@ defineExpose({ openFilePicker })
 <template>
   <aside class="document-sidebar" aria-label="文档管理">
     <header class="sidebar-brand">
-      <button type="button" class="sidebar-search-trigger" @click="emit('search')">
-        <Search :size="15" />
-        <span>搜索空间内容</span>
-        <kbd>Ctrl K</kbd>
-      </button>
+      <div class="sidebar-search-inline">
+        <Search :size="14" class="sidebar-search-inline__icon" />
+        <input
+          ref="filterInputRef"
+          v-model="filterQuery"
+          type="text"
+          class="sidebar-search-inline__input"
+          placeholder="筛选列表… Ctrl+K 全局搜索"
+          aria-label="筛选文档列表"
+          @keydown="handleFilterKeydown"
+        />
+        <button
+          v-if="filterQuery"
+          type="button"
+          class="sidebar-search-inline__clear"
+          aria-label="清除筛选"
+          @click="clearFilter"
+        >
+          <X :size="13" />
+        </button>
+        <kbd v-else class="sidebar-search-inline__kbd">Ctrl K</kbd>
+      </div>
     </header>
 
     <div v-if="view === 'documents'" class="context-sidebar__actions context-sidebar__actions--documents">
@@ -239,7 +316,7 @@ defineExpose({ openFilePicker })
     />
 
     <div v-if="view === 'documents'" class="document-list">
-      <div v-for="group in articleGroups" :key="group.id" class="document-group">
+      <div v-for="group in filteredArticleGroups" :key="group.id" class="document-group">
         <ContextMenuRoot>
           <ContextMenuTrigger as-child>
             <div
@@ -267,9 +344,7 @@ defineExpose({ openFilePicker })
                 <span class="document-list__main">
                   <NTooltip trigger="hover">
                     <template #trigger
-                      ><span class="document-list__title">{{
-                        displayDocumentTitle(group)
-                      }}</span></template
+                      ><span class="document-list__title"><SearchHighlight :text="displayDocumentTitle(group)" :query="filterQuery" /></span></template
                     >
                     {{ displayDocumentTitle(group) }}
                   </NTooltip>
@@ -336,6 +411,7 @@ defineExpose({ openFilePicker })
         <SidebarDocumentTree
           v-if="!collapsedGroupIds.has(group.id)"
           :nodes="getGroupArticleNodes(group.id)"
+          :filter-query="filterQuery"
           :current-document-id="activeDocumentId"
           :collapsed-document-ids="collapsedDocumentIds"
           :dragged-article-id="draggedArticleId"
@@ -372,14 +448,15 @@ defineExpose({ openFilePicker })
       </div>
 
       <p
-        v-if="articleGroups.length > 0 && ungroupedArticleNodes.length > 0"
+        v-if="filteredArticleGroups.length > 0 && filteredUngroupedNodes.length > 0"
         class="document-list__subheading"
       >
         未分组
       </p>
 
       <SidebarDocumentTree
-        :nodes="ungroupedArticleNodes"
+        :nodes="filteredUngroupedNodes"
+        :filter-query="filterQuery"
         :current-document-id="activeDocumentId"
         :collapsed-document-ids="collapsedDocumentIds"
         :dragged-article-id="draggedArticleId"
@@ -414,10 +491,10 @@ defineExpose({ openFilePicker })
       />
 
       <p
-        v-if="articleGroups.length === 0 && ungroupedArticleNodes.length === 0"
+        v-if="filteredArticleGroups.length === 0 && filteredUngroupedNodes.length === 0"
         class="document-list__empty"
       >
-        暂无文档
+        {{ isFiltering ? '没有匹配的文档' : '暂无文档' }}
       </p>
     </div>
 

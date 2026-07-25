@@ -43,6 +43,7 @@ const emit = defineEmits<{
   'create-project': []
   'select-history': [historyId: string]
   'delete-history': [historyId: string]
+  'delete-project': [projectId: string]
   'select-project': [projectId: string]
   'new-task': [projectId: string | null]
   'pin-project': [projectId: string]
@@ -83,6 +84,11 @@ function openProjectSettings(projectId: string): void {
   if (props.currentProjectId !== projectId) emit('select-project', projectId)
   showWorkspaceSettings.value =
     props.currentProjectId === projectId ? !showWorkspaceSettings.value : true
+}
+
+function deleteProject(project: AgentProject): void {
+  if (!globalThis.confirm(`删除项目“${project.name}”？其中的对话也会一并删除。`)) return
+  emit('delete-project', project.id)
 }
 
 function updateProjectName(event: BrowserEvent): void {
@@ -312,6 +318,14 @@ function formatHistoryTime(timestamp: number): string {
             @click="openProjectSettings(project.id)"
           >
             <SlidersHorizontal :size="13" />
+          </button>
+          <button
+            type="button"
+            class="ai-chat-project__action ai-chat-project__action--delete"
+            :aria-label="`删除项目：${project.name}`"
+            @click="deleteProject(project)"
+          >
+            <Trash2 :size="13" />
           </button>
         </div>
         <section

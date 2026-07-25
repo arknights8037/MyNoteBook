@@ -21,6 +21,7 @@ export interface AiConversationOptions {
   notify?: (message: string) => void
   historyStore?: AgentWorkspaceHistoryStore
   generateTitle?: (prompt: string, settings: AiSettings) => Promise<string>
+  persistHistory?: Readonly<Ref<boolean>>
 }
 
 export function useAiConversation(options: AiConversationOptions) {
@@ -33,7 +34,19 @@ export function useAiConversation(options: AiConversationOptions) {
     options.historyStore,
   )
   void historyState.hydrate()
-  const stopHistoryWatch = watch(messages, historyState.scheduleSave, { deep: true })
+  const historyPersistenceEnabled = () => options.persistHistory?.value !== false
+  const stopHistoryWatch = watch(
+    messages,
+    () => {
+      if (historyPersistenceEnabled()) historyState.scheduleSave()
+    },
+    { deep: true },
+  )
+  const stopHistoryPersistenceWatch = options.persistHistory
+    ? watch(options.persistHistory, (enabled, wasEnabled) => {
+        if (enabled && !wasEnabled && messages.value.length > 0) historyState.scheduleSave()
+      })
+    : null
   const requestedTitleIds = new Set<string>()
 
   function clear(): void {
@@ -127,6 +140,24 @@ export function useAiConversation(options: AiConversationOptions) {
     options.notify?.(`项目“${project.name}”已创建`)
   }
 
+  function deleteProject(projectId: string): boolean {
+    if (options.isRunning.value) {
+      options.notify?.('请先停止当前 Agent 任务，再删除项目')
+      return false
+    }
+    historyState.flush()
+    const project = historyState.projects.value.find((candidate) => candidate.id === projectId)
+    const deletingActiveProject = historyState.activeProjectId.value === projectId
+    if (!project || !historyState.removeProject(projectId)) return false
+    if (deletingActiveProject) {
+      messages.value = []
+      prompt.value = ''
+      options.error.value = ''
+    }
+    options.notify?.(`项目“${project.name}”及其中的对话已删除`)
+    return true
+  }
+
   function startTask(projectId: string | null): boolean {
     if (options.isRunning.value) {
       options.notify?.('请先停止当前 Agent 任务，再新建任务')
@@ -206,7 +237,8 @@ export function useAiConversation(options: AiConversationOptions) {
   if (getCurrentScope()) {
     onScopeDispose(() => {
       stopHistoryWatch()
-      historyState.flush()
+      stopHistoryPersistenceWatch?.()
+      if (historyPersistenceEnabled()) historyState.flush()
     })
   }
 
@@ -229,6 +261,7 @@ export function useAiConversation(options: AiConversationOptions) {
     deleteHistory,
     selectProject,
     createProject,
+    deleteProject,
     startTask,
     moveHistoryToProject,
     saveDetachedTask,

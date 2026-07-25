@@ -16,6 +16,9 @@ import type { MindMapService } from '@/services/workspace/MindMapService'
 import type { ResearchCandidateService } from '@/services/cognitive/ResearchCandidateService'
 import type { AgentWorkspaceHistoryStore } from '@/repositories/agent/AgentWorkspaceHistoryStore'
 import type { McpClientPort } from '@/services/ports/McpClientPort'
+import type { McpRuntimeTool } from '@/models/integrations/mcp'
+import type { AgentToolExecutionResult } from '@/services/agent/AgentToolExecutor'
+import type { AgentRuntimeProgressUpdate } from './agentRunRuntimeController'
 
 export interface AgentRunServiceDependencies {
   getCognitiveSessionService?: () => Promise<CognitiveSessionService>

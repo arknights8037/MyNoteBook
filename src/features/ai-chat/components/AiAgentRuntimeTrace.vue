@@ -11,7 +11,7 @@ import {
   LoaderCircle,
   Square,
 } from '@lucide/vue'
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import type { AgentRuntimeViewState, AgentTimelineEvent } from '@/models/agent/agentRuntime'
 import {
@@ -28,7 +28,6 @@ const props = defineProps<{
   model: string
   step: string
 }>()
-
 const emit = defineEmits<{
   stop: []
   'open-source': [documentId: string, blockId?: string]
@@ -36,6 +35,70 @@ const emit = defineEmits<{
 
 const runtimeClock = ref(Date.now())
 let runtimeClockTimer: ReturnType<typeof globalThis.setInterval> | null = null
+
+// Pre-computed lookup map: toolCallId -> toolCall (eliminates O(n) find per template access)
+const toolCallMap = computed(() => {
+  const map = new Map<string, RuntimeToolCall>()
+  for (const call of props.state.toolCalls) map.set(call.id, call)
+  return map
+})
+
+// Pre-computed timeline events (avoids re-computing on every template access)
+const timelineEvents = computed<AgentTimelineEvent[]>(() => {
+  if (props.state.timelineEvents?.length) return props.state.timelineEvents
+  return props.state.toolCalls.map((call) => ({
+    id: `tool:${call.id}`,
+    kind: 'tool' as const,
+    status:
+      call.status === 'running' ? ('running' as const) : call.status === 'completed' ? ('completed' as const) : ('failed' as const),
+    detail: summarizeToolResult(call),
+    occurredAt: call.startedAt,
+    completedAt: call.completedAt,
+    toolCallId: call.id,
+  }))
+})
+
+// Pre-computed timeline items: each event enriched with its tool call + presentation data
+interface TimelineItem {
+  event: AgentTimelineEvent
+  toolCall: RuntimeToolCall | null
+  toolLabel: string
+  argumentsSummary: string
+  resultSummary: string
+  resultPreview: string
+  inputFields: AgentToolDisplayField[]
+  resultItems: AgentToolDisplayItem[]
+  resultText: string
+  paragraphs: string[]
+  eventLabel: string
+  stepTitle: string
+}
+
+const timelineItems = computed<TimelineItem[]>(() => {
+  const tcMap = toolCallMap.value
+  return timelineEvents.value.map((event) => {
+    const toolCall = event.toolCallId ? (tcMap.get(event.toolCallId) ?? null) : null
+    return {
+      event,
+      toolCall,
+      toolLabel: toolCall ? getToolLabel(toolCall.toolName) : '',
+      argumentsSummary: toolCall ? summarizeToolArguments(toolCall.argumentsJson) : '',
+      resultSummary: toolCall ? summarizeToolResult(toolCall) : '',
+      resultPreview: toolCall ? getToolResultPreview(toolCall) : '',
+      inputFields: toolCall ? getToolInputFields(toolCall) : [],
+      resultItems: toolCall ? getToolResultItems(toolCall) : [],
+      resultText: toolCall ? getToolResultText(toolCall) : '',
+      paragraphs: getTimelineParagraphs(event),
+      eventLabel: getTimelineEventLabel(event),
+      stepTitle: getTimelineStepTitle(event),
+    }
+  })
+})
+
+const runtimeMeta = computed(() => getRuntimeMeta(props.state))
+const runtimeSummaryText = computed(() => getRuntimeSummaryText(props.state))
+const isTraceInitiallyOpen = computed(() => isRuntimeTraceInitiallyOpen(props.state))
+const hasTimeline = computed(() => timelineEvents.value.length > 0)
 
 function getRuntimeMeta(state: AgentRuntimeViewState): string {
   const items = [runtimeStatusLabel(state.status)]
@@ -259,7 +322,7 @@ onBeforeUnmount(() => {
   >
     <header class="ai-agent-loop__header">
       <span class="ai-agent-loop__identity"><Activity :size="14" /> Agent loop</span>
-      <small>{{ getRuntimeMeta(state) }} · {{ providerLabel }} / {{ model }}</small>
+      <small>{{ runtimeMeta }} · {{ providerLabel }} / {{ model }}</small>
       <button
         v-if="active"
         type="button"
@@ -272,9 +335,9 @@ onBeforeUnmount(() => {
     </header>
 
     <details
-      v-if="getRuntimeTimelineEvents(state).length > 0"
+      v-if="hasTimeline"
       class="ai-agent-loop__trace"
-      :open="isRuntimeTraceInitiallyOpen(state)"
+      :open="isTraceInitiallyOpen"
     >
       <summary class="ai-agent-loop__trace-summary">
         <span>
@@ -289,35 +352,35 @@ onBeforeUnmount(() => {
         </span>
         <span>
           <strong>{{ active ? '实时执行过程' : '执行摘要' }}</strong>
-          <small>{{ getRuntimeSummaryText(state) }}</small>
+          <small>{{ runtimeSummaryText }}</small>
         </span>
         <ChevronDown :size="14" aria-hidden="true" />
       </summary>
       <ol class="ai-agent-tool-list ai-agent-timeline">
         <li
-          v-for="event in getRuntimeTimelineEvents(state)"
-          :key="event.id"
+          v-for="item in timelineItems"
+          :key="item.event.id"
           :class="[
-            `ai-agent-tool-list__item--${event.status}`,
-            `ai-agent-timeline__item--${event.kind}`,
-            { 'ai-agent-timeline__decision': event.kind === 'decision' },
-            { 'ai-agent-timeline__summary': event.kind === 'summary' },
+            `ai-agent-tool-list__item--${item.event.status}`,
+            `ai-agent-timeline__item--${item.event.kind}`,
+            { 'ai-agent-timeline__decision': item.event.kind === 'decision' },
+            { 'ai-agent-timeline__summary': item.event.kind === 'summary' },
           ]"
         >
           <details
-            v-if="getTimelineTool(event, state)"
+            v-if="item.toolCall"
             class="ai-agent-tool-step"
-            :open="getTimelineTool(event, state)?.status === 'failed'"
+            :open="item.toolCall.status === 'failed'"
           >
             <summary>
               <span class="ai-agent-tool-step__marker" aria-hidden="true">
                 <LoaderCircle
-                  v-if="getTimelineTool(event, state)?.status === 'running'"
+                  v-if="item.toolCall.status === 'running'"
                   :size="13"
                   class="ai-agent-tool-list__spinner"
                 />
                 <CircleCheck
-                  v-else-if="getTimelineTool(event, state)?.status === 'completed'"
+                  v-else-if="item.toolCall.status === 'completed'"
                   :size="13"
                 />
                 <CircleX v-else :size="13" />
@@ -325,32 +388,28 @@ onBeforeUnmount(() => {
               <span class="ai-agent-tool-step__copy">
                 <strong>
                   <span class="ai-agent-timeline__kind">工具</span>
-                  {{ getToolLabel(getTimelineTool(event, state)?.toolName ?? '') }}
+                  {{ item.toolLabel }}
                 </strong>
-                <small>{{
-                  summarizeToolArguments(getTimelineTool(event, state)?.argumentsJson ?? '')
-                }}</small>
+                <small>{{ item.argumentsSummary }}</small>
               </span>
-              <span class="ai-agent-tool-step__status">{{
-                summarizeToolResult(getTimelineTool(event, state)!)
-              }}</span>
+              <span class="ai-agent-tool-step__status">{{ item.resultSummary }}</span>
               <time>{{
                 formatToolDuration(
-                  getTimelineTool(event, state)?.startedAt ?? event.occurredAt,
-                  getTimelineTool(event, state)?.completedAt ?? event.completedAt,
+                  item.toolCall.startedAt ?? item.event.occurredAt,
+                  item.toolCall.completedAt ?? item.event.completedAt,
                 )
               }}</time>
               <ChevronDown :size="13" class="ai-agent-tool-step__chevron" aria-hidden="true" />
             </summary>
             <div class="ai-agent-tool-step__details">
               <section
-                v-if="getToolInputFields(getTimelineTool(event, state)!).length"
+                v-if="item.inputFields.length"
                 class="ai-agent-tool-step__section"
               >
                 <strong>输入</strong>
                 <dl class="ai-agent-tool-step__fields">
                   <template
-                    v-for="field in getToolInputFields(getTimelineTool(event, state)!)"
+                    v-for="field in item.inputFields"
                     :key="field.label"
                   >
                     <dt>{{ field.label }}</dt>
@@ -358,105 +417,96 @@ onBeforeUnmount(() => {
                   </template>
                 </dl>
               </section>
-              <template v-if="getTimelineTool(event, state)?.error">
+              <template v-if="item.toolCall.error">
                 <section class="ai-agent-tool-step__section">
                   <strong>错误</strong>
                   <p class="ai-agent-tool-list__error">
-                    {{ getTimelineTool(event, state)?.error }}
+                    {{ item.toolCall.error }}
                   </p>
                 </section>
               </template>
               <section
-                v-else-if="
-                  getToolResultItems(getTimelineTool(event, state)!).length ||
-                  getToolResultText(getTimelineTool(event, state)!)
-                "
+                v-else-if="item.resultItems.length || item.resultText"
                 class="ai-agent-tool-step__section"
               >
                 <strong>结果</strong>
-                <p v-if="getToolResultText(getTimelineTool(event, state)!)">
-                  {{ getToolResultText(getTimelineTool(event, state)!) }}
+                <p v-if="item.resultText">
+                  {{ item.resultText }}
                 </p>
                 <ul
-                  v-if="getToolResultItems(getTimelineTool(event, state)!).length"
+                  v-if="item.resultItems.length"
                   class="ai-agent-tool-results"
                 >
                   <li
-                    v-for="item in getToolResultItems(getTimelineTool(event, state)!)"
-                    :key="`${item.documentId ?? item.url ?? ''}:${item.title}`"
+                    v-for="resultItem in item.resultItems"
+                    :key="`${resultItem.documentId ?? resultItem.url ?? ''}:${resultItem.title}`"
                   >
                     <button
-                      v-if="item.documentId"
+                      v-if="resultItem.documentId"
                       type="button"
                       class="ai-agent-tool-results__document"
-                      @click="emit('open-source', item.documentId, item.blockId)"
+                      @click="emit('open-source', resultItem.documentId, resultItem.blockId)"
                     >
                       <FileText :size="13" aria-hidden="true" />
-                      <span>{{ item.title }}</span>
+                      <span>{{ resultItem.title }}</span>
                       <ChevronRight :size="12" aria-hidden="true" />
                     </button>
-                    <a v-else-if="item.url" :href="item.url" target="_blank" rel="noreferrer">
-                      <span>{{ item.title }}</span>
+                    <a v-else-if="resultItem.url" :href="resultItem.url" target="_blank" rel="noreferrer">
+                      <span>{{ resultItem.title }}</span>
                       <ExternalLink :size="12" aria-hidden="true" />
                     </a>
-                    <strong v-else>{{ item.title }}</strong>
-                    <p v-if="item.description">{{ item.description }}</p>
-                    <small v-if="item.documentId">
-                      知识库文档{{ item.blockId ? ' · 已定位内容块' : '' }}
+                    <strong v-else>{{ resultItem.title }}</strong>
+                    <p v-if="resultItem.description">{{ resultItem.description }}</p>
+                    <small v-if="resultItem.documentId">
+                      知识库文档{{ resultItem.blockId ? ' · 已定位内容块' : '' }}
                     </small>
-                    <small v-else-if="item.url">{{ item.url }}</small>
+                    <small v-else-if="resultItem.url">{{ resultItem.url }}</small>
                   </li>
                 </ul>
               </section>
               <details class="ai-agent-tool-step__raw">
                 <summary>原始数据</summary>
                 <span>工具</span>
-                <code>{{ getTimelineTool(event, state)?.toolName }}</code>
+                <code>{{ item.toolCall.toolName }}</code>
                 <template
-                  v-if="formatToolDetail(getTimelineTool(event, state)?.argumentsJson ?? null)"
+                  v-if="formatToolDetail(item.toolCall.argumentsJson)"
                 >
                   <span>输入 JSON</span>
-                  <pre>{{
-                    formatToolDetail(getTimelineTool(event, state)?.argumentsJson ?? null)
-                  }}</pre>
+                  <pre>{{ formatToolDetail(item.toolCall.argumentsJson) }}</pre>
                 </template>
                 <template
-                  v-if="formatToolDetail(getTimelineTool(event, state)?.resultJson ?? null)"
+                  v-if="formatToolDetail(item.toolCall.resultJson)"
                 >
                   <span>输出 JSON</span>
-                  <pre>{{
-                    formatToolDetail(getTimelineTool(event, state)?.resultJson ?? null)
-                  }}</pre>
+                  <pre>{{ formatToolDetail(item.toolCall.resultJson) }}</pre>
                 </template>
               </details>
             </div>
           </details>
           <div
-            v-if="
-              getTimelineTool(event, state) && getToolResultPreview(getTimelineTool(event, state)!)
-            "
+            v-if="item.toolCall && item.resultPreview"
             class="ai-agent-tool-step__preview"
           >
             <CornerDownRight :size="12" aria-hidden="true" />
-            <span><b>输出</b>{{ getToolResultPreview(getTimelineTool(event, state)!) }}</span>
+            <span><b>输出</b>{{ item.resultPreview }}</span>
           </div>
-          <div v-if="!getTimelineTool(event, state)" class="ai-agent-timeline__step">
+          <div v-if="!item.toolCall" class="ai-agent-timeline__step">
             <span class="ai-agent-tool-step__marker" aria-hidden="true">
               <LoaderCircle
-                v-if="event.status === 'running'"
+                v-if="item.event.status === 'running'"
                 :size="13"
                 class="ai-agent-tool-list__spinner"
               />
-              <CircleCheck v-else-if="event.status === 'completed'" :size="13" />
+              <CircleCheck v-else-if="item.event.status === 'completed'" :size="13" />
               <CircleX v-else :size="13" />
             </span>
             <div class="ai-agent-timeline__copy">
               <strong>
-                <span class="ai-agent-timeline__kind">{{ getTimelineEventLabel(event) }}</span>
-                {{ getTimelineStepTitle(event) }}
+                <span class="ai-agent-timeline__kind">{{ item.eventLabel }}</span>
+                {{ item.stepTitle }}
               </strong>
               <span class="ai-agent-timeline__narrative">
-                <p v-for="paragraph in getTimelineParagraphs(event)" :key="paragraph">
+                <p v-for="paragraph in item.paragraphs" :key="paragraph">
                   {{ paragraph }}
                 </p>
               </span>

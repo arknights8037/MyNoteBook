@@ -34,6 +34,7 @@ interface AiChatPanelBindingsOptions {
   run: () => Promise<void>
   stop: () => void
   clear: () => void
+  close: () => void
   selectTarget: (target: AgentTargetOption) => void
   clearTarget: (targetId: string) => void
   writeMessageToChildDocument: (messageId: string) => Promise<DocumentId | null | void>
@@ -41,8 +42,9 @@ interface AiChatPanelBindingsOptions {
 
 export function useAiChatPanelBindings(options: AiChatPanelBindingsOptions) {
   const { preferences, conversation, surface, homeActions, researchActions } = options
-  return computed(() => ({
-    prompt: options.prompt.value,
+
+  // Group 1: Settings/preferences props — only re-evaluates when preference state changes
+  const settingsProps = computed(() => ({
     mode: preferences.aiChatMode.value,
     modeLabel: preferences.aiModeLabel.value,
     modeOptions: AI_MODE_OPTIONS,
@@ -52,23 +54,40 @@ export function useAiChatPanelBindings(options: AiChatPanelBindingsOptions) {
     reasoningOptions: preferences.reasoningOptions,
     modelOptions: preferences.aiModelOptions.value,
     settings: preferences.aiSettings.value,
+    promptPlaceholder: preferences.aiPromptPlaceholder.value,
+  }))
+
+  // Group 2: Conversation props — only re-evaluates when conversation state changes
+  const conversationProps = computed(() => ({
     messages: conversation.messages.value,
     chatHistory: conversation.history.value,
     currentHistoryId: conversation.currentHistoryId.value,
     projects: conversation.projects.value,
     currentProjectId: conversation.activeProjectId.value,
-    workspaceOptions: options.workspaceOptions.value,
-    currentWorkspaceRootIds: options.currentWorkspaceRootIds.value,
-    currentDocumentTitle: options.currentDocumentTitle.value,
-    knowledgeSourceCount: options.knowledgeSourceCount.value,
-    promptPlaceholder: preferences.aiPromptPlaceholder.value,
-    error: options.error.value,
+    prompt: options.prompt.value,
+  }))
+
+  // Group 3: Runtime/execution props — only re-evaluates during agent execution
+  const runtimeProps = computed(() => ({
     isRunning: options.isRunning.value,
     agentStep: options.activeTask.value?.currentStep ?? '',
     runtimeState: options.runtimeState.value,
-    renderMarkdownMessage: options.renderMarkdown,
+    error: options.error.value,
+  }))
+
+  // Group 4: Document/workspace context props
+  const documentProps = computed(() => ({
+    currentDocumentTitle: options.currentDocumentTitle.value,
+    knowledgeSourceCount: options.knowledgeSourceCount.value,
+    workspaceOptions: options.workspaceOptions.value,
+    currentWorkspaceRootIds: options.currentWorkspaceRootIds.value,
     targetOptions: options.targetOptions.value,
     explicitTargets: options.explicitTargets.value,
+    renderMarkdownMessage: options.renderMarkdown,
+  }))
+
+  // Event handlers — stable references, never re-created
+  const eventHandlers = {
     'onUpdate:prompt': (value: string) => {
       options.prompt.value = value
     },
@@ -84,13 +103,14 @@ export function useAiChatPanelBindings(options: AiChatPanelBindingsOptions) {
     onDeleteHistory: conversation.deleteHistory,
     onSelectProject: conversation.selectProject,
     onCreateProject: conversation.createProject,
+    onDeleteProject: conversation.deleteProject,
     onNewTask: conversation.startTask,
     onPinProject: conversation.toggleProjectPin,
     onPinHistory: conversation.toggleHistoryPin,
     onMoveHistory: conversation.moveHistoryToProject,
     onRenameProject: conversation.renameProject,
     onUpdateWorkspace: conversation.updateWorkspace,
-    onClose: surface.closeAiChat,
+    onClose: options.close,
     onRun: options.run,
     onStop: options.stop,
     onClear: options.clear,
@@ -102,5 +122,23 @@ export function useAiChatPanelBindings(options: AiChatPanelBindingsOptions) {
     onResolveReviewIssue: researchActions.resolveReviewIssue,
     onSelectTarget: options.selectTarget,
     onClearTarget: options.clearTarget,
+  }
+
+  // Merged computed for v-bind — each sub-computed is cached independently by Vue
+  const aiChatPanelBindings = computed(() => ({
+    ...settingsProps.value,
+    ...conversationProps.value,
+    ...runtimeProps.value,
+    ...documentProps.value,
+    ...eventHandlers,
   }))
+
+  return {
+    aiChatPanelBindings,
+    settingsProps,
+    conversationProps,
+    runtimeProps,
+    documentProps,
+    eventHandlers,
+  }
 }

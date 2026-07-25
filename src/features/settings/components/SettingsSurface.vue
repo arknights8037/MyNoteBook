@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import {
-  ArrowLeft,
-  Database,
   Bot,
+  Database,
   Keyboard,
   Palette,
-  RotateCcw,
   ShieldCheck,
   Settings,
   SlidersHorizontal,
@@ -140,6 +138,13 @@ const startupOptions = [
 const newDocumentOptions = [
   { label: '当前页面下方', value: 'current' },
   { label: '知识库根目录', value: 'root' },
+]
+const maxTabsOptions = [
+  { label: '4 个', value: '4' },
+  { label: '6 个', value: '6' },
+  { label: '8 个', value: '8' },
+  { label: '12 个', value: '12' },
+  { label: '20 个', value: '20' },
 ]
 const shortcutRows: Array<{ action: ShortcutAction; label: string; description: string }> = [
   { action: 'search', label: '搜索笔记', description: '打开全局搜索' },
@@ -374,7 +379,30 @@ async function scrollToSection(sectionId: string): Promise<void> {
   }
 }
 
+let skipNextSectionScroll = false
+
+function handleSettingsScroll(): void {
+  const body = settingsBody.value
+  if (!body) return
+
+  const marker = body.getBoundingClientRect().top + Math.min(64, body.clientHeight * 0.18)
+  let visibleSection = navigation[0]?.id
+  for (const item of navigation) {
+    const section = globalThis.document?.getElementById(`settings-${item.id}`)
+    if (section && section.getBoundingClientRect().top <= marker) visibleSection = item.id
+  }
+
+  if (!visibleSection || visibleSection === activeSection.value) return
+  skipNextSectionScroll = true
+  activeSection.value = visibleSection
+  if (visibleSection === 'ai') emit('aiSectionOpen')
+}
+
 watch(activeSection, (sectionId) => {
+  if (skipNextSectionScroll) {
+    skipNextSectionScroll = false
+    return
+  }
   if (props.contextNavigation) void scrollToSection(sectionId)
 })
 
@@ -442,6 +470,7 @@ provideSettingsSectionContext({
   aiModelSelectOptions,
   shortcutConflicts,
   widthOptions,
+  maxTabsOptions,
   fontSizeOptions,
   lineHeightOptions,
   jumpAidOptions,
@@ -478,24 +507,6 @@ onMounted(async () => {
 
 <template>
   <section class="settings-page" aria-label="设置页面">
-    <header class="settings-page__header">
-      <NButton quaternary circle aria-label="返回文章" @click="emit('close')">
-        <template #icon
-          ><NIcon :size="19"><ArrowLeft /></NIcon
-        ></template>
-      </NButton>
-      <div>
-        <p>My Notebook</p>
-        <h1>设置</h1>
-      </div>
-      <NButton secondary @click="emit('reset')">
-        <template #icon
-          ><NIcon :size="15"><RotateCcw /></NIcon
-        ></template>
-        恢复默认
-      </NButton>
-    </header>
-
     <div class="settings-layout" :class="{ 'settings-layout--context-navigation': contextNavigation }">
       <nav v-if="!contextNavigation" class="settings-nav" aria-label="设置分类">
         <button
@@ -512,7 +523,7 @@ onMounted(async () => {
         <p class="settings-nav__hint">所有更改自动保存</p>
       </nav>
 
-      <div ref="settingsBody" class="settings-page__body">
+      <div ref="settingsBody" class="settings-page__body" @scroll="handleSettingsScroll">
         <GeneralSettingsSection />
 
         <SecuritySettingsSection />
@@ -521,9 +532,9 @@ onMounted(async () => {
 
         <EditorSettingsSection />
 
-        <DataSettingsSection />
-
         <AiSettingsSection />
+
+        <DataSettingsSection />
 
         <ShortcutSettingsSection />
 

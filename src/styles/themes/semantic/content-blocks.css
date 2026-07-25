@@ -1,13 +1,13 @@
 :root[data-theme='nord-dark'] .settings-nav__item--active {
-  color: #eceff4;
-  background: color-mix(in srgb, var(--color-accent-primary) 34%, var(--color-bg-active));
+  color: var(--workspace-glass-text-primary);
+  background: var(--workspace-glass-selected);
   box-shadow:
-    inset 3px 0 0 var(--color-accent-primary),
-    0 0 0 1px color-mix(in srgb, var(--color-accent-primary) 30%, transparent);
+    inset 3px 0 0 var(--workspace-glass-accent),
+    0 0 0 1px color-mix(in srgb, var(--workspace-glass-accent) 30%, transparent);
 }
 
 :root[data-theme='nord-dark'] .settings-nav__item--active svg {
-  color: var(--color-accent-primary);
+  color: var(--workspace-glass-accent);
 }
 
 .vtable-block__toolbar button:hover:not(:disabled),

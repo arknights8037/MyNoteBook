@@ -30,6 +30,11 @@ export function useWorkspaceSurface() {
     aiPanelMode.value = 'workspace'
   }
 
+  function openDockedAiChat(): void {
+    primarySurface.value = 'document'
+    aiPanelMode.value = 'docked'
+  }
+
   function openSettingsSurface(): void {
     openPrimarySurface('settings')
   }
@@ -72,6 +77,7 @@ export function useWorkspaceSurface() {
   return {
     showAiChat,
     aiChatFullscreen,
+    aiPanelMode,
     showSettings,
     showPluginSkills,
     showAutomations,
@@ -79,6 +85,7 @@ export function useWorkspaceSurface() {
     showKnowledgeControl,
     activeSurface,
     openAgentWorkspace,
+    openDockedAiChat,
     openSettingsSurface,
     openPluginSkillsSurface,
     openAutomationsSurface,

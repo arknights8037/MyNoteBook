@@ -1,0 +1,69 @@
+/*
+ * Theme-specific glass profiles. Layout and component states stay shared;
+ * each skin only supplies its tint, contrast, and interaction colors here.
+ */
+
+:root[data-theme='paper-light'] {
+  --workspace-glass-tint-rgb: 244 246 249;
+  --workspace-glass-tint-depth: 56%;
+  --workspace-glass-control: rgb(255 255 255 / 34%);
+  --workspace-glass-border: rgb(255 255 255 / 46%);
+  --workspace-glass-accent: #3478d4;
+  --workspace-glass-text-primary: #000000;
+  --workspace-glass-text-secondary: rgb(0 0 0 / 72%);
+  --workspace-glass-text-muted: rgb(0 0 0 / 52%);
+  --workspace-glass-hover: rgb(255 255 255 / 24%);
+  --workspace-glass-selected: rgb(84 143 220 / 32%);
+}
+
+:root[data-theme='nord-dark'] {
+  --workspace-glass-tint-rgb: 35 45 60;
+  --workspace-glass-tint-depth: 58%;
+  --workspace-glass-control: rgb(255 255 255 / 10%);
+  --workspace-glass-border: rgb(136 192 208 / 20%);
+  --workspace-glass-accent: #88c0d0;
+  --workspace-glass-text-primary: #eceff4;
+  --workspace-glass-text-secondary: #c7ced9;
+  --workspace-glass-text-muted: #9ea8b8;
+  --workspace-glass-hover: rgb(136 192 208 / 14%);
+  --workspace-glass-selected: rgb(136 192 208 / 24%);
+}
+
+:root[data-theme='graphite-dark'] {
+  --workspace-glass-tint-rgb: 18 20 24;
+  --workspace-glass-tint-depth: 62%;
+  --workspace-glass-control: rgb(255 255 255 / 10%);
+  --workspace-glass-border: rgb(255 255 255 / 18%);
+  --workspace-glass-accent: #5b9bc2;
+  --workspace-glass-text-primary: #f1f3f5;
+  --workspace-glass-text-secondary: #c2c7d0;
+  --workspace-glass-text-muted: #9299a5;
+  --workspace-glass-hover: rgb(255 255 255 / 10%);
+  --workspace-glass-selected: rgb(91 155 194 / 30%);
+}
+
+:root[data-theme='inkstone-light'] {
+  --workspace-glass-tint-rgb: 227 234 239;
+  --workspace-glass-tint-depth: 54%;
+  --workspace-glass-control: rgb(255 255 255 / 30%);
+  --workspace-glass-border: rgb(255 255 255 / 42%);
+  --workspace-glass-accent: #2f6f9f;
+  --workspace-glass-text-primary: #000000;
+  --workspace-glass-text-secondary: rgb(0 0 0 / 72%);
+  --workspace-glass-text-muted: rgb(0 0 0 / 52%);
+  --workspace-glass-hover: rgb(255 255 255 / 22%);
+  --workspace-glass-selected: rgb(70 127 166 / 28%);
+}
+
+:root[data-theme='clay-light'] {
+  --workspace-glass-tint-rgb: 242 224 205;
+  --workspace-glass-tint-depth: 58%;
+  --workspace-glass-control: rgb(255 248 238 / 30%);
+  --workspace-glass-border: rgb(255 246 233 / 40%);
+  --workspace-glass-accent: #c15f3c;
+  --workspace-glass-text-primary: #000000;
+  --workspace-glass-text-secondary: rgb(0 0 0 / 72%);
+  --workspace-glass-text-muted: rgb(0 0 0 / 52%);
+  --workspace-glass-hover: rgb(255 245 230 / 24%);
+  --workspace-glass-selected: rgb(202 102 64 / 24%);
+}

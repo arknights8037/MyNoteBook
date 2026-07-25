@@ -14,7 +14,7 @@ describe('WorkspaceActivityRail', () => {
     await buttons[4]!.trigger('click')
 
     expect(wrapper.emitted('knowledge')).toHaveLength(1)
-    expect(wrapper.emitted('new-view')).toHaveLength(1)
     expect(wrapper.emitted('plugins')).toHaveLength(1)
+    expect(wrapper.emitted('automations')).toHaveLength(1)
   })
 })

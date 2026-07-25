@@ -9,6 +9,14 @@
     var(--color-bg-app);
 }
 
+:root[data-theme-mode='dark'] .settings-page {
+  background: var(--color-bg-app);
+}
+
+:root[data-theme-mode='dark'] .shortcut-recorder {
+  background: var(--color-bg-elevated);
+}
+
 .settings-page__header,
 .settings-card,
 .settings-note {

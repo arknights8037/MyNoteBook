@@ -5,6 +5,10 @@
   background: var(--color-agent-panel-bg);
 }
 
+.ai-chat-popover--workspace {
+  background: var(--color-bg-editor);
+}
+
 .ai-chat-composer {
   border-color: transparent;
   color: var(--color-text-primary);

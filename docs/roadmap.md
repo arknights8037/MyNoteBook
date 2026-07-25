@@ -190,7 +190,7 @@ cargo build --release --manifest-path src-tauri/Cargo.toml --bin my-notebook
 
 - 空间树已统一承载文档、思维导图、幻灯片、UML/流程图和表格；所有创建入口共用类型选择器，并保留父子位置、拖放和右键删除能力。
 - 思维导图使用版本化 canonical 数据、MindElixir 人类编辑器、左右分支继承、稳定编辑焦点、非模态右键菜单、JSON/指向性文本导出和 Agent 读取工具。
-- 幻灯片采用受限模板与 slot；UML 采用受限 Mermaid flowchart 与语义节点修改；表格复用 rows 和 `TableField`，独立视图使用稳定的轻量编辑器。
+- 幻灯片采用单文件 Slidev Markdown canonical，并提供默认布局下的可视化文本编辑、原生 `v-drag` 文本框、源码和演示模式；UML 采用受限 Mermaid flowchart 与语义节点修改；表格复用 rows 和 `TableField`，独立视图使用稳定的轻量编辑器。
 - 结构化视图具备 repository、service、revision history、验证器和语义 operation schema。幻灯片、UML、表格的 Agent read/create/edit/convert 工具尚未暴露，作为后续增量，不进行实时共享数据映射。
 - 详细边界见 `docs/workspace-views.md`。
 

@@ -18,8 +18,13 @@
   margin: 0 auto;
   padding: 126px 0 160px;
   outline: none;
-  font-family:
-    var(--editor-western-font-family), var(--editor-chinese-font-family), system-ui, sans-serif;
+  font-family: var(
+    --app-font-family,
+    var(--editor-western-font-family),
+    var(--editor-chinese-font-family),
+    system-ui,
+    sans-serif
+  );
   font-size: var(--editor-font-size, 16px);
 }
 
@@ -29,7 +34,11 @@
 
 .editor-jump-aid {
   position: fixed;
-  --editor-jump-aid-panel-width: calc(100vw - var(--workspace-sidebar-width, 0px));
+  --editor-jump-aid-leading-width: var(
+    --workspace-leading-width,
+    calc(var(--workspace-rail-width, 52px) + var(--workspace-sidebar-width, 0px))
+  );
+  --editor-jump-aid-panel-width: calc(100vw - var(--editor-jump-aid-leading-width));
   --editor-jump-aid-content-width: min(
     var(--editor-content-width, 850px),
     calc(var(--editor-jump-aid-panel-width) - 80px)
@@ -39,10 +48,10 @@
   );
   --editor-jump-aid-width: 34px;
   --editor-jump-aid-gap: 16px;
-  top: 50%;
+  top: calc(50% + 50px);
   z-index: 40;
   display: grid;
-  max-height: min(70vh, calc(100vh - 96px));
+  max-height: min(70vh, calc(100vh - 132px));
   gap: 6px;
   overflow: auto;
   color: var(--color-text-secondary);
@@ -72,7 +81,7 @@
 }
 
 .editor-jump-aid--left {
-  left: calc(var(--workspace-sidebar-width, 0px) + 20px);
+  left: calc(var(--editor-jump-aid-leading-width) + 20px);
 }
 
 .editor-jump-aid--anchors {
@@ -90,6 +99,10 @@
   background: color-mix(in srgb, var(--color-bg-elevated) 94%, transparent);
   box-shadow: 0 8px 20px color-mix(in srgb, #000 8%, transparent);
   backdrop-filter: blur(12px);
+}
+
+.editor-jump-aid--outline.editor-jump-aid--right {
+  right: 20px;
 }
 
 .editor-jump-aid__item {

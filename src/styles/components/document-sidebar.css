@@ -320,7 +320,7 @@
 .market-link {
   display: inline-flex;
   width: 100%;
-  min-height: 34px;
+  min-height: 38px;
   align-items: center;
   justify-content: flex-start;
   gap: 9px;
@@ -350,5 +350,5 @@
   flex: 0 0 auto;
   margin-top: auto;
   gap: 8px;
-  padding: 12px 10px 14px;
+  padding: 12px 10px 8px;
 }

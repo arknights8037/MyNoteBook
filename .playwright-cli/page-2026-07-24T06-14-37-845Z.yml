@@ -1,0 +1,33 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - strong [ref=e6]: 2 页
+      - button "新增幻灯片" [ref=e7] [cursor=pointer]
+    - button "1 边缘安全演示 双击标题或正文开始编辑。" [ref=e54] [cursor=pointer]:
+      - generic [ref=e10]: "1"
+      - generic [ref=e11]:
+        - strong [ref=e12]: 边缘安全演示
+        - generic [ref=e13]: 双击标题或正文开始编辑。
+    - button "2 新页面 双击这里填写正文。" [ref=e56] [cursor=pointer]:
+      - generic [ref=e57]: "2"
+      - generic [ref=e58]:
+        - strong [ref=e59]: 新页面
+        - generic [ref=e60]: 双击这里填写正文。
+  - main [ref=e14]:
+    - generic [ref=e15]:
+      - button "新增" [active] [ref=e16] [cursor=pointer]
+      - button "复制" [ref=e18] [cursor=pointer]
+      - button "上移页面" [ref=e22] [cursor=pointer]
+      - button "下移页面" [disabled] [ref=e25]
+      - button "删除页面" [ref=e28] [cursor=pointer]
+      - button "文本框" [ref=e33] [cursor=pointer]
+      - button "源码" [ref=e36] [cursor=pointer]
+      - button "演示" [ref=e41] [cursor=pointer]
+    - generic [ref=e46]:
+      - heading "新页面" [level=1] [ref=e61]
+      - generic "双击编辑正文" [ref=e48]:
+        - paragraph [ref=e62]: 双击这里填写正文。
+    - generic [ref=e50]:
+      - generic [ref=e51]: 演讲者备注
+      - textbox "演讲者备注" [ref=e52]:
+        - /placeholder: 仅演讲者可见的提示…

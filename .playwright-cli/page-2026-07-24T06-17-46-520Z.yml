@@ -1,0 +1,23 @@
+- generic [ref=f1e3]:
+  - complementary [ref=f1e4]:
+    - generic [ref=f1e5]:
+      - strong [ref=f1e6]: 1 页
+      - button "新增幻灯片" [ref=f1e7] [cursor=pointer]
+    - button "1 Slidev 可视化演示 双击标题或正文开始编辑。" [ref=f1e9] [cursor=pointer]:
+      - generic [ref=f1e10]: "1"
+      - generic [ref=f1e11]:
+        - strong [ref=f1e12]: Slidev 可视化演示
+        - generic [ref=f1e13]: 双击标题或正文开始编辑。
+  - main [ref=f1e14]:
+    - generic [ref=f1e15]:
+      - button "新增" [ref=f1e16] [cursor=pointer]
+      - button "复制" [ref=f1e18] [cursor=pointer]
+      - button "上移页面" [disabled] [ref=f1e22]
+      - button "下移页面" [disabled] [ref=f1e25]
+      - button "删除页面" [disabled] [ref=f1e28]
+      - button "文本框" [ref=f1e33] [cursor=pointer]
+      - button "源码" [active] [ref=f1e36] [cursor=pointer]
+      - button "演示" [ref=f1e41] [cursor=pointer]
+    - generic [ref=f1e62]:
+      - textbox "Slidev Markdown 源码" [ref=f1e63]: "--- theme: default title: Slidev 可视化演示 transition: slide-left canvasWidth: 980 aspectRatio: 16/9 layout: default nbId: slide-qa-1 dragPos: textbox-45938cc7-b9d2-4492-9560-a14527fdfc2b: 320,290,300,96,0 --- # Slidev 可视化演示 双击标题或正文开始编辑。 <v-drag pos=\"textbox-45938cc7-b9d2-4492-9560-a14527fdfc2b\"> 关键结论：边缘节点承担实时防护 </v-drag>"
+      - button "应用源码" [ref=f1e65] [cursor=pointer]

@@ -10,6 +10,7 @@ import {
 } from '@lucide/vue'
 
 import type { WorkspaceSurface } from '@/models/workspace/workspaceSurface'
+import appLogoUrl from '@/public/APP_LOGO.svg'
 
 defineProps<{ activeSurface: WorkspaceSurface }>()
 
@@ -40,7 +41,8 @@ function trigger(event: (typeof primaryItems)[number]['event']): void {
 <template>
   <aside class="activity-rail" aria-label="主功能区" tabindex="-1">
     <button class="activity-rail__brand" type="button" aria-label="打开 Agent Work" @click="emit('agent')">
-      <span class="activity-rail__brand-mark"><Bot :size="19" /></span>
+      <span class="activity-rail__brand-mark"><img :src="appLogoUrl" alt="" /></span>
+      <strong class="activity-rail__brand-name">Prism<span>Knowledge</span></strong>
     </button>
 
     <div class="activity-rail__panel">

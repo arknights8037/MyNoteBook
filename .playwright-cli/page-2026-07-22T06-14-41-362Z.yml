@@ -1,0 +1,351 @@
+- generic [ref=e2]:
+  - main [ref=e9]:
+    - generic [ref=e10]:
+      - complementary "主功能区" [ref=e11]:
+        - button "打开 Agent Work" [ref=e12] [cursor=pointer]:
+          - strong [ref=e14]: PrismKnowledge
+        - generic [ref=e15]:
+          - navigation "工作区" [ref=e16]:
+            - button "Agent Work" [ref=e17] [cursor=pointer]
+            - button "文档与视图" [ref=e22] [cursor=pointer]
+            - button "知识控制" [ref=e27] [cursor=pointer]
+            - button "插件技能" [ref=e32] [cursor=pointer]
+            - button "自动化任务" [ref=e37] [cursor=pointer]
+            - button "审计记录" [ref=e43] [cursor=pointer]
+          - button "设置" [ref=e48] [cursor=pointer]
+      - complementary "设置选项" [ref=e717]:
+        - button "搜索工作区 Ctrl K" [ref=e55]:
+          - generic [ref=e59]: 搜索工作区
+          - generic [ref=e60]: Ctrl K
+        - navigation "设置选项" [ref=e720]:
+          - button "通用 启动与新建行为" [ref=e721] [cursor=pointer]:
+            - generic [ref=e723]:
+              - strong [ref=e724]: 通用
+              - generic [ref=e725]: 启动与新建行为
+          - button "安全 敏感操作保护" [ref=e726] [cursor=pointer]:
+            - generic [ref=e730]:
+              - strong [ref=e731]: 安全
+              - generic [ref=e732]: 敏感操作保护
+          - button "外观 主题、字体与动效" [ref=e733] [cursor=pointer]:
+            - generic [ref=e740]:
+              - strong [ref=e741]: 外观
+              - generic [ref=e742]: 主题、字体与动效
+          - button "编辑器 排版、保存与块操作" [ref=e743] [cursor=pointer]:
+            - generic [ref=e746]:
+              - strong [ref=e747]: 编辑器
+              - generic [ref=e748]: 排版、保存与块操作
+          - button "AI 模型、参数与提示词" [ref=e749] [cursor=pointer]:
+            - generic [ref=e753]:
+              - strong [ref=e754]: AI
+              - generic [ref=e755]: 模型、参数与提示词
+          - button "数据 本地存储位置" [ref=e756] [cursor=pointer]:
+            - generic [ref=e761]:
+              - strong [ref=e762]: 数据
+              - generic [ref=e763]: 本地存储位置
+          - button "快捷键 常用操作按键" [ref=e764] [cursor=pointer]:
+            - generic [ref=e767]:
+              - strong [ref=e768]: 快捷键
+              - generic [ref=e769]: 常用操作按键
+      - generic [ref=e83]:
+        - generic "打开的页面" [ref=e84]:
+          - tablist [ref=e85]:
+            - tab "Agent Work 关闭 Agent Work" [ref=e86] [cursor=pointer]:
+              - generic [ref=e90]: Agent Work
+              - button "关闭 Agent Work" [ref=e92]
+            - tab "设置 关闭 设置" [selected] [ref=e219] [cursor=pointer]:
+              - generic [ref=e223]: 设置
+              - button "关闭 设置" [ref=e225]
+          - button "新建内容" [ref=e96] [cursor=pointer]
+          - generic [ref=e99]: "|"
+          - generic "窗口控制" [ref=e100]:
+            - button "最小化窗口" [ref=e101]
+            - button "最大化窗口" [ref=e103]
+            - button "关闭窗口" [ref=e106]
+        - region "设置页面" [ref=e229]:
+          - generic [ref=e230]:
+            - button "返回文章" [ref=e231] [cursor=pointer]
+            - generic [ref=e236]:
+              - paragraph [ref=e237]: My Notebook
+              - heading "设置" [level=1] [ref=e238]
+            - button "恢复默认" [ref=e239] [cursor=pointer]
+          - generic [ref=e247]:
+            - generic [ref=e248]:
+              - generic [ref=e253]:
+                - heading "通用偏好" [level=2] [ref=e254]
+                - paragraph [ref=e255]: 决定应用启动和日常操作的方式。
+              - generic [ref=e256]:
+                - generic [ref=e257]:
+                  - generic [ref=e258]:
+                    - strong [ref=e259]: 启动时打开
+                    - generic [ref=e260]: 选择进入知识库后的默认页面。
+                  - combobox [ref=e261] [cursor=pointer]:
+                    - generic [ref=e262]: 上次打开的页面
+                - generic [ref=e265]:
+                  - generic [ref=e266]:
+                    - strong [ref=e267]: 快捷新建位置
+                    - generic [ref=e268]: 使用快捷键新建页面时采用。
+                  - combobox [ref=e269] [cursor=pointer]:
+                    - generic [ref=e270]: 当前页面下方
+                - generic [ref=e273]:
+                  - generic [ref=e274]:
+                    - strong [ref=e275]: 删除前确认
+                    - generic [ref=e276]: 移入回收站和彻底删除前显示确认窗口。
+                  - switch [checked] [ref=e277] [cursor=pointer]
+            - generic [ref=e279]:
+              - generic [ref=e285]:
+                - heading "敏感操作授权" [level=2] [ref=e286]
+                - paragraph [ref=e287]: 删除、恢复、导入导出和数据迁移前可要求输入授权密码。
+              - generic [ref=e288]:
+                - generic [ref=e289]:
+                  - generic [ref=e290]:
+                    - strong [ref=e291]: 启用密码授权
+                    - generic [ref=e292]: 设置密码后，敏感动作会先要求输入授权密码。
+                  - switch [disabled] [ref=e293] [cursor=pointer]
+                - generic [ref=e295]:
+                  - generic [ref=e296]:
+                    - strong [ref=e297]: 授权密码
+                    - generic [ref=e298]: 可随时输入新密码覆盖；留空会关闭密码授权。
+                  - textbox [ref=e300]:
+                    - /placeholder: 输入自定义授权密码
+                - generic [ref=e301]:
+                  - generic [ref=e302]:
+                    - strong [ref=e303]: 允许开发模式
+                    - generic [ref=e304]: 默认关闭。关闭时会拦截 F12 和开发者工具快捷键。
+                  - switch [ref=e305] [cursor=pointer]
+            - generic [ref=e307]:
+              - generic [ref=e316]:
+                - heading "外观" [level=2] [ref=e317]
+                - paragraph [ref=e318]: 主题会跟随选择即时切换。
+              - generic [ref=e319]:
+                - generic [ref=e320]:
+                  - generic [ref=e321]:
+                    - strong [ref=e322]: 颜色主题
+                    - generic [ref=e323]: 选择后立即应用，并保存在本机设置中。
+                  - radiogroup "颜色主题" [ref=e324]:
+                    - radio "跟随系统 当前：北境深色" [ref=e770] [cursor=pointer]:
+                      - generic [ref=e333]:
+                        - strong [ref=e334]: 跟随系统
+                        - generic [ref=e337]: 当前：北境深色
+                    - radio "纸张浅色 Paper Light · 浅色" [ref=e340] [cursor=pointer]:
+                      - generic [ref=e348]:
+                        - strong [ref=e349]: 纸张浅色
+                        - generic [ref=e350]: Paper Light · 浅色
+                    - radio "墨页 Inkstone Inkstone · 浅色" [ref=e351] [cursor=pointer]:
+                      - generic [ref=e359]:
+                        - strong [ref=e360]: 墨页 Inkstone
+                        - generic [ref=e361]: Inkstone · 浅色
+                    - radio "陶土浅色 Clay Light · 浅色" [ref=e362] [cursor=pointer]:
+                      - generic [ref=e370]:
+                        - strong [ref=e371]: 陶土浅色
+                        - generic [ref=e372]: Clay Light · 浅色
+                    - radio "北境深色 Nord Dark · 深色" [checked] [active] [ref=e373] [cursor=pointer]:
+                      - generic [ref=e381]:
+                        - strong [ref=e382]: 北境深色
+                        - generic [ref=e383]: Nord Dark · 深色
+                    - radio "石墨深色 Graphite Dark · 深色" [ref=e384] [cursor=pointer]:
+                      - generic [ref=e392]:
+                        - strong [ref=e393]: 石墨深色
+                        - generic [ref=e394]: Graphite Dark · 深色
+                - generic [ref=e395]:
+                  - generic [ref=e396]:
+                    - strong [ref=e397]: 减少动态效果
+                    - generic [ref=e398]: 关闭平滑滚动和非必要过渡动画。
+                  - switch [ref=e399] [cursor=pointer]
+            - generic [ref=e401]:
+              - generic [ref=e406]:
+                - heading "编辑器" [level=2] [ref=e407]
+                - paragraph [ref=e408]: 调整阅读密度、保存和块操作。
+              - generic [ref=e409]:
+                - generic [ref=e410]:
+                  - generic [ref=e411]:
+                    - strong [ref=e412]: 正文宽度
+                    - generic [ref=e413]: 只影响文章内容，不影响侧栏。
+                  - combobox [ref=e414] [cursor=pointer]:
+                    - generic [ref=e415]: 标准（850px）
+                - generic [ref=e418]:
+                  - generic [ref=e419]:
+                    - strong [ref=e420]: 正文字号
+                    - generic [ref=e421]: 标题会按比例保持层级。
+                  - combobox [ref=e422] [cursor=pointer]:
+                    - generic [ref=e423]: 标准（16px）
+                - generic [ref=e426]:
+                  - generic [ref=e427]:
+                    - strong [ref=e428]: 正文行距
+                    - generic [ref=e429]: 调整长文档的阅读节奏。
+                  - combobox [ref=e430] [cursor=pointer]:
+                    - generic [ref=e431]: 舒适
+                - generic [ref=e434]:
+                  - generic [ref=e435]:
+                    - strong [ref=e436]: 中文字体
+                    - generic [ref=e437]: 从系统字体中选择，不影响公式字段。
+                  - generic [ref=e438]:
+                    - combobox [ref=e439] [cursor=pointer]:
+                      - generic [ref=e440]: 系统默认中文字体（PingFang SC）
+                    - button "恢复默认中文字体" [ref=e443] [cursor=pointer]
+                - generic [ref=e449]:
+                  - generic [ref=e450]:
+                    - strong [ref=e451]: 西文字体
+                    - generic [ref=e452]: 拉丁字符优先使用该字体，中文仍回落到中文字体。
+                  - generic [ref=e453]:
+                    - combobox [ref=e454] [cursor=pointer]:
+                      - generic [ref=e455]: 系统默认西文字体（Inter）
+                    - button "恢复默认西文字体" [ref=e458] [cursor=pointer]
+                - generic [ref=e464]:
+                  - generic [ref=e465]:
+                    - strong [ref=e466]: 跳转辅助工具
+                    - generic [ref=e467]: 在文档右侧显示锚点或大纲，快速跳到标题。
+                  - combobox [ref=e468] [cursor=pointer]:
+                    - generic [ref=e469]: 关
+                - generic [ref=e472]:
+                  - generic [ref=e473]:
+                    - strong [ref=e474]: 辅助显示位置
+                    - generic [ref=e475]: 文档锚点和文档大纲都可显示在文章左侧或右侧。
+                  - combobox [ref=e476] [cursor=pointer]:
+                    - generic [ref=e477]: 右侧
+                - generic [ref=e480]:
+                  - generic [ref=e481]:
+                    - strong [ref=e482]: 目录显示级别
+                    - generic [ref=e483]: 大纲显示到所选层级；锚点只显示所选层级的标题。
+                  - combobox [ref=e484] [cursor=pointer]:
+                    - generic [ref=e485]: 显示到四级标题
+                - generic [ref=e488]:
+                  - generic [ref=e489]:
+                    - strong [ref=e490]: 自动保存
+                    - generic [ref=e491]: 停止输入多久后写入知识库。
+                  - combobox [ref=e492] [cursor=pointer]:
+                    - generic [ref=e493]: 标准（0.8 秒）
+                - generic [ref=e496]:
+                  - generic [ref=e497]:
+                    - strong [ref=e498]: 复制当前块
+                    - generic [ref=e499]: 立即在下方重复，或保留至粘贴。
+                  - combobox [ref=e500] [cursor=pointer]:
+                    - generic [ref=e501]: 在下一行重复
+                - generic [ref=e504]:
+                  - generic [ref=e505]:
+                    - strong [ref=e506]: 拼写检查
+                    - generic [ref=e507]: 使用系统词典标记可能的拼写错误。
+                  - switch [checked] [ref=e508] [cursor=pointer]
+                - generic [ref=e510]:
+                  - generic [ref=e511]:
+                    - strong [ref=e512]: 显示块控件
+                    - generic [ref=e513]: 鼠标经过文章块时显示拖拽手柄。
+                  - switch [checked] [ref=e514] [cursor=pointer]
+            - generic [ref=e516]:
+              - generic [ref=e523]:
+                - heading "数据存储" [level=2] [ref=e524]
+                - paragraph [ref=e525]: 知识库数据库和受管文件均保存在本机。
+              - generic [ref=e527]:
+                - generic [ref=e528]:
+                  - strong [ref=e529]: 当前存储位置
+                  - generic "系统应用数据目录" [ref=e530]
+                  - emphasis [ref=e531]: 切换会迁移数据库、附件、技能、MCP 配置与受管交付文件，并整体备份目标原有数据。
+                - button "更改位置" [ref=e533] [cursor=pointer]
+            - generic [ref=e539]:
+              - generic [ref=e545]:
+                - heading "AI 配置" [level=2] [ref=e546]
+                - paragraph [ref=e547]: 悬浮聊天窗会使用这里的模型和提示词。
+              - generic [ref=e548]:
+                - generic [ref=e549]:
+                  - generic [ref=e550]:
+                    - strong [ref=e551]: 服务商
+                    - generic [ref=e552]: 决定请求路由和参数兼容方式。
+                  - combobox [ref=e553] [cursor=pointer]:
+                    - generic [ref=e554]: OpenAI
+                - generic [ref=e557]:
+                  - generic [ref=e558]:
+                    - strong [ref=e559]: Endpoint
+                    - generic [ref=e560]: OpenAI/DeepSeek/千问走 chat/completions；Anthropic 走 messages。
+                  - textbox [ref=e562]:
+                    - /placeholder: https://api.openai.com/v1
+                    - text: https://api.openai.com/v1
+                - generic [ref=e563]:
+                  - generic [ref=e564]:
+                    - strong [ref=e565]: 模型
+                    - generic [ref=e566]: 可手动输入，也可以从目标 Endpoint 主动获取。
+                  - generic [ref=e567]:
+                    - textbox [ref=e569]:
+                      - /placeholder: 先获取或输入模型名
+                    - button "获取模型" [ref=e570] [cursor=pointer]
+                - generic [ref=e578]:
+                  - generic [ref=e579]:
+                    - strong [ref=e580]: API Key
+                    - generic [ref=e581]: 使用 AES-256-GCM 加密，数据密钥由系统凭据库保护。
+                  - textbox [ref=e583]:
+                    - /placeholder: sk-...
+                - generic [ref=e584]:
+                  - generic [ref=e585]:
+                    - strong [ref=e586]: 温度
+                    - generic [ref=e587]: 0 更稳定，2 更发散。
+                  - spinbutton [ref=e589]: "0.4"
+                - generic [ref=e590]:
+                  - generic [ref=e591]:
+                    - strong [ref=e592]: Top P
+                    - generic [ref=e593]: 控制采样范围，1 表示不额外限制。
+                  - spinbutton [ref=e595]: "1"
+                - generic [ref=e596]:
+                  - generic [ref=e597]:
+                    - strong [ref=e598]: 最大输出
+                    - generic [ref=e599]: OpenAI-compatible 与 Anthropic 都会使用。
+                  - spinbutton [ref=e601]: "2048"
+                - generic [ref=e602]:
+                  - generic [ref=e603]:
+                    - strong [ref=e604]: 模型能力
+                    - generic [ref=e605]: 由 Provider/Model Capability Matrix 驱动。
+                  - generic [ref=e606]: Tools ✓ · Structured Output ✓ · Reasoning — · Streaming ✓
+                - generic [ref=e607]:
+                  - generic [ref=e608]:
+                    - strong [ref=e609]: 系统提示词
+                    - generic [ref=e610]: 控制 AI 输出的 Markdown 风格和边界。
+                  - textbox "AI 系统提示词" [ref=e611]: 你是一个文档笔记助手。请输出结构清晰的 Markdown，优先使用标题、列表、表格、代码块和数学公式。
+            - generic [ref=e612]:
+              - generic [ref=e617]:
+                - heading "快捷键" [level=2] [ref=e618]
+                - paragraph [ref=e619]: 点击组合键后，直接按下新的按键组合。
+              - generic [ref=e620]:
+                - generic [ref=e621]:
+                  - generic [ref=e622]:
+                    - strong [ref=e623]: 搜索笔记
+                    - generic [ref=e624]: 打开全局搜索
+                  - generic [ref=e625]:
+                    - button "Ctrl+K" [ref=e626] [cursor=pointer]
+                    - button "恢复搜索笔记默认快捷键" [disabled] [ref=e627]
+                - generic [ref=e633]:
+                  - generic [ref=e634]:
+                    - strong [ref=e635]: 新建页面
+                    - generic [ref=e636]: 按通用偏好选择创建位置
+                  - generic [ref=e637]:
+                    - button "Ctrl+N" [ref=e638] [cursor=pointer]
+                    - button "恢复新建页面默认快捷键" [disabled] [ref=e639]
+                - generic [ref=e645]:
+                  - generic [ref=e646]:
+                    - strong [ref=e647]: 立即保存
+                    - generic [ref=e648]: 立即写入当前更改
+                  - generic [ref=e649]:
+                    - button "Ctrl+S" [ref=e650] [cursor=pointer]
+                    - button "恢复立即保存默认快捷键" [disabled] [ref=e651]
+                - generic [ref=e657]:
+                  - generic [ref=e658]:
+                    - strong [ref=e659]: 打开设置
+                    - generic [ref=e660]: 进入设置中心
+                  - generic [ref=e661]:
+                    - button "Ctrl+," [ref=e662] [cursor=pointer]
+                    - button "恢复打开设置默认快捷键" [disabled] [ref=e663]
+                - generic [ref=e669]:
+                  - generic [ref=e670]:
+                    - strong [ref=e671]: 导入文档
+                    - generic [ref=e672]: 打开格式选择窗口
+                  - generic [ref=e673]:
+                    - button "Ctrl+Shift+I" [ref=e674] [cursor=pointer]
+                    - button "恢复导入文档默认快捷键" [disabled] [ref=e675]
+            - complementary [ref=e681]:
+              - generic [ref=e685]: 设置保存在本机，并立即应用到整个应用。
+      - complementary "帮助入口" [ref=e686]:
+        - button "AI" [ref=e687] [cursor=pointer]
+  - alert [ref=e773]: Notification Cannot read properties of undefined (reading 'invoke')
+  - alert [ref=e774]: Notification Cannot read properties of undefined (reading 'invoke')
+  - region "Notifications (F8)":
+    - list [ref=e180]:
+      - listitem [ref=e775]:
+        - generic [ref=e776]: Cannot read properties of undefined (reading 'invoke')
+      - listitem [ref=e777]:
+        - generic [ref=e778]: Cannot read properties of undefined (reading 'invoke')

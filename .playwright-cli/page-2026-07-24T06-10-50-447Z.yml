@@ -1,0 +1,8 @@
+- generic [ref=e2]:
+  - main "正在启动" [ref=e3]:
+    - status [ref=e4]:
+      - generic [ref=e6]:
+        - strong [ref=e7]: 正在打开知识库
+        - generic [ref=e8]: 准备本地文档与编辑器
+  - region "Notifications (F8)":
+    - list

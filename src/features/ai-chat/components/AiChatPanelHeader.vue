@@ -20,14 +20,18 @@ import type { AiChatPanelHistoryItem } from './aiChatPanelTypes'
 
 type BrowserPointerEvent = InstanceType<typeof globalThis.PointerEvent>
 
-defineProps<{
-  workspace: boolean
-  docked: boolean
-  historyCollapsed: boolean
-  chatHistory: AiChatPanelHistoryItem[]
-  providerLabel: string
-  model: string
-}>()
+withDefaults(
+  defineProps<{
+    workspace: boolean
+    docked: boolean
+    historyCollapsed: boolean
+    chatHistory: AiChatPanelHistoryItem[]
+    providerLabel: string
+    model: string
+    externalNavigation?: boolean
+  }>(),
+  { externalNavigation: false },
+)
 
 const emit = defineEmits<{
   'toggle-history': []
@@ -56,12 +60,12 @@ function formatHistoryTime(timestamp: number): string {
     @pointerdown="emit('pointer-down', $event)"
   >
     <div class="ai-chat-popover__heading">
-      <strong>知识库 Agent</strong>
+      <strong>{{ docked && externalNavigation ? 'AI 辅助任务' : '知识库 Agent' }}</strong>
       <span>{{ providerLabel }} · {{ model || '未选择模型' }}</span>
     </div>
     <div class="ai-chat-popover__window-actions">
       <button
-        v-if="workspace || docked"
+        v-if="(workspace || docked) && !externalNavigation"
         type="button"
         class="ai-chat-popover__icon-button"
         :aria-label="historyCollapsed ? '展开对话历史' : '折叠对话历史'"
@@ -71,7 +75,7 @@ function formatHistoryTime(timestamp: number): string {
         <PanelLeftOpen v-if="historyCollapsed" :size="15" />
         <PanelLeftClose v-else :size="15" />
       </button>
-      <DropdownMenuRoot v-else>
+      <DropdownMenuRoot v-else-if="!externalNavigation">
         <DropdownMenuTrigger as-child>
           <button type="button" class="ai-chat-popover__icon-button" aria-label="聊天记录">
             <History :size="15" />
@@ -115,7 +119,8 @@ function formatHistoryTime(timestamp: number): string {
       <button
         type="button"
         class="ai-chat-popover__icon-button"
-        :aria-label="workspace ? '还原为侧边 AI 面板' : '在文档区打开 AI 聊天'"
+        :aria-label="workspace ? '还原为侧边 AI 面板' : '转为 Agent Work'"
+        :title="workspace ? '还原为侧边 AI 面板' : '转为 Agent Work'"
         @click="emit('toggle-workspace')"
       >
         <Minimize2 v-if="workspace" :size="15" />

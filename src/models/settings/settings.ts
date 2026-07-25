@@ -21,6 +21,7 @@ export const DEFAULT_WESTERN_FONT_FAMILY =
 
 export interface AppSettings {
   autosaveDelay: number
+  maxTabs: number
   spellcheck: boolean
   showBlockHandles: boolean
   contentWidth: EditorContentWidth
@@ -55,6 +56,7 @@ export const DEFAULT_SHORTCUTS: AppShortcuts = {
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   autosaveDelay: 800,
+  maxTabs: 8,
   spellcheck: true,
   showBlockHandles: true,
   contentWidth: 'standard',
@@ -120,6 +122,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     autosaveDelay: [400, 800, 1500].includes(settings.autosaveDelay ?? 0)
       ? (settings.autosaveDelay as number)
       : DEFAULT_APP_SETTINGS.autosaveDelay,
+    maxTabs: normalizeMaxTabs(settings.maxTabs),
     spellcheck:
       typeof settings.spellcheck === 'boolean'
         ? settings.spellcheck
@@ -241,6 +244,13 @@ function normalizeJumpAidMaxLevel(value: unknown): EditorJumpAidMaxLevel {
   return level === 1 || level === 2 || level === 3 || level === 4
     ? level
     : DEFAULT_APP_SETTINGS.jumpAidMaxLevel
+}
+
+function normalizeMaxTabs(value: unknown): number {
+  const maxTabs = typeof value === 'string' ? Number(value) : value
+  return typeof maxTabs === 'number' && Number.isInteger(maxTabs) && maxTabs >= 2 && maxTabs <= 30
+    ? maxTabs
+    : DEFAULT_APP_SETTINGS.maxTabs
 }
 
 function normalizeShortcutKey(key: string): string {

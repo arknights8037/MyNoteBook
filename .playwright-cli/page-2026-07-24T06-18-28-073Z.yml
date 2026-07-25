@@ -1,0 +1,46 @@
+- generic [ref=f1e1]:
+  - generic [ref=f1e3]:
+    - complementary [ref=f1e4]:
+      - generic [ref=f1e5]:
+        - strong [ref=f1e6]: 1 页
+        - button "新增幻灯片" [ref=f1e7] [cursor=pointer]
+      - button "1 Slidev 可视化演示 双击标题或正文开始编辑。" [ref=f1e9] [cursor=pointer]:
+        - generic [ref=f1e10]: "1"
+        - generic [ref=f1e11]:
+          - strong [ref=f1e12]: Slidev 可视化演示
+          - generic [ref=f1e13]: 双击标题或正文开始编辑。
+    - main [ref=f1e14]:
+      - generic [ref=f1e15]:
+        - button "新增" [ref=f1e16] [cursor=pointer]
+        - button "复制" [ref=f1e18] [cursor=pointer]
+        - button "上移页面" [disabled] [ref=f1e22]
+        - button "下移页面" [disabled] [ref=f1e25]
+        - button "删除页面" [disabled] [ref=f1e28]
+        - button "文本框" [ref=f1e33] [cursor=pointer]
+        - button "源码" [ref=f1e36] [cursor=pointer]
+        - button "演示" [active] [ref=f1e41] [cursor=pointer]
+      - generic [ref=f1e67]:
+        - generic [ref=f1e68]:
+          - heading "Slidev 可视化演示" [level=1] [ref=f1e69]
+          - generic "双击编辑正文" [ref=f1e70]:
+            - paragraph [ref=f1e71]: 双击标题或正文开始编辑。
+        - article [ref=f1e72]:
+          - paragraph [ref=f1e74]: 关键结论：边缘节点承担实时防护
+      - generic [ref=f1e76]:
+        - generic [ref=f1e77]: 演讲者备注
+        - textbox "演讲者备注" [ref=f1e78]:
+          - /placeholder: 仅演讲者可见的提示…
+  - generic [ref=f1e79]:
+    - generic [ref=f1e80]:
+      - generic [ref=f1e81]:
+        - heading "Slidev 可视化演示" [level=1] [ref=f1e82]
+        - paragraph [ref=f1e84]: 双击标题或正文开始编辑。
+      - article:
+        - generic:
+          - paragraph: 关键结论：边缘节点承担实时防护
+    - generic [ref=f1e85]:
+      - button "上一页" [disabled] [ref=f1e86]
+      - generic [ref=f1e89]: 1 / 1
+      - button "下一页" [disabled] [ref=f1e90]
+      - button "全屏" [ref=f1e93] [cursor=pointer]
+      - button "退出演示" [ref=f1e99] [cursor=pointer]

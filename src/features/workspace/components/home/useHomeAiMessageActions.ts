@@ -10,6 +10,7 @@ import type { EditorShellExpose } from './homePageTypes'
 interface HomeAiMessageActionsOptions {
   conversation: UseAiConversationReturn
   showChat: Ref<boolean>
+  openChat?: () => void
   editor: Ref<EditorShellExpose | null>
   currentDocumentId: Ref<DocumentId>
   autosave: UseDocumentAutosaveReturn
@@ -28,7 +29,8 @@ interface HomeAiMessageActionsOptions {
 
 export function useHomeAiMessageActions(options: HomeAiMessageActionsOptions) {
   function openChat(): void {
-    options.showChat.value = true
+    if (options.openChat) options.openChat()
+    else options.showChat.value = true
     if (!options.conversation.prompt.value.trim()) {
       options.conversation.prompt.value = '请根据当前文档，整理一版结构清晰的 Markdown 摘要。'
     }

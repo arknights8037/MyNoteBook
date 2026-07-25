@@ -1,9 +1,25 @@
 :root {
   color: var(--color-text-primary);
-  background: var(--color-bg-app);
+  background: transparent;
   color-scheme: light;
   --color-bg-app: #f7f7f5;
   --color-bg-sidebar: #f3f3f1;
+  --workspace-shell-background: transparent;
+  --workspace-titlebar-background: var(--color-bg-sidebar);
+  /* Hybrid glass tuning: native Acrylic blurs; these tokens own its visible tint. */
+  --workspace-glass-tint-rgb: 30 34 40;
+  --workspace-glass-tint-depth: 54%;
+  --workspace-menu-glass: rgb(
+    var(--workspace-glass-tint-rgb) / var(--workspace-glass-tint-depth)
+  );
+  --workspace-glass-control: rgb(255 255 255 / 12%);
+  --workspace-glass-border: rgb(255 255 255 / 18%);
+  --workspace-nav-divider: #9e9e9a;
+  --workspace-glass-text-primary: #f4f6fa;
+  --workspace-glass-text-secondary: #d7dbe2;
+  --workspace-glass-text-muted: #a9b0bb;
+  --workspace-glass-hover: rgb(255 255 255 / 10%);
+  --workspace-glass-selected: rgb(157 130 255 / 28%);
   --color-bg-editor: #ffffff;
   --color-bg-surface: #f8f8f7;
   --color-bg-elevated: #ffffff;
@@ -90,14 +106,14 @@
   --z-block-transform-menu: 1100;
   --z-bubble-menu: 1800;
   --z-bubble-popover: 1850;
-  font-family:
+  font-family: var(
+    --app-font-family,
     Inter,
-    ui-sans-serif,
+    'PingFang SC',
+    'Microsoft YaHei',
     system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    sans-serif;
+    sans-serif
+  );
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;

@@ -4,6 +4,7 @@ import {
   BookOpenCheck,
   Boxes,
   CalendarClock,
+  ChevronRight,
   CirclePlay,
   Code2,
   Database,
@@ -16,14 +17,16 @@ import {
   ListChecks,
   Palette,
   Plus,
+  Pin,
   Puzzle,
   Search,
   ServerCog,
   ShieldCheck,
   SlidersHorizontal,
+  Trash2,
   Type,
 } from '@lucide/vue'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 import type { WorkspaceSurface } from '@/features/documents/components/DocumentSidebar.vue'
 import type { AgentProject, AiChatHistoryItem } from '@/models/ai/aiChatHistory'
@@ -50,17 +53,20 @@ const emit = defineEmits<{
   'update:settings-section': [value: string]
   'select-project': [value: string]
   'select-history': [value: string]
+  'delete-history': [value: string]
   'new-task': [projectId: string | null]
   'new-project': []
+  'pin-project': [projectId: string]
+  'delete-project': [projectId: string]
   search: []
 }>()
 
 const titles: Partial<Record<WorkspaceSurface, string>> = {
   agent: '任务列表',
   knowledge: '知识控制',
-  plugins: '插件扩展',
-  automations: '自动化',
-  audit: '审计分类',
+  plugins: '插件技能',
+  automations: '自动化任务',
+  audit: '审计记录',
   settings: '设置选项',
 }
 
@@ -78,7 +84,7 @@ const sections = computed(() => {
     { id: 'builtin', label: '内置插件', description: '应用自带能力', icon: Puzzle },
   ]
   if (props.activeSurface === 'automations') return [
-    { id: 'tasks', label: '任务定义', description: '创建和管理自动化', icon: CalendarClock },
+    { id: 'tasks', label: '任务', description: '创建和管理自动化', icon: CalendarClock },
     { id: 'runs', label: '运行记录', description: '执行状态与结果', icon: CirclePlay },
   ]
   if (props.activeSurface === 'audit') return [
@@ -130,6 +136,47 @@ function historiesForProject(projectId: string): AiChatHistoryItem[] {
 }
 
 const ungroupedHistories = computed(() => historiesForProject(UNGROUPED_AGENT_PROJECT_ID))
+const collapsedProjectIds = ref<Set<string>>(readCollapsedProjectIds())
+
+function toggleProject(projectId: string): void {
+  const next = new Set(collapsedProjectIds.value)
+  if (next.has(projectId)) next.delete(projectId)
+  else next.add(projectId)
+  collapsedProjectIds.value = next
+  persistCollapsedProjectIds(next)
+}
+
+function selectProject(projectId: string): void {
+  if (collapsedProjectIds.value.has(projectId)) {
+    const next = new Set(collapsedProjectIds.value)
+    next.delete(projectId)
+    collapsedProjectIds.value = next
+    persistCollapsedProjectIds(next)
+  }
+  emit('select-project', projectId)
+}
+
+function readCollapsedProjectIds(): Set<string> {
+  try {
+    const value = JSON.parse(globalThis.localStorage?.getItem('my-notebook:agent-project-folders') ?? '[]')
+    return new Set(Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function persistCollapsedProjectIds(ids: Set<string>): void {
+  try {
+    globalThis.localStorage?.setItem('my-notebook:agent-project-folders', JSON.stringify([...ids]))
+  } catch {
+    // Folder state remains available for the current session.
+  }
+}
+
+function deleteProject(project: AgentProject): void {
+  if (!globalThis.confirm(`删除项目“${project.name}”？其中的对话也会一并删除。`)) return
+  emit('delete-project', project.id)
+}
 </script>
 
 <template>
@@ -155,39 +202,89 @@ const ungroupedHistories = computed(() => historiesForProject(UNGROUPED_AGENT_PR
 
     <div v-if="activeSurface === 'agent'" class="context-sidebar__body">
       <div v-for="project in projects" :key="project.id" class="context-sidebar__project">
-        <button
-          type="button"
-          class="context-sidebar__folder"
-          :class="{ 'is-active': currentProjectId === project.id }"
-          @click="emit('select-project', project.id)"
-        >
-          <FolderOpen v-if="currentProjectId === project.id" :size="16" />
-          <Folder v-else :size="16" />
-          <span>{{ project.name }}</span>
-        </button>
-        <button
-          v-for="history in historiesForProject(project.id)"
-          :key="history.id"
-          type="button"
-          class="context-sidebar__item context-sidebar__item--nested"
-          :class="{ 'is-active': currentHistoryId === history.id }"
-          @click="emit('select-history', history.id)"
-        >
-          <FileClock :size="15" /><span><strong>{{ history.title }}</strong><small>{{ history.messageCount }} 条消息</small></span>
-        </button>
+        <div class="context-sidebar__folder-row" :class="{ 'is-active': currentProjectId === project.id }">
+          <button
+            type="button"
+            class="context-sidebar__folder-toggle"
+            :aria-label="`${collapsedProjectIds.has(project.id) ? '展开' : '折叠'}项目：${project.name}`"
+            @click="toggleProject(project.id)"
+          >
+            <ChevronRight :size="13" :class="{ 'is-expanded': !collapsedProjectIds.has(project.id) }" />
+          </button>
+          <button type="button" class="context-sidebar__folder" @click="selectProject(project.id)">
+            <Folder v-if="collapsedProjectIds.has(project.id)" :size="16" />
+            <FolderOpen v-else :size="16" />
+            <span>{{ project.name }}</span>
+          </button>
+          <button
+            type="button"
+            class="context-sidebar__project-pin"
+            :class="{ 'is-pinned': project.pinnedAt !== null }"
+            :aria-label="`${project.pinnedAt !== null ? '取消置顶' : '置顶'}项目：${project.name}`"
+            @click="emit('pin-project', project.id)"
+          >
+            <Pin :size="13" />
+          </button>
+          <button
+            type="button"
+            class="context-sidebar__project-delete"
+            :aria-label="`删除项目：${project.name}`"
+            @click.stop="deleteProject(project)"
+          >
+            <Trash2 :size="13" />
+          </button>
+        </div>
+        <template v-if="!collapsedProjectIds.has(project.id)">
+          <div
+            v-for="history in historiesForProject(project.id)"
+            :key="history.id"
+            class="context-sidebar__history-row"
+          >
+            <button
+              type="button"
+              class="context-sidebar__item context-sidebar__item--nested"
+              :class="{ 'is-active': currentHistoryId === history.id }"
+              :title="history.title"
+              @click="emit('select-history', history.id)"
+            >
+              <FileClock :size="15" /><span><strong>{{ history.title }}</strong><small>{{ history.messageCount }} 条消息</small></span>
+            </button>
+            <button
+              type="button"
+              class="context-sidebar__history-delete"
+              :aria-label="`删除对话：${history.title}`"
+              @click="emit('delete-history', history.id)"
+            >
+              <Trash2 :size="13" />
+            </button>
+          </div>
+        </template>
       </div>
       <div v-if="ungroupedHistories.length" class="context-sidebar__project">
         <div class="context-sidebar__folder"><Folder :size="16" /><span>未分组</span></div>
-        <button
+        <div
           v-for="history in ungroupedHistories"
           :key="history.id"
-          type="button"
-          class="context-sidebar__item context-sidebar__item--nested"
-          :class="{ 'is-active': currentHistoryId === history.id }"
-          @click="emit('select-history', history.id)"
+          class="context-sidebar__history-row"
         >
-          <FileClock :size="15" /><span><strong>{{ history.title }}</strong><small>{{ history.messageCount }} 条消息</small></span>
-        </button>
+          <button
+            type="button"
+            class="context-sidebar__item context-sidebar__item--nested"
+            :class="{ 'is-active': currentHistoryId === history.id }"
+            :title="history.title"
+            @click="emit('select-history', history.id)"
+          >
+            <FileClock :size="15" /><span><strong>{{ history.title }}</strong><small>{{ history.messageCount }} 条消息</small></span>
+          </button>
+          <button
+            type="button"
+            class="context-sidebar__history-delete"
+            :aria-label="`删除对话：${history.title}`"
+            @click="emit('delete-history', history.id)"
+          >
+            <Trash2 :size="13" />
+          </button>
+        </div>
       </div>
       <p v-if="projects.length === 0 && histories.length === 0" class="context-sidebar__empty">暂无任务</p>
     </div>

@@ -31,7 +31,7 @@ describe('useWorkspaceItems', () => {
         sortOrder: 0,
         viewType: 'slides' as const,
         title: '新幻灯片',
-        payload: { type: 'slides' as const, slides: [] },
+        payload: { type: 'slides' as const, format: 'slidev' as const, source: '# 新幻灯片', assetIds: [] },
         pinnedAt: null,
         schemaVersion: 1,
         version: 1,

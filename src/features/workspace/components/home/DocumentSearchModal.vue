@@ -3,6 +3,7 @@ import { FileText, Folder, Search } from '@lucide/vue'
 
 import { NIcon, NInput, NModal } from '@/ui'
 import type { DocumentSummary } from '@/models/documents/document'
+import SearchHighlight from '@/components/SearchHighlight.vue'
 
 defineProps<{
   results: DocumentSummary[]
@@ -53,8 +54,8 @@ const emit = defineEmits<{
         <Folder v-if="document.documentKind === 'group'" :size="17" />
         <FileText v-else :size="17" />
         <span class="search-results__content">
-          <span class="search-results__title">{{ displayTitle(document) }}</span>
-          <span class="search-results__snippet">{{ getSnippet(document) }}</span>
+          <span class="search-results__title"><SearchHighlight :text="displayTitle(document)" :query="query" /></span>
+          <span class="search-results__snippet"><SearchHighlight :text="getSnippet(document)" :query="query" /></span>
         </span>
       </button>
       <p v-if="searching && results.length === 0" class="search-results__empty">正在搜索…</p>

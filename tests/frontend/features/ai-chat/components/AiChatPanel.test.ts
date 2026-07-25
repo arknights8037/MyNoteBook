@@ -119,6 +119,24 @@ describe('AiChatPanel runtime visibility', () => {
     globalThis.localStorage?.removeItem('my-notebook:agent-history-collapsed')
   })
 
+  it('uses a history-free document assistant header with an Agent Work handoff', async () => {
+    const wrapper = createWrapper()
+    await wrapper.setProps({ docked: true, externalNavigation: true })
+
+    expect(wrapper.get('.ai-chat-popover__heading strong').text()).toBe('AI 辅助任务')
+    expect(wrapper.find('button[aria-label="聊天记录"]').exists()).toBe(false)
+    expect(wrapper.find('button[aria-label*="对话历史"]').exists()).toBe(false)
+    expect(wrapper.get('button[aria-label="转为 Agent Work"]').exists()).toBe(true)
+  })
+
+  it('removes the whole conversation header in Agent Work', async () => {
+    const wrapper = createWrapper()
+    await wrapper.setProps({ workspace: true, externalNavigation: true })
+
+    expect(wrapper.classes()).toContain('ai-chat-popover--headerless')
+    expect(wrapper.find('.ai-chat-popover__header').exists()).toBe(false)
+  })
+
   it('selects an explicit target from the @ file menu', async () => {
     const wrapper = createWrapper(runtimeState('completed'))
     await wrapper.setProps({

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BookOpenCheck, Database, ListChecks, RefreshCw, ShieldCheck } from '@lucide/vue'
+import { BookOpenCheck, Database, ListChecks, ShieldCheck } from '@lucide/vue'
 import { onMounted, ref } from 'vue'
 
 import { loadAiSettings } from '@/models/ai/ai'
@@ -22,7 +22,7 @@ import KnowledgeAssetPreviewModal from '@/features/knowledge-control/components/
 import AiConversationImportPreviewModal from '@/features/knowledge-control/components/AiConversationImportPreviewModal.vue'
 import TaskRunsPanel from '@/features/knowledge-control/components/TaskRunsPanel.vue'
 import ViewsPanel from '@/features/knowledge-control/components/ViewsPanel.vue'
-import { NButton, NIcon, useDialog, useMessage } from '@/ui'
+import { useDialog, useMessage } from '@/ui'
 
 type BrowserFile = InstanceType<typeof globalThis.File>
 
@@ -308,19 +308,6 @@ onMounted(load)
 
 <template>
   <section class="operations-page knowledge-control-page" aria-label="知识控制">
-    <header class="operations-page__header">
-      <div>
-        <h1>知识中心</h1>
-        <p>管理知识资产、规则、智能视图与任务验收。</p>
-      </div>
-      <NButton secondary :loading="loading" @click="load">
-        <template #icon
-          ><NIcon :size="15"><RefreshCw /></NIcon
-        ></template>
-        刷新
-      </NButton>
-    </header>
-
     <div class="operations-page__content p1-domain-grid">
       <p v-if="error" class="operations-error" role="alert">{{ error }}</p>
       <nav v-if="!contextNavigation" class="surface-tabs" role="tablist" aria-label="知识中心功能">

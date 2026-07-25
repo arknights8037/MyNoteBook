@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Sparkles, X } from '@lucide/vue'
+import { AlertCircle, CheckCircle2, Sparkles, X } from '@lucide/vue'
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import NButton from '@/ui/NButton.vue'
@@ -48,6 +48,7 @@ import type { DataDirectoryPort } from '@/services/ports/DataDirectoryPort'
 import { renderAiMarkdown } from '@/services/ai/AiMarkdownRenderer'
 import { generateConversationTitle } from '@/services/ai/ConversationTitleService'
 import { applyTheme, setThemePreference, subscribeToSystemTheme } from '@/services/appearance/theme'
+import { applyApplicationTypography } from '@/services/appearance/applicationTypography'
 import DocumentSidebar from '@/features/documents/components/DocumentSidebar.vue'
 import type {
   DocumentSidebarView,
@@ -156,6 +157,7 @@ const workspaceSurface = useWorkspaceSurface()
 const {
   showAiChat,
   aiChatFullscreen,
+  aiPanelMode,
   showSettings,
   showPluginSkills,
   showAutomations,
@@ -163,6 +165,7 @@ const {
   showKnowledgeControl,
   activeSurface,
   openAgentWorkspace,
+  openDockedAiChat,
   openSettingsSurface,
   openPluginSkillsSurface,
   openAutomationsSurface,
@@ -350,6 +353,7 @@ const {
 })
 
 const openTabs = ref<WorkspaceTab[]>([])
+const persistentSurfaceIds = new Set<WorkspaceSurfaceName>(['agent', 'knowledge'])
 const surfaceTitles: Partial<Record<WorkspaceSurfaceName, string>> = {
   agent: 'Agent Work',
   knowledge: '知识控制',
@@ -361,6 +365,7 @@ const surfaceTitles: Partial<Record<WorkspaceSurfaceName, string>> = {
 
 const activeTab = computed<WorkspaceTab | null>(() => {
   if (activeSurface.value !== 'document') {
+    if (!persistentSurfaceIds.has(activeSurface.value)) return null
     const title = surfaceTitles[activeSurface.value]
     return title
       ? { key: `surface:${activeSurface.value}`, kind: 'surface', id: activeSurface.value, title }
@@ -388,6 +393,16 @@ const activeTab = computed<WorkspaceTab | null>(() => {
 
 const activeTabKey = computed(() => activeTab.value?.key ?? '')
 
+function trimOpenTabs(): void {
+  const maxTabs = appSettings.value.maxTabs
+  while (openTabs.value.length > maxTabs) {
+    const activeKey = activeTabKey.value
+    const removableIndex = openTabs.value.findIndex((tab) => tab.key !== activeKey)
+    if (removableIndex < 0) break
+    openTabs.value.splice(removableIndex, 1)
+  }
+}
+
 watch(
   activeTab,
   (tab) => {
@@ -395,8 +410,14 @@ watch(
     const existingIndex = openTabs.value.findIndex((item) => item.key === tab.key)
     if (existingIndex < 0) openTabs.value.push(tab)
     else openTabs.value.splice(existingIndex, 1, tab)
+    trimOpenTabs()
   },
   { immediate: true },
+)
+
+watch(
+  () => appSettings.value.maxTabs,
+  () => trimOpenTabs(),
 )
 
 async function activateWorkspaceTab(tab: WorkspaceTab): Promise<void> {
@@ -524,6 +545,7 @@ const aiConversation = useAiConversation({
   stop: stopAiAssistant,
   notify: (content) => message.success(content),
   generateTitle: generateConversationTitle,
+  persistHistory: computed(() => aiPanelMode.value !== 'docked'),
 })
 const aiMessages = aiConversation.messages
 const aiPrompt = aiConversation.prompt
@@ -647,7 +669,9 @@ const agentCommunicationWorker = useAgentCommunicationWorker({
   acceptAllPatches: acceptAllPendingAgentPatches,
   rejectPatches: rejectPendingAgentPatches,
   notifyError: message.error,
+  createId: createDocumentId,
 })
+const activeA2aTask = agentCommunicationWorker.activeA2aTask
 const agentAuthorizationRequest = computed(() => agentRun.runtimeState.value.authorizationRequest)
 let unsubscribeSystemTheme: (() => void) | null = null
 const {
@@ -804,6 +828,7 @@ watch(
   appSettings,
   (settings) => {
     saveAppSettings(settings)
+    applyApplicationTypography(settings)
     syncTheme()
   },
   { deep: true, immediate: true },
@@ -887,9 +912,17 @@ function answerAgentAuthorization(requestId: string, answer: string): void {
   }
 }
 
+function openDocumentAiChat(): void {
+  aiConversation.flushHistory()
+  clearAiChat()
+  explicitAgentTargets.value = []
+  openDockedAiChat()
+}
+
 const homeAiMessageActions = useHomeAiMessageActions({
   conversation: aiConversation,
   showChat: showAiChat,
+  openChat: openDocumentAiChat,
   editor: editorShell,
   currentDocumentId,
   autosave,
@@ -920,6 +953,14 @@ const { handleGlobalKeydown, handleDeveloperToolKeydown } = useHomeKeyboardShort
 function clearAiChat(): void {
   agentRun.resetRuntime()
   aiConversation.clear()
+}
+
+function closeAiChat(): void {
+  if (aiPanelMode.value === 'docked') {
+    clearAiChat()
+    explicitAgentTargets.value = []
+  }
+  workspaceSurface.closeAiChat()
 }
 
 const researchReviewActions = useResearchReviewActions({
@@ -1057,7 +1098,7 @@ function documentCharacterCount(document: DocumentSummary): number {
   return document.characterCount ?? Array.from(document.plainText.trim()).length
 }
 
-const aiChatPanelBindings = useAiChatPanelBindings({
+const { aiChatPanelBindings } = useAiChatPanelBindings({
   preferences: aiPreferences,
   conversation: aiConversation,
   surface: workspaceSurface,
@@ -1078,6 +1119,7 @@ const aiChatPanelBindings = useAiChatPanelBindings({
   run: runAiAssistant,
   stop: stopAiAssistant,
   clear: clearAiChat,
+  close: closeAiChat,
   selectTarget: selectAgentTarget,
   clearTarget: clearAgentTarget,
   writeMessageToChildDocument: homeAiMessageActions.writeMessageToChildDocument,
@@ -1176,8 +1218,11 @@ const aiChatPanelBindings = useAiChatPanelBindings({
         @search="openSearch"
         @select-project="aiConversation.selectProject"
         @select-history="aiConversation.selectHistory"
+        @delete-history="aiConversation.deleteHistory"
         @new-task="aiConversation.startTask"
         @new-project="requestNewAgentProject"
+        @pin-project="aiConversation.toggleProjectPin"
+        @delete-project="aiConversation.deleteProject"
       />
       <div class="workspace-main">
         <WorkspaceTabs
@@ -1317,6 +1362,7 @@ const aiChatPanelBindings = useAiChatPanelBindings({
         v-bind="aiChatPanelBindings"
         :workspace="false"
         docked
+        external-navigation
       />
 
       <div
@@ -1338,6 +1384,30 @@ const aiChatPanelBindings = useAiChatPanelBindings({
         >
           <X :size="14" />
         </button>
+      </div>
+
+      <div
+        v-if="activeA2aTask"
+        class="a2a-task-indicator"
+        :class="`a2a-task-indicator--${activeA2aTask.status}`"
+        role="status"
+      >
+        <span v-if="activeA2aTask.status === 'running'" class="a2a-task-indicator__dot" />
+        <component
+          :is="activeA2aTask.status === 'failed' ? AlertCircle : CheckCircle2"
+          v-else
+          :size="16"
+        />
+        <span class="a2a-task-indicator__text">{{ activeA2aTask.title }}</span>
+        <span class="a2a-task-indicator__status">
+          {{
+            activeA2aTask.status === 'running'
+              ? '执行中'
+              : activeA2aTask.status === 'failed'
+                ? '失败'
+                : '完成'
+          }}
+        </span>
       </div>
 
       <CreateViewModal

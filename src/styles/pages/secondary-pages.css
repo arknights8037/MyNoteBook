@@ -71,11 +71,11 @@
 
 .plugin-skills-page__header {
   display: flex;
-  min-height: 190px;
+  min-height: 156px;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 32px;
-  padding: 42px max(32px, calc((100% - 1180px) / 2)) 30px;
+  gap: 24px;
+  padding: 34px max(28px, calc((100% - 1080px) / 2)) 26px;
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -94,7 +94,7 @@
 }
 
 .plugin-skills-page__header h1 {
-  font-size: 28px;
+  font-size: 27px;
 }
 
 .plugin-skills-page__header p {
@@ -133,10 +133,10 @@
 
 .plugin-skills-page__content {
   display: grid;
-  width: min(calc(100% - 64px), 1180px);
-  gap: 38px;
+  width: min(calc(100% - 56px), 1080px);
+  gap: 28px;
   margin: 0 auto;
-  padding: 30px 0 64px;
+  padding: 28px 0 64px;
 }
 
 .mcp-panel {

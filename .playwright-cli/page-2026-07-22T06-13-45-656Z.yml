@@ -1,0 +1,82 @@
+- generic [ref=e2]:
+  - main [ref=e9]:
+    - generic [ref=e10]:
+      - complementary "主功能区" [ref=e11]:
+        - button "打开 Agent Work" [ref=e12] [cursor=pointer]:
+          - strong [ref=e14]: PrismKnowledge
+        - generic [ref=e15]:
+          - navigation "工作区" [ref=e16]:
+            - button "Agent Work" [ref=e17] [cursor=pointer]
+            - button "文档与视图" [ref=e22] [cursor=pointer]
+            - button "知识控制" [ref=e27] [cursor=pointer]
+            - button "插件技能" [ref=e32] [cursor=pointer]
+            - button "自动化任务" [ref=e37] [cursor=pointer]
+            - button "审计记录" [ref=e43] [cursor=pointer]
+          - button "设置" [ref=e48] [cursor=pointer]
+      - complementary "任务列表":
+        - generic:
+          - button "搜索工作区 Ctrl K":
+            - generic: 搜索工作区
+            - generic: Ctrl K
+        - generic:
+          - button "新建项目"
+          - button "新建任务"
+        - generic:
+          - generic:
+            - generic:
+              - button "折叠项目：Agent MVP"
+              - button "Agent MVP"
+              - button "置顶项目：Agent MVP"
+      - generic [ref=e83]:
+        - generic "打开的页面" [ref=e84]:
+          - tablist [ref=e85]:
+            - tab "Agent Work 关闭 Agent Work" [selected] [ref=e86] [cursor=pointer]:
+              - generic [ref=e90]: Agent Work
+              - button "关闭 Agent Work" [ref=e92]
+          - button "新建内容" [ref=e96] [cursor=pointer]
+          - generic [ref=e99]: "|"
+          - generic "窗口控制" [ref=e100]:
+            - button "最小化窗口" [ref=e101]
+            - button "最大化窗口" [ref=e103]
+            - button "关闭窗口" [ref=e106]
+        - region "AI 聊天" [ref=e112]:
+          - generic [ref=e114]:
+            - generic [ref=e116]:
+              - generic [ref=e121]:
+                - paragraph [ref=e122]: 开始一次基于知识库的协作
+                - generic [ref=e123]: 我会结合当前页面与已收录资料回答；需要改写时切换到 Edit。
+              - generic "当前知识上下文" [ref=e124]:
+                - generic [ref=e125]: 知识上下文
+                - generic [ref=e130]: 未命名文档
+                - generic [ref=e135]: 已连接 0 篇资料
+              - generic "常用任务" [ref=e138]:
+                - button "提炼要点" [ref=e139] [cursor=pointer]
+                - button "查找关联资料" [ref=e140] [cursor=pointer]
+                - button "提取行动项" [ref=e141] [cursor=pointer]
+                - button "整理为提纲" [ref=e142] [cursor=pointer]
+            - generic [ref=e144]:
+              - textbox "AI 输入" [ref=e145]:
+                - /placeholder: 交给 Agent 一个需要检索、整理或改写的任务
+              - generic [ref=e146]:
+                - generic "AI 输入选项" [ref=e147]:
+                  - button "打开 Agent 斜杠菜单" [ref=e148] [cursor=pointer]: /
+                  - button "选择目标文件" [ref=e149] [cursor=pointer]
+                  - button "Agent" [ref=e153] [cursor=pointer]
+                  - button "OpenAI" [ref=e157] [cursor=pointer]
+                  - button "选择模型" [ref=e161] [cursor=pointer]
+                - generic [ref=e165]:
+                  - button "清空" [disabled] [ref=e166]
+                  - button "执行 Agent" [disabled] [ref=e167]
+              - paragraph [ref=e171]:
+                - generic [ref=e172]: 已装载当前页面与 0 篇知识库资料
+  - alert [ref=e204]: Notification Cannot read properties of undefined (reading 'invoke')
+  - alert [ref=e205]: Notification Cannot read properties of undefined (reading 'invoke')
+  - alert [ref=e206]: Notification Cannot read properties of undefined (reading 'invoke')
+  - region "Notifications (F8)":
+    - list [ref=e180]:
+      - listitem [ref=e207]:
+        - generic [ref=e208]: Cannot read properties of undefined (reading 'invoke')
+      - listitem [ref=e209]:
+        - generic [ref=e210]: Cannot read properties of undefined (reading 'invoke')
+      - listitem [ref=e211]:
+        - generic [ref=e212]: Cannot read properties of undefined (reading 'invoke')

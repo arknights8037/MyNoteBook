@@ -1,11 +1,29 @@
 /* Semantic theme token overrides. Keep component rules above as layout; colors flow from tokens. */
+
+:root[data-theme-mode='dark'] {
+  --workspace-nav-divider: #5e5e5a;
+}
+
+:root,
 html,
 body,
-#app,
-.app-shell,
+#app {
+  background: transparent;
+}
+
+.app-shell {
+  color: var(--color-text-primary);
+  background: var(--workspace-shell-background);
+}
+
 .editor-workspace {
   color: var(--color-text-primary);
-  background: var(--color-bg-app);
+  background: transparent;
+}
+
+:root[data-theme-mode='dark'] .workspace-main__surface,
+:root[data-theme-mode='dark'] .ai-chat-popover--docked {
+  color-scheme: dark;
 }
 
 ::selection {
@@ -36,11 +54,36 @@ body,
   background: var(--color-bg-editor);
 }
 
+.activity-rail__panel,
+.activity-rail__brand,
 .document-sidebar,
 .settings-nav {
   color: var(--color-text-secondary);
-  background: var(--color-bg-sidebar);
-  border-color: var(--color-border-subtle);
+  background: var(--workspace-menu-glass);
+  border-color: var(--workspace-nav-divider);
+  background-clip: padding-box;
+}
+
+.activity-rail,
+.sidebar-brand,
+.context-sidebar__header,
+.context-sidebar__actions {
+  border-color: var(--workspace-nav-divider);
+}
+
+.activity-rail {
+  border-right-color: var(--workspace-nav-divider);
+}
+
+.workspace-tabs,
+.workspace-tab,
+.ai-chat-popover--docked,
+.ai-chat-history {
+  border-color: var(--workspace-nav-divider);
+}
+
+.document-sidebar {
+  border-right: 0;
 }
 
 .topbar,
@@ -245,12 +288,31 @@ body,
   background: var(--color-accent-primary);
 }
 
-:root[data-theme-mode='dark'] .settings-nav__item,
 :root[data-theme-mode='dark'] .settings-section__header p,
 :root[data-theme-mode='dark'] .settings-row small,
-:root[data-theme-mode='dark'] .settings-nav__hint,
 :root[data-theme-mode='dark'] .theme-option__body small {
   color: color-mix(in srgb, var(--color-text-secondary) 82%, var(--color-text-primary));
+}
+
+:root[data-theme-mode='dark'] .settings-nav__item {
+  color: var(--workspace-glass-text-secondary);
+}
+
+:root[data-theme-mode='dark'] .settings-nav__item:hover,
+:root[data-theme-mode='dark'] .settings-nav__item--active {
+  color: var(--workspace-glass-text-primary);
+}
+
+:root[data-theme-mode='dark'] .settings-nav__item:hover {
+  background: var(--workspace-glass-hover);
+}
+
+:root[data-theme-mode='dark'] .settings-nav__item--active {
+  background: var(--workspace-glass-selected);
+}
+
+:root[data-theme-mode='dark'] .settings-nav__hint {
+  color: var(--workspace-glass-text-muted);
 }
 
 :root[data-theme-mode='dark'] .settings-row strong,
