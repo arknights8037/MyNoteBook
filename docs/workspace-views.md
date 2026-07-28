@@ -6,7 +6,7 @@
 
 所有创建入口共用同一个类型选择器：侧栏“新建视图”、空间标题栏的 `+`、文件夹或页面的 `+`，以及右键菜单中的“新建内容”。从树节点发起创建时，新内容会继承该节点作为父级。结构化视图和思维导图支持打开、重命名、自动保存、拖入文件夹和删除。
 
-这套设计不尝试把一份数据实时投影成所有展示形式。每种内容独立编辑、独立持久化；跨类型转换由 Agent 在读取来源后生成目标内容，并继续经过本地校验和用户确认。
+这套设计不尝试把一份数据实时投影成所有展示形式。每种内容独立编辑、独立持久化；未来的跨类型转换应由 Agent 在读取来源后生成目标内容，并继续经过本地校验和用户确认，当前尚未暴露这组工具。
 
 ## 内容类型
 
@@ -46,8 +46,9 @@
 ## 持久化
 
 - 思维导图使用 `mind_maps` 及 revision history，并通过 migration `0020`、`0022` 增加 aggregate 与树位置。
-- 幻灯片、UML 和表格共用 `workspace_views` 及 revision history，并通过 migration `0021`、`0023` 增加 aggregate 与树位置。
+- 幻灯片、UML 和表格共用 `workspace_views` 及 revision history，并通过 migration `0021`、`0023` 增加 aggregate 与树位置；migration `0026` 增加 `pinned_at`，侧栏可持久化置顶结构化视图。
 - 文档和思维导图保留各自专用 aggregate；`slides | uml | table` 共用 `StructuredWorkspaceView`，避免为了表面统一而破坏各类型语义。
+- 当前置顶只属于 `workspace_views`；`mind_maps` 没有 `pinned_at`，文档也继续使用各自既有排序语义。
 - UI 不显示每次自动保存产生的内部版本计数；version 只用于 optimistic concurrency、历史记录和 Agent 修改门禁。
 
 ## Agent 边界
@@ -56,6 +57,13 @@
 
 后续接入必须遵守现有 Agent Runtime：先读取 canonical 来源和 revision，再生成目标或修改提案；写入必须经过本地 schema 校验、能力范围检查和用户确认，不允许模型直接写 SQLite，也不做静默跨视图同步。
 
-## 验证基线
+## 代码与验证基线
 
-截至 2026-07-16，前端全量测试为 118 个文件通过、2 个跳过，448 项通过、5 项跳过；`pnpm typecheck` 与 `pnpm lint` 通过。生产构建和 Rust `cargo check` 已通过，构建只保留既有的 chunk size 与动态/静态 import 提示。
+截至 2026-07-28，事实边界由以下实现共同约束：
+
+- `src/models/workspace`：Mind Map 与 `StructuredWorkspaceView` 类型、canonical payload 和 `pinnedAt`。
+- `src/repositories/workspace` 与 `src/infrastructure/database/workspace`：CRUD、revision、树位置和结构化视图置顶。
+- `src/features/workspace` 与 `src/composables/workspace`：统一内容树、编辑器、拖放和 `toggleWorkspaceViewPin`。
+- `tests/frontend` 中对应 workspace model/repository/service/component 定向测试。
+
+长期文档不保存某次全量测试数量。变更这组能力时，只运行受影响的定向测试、类型检查或 Rust migration 测试，并以当前 CI/提交记录追溯结果。

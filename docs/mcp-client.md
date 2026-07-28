@@ -62,6 +62,8 @@ MyNoteBook 可以作为 MCP Client 连接用户显式导入并启用的外部服
 
 ## MyNoteBook MCP Server 与 Agent 通信
 
+以下内容已按 2026-07-28 的 `mcp_server_exposure.rs` 与 `mynotebook-mcp.rs` 核对。对外工具名固定为八个：`search_knowledge`、`list_agent_projects`、`create_agent_branch`、`submit_agent_request`、`submit_cognitive_request`、`get_agent_request`、`decide_agent_request` 和 `revise_agent_request`。
+
 `src-tauri/src/bin/mynotebook-mcp.rs` 是独立 stdio Server。未配置 `MYNOTEBOOK_AGENT_CAPABILITY_TOKEN` 时，它以 SQLite `query_only` 模式公开当前有效 Rule、Decision、开放 TaskRun、指定 Context Bundle 和知识搜索。
 
 插件与技能页面的 **MCP Server** 选项卡用于控制八个工具的对外暴露面。策略保存在资料目录的 `mcp-server-exposure.json`；关闭的工具不会出现在 `tools/list`，按名称直接调用也会失败。设置由新启动的 Server 进程读取，因此修改后需要重启 Server 或让客户端重连。若配置文件不存在，所有工具保持暴露以兼容既有安装；项目目录和写入类工具仍要求 `MYNOTEBOOK_AGENT_CAPABILITY_TOKEN`。
@@ -70,15 +72,15 @@ MyNoteBook 可以作为 MCP Client 连接用户显式导入并启用的外部服
 
 - `submit_agent_request`：把通用任务说明加入本地队列，不运行第二套模型循环，也不批准或应用 Patch。
 - `submit_cognitive_request`：通过 `mode=research|review|learning` 把 C2-C4 认知任务加入同一队列。桌面端将模式绑定到已有 Cognitive Runtime；Learning 后续调用会恢复当前会话中的等待状态。
-- `list_agent_projects`：返回项目、资料根分组、既有对话和已登记的 A2A 分支，供外部 Agent 在创建任务前发现正确归属。
-- `create_agent_branch`：在指定项目下创建稳定分支，可通过 `parent_conversation_id` 关联既有对话或分支。
+- `list_agent_projects`：返回项目、资料根分组、既有任务消息链和已登记的 A2A 分支，供外部 Agent 在创建任务前发现正确归属。
+- `create_agent_branch`：在指定项目下创建稳定分支，可通过 `parent_conversation_id` 关联既有任务消息链或分支；字段名保留 `conversation` 是持久化协议兼容，不代表 UI 仍以“对话”命名。
 - `get_agent_request`：查询请求状态、AgentTask 和候选 Patch，属于只读操作。
 - `decide_agent_request`：在请求已经进入 `awaiting_review` 后提交版本化审批回复并批准或拒绝；回复会绑定当前 `taskId` 与 `result.summary`，批准后由桌面应用通过既有确认与 Rust transaction 应用。
 - `revise_agent_request`：对当前待审阅任务提交反馈并重新排队，继续沿用原项目和分支路由。
 
 `mynotebook-agent` 是对应的 stdio MCP 客户端，可执行 `projects`、`branch`、`submit`、`research`、`review`、`learning`、`get`、`revise`、`approve` 和 `reject`。数据库 URL 可由 `--database-url` 或 `MYNOTEBOOK_DATABASE_URL` 提供；能力令牌只从 `MYNOTEBOOK_AGENT_CAPABILITY_TOKEN` 读取，避免出现在命令行参数中。该接口用于启动后的本地受控集成与验收，不允许调用方用它绕过 ExecutionPolicy、Patch/Diff、revision 校验或确认记录。
 
-推荐的 A2A 路由顺序：先用 `projects` 读取项目目录，再用 `branch --project-id <id> --title <title>` 创建协作分支，最后在 `submit` 或认知模式命令中同时传入 `--project-id` 与 `--branch-id`。同一分支上的后续请求会复用同一条桌面对话及其资料根目录；仅传 `--project-id` 时会在指定项目下创建独立任务，不传路由参数时保持旧版未分组行为。
+推荐的 A2A 路由顺序：先用 `projects` 读取项目目录，再用 `branch --project-id <id> --title <title>` 创建协作分支，最后在 `submit` 或认知模式命令中同时传入 `--project-id` 与 `--branch-id`。同一分支上的后续请求会复用同一条桌面任务消息链及其资料根目录；仅传 `--project-id` 时会在指定项目下创建独立任务，不传路由参数时保持旧版未分组行为。
 
 ```powershell
 mynotebook-agent projects --database-url $env:MYNOTEBOOK_DATABASE_URL

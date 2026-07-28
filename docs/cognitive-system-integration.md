@@ -1,6 +1,6 @@
-# 认知系统集成设计
+# 认知系统集成
 
-> 实现状态（2026-07-16）：C1 最小认知内核、C2 Research、C3 Review 和 C4 Learning 功能已落地。Learning 使用 `waiting_user` Cognitive Session 跨 run 保存 Attempt、当前问题、提示层级与理解状态；首次不直接给答案，状态变化必须有用户尝试 evidence，候选理解不写正式知识。真实 Provider/Tauri 联合 smoke 仍待执行。
+> 实现状态（2026-07-28）：Research、Review 和 Learning 已绑定同一 Agent Runtime、Cognitive Session、Output Contract 与结果 UI。Review 已完成真实 DeepSeek/Tauri smoke；Research 和 Learning 的真实 Provider/Tauri 纵向 smoke 仍待执行。Learning 使用 `waiting_user` 跨 run 保存 Attempt、当前问题、提示层级与理解状态；首次不直接给答案，状态变化必须有用户尝试 evidence，候选理解不写正式知识。
 
 ## 1. 目标
 
@@ -30,7 +30,7 @@
 | 工具权限       | Tool Registry + Tags + `ExecutionPolicy.allowedTools`  | Tags 已在运行前编译，Runtime 仍检查工具名           |
 | MCP            | Tools/Resources Client、只读 Server                    | 直接复用相同信任和授权协议                          |
 | Skills         | Skill 摘要注入、按需读取                               | 通过 binding 关联 Mode，不把 Mode 变成 Skill 子类型 |
-| Slash Command  | plan/create/interactive/research/review 等 intent      | 命令只选择认知任务，不承载业务逻辑                  |
+| Slash Command  | research/review/learn 等 intent                        | 命令只选择认知任务，不承载业务逻辑                  |
 | 上下文         | Context Bundle、document/block/revision、Rule/Decision | 增加认知 context policy 和 session state            |
 | 结构化输出     | command/Patch + 可插拔 `AgentOutputContract<T>`        | 同一 Runtime 按运行注入 contract                    |
 | 知识生命周期   | 扩展 Knowledge Object + candidate/approved/rejected    | 复用现有模型，不建平行候选仓库                      |
@@ -194,11 +194,11 @@ Research 默认只读：`allowWriteProposals=false`，不能修改文档，也�
 
 来源必须尽量落到 block/revision。无法提供来源的项目可以作为 question 或未验证 claim 展示，但必须暴露不确定性，不能伪装成 fact/evidence。
 
-## 8. Review 与 Learning 扩展
+## 8. Review 与 Learning 闭环
 
-Review 在 Research 稳定后复用相同的来源、Validation、Conflict 和候选确认组件，增加 issue type、severity、原始位置、说明和建议动作。Review 默认只读；建议修改必须显式转成既有 Patch 提案。
+Review 已复用相同的来源、Validation、Conflict 和候选确认组件，并增加 issue type、severity、原始位置、说明和建议动作。Review 默认只读；建议修改必须显式转成既有 Patch 提案。
 
-Learning 最后实现，因为它需要多轮 session 状态机：
+Learning 已实现多轮 session 状态机：
 
 ```text
 要求用户先解释

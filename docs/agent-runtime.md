@@ -66,7 +66,7 @@ Command -> AgentRunEvent -> reducer -> AgentRunLifecycleState
 
 ## 3. Context Bundle
 
-模型调用前，`compileContextBundle()` 生成不可变 `Context Bundle v1`，保存：
+模型调用前，`compileContextBundle()` 生成不可变 `Context Bundle v2`。读取端仍兼容历史 v1；新运行只生成 v2，并在每个 source 中保存用于本轮模型输入的 `contentSnapshot` 与内容哈希。Bundle 保存：
 
 - 当前 document、context scope 和 revision。
 - document/block 来源及内容 SHA-256。
@@ -124,30 +124,35 @@ Agent MVP 使用文档 command/Patch 契约。Runtime 也可注入版本化 `Age
 
 ## 6. 内置工具
 
-| 工具                        | 风险           | 行为                                |
-| --------------------------- | -------------- | ----------------------------------- |
-| `get_current_document`      | read           | 当前文档、revision 和稳定块         |
-| `get_selected_blocks`       | read           | 用户真实选中的块                    |
-| `get_document_outline`      | read           | 标题大纲与 block ID                 |
-| `search_documents`          | read           | SQLite FTS5 作业区/全库分层检索     |
-| `list_document_groups`      | read           | 获取真实分组 ID 与子项数量          |
-| `read_document`             | read           | 按 ID 读取正文、标签、块和 revision |
-| `find_blocks_by_regex`      | read           | Rust 线性时间正则定位块             |
-| `read_skill_file`           | read           | 读取已启用 Skill 内的受限相对路径   |
-| `request_authorizer_input`  | read           | 暂停并等待授权人选择或文本          |
-| `execute_shell`             | read           | 白名单 Windows/本机只读命令         |
-| `inspect_environment_paths` | read           | 有界读取 PATH/PATHEXT/PSModulePath  |
-| `discover_local_tools`      | read           | 发现安全名称的本机工具              |
-| `get_system_info`           | read           | 系统、架构、CPU 和工作目录          |
-| `create_automation_draft`   | draft          | 授权后创建停用自动化草稿            |
-| `create_mcp_server_draft`   | draft          | 授权后创建停用、未信任 MCP 配置草稿 |
-| `create_skill_draft`        | draft          | 授权后创建停用 Skill 草稿           |
-| `replace_text_by_regex`     | write proposal | Rust 正则生成逐块替换提案           |
-| `replace_block`             | write proposal | 完整替换允许范围内的块              |
-| `insert_blocks`             | write proposal | 在稳定锚点附近插入内容              |
-| `create_document`           | write proposal | 创建新文档提案                      |
-| `create_group`              | write proposal | 创建分组及可选初始文档提案          |
-| `submit_document_edits`     | write proposal | 按文档分组提交一批复杂或跨文档修改  |
+当前 Registry 共注册 25 个内置工具：
+
+| 工具                        | 风险           | 行为                                 |
+| --------------------------- | -------------- | ------------------------------------ |
+| `get_current_document`      | read           | 当前文档、revision 和稳定块          |
+| `get_selected_blocks`       | read           | 用户真实选中的块                     |
+| `get_document_outline`      | read           | 标题大纲与 block ID                  |
+| `search_documents`          | read           | SQLite FTS5 作业区/全库分层检索      |
+| `list_document_groups`      | read           | 获取真实分组 ID 与子项数量           |
+| `read_document`             | read           | 按 ID 读取正文、标签、块和 revision  |
+| `list_mind_maps`            | read           | 列出可见范围内的思维导图             |
+| `read_mind_map`             | read           | 读取思维导图 canonical 树与 revision |
+| `find_blocks_by_regex`      | read           | Rust 线性时间正则定位块              |
+| `read_skill_file`           | read           | 读取已启用 Skill 内的受限相对路径    |
+| `request_authorizer_input`  | read           | 暂停并等待授权人选择或文本           |
+| `report_progress`           | read           | 向运行时间线报告可验证的阶段进度     |
+| `execute_shell`             | read           | 白名单 Windows/本机只读命令          |
+| `inspect_environment_paths` | read           | 有界读取 PATH/PATHEXT/PSModulePath   |
+| `discover_local_tools`      | read           | 发现安全名称的本机工具               |
+| `get_system_info`           | read           | 系统、架构、CPU 和工作目录           |
+| `create_automation_draft`   | draft          | 授权后创建停用自动化草稿             |
+| `create_mcp_server_draft`   | draft          | 授权后创建停用、未信任 MCP 配置草稿  |
+| `create_skill_draft`        | draft          | 授权后创建停用 Skill 草稿            |
+| `replace_text_by_regex`     | write proposal | Rust 正则生成逐块替换提案            |
+| `replace_block`             | write proposal | 完整替换允许范围内的块               |
+| `insert_blocks`             | write proposal | 在稳定锚点附近插入内容               |
+| `create_document`           | write proposal | 创建新文档提案                       |
+| `create_group`              | write proposal | 创建分组及可选初始文档提案           |
+| `submit_document_edits`     | write proposal | 按文档分组提交一批复杂或跨文档修改   |
 
 Rust 正则引擎限制 pattern、flags、块数量、replacement 和编译内存，保证线性时间；不支持回溯引用或 look-around。查找和替换都不在 WebView 主线程构造模型提供的 JavaScript `RegExp`。
 
@@ -163,11 +168,11 @@ MCP 返回值只作为不可信 Observation。它不能绕过 Patch/Diff，也�
 
 ## 8. 项目组、作业区与持久化
 
-Agent 对话按项目组管理。左侧采用项目文件夹树，项目下直接嵌套所属对话；创建项目时一次完成命名和文档分组作业区选择。项目与对话都可独立置顶，置顶项优先、其余按最近更新时间排列。每个项目保存一个或多个文档分组根节点作为默认作业区；其全部后代文档在一次运行开始时冻结成允许集合。`search_documents` 未声明 scope 时只检索该集合。若现有证据不足，模型可以显式调用 `search_documents(scope="global")` 扩大到全库；只有该次全库搜索实际返回的文档才会加入本次运行的可读集合，不能直接猜测 ID 越界读取。
+Agent 任务按项目组管理。左侧采用项目文件夹树，项目下直接嵌套所属任务；创建项目时一次完成命名和文档分组作业区选择。项目与任务都可独立置顶，置顶项优先、其余按最近更新时间排列。内部持久化字段仍使用 `conversationId` 表示一条任务消息链。每个项目保存一个或多个文档分组根节点作为默认作业区；其全部后代文档在一次运行开始时冻结成允许集合。`search_documents` 未声明 scope 时只检索该集合。若现有证据不足，模型可以显式调用 `search_documents(scope="global")` 扩大到全库；只有该次全库搜索实际返回的文档才会加入本次运行的可读集合，不能直接猜测 ID 越界读取。
 
-项目、作业区和整组对话以版本化状态快照保存到 SQLite `agent_workspace_state`，不再使用 WebView localStorage 保存业务历史。旧历史键在启动时只删除、不迁移。`agent_tasks` 同时保存 `project_id` 和 `conversation_id`，因此重启后仍可从项目、会话、任务三层追踪作业归属；任务本身的 Patch、工具调用、确认和事务继续使用既有规范化审计表。
+项目、作业区和整组任务消息以版本化状态快照保存到 SQLite `agent_workspace_state`，不再使用 WebView localStorage 保存业务历史。旧历史键在启动时只删除、不迁移。侧栏中新建但尚无消息的任务是 `transient` 内存锚点；发送第一条消息后才进入持久化快照，避免空任务污染历史。`agent_tasks` 同时保存 `project_id` 和 `conversation_id`，因此重启后仍可从项目、会话、任务三层追踪作业归属；任务本身的 Patch、工具调用、确认和事务继续使用既有规范化审计表。
 
-项目还提供本地 Agent 请求通信队列。持有 capability token 的调用方先通过 stdio MCP 读取项目、资料根、对话和 A2A 分支目录，再可在指定项目下创建稳定分支，并把任务路由到 `project_id` / `branch_id`。桌面应用轮询后会在该项目资料范围内运行现有 `useAgentRun`；同一分支复用同一条持久化对话，父分支关系随历史快照保存。未提供路由参数的旧调用继续作为未分组独立任务处理。跨文档写入只对本次运行已成功读取且 revision 未变化的文档开放，最终结果仍是待审阅 Patch。MCP 的提交动作不会批准或应用修改；查询 Patch 后必须另行批准或拒绝，应用仍走同一 Rust transaction。
+项目还提供本地 Agent 请求通信队列。持有 capability token 的调用方先通过 stdio MCP 读取项目、资料根、任务和 A2A 分支目录，再可在指定项目下创建稳定分支，并把任务路由到 `project_id` / `branch_id`。桌面应用轮询后会在该项目资料范围内运行现有 `useAgentRun`；同一分支复用同一条持久化任务记录，父分支关系随历史快照保存。未提供路由参数的旧调用继续作为未分组独立任务处理。请求保存 `request_mode`、路由和版本化 decision envelope；批准、拒绝与修订都返回 action、reply、request/task、结果摘要和时间等可审计信息。跨文档写入只对本次运行已成功读取且 revision 未变化的文档开放，最终结果仍是待审阅 Patch。MCP 的提交动作不会批准或应用修改；查询 Patch 后必须另行批准或拒绝，应用仍走同一 Rust transaction。
 
 ## 9. Patch、确认与撤销
 
@@ -220,7 +225,7 @@ C1.5-R 维护后，`ToolLoopAgent` 使用流式执行。Provider 明确返回的
 
 当前文档和选区在工具边界统一投影成 canonical Markdown：`get_current_document` 与 `get_selected_blocks` 只向模型返回文档元数据、稳定块标识和 Markdown，不返回 Tiptap JSON。编辑器与数据库内部仍保留 Tiptap 树用于结构编辑、版本校验和事务保存。
 
-Agent 对话区左侧提供可折叠工作记录管理器，可切换项目、配置文档分组作业区，并直接选择、删除或新建对话。项目与历史记录由 SQLite 持久化。普通消息限制可见数量并自动回收定时器；最近一次 Agent 修改的撤销提示只控制 UI 可见性，9 秒后自动消失且可手动关闭，不会清除底层可撤销事务。
+Agent 区左侧提供可折叠任务管理器，可切换项目、配置文档分组作业区，并直接选择、删除或新建任务。项目与已有消息的任务记录由 SQLite 持久化；无消息的 transient 新任务只保留在内存中。普通消息限制可见数量并自动回收定时器；最近一次 Agent 修改的撤销提示只控制 UI 可见性，9 秒后自动消失且可手动关闭，不会清除底层可撤销事务。
 
 Run lifecycle、Plan snapshot、运行级事件和 Step/tool timeline 会绑定到当前 assistant 消息并随聊天历史持久化。授权请求不会持久化，避免重启后把旧请求误认为仍可批准；规范工具审计仍以 `agent_tool_calls` 等数据库记录为准，消息内事件是可观察运行投影，不替代领域审计表。
 

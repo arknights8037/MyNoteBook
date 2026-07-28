@@ -1,6 +1,6 @@
 # 可组合情报与工作看板
 
-> 状态：产品与技术方案，尚未实现。本文用于约束后续设计与开发，不把演进方向描述成当前能力。
+> 状态（代码复核于 2026-07-28）：产品与技术方案，尚未实现。当前仓库没有 `src/features/dashboard`、Dashboard model/repository/table，也没有安装 GridStack 或 Grid Layout Plus。本文用于约束后续设计与开发，不把演进方向描述成当前能力。
 
 ## 1. 产品定位
 
@@ -39,15 +39,15 @@
 
 ## 3. 首批 Widget
 
-| Widget | 主要信息 | 主要动作 |
-| --- | --- | --- |
-| RSS Briefing | 未读更新、增量摘要、主题聚类、来源异常、自上次阅读以来的变化 | 标记已读、加入项目、创建 Research |
-| Signal Inbox | RSS、IM、MCP 和外部系统信号 | 关联项目、提取任务、归档、咨询 Agent |
-| Automation Results | queued、running、completed、failed、输出摘要、下次运行时间 | 查看日志、重试、暂停、创建后续任务 |
-| Agent Work Status | 多任务运行状态、等待用户、等待外部结果、失败和已完成 | 打开会话、停止任务、回答授权问题 |
-| Decision Queue | Research Candidate、Review Issue、ChangeSet、Approval、待验证结果 | 批准、拒绝、请求补充证据 |
-| Project Context | 项目目标、近期决策、开放问题、活跃任务和最近成果 | 打开项目、更新目标、委派任务 |
-| Ask Agent | 当前看板、项目或卡片的咨询入口 | 生成 Research、Decision、Task 或文档 |
+| Widget             | 主要信息                                                          | 主要动作                             |
+| ------------------ | ----------------------------------------------------------------- | ------------------------------------ |
+| RSS Briefing       | 未读更新、增量摘要、主题聚类、来源异常、自上次阅读以来的变化      | 标记已读、加入项目、创建 Research    |
+| Signal Inbox       | RSS、IM、MCP 和外部系统信号                                       | 关联项目、提取任务、归档、咨询 Agent |
+| Automation Results | queued、running、completed、failed、输出摘要、下次运行时间        | 查看日志、重试、暂停、创建后续任务   |
+| Agent Work Status  | 多任务运行状态、等待用户、等待外部结果、失败和已完成              | 打开会话、停止任务、回答授权问题     |
+| Decision Queue     | Research Candidate、Review Issue、ChangeSet、Approval、待验证结果 | 批准、拒绝、请求补充证据             |
+| Project Context    | 项目目标、近期决策、开放问题、活跃任务和最近成果                  | 打开项目、更新目标、委派任务         |
+| Ask Agent          | 当前看板、项目或卡片的咨询入口                                    | 生成 Research、Decision、Task 或文档 |
 
 第二阶段再考虑日历、会议、邮件、指标图表和外部 SaaS 卡片。首期不追求 Widget 数量，先保证来源、状态、动作和权限边界一致。
 
@@ -130,11 +130,11 @@ src/features/dashboard/
 
 ## 6. 布局引擎选型
 
-### 推荐：GridStack 适配层
+### 候选：GridStack 适配层
 
 [GridStack 官方文档](https://gridstackjs.com/)提供拖拽、缩放、响应式列、保存/恢复、跨网格和嵌套网格能力，并提供 Vue 集成。它适合桌面 Dashboard Composer，但业务代码不应直接依赖第三方节点结构，应通过 `DashboardGridAdapter` 转换为自己的 `GridPosition`。
 
-推荐理由：
+候选理由：
 
 - 交互能力完整，适合桌面级复杂排版；
 - 布局可序列化，便于本地持久化和迁移；
@@ -168,6 +168,7 @@ src/features/dashboard/
 
 ### P0：布局基础
 
+- 先用最小原型比较 GridStack、Grid Layout Plus 与有限自研 CSS Grid，并记录 WebView2 拖拽、高 DPI、键盘和卸载行为后再选型；
 - Dashboard 页面和 SQLite repository；
 - 编辑/浏览模式；
 - 添加、移动、缩放、删除、保存和恢复默认布局；

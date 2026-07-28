@@ -2,7 +2,7 @@
 
 ## 当前边界
 
-自动化模块提供本地任务定义、调度指针、运行队列和状态生命周期。当前版本不在后台主动唤醒模型；桌面调度器或其他执行器可以通过 `AutomationService` 领取到期任务并推进运行状态。
+自动化模块提供本地任务定义、调度指针、运行队列和状态生命周期。当前版本没有后台调度 worker，也不会主动唤醒模型；现有 UI 只能创建定义、计算到期状态和手动入队。未来的桌面调度器或其他执行器可以通过 `AutomationService` 领取到期任务并推进运行状态，但不能建立第二套 Agent Runtime。
 
 ```text
 automation_tasks
@@ -21,7 +21,9 @@ automation_tasks
 
 ## 页面
 
-“自动化任务”页面支持创建定义、绑定当前页面、手动/间隔/每日触发、启停、手动入队和查看最近运行。
+“自动化任务”页面支持创建定义、绑定当前页面、手动/间隔/每日触发、启停、手动入队和查看最近运行。没有执行器时，手动或计划入队只会生成 `queued` 记录，页面会提示等待执行器，不应把它描述成后台任务已经运行。
+
+当前实现分布在 `src/models/automation`、`src/services/automation`、`src/repositories/automation`、`src/infrastructure/database/automation` 和自动化页面组件；migration `0008` 拥有表、触发器与唯一索引。
 
 “审计记录”页面统一展示：
 

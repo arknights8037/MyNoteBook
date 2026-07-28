@@ -4,30 +4,35 @@
 
 SQLite schema 只由 `src-tauri/migrations/` 中的 SQLx 迁移管理。应用启动时 Rust 端按版本执行迁移，并把 checksum 写入 `_sqlx_migrations`。
 
+截至 2026-07-28，主干迁移链为 `0001`–`0028`。最新迁移包含 Mind Map、Slidev/UML/Table 工作区视图、树形位置、结构化视图置顶、Agent 请求模式、Confirmation/Decision Envelope 和项目/A2A 分支路由。
+
 前端不再执行 `CREATE TABLE`、`ALTER TABLE` 或补列逻辑。这样避免了两个运行时同时管理 schema，防止“每次打开都提示迁移”或已应用迁移 checksum 不匹配。
 
 **规则：已发布迁移不可修改、不可删除、不可重排。** Schema 变更必须新建下一个编号迁移。例如 `0006_add_x.sql`。历史迁移是已有用户数据的版本链，不是运行时兼容代码。
 
 ## 当前持久化内容
 
-| 域         | 表/文件                                                                           |
-| ---------- | --------------------------------------------------------------------------------- |
-| 文档与层级 | `documents`；只读块投影 `blocks`                                                  |
-| 标签       | `tags`、`document_tags`                                                           |
-| 附件元数据 | `assets`；二进制文件位于数据库同级 `assets/`                                      |
-| 本地集成文件 | `skills/`、`mcp-servers.json`、`mcp-server-exposure.json`；与数据库使用同一个可迁移数据目录 |
-| 全文检索   | FTS5 `document_search` 与同步触发器                                               |
-| Agent 审计 | `agent_*` 表；`agent_branches` 保存 A2A 项目分支路由，完整对话仍在 `agent_workspace_state` |
-| 自动化与运行队列 | `automation_tasks`、`automation_runs`                                         |
-| 上下文追溯 | `context_bundles`；Agent ExecutionPolicy、Provider 参数、Skill 版本与关联 ID |
-| 结构化知识 | `knowledge_objects`、`knowledge_object_relations` |
-| 认知会话与验证 | `cognitive_sessions`、`knowledge_object_sources`、`knowledge_validations` |
-| 统一 Work | `task_definitions`、`task_runs`；兼容既有 Automation/Agent 表 |
-| 交付与治理 | `work_artifacts`、`work_evidence`、`result_verifications`、`change_sets`、`approvals` |
-| 可重建 View | `view_definitions`、`view_snapshots`、`view_dependencies` |
-| 外部委派 | `delegations`、`external_submissions`、`idempotency_records` |
-| 事件投递 | `domain_events`、`outbox_messages` |
-| API Key    | AES-256-GCM 密文文件；随机数据密钥由系统凭据库保护，不进入 SQLite 或 localStorage |
+| 域               | 表/文件                                                                                                                             |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 文档与层级       | `documents`；只读块投影 `blocks`                                                                                                    |
+| 标签             | `tags`、`document_tags`                                                                                                             |
+| 附件元数据       | `assets`；二进制文件位于数据库同级 `assets/`                                                                                        |
+| 本地集成文件     | `skills/`、`mcp-servers.json`、`mcp-server-exposure.json`；与数据库使用同一个可迁移数据目录                                         |
+| 全文检索         | FTS5 `document_search` 与同步触发器                                                                                                 |
+| Agent 任务与审计 | `agent_*` 表保存 task、tool call、Patch、confirmation、transaction 和 request；`agent_workspace_state` 保存版本化项目/任务消息快照  |
+| Agent 通信与路由 | `agent_requests` 保存 request mode、result、revision、decision 和 project/branch routing；`agent_branches` 保存 A2A 分支目录        |
+| 自动化与运行队列 | `automation_tasks`、`automation_runs`                                                                                               |
+| 上下文追溯       | `context_bundles`；Agent ExecutionPolicy、Provider 参数、Skill 版本与关联 ID                                                        |
+| 结构化知识       | `knowledge_objects`、`knowledge_object_relations`                                                                                   |
+| 认知会话与验证   | `cognitive_sessions`、`knowledge_object_sources`、`knowledge_validations`                                                           |
+| Mind Map         | `mind_maps`、`mind_map_revisions`；版本化 canonical JSON 与树形位置                                                                 |
+| 结构化工作区     | `workspace_views`、`workspace_view_revisions`；Slidev/UML/Table payload、树形位置与 `pinned_at`                                     |
+| 统一 Work        | `task_definitions`、`task_runs`；兼容既有 Automation/Agent 表                                                                       |
+| 交付与治理       | `work_artifacts`、`work_evidence`、`result_verifications`、`change_sets`、`approvals`；验证结果可保存 Confirmation Envelope 与 hash |
+| 可重建 View      | `view_definitions`、`view_snapshots`、`view_dependencies`                                                                           |
+| 外部委派         | `delegations`、`external_submissions`、`idempotency_records`                                                                        |
+| 事件投递         | `domain_events`、`outbox_messages`                                                                                                  |
+| API Key          | AES-256-GCM 密文文件；随机数据密钥由系统凭据库保护，不进入 SQLite 或 localStorage                                                   |
 
 API Key 首次使用时从系统凭据库取得数据密钥并完成一次 AES-GCM 解密，随后缓存在应用进程内存中。Agent 请求不会重复执行 KDF、系统凭据读取或 AES 解密。写入时使用新的随机 nonce，GCM 认证标签同时校验密文完整性。
 
@@ -48,6 +53,19 @@ Migration `0014` 扩展 `knowledge_objects` 的候选类型、正文、结构化
 `work_artifacts` 是运行交付物，`work_evidence` 保存可验证来源和验证状态，`result_verifications` 保存不可变的 verifier 结论。Verifier 可更新 `task_runs` 或提出 `change_sets`，不能绕过既有 Document Core/Patch 事务直接改正文。
 
 每次 View 手工刷新新增一条 `view_snapshots` 及其 `view_dependencies`，并由 `view_definitions.current_snapshot_id` 指向当前版本。历史依赖永久保留；文档 revision 或 Knowledge Object 版本变化时，trigger 只根据当前快照依赖标记 stale。View 是可重建投影，不是第二事实来源。
+
+这里的 Generated View 与工作区里的 `workspace_views` 不是同一概念。前者是可重建查询投影；后者保存用户直接编辑的 Slidev、UML 或 Table canonical payload，并通过独立 revision 表记录历史。`mind_maps` 同样是直接编辑的版本化工作区资产，不应写入 `view_snapshots`。
+
+## 近期工作区与 Agent 通信迁移
+
+- `0020`–`0023` 增加 Mind Map、结构化工作区视图、各自 revision history 和树形父级/排序位置。
+- `0024` 为 `agent_requests` 增加认知请求模式。
+- `0025` 为 `result_verifications` 增加版本化 Confirmation Envelope JSON 与 hash。
+- `0026` 只为 `workspace_views` 增加 `pinned_at`；Mind Map 当前没有置顶字段。
+- `0027` 为 Agent 请求保存版本化 decision envelope。
+- `0028` 增加 `agent_branches`，并让请求可路由到 `project_id` / `branch_id`。
+
+这些迁移只扩展现有 Runtime 和工作区模型，不建立第二套文档正文或第二套 Agent 执行器。
 
 ## P2 外部协议与 Outbox
 
