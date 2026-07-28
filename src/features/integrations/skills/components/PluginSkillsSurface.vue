@@ -18,7 +18,6 @@ import {
   Plus,
   Puzzle,
   RefreshCw,
-  Rss,
   Save,
   Search,
   ServerCog,
@@ -45,6 +44,7 @@ import McpServersPanel from '@/features/integrations/mcp/components/McpServersPa
 import McpServerExposurePanel from '@/features/integrations/mcp/components/McpServerExposurePanel.vue'
 import type { McpClientPort } from '@/services/ports/McpClientPort'
 import EmailAccountPanel from '@/features/integrations/email/components/EmailAccountPanel.vue'
+import RssSourcePanel from '@/features/integrations/rss/components/RssSourcePanel.vue'
 
 withDefaults(defineProps<{ mcpClient: McpClientPort; contextNavigation?: boolean }>(), {
   contextNavigation: false,
@@ -359,7 +359,9 @@ onMounted(() => void loadSkills())
   <section class="plugin-skills-page" aria-label="连接与扩展">
     <header class="plugin-skills-page__header">
       <div>
-        <span class="plugin-skills-page__eyebrow"><Sparkles :size="14" /> CONNECTIONS & EXTENSIONS</span>
+        <span class="plugin-skills-page__eyebrow"
+          ><Sparkles :size="14" /> CONNECTIONS & EXTENSIONS</span
+        >
         <h1>连接与扩展</h1>
         <p>统一管理外部信息来源、Agent Skills、MCP 能力和内置插件。</p>
       </div>
@@ -453,24 +455,26 @@ onMounted(() => void loadSkills())
       <section v-if="activeTab === 'connections'" class="connector-catalog" aria-label="连接器目录">
         <header>
           <div><strong>信息连接器</strong><small>配置来源，不在这里阅读内容</small></div>
-          <span>邮箱已开放连接</span>
+          <span>RSS 与邮箱已开放连接</span>
         </header>
         <div>
           <article>
-            <span><Rss :size="20" /></span>
-            <div><strong>RSS</strong><p>订阅源、抓取频率、内容范围和解析状态。</p></div>
-            <em>规划中</em>
-          </article>
-          <article>
             <span><MessageCircle :size="20" /></span>
-            <div><strong>IM / 消息</strong><p>协作空间、频道范围、权限和同步状态。</p></div>
+            <div>
+              <strong>IM / 消息</strong>
+              <p>协作空间、频道范围、权限和同步状态。</p>
+            </div>
             <em>规划中</em>
           </article>
         </div>
+        <RssSourcePanel />
         <EmailAccountPanel />
         <aside>
           <Cable :size="17" />
-          <p><strong>已有 MCP 数据源？</strong>继续在 MCP Client 中配置。未来连接器和 MCP 资源会共同进入统一收件箱。</p>
+          <p>
+            <strong>已有 MCP 数据源？</strong>继续在 MCP Client 中配置。未来连接器和 MCP
+            资源会共同进入统一收件箱。
+          </p>
           <button type="button" @click="activeTab = 'mcp'">打开 MCP Client</button>
         </aside>
       </section>

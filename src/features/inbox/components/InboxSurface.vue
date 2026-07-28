@@ -1,18 +1,12 @@
 <script setup lang="ts">
-import {
-  AlertTriangle,
-  ArrowRight,
-  Inbox,
-  Mail,
-  MessageCircle,
-  PlugZap,
-  Rss,
-  ShieldCheck,
-} from '@lucide/vue'
+import { AlertTriangle, ArrowRight, Inbox, MessageCircle, PlugZap, ShieldCheck } from '@lucide/vue'
 import { computed } from 'vue'
 
 import type { InboxSection } from '@/models/workspace/workspaceSurface'
 import EmailInboxPanel from './EmailInboxPanel.vue'
+import RssInboxPanel from './RssInboxPanel.vue'
+import UnifiedInboxPanel from './UnifiedInboxPanel.vue'
+import ConnectorFailuresPanel from './ConnectorFailuresPanel.vue'
 
 const props = defineProps<{ section: InboxSection }>()
 const emit = defineEmits<{ openConnections: [] }>()
@@ -52,28 +46,16 @@ const sectionMeta: Record<InboxSection, { eyebrow: string; title: string; descri
 
 const sources = [
   {
-    id: 'rss' as const,
-    title: 'RSS',
-    description: '订阅源、增量抓取和内容哈希',
-    icon: Rss,
-  },
-  {
     id: 'messages' as const,
     title: 'IM / 消息',
     description: '协作空间、频道和会话范围',
     icon: MessageCircle,
   },
-  {
-    id: 'email' as const,
-    title: '邮件',
-    description: '账户、文件夹和邮件会话',
-    icon: Mail,
-  },
 ]
 
 const activeMeta = computed(() => sectionMeta[props.section])
 const visibleSources = computed(() => {
-  if (props.section === 'rss' || props.section === 'messages' || props.section === 'email') {
+  if (props.section === 'messages') {
     return sources.filter((source) => source.id === props.section)
   }
   return sources
@@ -94,15 +76,26 @@ const visibleSources = computed(() => {
     </header>
 
     <div class="inbox-surface__content">
-      <section v-if="section === 'failures'" class="inbox-empty-state">
-        <span class="inbox-empty-state__icon"><ShieldCheck :size="25" /></span>
-        <h2>当前没有采集异常</h2>
-        <p>连接器接入后，授权、同步和解析问题会统一出现在这里。</p>
-      </section>
+      <ConnectorFailuresPanel
+        v-if="section === 'failures'"
+        @open-connections="emit('openConnections')"
+      />
+
+      <UnifiedInboxPanel
+        v-else-if="section === 'pending' || section === 'all'"
+        :mode="section"
+        @open-connections="emit('openConnections')"
+      />
 
       <EmailInboxPanel
-        v-else-if="section === 'pending' || section === 'all' || section === 'email'"
-        :mode="section"
+        v-else-if="section === 'email'"
+        mode="email"
+        @open-connections="emit('openConnections')"
+      />
+
+      <RssInboxPanel
+        v-else-if="section === 'rss'"
+        mode="rss"
         @open-connections="emit('openConnections')"
       />
 
@@ -126,7 +119,10 @@ const visibleSources = computed(() => {
         <div class="inbox-source-grid" aria-label="可接入来源">
           <article v-for="source in visibleSources" :key="source.id">
             <span><component :is="source.icon" :size="18" /></span>
-            <div><strong>{{ source.title }}</strong><small>{{ source.description }}</small></div>
+            <div>
+              <strong>{{ source.title }}</strong
+              ><small>{{ source.description }}</small>
+            </div>
             <em>规划中</em>
           </article>
         </div>
@@ -134,7 +130,10 @@ const visibleSources = computed(() => {
 
       <aside class="inbox-boundary-note">
         <AlertTriangle :size="16" />
-        <p><strong>收件箱不是插件配置页。</strong>这里处理“进来了什么”；账户授权、同步范围和连接状态由“连接与扩展”管理。</p>
+        <p>
+          <strong>收件箱不是插件配置页。</strong
+          >这里处理“进来了什么”；账户授权、同步范围和连接状态由“连接与扩展”管理。
+        </p>
       </aside>
     </div>
   </section>

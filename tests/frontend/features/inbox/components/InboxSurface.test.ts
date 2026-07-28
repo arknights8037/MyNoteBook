@@ -8,7 +8,7 @@ describe('InboxSurface', () => {
     const wrapper = mount(InboxSurface, { props: { section: 'rss' } })
 
     expect(wrapper.get('h1').text()).toBe('RSS')
-    expect(wrapper.findAll('.inbox-source-grid article')).toHaveLength(1)
+    expect(wrapper.find('.rss-inbox-panel').exists()).toBe(true)
     expect(wrapper.text()).toContain('收件箱不是插件配置页')
 
     await wrapper.get('.inbox-empty-state button').trigger('click')

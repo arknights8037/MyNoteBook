@@ -87,6 +87,7 @@ mod email;
 mod governance;
 mod mcp;
 pub mod mcp_server_exposure;
+mod rss;
 mod secret_store;
 mod sensitive_data;
 mod skills;
@@ -276,6 +277,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0030_add_email_inbox.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 31,
+            description: "add_rss_inbox",
+            sql: include_str!("../migrations/0031_add_rss_inbox.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -347,6 +354,7 @@ pub fn run() {
             email::set_email_account_secret,
             email::delete_email_account_secret,
             email::sync_email_account,
+            rss::fetch_rss_feed,
             ai_models::fetch_ai_models,
             ai_proxy::proxy_ai_request,
             agent_cancellation::cancel_agent_tool_call,

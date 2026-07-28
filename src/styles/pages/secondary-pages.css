@@ -208,6 +208,21 @@
   font-size: 9px;
 }
 
+.rss-source-panel .email-account-list__main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rss-source-panel > header {
+  border-bottom: 1px solid var(--color-border-subtle);
+  padding-bottom: 10px;
+}
+
+.rss-source-form {
+  grid-template-columns: 1fr;
+}
+
 .email-account-list {
   display: grid;
   gap: 1px;
