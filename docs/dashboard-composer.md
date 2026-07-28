@@ -1,6 +1,6 @@
 # 可组合情报与工作看板
 
-> 状态（代码复核于 2026-07-28）：产品与技术方案，尚未实现。当前仓库没有 `src/features/dashboard`、Dashboard model/repository/table，也没有安装 GridStack 或 Grid Layout Plus。本文用于约束后续设计与开发，不把演进方向描述成当前能力。
+> 状态（实现于 2026-07-28）：P0 已落地。信息面板现在是工作区一级视图，使用 Grid Layout Plus、`workspace_views` 的版本化持久化，以及显式 Widget 注册表。当前内置“自动化结果”和“Agent 工作状态”两个只读组件；P1 及以后能力仍是规划，不描述为现有能力。
 
 ## 1. 产品定位
 
@@ -98,39 +98,30 @@ interface GridPosition {
 
 ## 5. Vue 组件组织
 
-建议将看板作为独立 feature，而不是把大量卡片写进一个页面组件：
+看板已作为独立 feature 实现，没有把卡片逻辑堆进工作区页面：
 
 ```text
 src/features/dashboard/
-├─ components/
-│  ├─ DashboardSurface.vue
-│  ├─ DashboardComposer.vue
-│  ├─ DashboardGrid.vue
-│  ├─ DashboardWidgetFrame.vue
-│  ├─ DashboardWidgetLibrary.vue
-│  └─ DashboardWidgetSettings.vue
-├─ composables/
-│  ├─ useDashboardLayout.ts
-│  ├─ useDashboardPersistence.ts
-│  └─ useDashboardWidgetContext.ts
-├─ registry/
-│  ├─ dashboardWidgetRegistry.ts
-│  └─ dashboardWidgetPermissions.ts
-└─ widgets/
-   ├─ rss-briefing/RssBriefingWidget.vue
-   ├─ signal-inbox/SignalInboxWidget.vue
-   ├─ automation-results/AutomationResultsWidget.vue
-   ├─ agent-work-status/AgentWorkStatusWidget.vue
-   ├─ decision-queue/DecisionQueueWidget.vue
-   ├─ project-context/ProjectContextWidget.vue
-   └─ ask-agent/AskAgentWidget.vue
+├─ dashboardWidgetRegistry.ts
+└─ components/
+   ├─ DashboardSurface.vue
+   ├─ DashboardGrid.vue
+   ├─ DashboardWidgetFrame.vue
+   ├─ DashboardWidgetHost.vue
+   ├─ DashboardWidgetLibrary.vue
+   ├─ AutomationResultsWidget.vue
+   └─ AgentWorkStatusWidget.vue
 ```
 
-每个 Widget 文件夹包含组件、类型、查询适配器和定向测试。注册表使用显式静态 import 或受控 lazy import；首期只加载随应用编译的 Widget。
+当前两个只读 Widget 直接使用独立组件和既有 service 查询端口；注册表只接受随应用编译的固定类型。组件数量增长或出现独立配置 schema 后，再按 Widget 拆分文件夹、查询适配器和定向测试。
 
 ## 6. 布局引擎选型
 
-### 候选：GridStack 适配层
+### 已选：Grid Layout Plus
+
+P0 使用 [Grid Layout Plus 官方站点](https://grid-layout-plus.netlify.app/)所述的 Vue 3 原生网格能力。选择原因是组件生命周期与现有 Vue 工作区一致，并直接覆盖拖拽、缩放、紧凑排列、序列化和响应式布局。桌面布局与 compact 布局分别保存，窄窗口切换不会覆盖桌面坐标。
+
+### 备选：GridStack 适配层
 
 [GridStack 官方文档](https://gridstackjs.com/)提供拖拽、缩放、响应式列、保存/恢复、跨网格和嵌套网格能力，并提供 Vue 集成。它适合桌面 Dashboard Composer，但业务代码不应直接依赖第三方节点结构，应通过 `DashboardGridAdapter` 转换为自己的 `GridPosition`。
 
@@ -148,10 +139,6 @@ src/features/dashboard/
 - 大量实时 Widget 更新时的渲染成本；
 - 键盘操作、焦点顺序和无障碍替代操作。
 
-### 备选：Grid Layout Plus
-
-[Grid Layout Plus 官方站点](https://grid-layout-plus.netlify.app/)提供 Vue 3 原生的可拖拽、可缩放、可序列化响应式网格。它的 Vue 心智负担更低，适合首期较简单的固定网格；如果 GridStack 的 DOM 适配成本过高，可用它完成验证版。
-
 不建议首期自行实现碰撞、压缩、响应式迁移和缩放算法。这些边缘情况会快速超过普通拖拽列表的复杂度。
 
 ## 7. 安全与插件边界
@@ -168,12 +155,13 @@ src/features/dashboard/
 
 ### P0：布局基础
 
-- 先用最小原型比较 GridStack、Grid Layout Plus 与有限自研 CSS Grid，并记录 WebView2 拖拽、高 DPI、键盘和卸载行为后再选型；
-- Dashboard 页面和 SQLite repository；
-- 编辑/浏览模式；
-- 添加、移动、缩放、删除、保存和恢复默认布局；
-- Widget 注册表、错误边界、加载态和空状态；
-- Automation Results 与 Agent Work Status 两个只读 Widget。
+- [x] 采用 Grid Layout Plus，并以应用模型隔离第三方布局结构；
+- [x] Dashboard 工作区页面和 SQLite 持久化（复用 `workspace_views` 的 revision/optimistic concurrency）；
+- [x] 编辑/浏览模式；
+- [x] 添加、移动、缩放、复制、删除、保存、撤销和恢复默认布局；
+- [x] Widget 注册表、组件级错误边界、加载态和空状态；
+- [x] Automation Results 与 Agent Work Status 两个只读 Widget；
+- [ ] WebView2 高 DPI 与键盘替代操作的人工验收。
 
 ### P1：情报入口
 

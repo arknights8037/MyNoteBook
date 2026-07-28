@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { Download, GitBranch, Presentation, Save, Share2, Table2 } from '@lucide/vue'
+import {
+  Download,
+  GitBranch,
+  LayoutDashboard,
+  Presentation,
+  Save,
+  Share2,
+  Table2,
+} from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { applyTableFieldsToRows } from '@/editor/blocks/tableFields'
@@ -9,14 +17,19 @@ import type {
   StructuredWorkspaceViewSummary,
 } from '@/models/workspace/workspaceView'
 import type { WorkspaceViewService } from '@/services/workspace/WorkspaceViewService'
+import type { AutomationService } from '@/services/automation/AutomationService'
+import type { AgentTask } from '@/models/agent/agent'
 import { NButton, NDrawer, NDrawerContent, NIcon, NTooltip } from '@/ui'
 import SlidesViewEditor from './SlidesViewEditor.vue'
 import TableViewEditor from './TableViewEditor.vue'
 import UmlViewEditor from './UmlViewEditor.vue'
+import DashboardSurface from '@/features/dashboard/components/DashboardSurface.vue'
 
 const props = defineProps<{
   viewId: string
   getService: () => Promise<WorkspaceViewService>
+  getAutomationService: () => Promise<AutomationService>
+  agentTasks: AgentTask[]
 }>()
 const emit = defineEmits<{ saved: [summary: StructuredWorkspaceViewSummary] }>()
 
@@ -35,6 +48,7 @@ let generation = 0
 const viewIcon = computed(() => {
   if (payload.value?.type === 'slides') return Presentation
   if (payload.value?.type === 'uml') return GitBranch
+  if (payload.value?.type === 'dashboard') return LayoutDashboard
   return Table2
 })
 
@@ -181,6 +195,13 @@ function serializeForExport(
       label: 'CSV 表格',
     }
   }
+  if (currentPayload.type === 'dashboard') {
+    return {
+      content: JSON.stringify(currentPayload, null, 2),
+      extension: 'json',
+      label: '信息面板布局',
+    }
+  }
   return {
     content: currentPayload.source,
     extension: 'md',
@@ -267,6 +288,13 @@ onBeforeUnmount(() => {
     <SlidesViewEditor v-if="payload?.type === 'slides'" :payload="payload" @update="change" />
     <UmlViewEditor v-else-if="payload?.type === 'uml'" :payload="payload" @update="change" />
     <TableViewEditor v-else-if="payload?.type === 'table'" :payload="payload" @update="change" />
+    <DashboardSurface
+      v-else-if="payload?.type === 'dashboard'"
+      :payload="payload"
+      :agent-tasks="agentTasks"
+      :get-automation-service="getAutomationService"
+      @update="change"
+    />
     <div v-else class="structured-view-workspace__empty">正在加载视图…</div>
 
     <NDrawer v-model:show="showInspector" :width="420" placement="right">

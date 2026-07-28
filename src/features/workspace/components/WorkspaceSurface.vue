@@ -23,7 +23,11 @@ import { useAiPreferences } from '@/composables/useAiPreferences'
 import { useHomeKeyboardShortcuts } from '@/composables/useHomeKeyboardShortcuts'
 import { ensureTopLevelBlockIds } from '@/editor/blocks/blockId'
 import { parseEditorContentJson } from '@/editor/core/editorContent'
-import { EMPTY_TIPTAP_DOCUMENT, type DocumentId, type DocumentSummary } from '@/models/documents/document'
+import {
+  EMPTY_TIPTAP_DOCUMENT,
+  type DocumentId,
+  type DocumentSummary,
+} from '@/models/documents/document'
 import { UNGROUPED_AGENT_PROJECT_ID } from '@/models/ai/aiChatHistory'
 import { createIdleAgentRuntimeState } from '@/models/agent/agentRuntime'
 import type { AgentTask } from '@/models/agent/agent'
@@ -375,11 +379,18 @@ const activeTab = computed<WorkspaceTab | null>(() => {
   if (activeMindMapId.value) {
     const item = mindMaps.value.find((candidate) => candidate.id === activeMindMapId.value)
     return item
-      ? { key: `mindmap:${item.id}`, kind: 'mindmap', id: item.id, title: item.title || '未命名思维导图' }
+      ? {
+          key: `mindmap:${item.id}`,
+          kind: 'mindmap',
+          id: item.id,
+          title: item.title || '未命名思维导图',
+        }
       : null
   }
   if (activeWorkspaceViewId.value) {
-    const item = workspaceViews.value.find((candidate) => candidate.id === activeWorkspaceViewId.value)
+    const item = workspaceViews.value.find(
+      (candidate) => candidate.id === activeWorkspaceViewId.value,
+    )
     return item
       ? { key: `view:${item.id}`, kind: 'view', id: item.id, title: item.title || '未命名视图' }
       : null
@@ -537,8 +548,7 @@ function scheduleAgentRollbackToastDismissal(): void {
 const activeAgentTask = computed(
   () =>
     agentTasks.value.find(
-      (task) =>
-        task.status === 'running' && task.conversationId === currentAiChatHistoryId.value,
+      (task) => task.status === 'running' && task.conversationId === currentAiChatHistoryId.value,
     ) ??
     (pendingAgentTask.value?.conversationId === currentAiChatHistoryId.value
       ? pendingAgentTask.value
@@ -566,9 +576,7 @@ const currentAiProject = aiConversation.activeProject
 const currentAgentRuntimeProjectId = computed(() =>
   currentAiProjectId.value === UNGROUPED_AGENT_PROJECT_ID ? '' : currentAiProjectId.value,
 )
-const agentWorkspaceOptions = computed(() =>
-  buildAgentWorkspaceOptions(documents.value),
-)
+const agentWorkspaceOptions = computed(() => buildAgentWorkspaceOptions(documents.value))
 const currentAgentWorkspaceRootIds = computed(() => currentAiProject.value?.workspaceRootIds ?? [])
 const agentTargetOptions = computed<AgentTargetOption[]>(() =>
   buildAgentTargetOptions(documents.value, currentDocumentId.value),
@@ -1180,9 +1188,7 @@ async function deleteEntireGroup(group: DocumentSummary): Promise<void> {
     (item) => item.documentKind === 'article' && containerIds.has(item.id),
   )
   const mindMapCount = mindMaps.value.filter((item) => containerIds.has(item.id)).length
-  const workspaceViewCount = workspaceViews.value.filter((item) =>
-    containerIds.has(item.id),
-  ).length
+  const workspaceViewCount = workspaceViews.value.filter((item) => containerIds.has(item.id)).length
   const permanentCount = mindMapCount + workspaceViewCount
   const confirmed = await confirmEntireGroupRemoval(
     group,
@@ -1457,112 +1463,114 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
         />
         <div class="workspace-main__surface">
           <Transition name="settings-surface" mode="out-in">
-        <SettingsSurface
-          v-if="showSettings"
-          key="settings"
-          v-model:section="settingsSection"
-          context-navigation
-          :settings="appSettings"
-          :ai-settings="aiSettings"
-          :default-data-directory="defaultDataDirectory"
-          :data-busy="isChangingDataDirectory"
-          @change="updateSettings"
-          @ai-change="updateAiSettings"
-          @ai-section-open="ensureAiSecretLoaded"
-          @reset="resetSettings"
-          @choose-data-directory="chooseDataDirectory"
-          @restore-data-directory="restoreDefaultDataDirectory"
-          @close="openDocumentSurface"
-        />
+            <SettingsSurface
+              v-if="showSettings"
+              key="settings"
+              v-model:section="settingsSection"
+              context-navigation
+              :settings="appSettings"
+              :ai-settings="aiSettings"
+              :default-data-directory="defaultDataDirectory"
+              :data-busy="isChangingDataDirectory"
+              @change="updateSettings"
+              @ai-change="updateAiSettings"
+              @ai-section-open="ensureAiSecretLoaded"
+              @reset="resetSettings"
+              @choose-data-directory="chooseDataDirectory"
+              @restore-data-directory="restoreDefaultDataDirectory"
+              @close="openDocumentSurface"
+            />
 
-        <PluginSkillsSurface
-          v-else-if="showPluginSkills"
-          key="plugin-skills"
-          v-model:tab="pluginSection"
-          context-navigation
-          :mcp-client="dependencies.agentRunServices.mcpClient"
-        />
+            <PluginSkillsSurface
+              v-else-if="showPluginSkills"
+              key="plugin-skills"
+              v-model:tab="pluginSection"
+              context-navigation
+              :mcp-client="dependencies.agentRunServices.mcpClient"
+            />
 
-        <AutomationSurface
-          v-else-if="showAutomations"
-          key="automations"
-          v-model:tab="automationSection"
-          context-navigation
-          :current-document-id="currentDocumentId"
-          :current-document-title="documentTitle"
-          :get-service="dependencies.getAutomationService"
-        />
+            <AutomationSurface
+              v-else-if="showAutomations"
+              key="automations"
+              v-model:tab="automationSection"
+              context-navigation
+              :current-document-id="currentDocumentId"
+              :current-document-title="documentTitle"
+              :get-service="dependencies.getAutomationService"
+            />
 
-        <AuditSurface
-          v-else-if="showAudit"
-          key="audit"
-          v-model:category="auditCategory"
-          context-navigation
-          :get-repository="dependencies.getAuditRepository"
-        />
+            <AuditSurface
+              v-else-if="showAudit"
+              key="audit"
+              v-model:category="auditCategory"
+              context-navigation
+              :get-repository="dependencies.getAuditRepository"
+            />
 
-        <KnowledgeControlSurface
-          v-else-if="showKnowledgeControl"
-          key="knowledge-control"
-          v-model:tab="knowledgeSection"
-          context-navigation
-          :current-document-id="currentDocumentId"
-          :current-document-revision="currentDocument?.revision ?? 0"
-          :get-service="dependencies.getKnowledgeControlService"
-          :chat-history="aiChatHistory"
-          @research-assets="researchKnowledgeAssets"
-        />
+            <KnowledgeControlSurface
+              v-else-if="showKnowledgeControl"
+              key="knowledge-control"
+              v-model:tab="knowledgeSection"
+              context-navigation
+              :current-document-id="currentDocumentId"
+              :current-document-revision="currentDocument?.revision ?? 0"
+              :get-service="dependencies.getKnowledgeControlService"
+              :chat-history="aiChatHistory"
+              @research-assets="researchKnowledgeAssets"
+            />
 
-        <div
-          v-else
-          key="document-workspace"
-          class="document-workspace"
-          :class="{ 'document-workspace--agent-workspace': showAiChat && aiChatFullscreen }"
-        >
-          <AiChatPanel
-            v-if="showAiChat && aiChatFullscreen"
-            v-bind="aiChatPanelBindings"
-            workspace
-            external-navigation
-            :project-create-request="agentProjectCreateRequest"
-          />
+            <div
+              v-else
+              key="document-workspace"
+              class="document-workspace"
+              :class="{ 'document-workspace--agent-workspace': showAiChat && aiChatFullscreen }"
+            >
+              <AiChatPanel
+                v-if="showAiChat && aiChatFullscreen"
+                v-bind="aiChatPanelBindings"
+                workspace
+                external-navigation
+                :project-create-request="agentProjectCreateRequest"
+              />
 
-          <WorkspaceEditorPane
-            ref="editorShell"
-            :active-mind-map-id="activeMindMapId"
-            :active-workspace-view-id="activeWorkspaceViewId"
-            :mind-maps="mindMaps"
-            :workspace-views="workspaceViews"
-            :document-title="documentTitle"
-            :editor-content="editorContent"
-            :editor-settings="editorSettings"
-            :internal-documents="internalDocuments"
-            :current-document-id="currentDocumentId"
-            :current-document="currentDocument"
-            :loading="isLoadingDocument"
-            :load-error="loadError"
-            :busy="isBusy"
-            :save-status-class="saveStatusClass"
-            :save-status-text="saveStatusText"
-            :preparing-share="isPreparingShare"
-            :get-mind-map-service="mindMapService"
-            :get-workspace-view-service="workspaceViewService"
-            :class="{ 'editor-panel--behind-ai': showAiChat && aiChatFullscreen }"
-            @update:title="documentTitle = $event"
-            @title-input="handleTitleInput"
-            @commit-title="commitCurrentTitle"
-            @create-child="createAndOpenDocument(currentDocumentId)"
-            @share="openShareView"
-            @inspect="showInspector = true"
-            @search="openSearch"
-            @update:editor-content="handleEditorContentUpdate"
-            @text-update="handleTextUpdate"
-            @image-error="message.error"
-            @open-document="openEditorDocument"
-            @mind-map-saved="handleMindMapSaved"
-            @workspace-view-saved="handleWorkspaceViewSaved"
-          />
-        </div>
+              <WorkspaceEditorPane
+                ref="editorShell"
+                :active-mind-map-id="activeMindMapId"
+                :active-workspace-view-id="activeWorkspaceViewId"
+                :mind-maps="mindMaps"
+                :workspace-views="workspaceViews"
+                :document-title="documentTitle"
+                :editor-content="editorContent"
+                :editor-settings="editorSettings"
+                :internal-documents="internalDocuments"
+                :current-document-id="currentDocumentId"
+                :current-document="currentDocument"
+                :loading="isLoadingDocument"
+                :load-error="loadError"
+                :busy="isBusy"
+                :save-status-class="saveStatusClass"
+                :save-status-text="saveStatusText"
+                :preparing-share="isPreparingShare"
+                :get-mind-map-service="mindMapService"
+                :get-workspace-view-service="workspaceViewService"
+                :get-automation-service="dependencies.getAutomationService"
+                :agent-tasks="agentTasks"
+                :class="{ 'editor-panel--behind-ai': showAiChat && aiChatFullscreen }"
+                @update:title="documentTitle = $event"
+                @title-input="handleTitleInput"
+                @commit-title="commitCurrentTitle"
+                @create-child="createAndOpenDocument(currentDocumentId)"
+                @share="openShareView"
+                @inspect="showInspector = true"
+                @search="openSearch"
+                @update:editor-content="handleEditorContentUpdate"
+                @text-update="handleTextUpdate"
+                @image-error="message.error"
+                @open-document="openEditorDocument"
+                @mind-map-saved="handleMindMapSaved"
+                @workspace-view-saved="handleWorkspaceViewSaved"
+              />
+            </div>
           </Transition>
         </div>
       </div>

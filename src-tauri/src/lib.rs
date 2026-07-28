@@ -263,6 +263,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0028_add_agent_a2a_routing.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 29,
+            description: "add_dashboard_workspace_view",
+            sql: include_str!("../migrations/0029_add_dashboard_workspace_view.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

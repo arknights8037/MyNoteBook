@@ -31,7 +31,12 @@ describe('useWorkspaceItems', () => {
         sortOrder: 0,
         viewType: 'slides' as const,
         title: '新幻灯片',
-        payload: { type: 'slides' as const, format: 'slidev' as const, source: '# 新幻灯片', assetIds: [] },
+        payload: {
+          type: 'slides' as const,
+          format: 'slidev' as const,
+          source: '# 新幻灯片',
+          assetIds: [],
+        },
         pinnedAt: null,
         schemaVersion: 1,
         version: 1,
@@ -51,6 +56,38 @@ describe('useWorkspaceItems', () => {
     expect(controller.activeWorkspaceViewId.value).toBe('view-1')
   })
 
+  it('creates an information dashboard in the selected group', async () => {
+    const create = vi.fn(async () =>
+      ok({
+        id: 'dashboard-1',
+        parentId: 'group-1',
+        sortOrder: 0,
+        viewType: 'dashboard' as const,
+        title: '信息面板',
+        payload: {
+          type: 'dashboard' as const,
+          scope: { kind: 'global' as const },
+          layoutVersion: 1 as const,
+          widgets: [],
+        },
+        pinnedAt: null,
+        schemaVersion: 1 as const,
+        version: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    )
+    const controller = createController({
+      workspaceViewService: { create, list: vi.fn(async () => ok([])) },
+    })
+
+    controller.openCreateView('group-1')
+    await controller.createAndOpenView('dashboard')
+
+    expect(create).toHaveBeenCalledWith('dashboard', '信息面板', 'group-1')
+    expect(controller.activeWorkspaceViewId.value).toBe('dashboard-1')
+  })
+
   it('deletes all non-document items belonging to a removed hierarchy', async () => {
     const deleteMindMap = vi.fn(async () => ok(undefined))
     const deleteWorkspaceView = vi.fn(async () => ok(undefined))
@@ -60,20 +97,32 @@ describe('useWorkspaceItems', () => {
     })
     controller.mindMaps.value = [
       {
-        id: 'map-1', parentId: 'group-1', sortOrder: 0, title: '地图', rootNodeId: 'root',
-        nodeCount: 1, version: 1, createdAt: 1, updatedAt: 1,
+        id: 'map-1',
+        parentId: 'group-1',
+        sortOrder: 0,
+        title: '地图',
+        rootNodeId: 'root',
+        nodeCount: 1,
+        version: 1,
+        createdAt: 1,
+        updatedAt: 1,
       },
     ]
     controller.workspaceViews.value = [
       {
-        id: 'view-1', parentId: 'map-1', sortOrder: 0, viewType: 'table', title: '表格',
-        pinnedAt: null, version: 1, createdAt: 1, updatedAt: 1,
+        id: 'view-1',
+        parentId: 'map-1',
+        sortOrder: 0,
+        viewType: 'table',
+        title: '表格',
+        pinnedAt: null,
+        version: 1,
+        createdAt: 1,
+        updatedAt: 1,
       },
     ]
 
-    const result = await controller.deleteItemsInContainers(
-      new Set(['group-1', 'map-1', 'view-1']),
-    )
+    const result = await controller.deleteItemsInContainers(new Set(['group-1', 'map-1', 'view-1']))
 
     expect(result).toEqual({ ok: true, count: 2 })
     expect(deleteMindMap).toHaveBeenCalledWith('map-1')
@@ -83,11 +132,13 @@ describe('useWorkspaceItems', () => {
   })
 })
 
-function createController(overrides: {
-  selectDocument?: (id: string) => Promise<void>
-  mindMapService?: Partial<MindMapService>
-  workspaceViewService?: Partial<WorkspaceViewService>
-} = {}) {
+function createController(
+  overrides: {
+    selectDocument?: (id: string) => Promise<void>
+    mindMapService?: Partial<MindMapService>
+    workspaceViewService?: Partial<WorkspaceViewService>
+  } = {},
+) {
   const mindMapService = {
     list: vi.fn(async () => ok([])),
     ...overrides.mindMapService,
