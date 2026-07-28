@@ -27,6 +27,12 @@ describe('TauriRssRepository', () => {
     client.database.exec(
       readFileSync(join(process.cwd(), 'src-tauri/migrations/0031_add_rss_inbox.sql'), 'utf8'),
     )
+    client.database.exec(
+      readFileSync(
+        join(process.cwd(), 'src-tauri/migrations/0032_add_rss_article_extraction.sql'),
+        'utf8',
+      ),
+    )
     const repository = new TauriRssRepository(client)
     const source: RssSource = {
       id: 'rss-source-1',
@@ -55,6 +61,9 @@ describe('TauriRssRepository', () => {
       updatedAt: null,
       preview: 'hello',
       bodyText: 'hello reader',
+      contentSource: 'summary' as const,
+      articleFetchedAt: null,
+      articleFetchError: null,
       categories: ['News'],
     }
     expect(await repository.upsertEntries(source, [remote], 3)).toEqual({ ok: true, value: 1 })
@@ -65,6 +74,25 @@ describe('TauriRssRepository', () => {
     expect(await repository.listEntries()).toMatchObject({
       ok: true,
       value: [{ title: 'Updated', categories: ['News'], processingStatus: 'done' }],
+    })
+    const listed = await repository.listEntries()
+    if (!listed.ok) throw new Error('expected RSS entries')
+    await repository.updateArticleContent(listed.value[0]!.id, {
+      title: 'Article title',
+      author: 'Article author',
+      bodyText: 'complete article body',
+      extractedAt: 6,
+    })
+    await repository.upsertEntries(source, [{ ...remote, bodyText: 'short summary' }], 7)
+    expect(await repository.listEntries()).toMatchObject({
+      ok: true,
+      value: [
+        {
+          bodyText: 'complete article body',
+          contentSource: 'article',
+          articleFetchedAt: 6,
+        },
+      ],
     })
     expect(
       await repository.updateSyncState(source.id, {

@@ -283,6 +283,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0031_add_rss_inbox.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 32,
+            description: "add_rss_article_extraction",
+            sql: include_str!("../migrations/0032_add_rss_article_extraction.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -355,6 +361,7 @@ pub fn run() {
             email::delete_email_account_secret,
             email::sync_email_account,
             rss::fetch_rss_feed,
+            rss::fetch_rss_article,
             ai_models::fetch_ai_models,
             ai_proxy::proxy_ai_request,
             agent_cancellation::cancel_agent_tool_call,

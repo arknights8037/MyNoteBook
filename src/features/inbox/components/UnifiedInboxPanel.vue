@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import { Archive, Check, ExternalLink, Mail, RefreshCw, RotateCcw, Rss } from '@lucide/vue'
+import {
+  Archive,
+  Check,
+  ExternalLink,
+  FileText,
+  Mail,
+  RefreshCw,
+  RotateCcw,
+  Rss,
+} from '@lucide/vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { computed, onMounted, ref, watch } from 'vue'
 
@@ -47,6 +56,7 @@ const rssEntries = ref<RssEntry[]>([])
 const selectedId = ref('')
 const loading = ref(false)
 const syncing = ref(false)
+const extractingId = ref('')
 const error = ref('')
 let emailPromise: Promise<EmailService> | null = null
 let rssPromise: Promise<RssService> | null = null
@@ -161,6 +171,22 @@ async function openOriginal(item: UnifiedItem): Promise<void> {
     await openUrl(item.payload.articleUrl)
   } catch (openError) {
     error.value = openError instanceof Error ? openError.message : String(openError)
+  }
+}
+
+async function extractArticle(item: UnifiedItem): Promise<void> {
+  if (item.kind !== 'rss') return
+  extractingId.value = item.payload.id
+  error.value = ''
+  try {
+    const result = await (await rssService()).extractArticle(item.payload)
+    if (!result.ok) return void (error.value = result.error.message)
+    rssEntries.value = rssEntries.value.map((entry) =>
+      entry.id === item.payload.id ? result.value : entry,
+    )
+    notify.success('已从文章页提取正文')
+  } finally {
+    extractingId.value = ''
   }
 }
 
@@ -280,6 +306,20 @@ watch(
             <button
               v-if="selected.kind === 'rss' && selected.payload.articleUrl"
               type="button"
+              :disabled="extractingId === selected.payload.id"
+              @click="extractArticle(selected)"
+            >
+              <FileText :size="14" />{{
+                extractingId === selected.payload.id
+                  ? '提取中'
+                  : selected.payload.contentSource === 'article'
+                    ? '重新提取全文'
+                    : '提取全文'
+              }}
+            </button>
+            <button
+              v-if="selected.kind === 'rss' && selected.payload.articleUrl"
+              type="button"
               @click="openOriginal(selected)"
             >
               <ExternalLink :size="14" />打开原文</button
@@ -317,7 +357,26 @@ watch(
           <dd>{{ selected.source }}</dd>
           <dt>时间</dt>
           <dd>{{ formatFullTime(selected.timestamp) }}</dd>
+          <template v-if="selected.kind === 'rss'">
+            <dt>正文来源</dt>
+            <dd>
+              {{
+                selected.payload.contentSource === 'article'
+                  ? '文章页全文'
+                  : selected.payload.contentSource === 'feed'
+                    ? 'RSS 正文'
+                    : 'RSS 摘要'
+              }}
+            </dd>
+          </template>
         </dl>
+        <p
+          v-if="selected.kind === 'rss' && selected.payload.articleFetchError"
+          class="email-inbox-panel__error"
+          role="status"
+        >
+          自动提取未完成：{{ selected.payload.articleFetchError }}
+        </p>
         <section class="email-message-detail__body">
           <header><span>CONTENT</span><small>安全纯文本</small></header>
           <pre>{{ selected.payload.bodyText || selected.preview || '正文为空。' }}</pre>

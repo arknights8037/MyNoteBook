@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import { Archive, Check, ExternalLink, Inbox, RefreshCw, RotateCcw, Rss } from '@lucide/vue'
+import {
+  Archive,
+  Check,
+  ExternalLink,
+  FileText,
+  Inbox,
+  RefreshCw,
+  RotateCcw,
+  Rss,
+} from '@lucide/vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { computed, onMounted, ref, watch } from 'vue'
 
@@ -17,6 +26,7 @@ const entries = ref<RssEntry[]>([])
 const selectedId = ref('')
 const loading = ref(false)
 const syncing = ref(false)
+const extractingId = ref('')
 const error = ref('')
 let servicePromise: Promise<RssService> | null = null
 
@@ -101,12 +111,35 @@ async function openOriginal(entry: RssEntry): Promise<void> {
   }
 }
 
+async function extractArticle(entry: RssEntry): Promise<void> {
+  extractingId.value = entry.id
+  error.value = ''
+  try {
+    const result = await (await service()).extractArticle(entry)
+    if (!result.ok) return void (error.value = result.error.message)
+    entries.value = entries.value.map((candidate) =>
+      candidate.id === entry.id ? result.value : candidate,
+    )
+    notify.success('已从文章页提取正文')
+  } finally {
+    extractingId.value = ''
+  }
+}
+
 function sourceName(sourceId: string): string {
   return sources.value.find((source) => source.id === sourceId)?.displayName ?? 'RSS'
 }
 
 function processingLabel(status: RssProcessingStatus): string {
   return status === 'done' ? '已处理' : status === 'archived' ? '已归档' : '待处理'
+}
+
+function contentSourceLabel(entry: RssEntry): string {
+  return entry.contentSource === 'article'
+    ? '文章页全文'
+    : entry.contentSource === 'feed'
+      ? 'RSS 正文'
+      : 'RSS 摘要'
 }
 
 function formatListTime(timestamp: number): string {
@@ -217,6 +250,20 @@ watch(
             </div>
           </div>
           <div class="email-message-detail__actions">
+            <button
+              v-if="selected.articleUrl"
+              type="button"
+              :disabled="extractingId === selected.id"
+              @click="extractArticle(selected)"
+            >
+              <FileText :size="14" />{{
+                extractingId === selected.id
+                  ? '提取中'
+                  : selected.contentSource === 'article'
+                    ? '重新提取全文'
+                    : '提取全文'
+              }}
+            </button>
             <button v-if="selected.articleUrl" type="button" @click="openOriginal(selected)">
               <ExternalLink :size="14" />打开原文
             </button>
@@ -258,9 +305,16 @@ watch(
           <dd>{{ formatFullTime(selected.publishedAt) }}</dd>
           <dt>分类</dt>
           <dd>{{ selected.categories.join(' · ') || '—' }}</dd>
+          <dt>正文来源</dt>
+          <dd>{{ contentSourceLabel(selected) }}</dd>
         </dl>
+        <p v-if="selected.articleFetchError" class="email-inbox-panel__error" role="status">
+          自动提取未完成：{{ selected.articleFetchError }}
+        </p>
         <section class="email-message-detail__body">
-          <header><span>RSS CONTENT</span><small>安全纯文本</small></header>
+          <header>
+            <span>RSS CONTENT</span><small>{{ contentSourceLabel(selected) }} · 安全纯文本</small>
+          </header>
           <pre>{{ selected.bodyText || selected.preview || '该条目没有正文。' }}</pre>
         </section>
       </article>

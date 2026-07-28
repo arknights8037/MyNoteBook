@@ -3,6 +3,8 @@ import { invoke } from '@tauri-apps/api/core'
 import {
   validateRssSourceInput,
   type CreateRssSourceInput,
+  type RssArticleFetchResult,
+  type RssEntry,
   type RssFetchResult,
   type RssProcessingStatus,
   type RssSource,
@@ -69,7 +71,22 @@ export class RssService {
   async syncSource(source: RssSource, limit = 50): Promise<AppResult<number>> {
     const syncedAt = this.now()
     try {
-      const fetched = await this.fetch(source.feedUrl, source.etag, source.lastModified, limit)
+      const localEntries = await this.repository.listEntries({ sourceId: source.id, limit: 12 })
+      const needsArticleBackfill =
+        localEntries.ok &&
+        localEntries.value.some(
+          (entry) =>
+            entry.contentSource === 'summary' &&
+            Boolean(entry.articleUrl) &&
+            entry.articleFetchedAt == null &&
+            !entry.articleFetchError,
+        )
+      const fetched = await this.fetch(
+        source.feedUrl,
+        needsArticleBackfill ? null : source.etag,
+        needsArticleBackfill ? null : source.lastModified,
+        limit,
+      )
       const stored = fetched.notModified
         ? ok(0)
         : await this.repository.upsertEntries(source, fetched.entries, syncedAt)
@@ -109,6 +126,19 @@ export class RssService {
 
   setEntryStatus(id: string, status: RssProcessingStatus) {
     return this.repository.setEntryStatus(id, status)
+  }
+
+  async extractArticle(entry: RssEntry): Promise<AppResult<RssEntry>> {
+    if (!entry.articleUrl)
+      return err({ code: 'validation-error', message: '该 RSS 条目没有文章链接。' })
+    try {
+      const article = await invoke<RssArticleFetchResult>('fetch_rss_article', {
+        input: { url: entry.articleUrl },
+      })
+      return this.repository.updateArticleContent(entry.id, article)
+    } catch (error) {
+      return err(normalizeError(error, '无法提取文章正文。'))
+    }
   }
 
   private fetch(

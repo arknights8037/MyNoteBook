@@ -1,4 +1,5 @@
 export type RssProcessingStatus = 'pending' | 'done' | 'archived'
+export type RssContentSource = 'summary' | 'feed' | 'article'
 
 export interface RssSource {
   id: string
@@ -26,6 +27,9 @@ export interface RssEntry {
   updatedAt: number | null
   preview: string
   bodyText: string
+  contentSource: RssContentSource
+  articleFetchedAt: number | null
+  articleFetchError: string | null
   categories: string[]
   processingStatus: RssProcessingStatus
   syncedAt: number
@@ -40,7 +44,17 @@ export interface RemoteRssEntry {
   updatedAt: number | null
   preview: string
   bodyText: string
+  contentSource: RssContentSource
+  articleFetchedAt: number | null
+  articleFetchError: string | null
   categories: string[]
+}
+
+export interface RssArticleFetchResult {
+  title: string
+  author: string
+  bodyText: string
+  extractedAt: number
 }
 
 export interface RssFetchResult {

@@ -1,4 +1,10 @@
-import type { RemoteRssEntry, RssEntry, RssProcessingStatus, RssSource } from '@/models/inbox/rss'
+import type {
+  RemoteRssEntry,
+  RssArticleFetchResult,
+  RssEntry,
+  RssProcessingStatus,
+  RssSource,
+} from '@/models/inbox/rss'
 import type { AppResult } from '@/models/shared/result'
 
 export interface RssRepository {
@@ -29,4 +35,5 @@ export interface RssRepository {
     limit?: number
   }): Promise<AppResult<RssEntry[]>>
   setEntryStatus(id: string, status: RssProcessingStatus): Promise<AppResult<RssEntry>>
+  updateArticleContent(id: string, article: RssArticleFetchResult): Promise<AppResult<RssEntry>>
 }

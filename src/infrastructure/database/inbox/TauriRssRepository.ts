@@ -1,4 +1,11 @@
-import type { RemoteRssEntry, RssEntry, RssProcessingStatus, RssSource } from '@/models/inbox/rss'
+import type {
+  RemoteRssEntry,
+  RssArticleFetchResult,
+  RssContentSource,
+  RssEntry,
+  RssProcessingStatus,
+  RssSource,
+} from '@/models/inbox/rss'
 import { err, normalizeError, ok, type AppResult } from '@/models/shared/result'
 import type { RssRepository } from '@/repositories/inbox/RssRepository'
 import { parseJsonStrict } from '@/repositories/shared/jsonCodec'
@@ -30,6 +37,9 @@ interface RssEntryRow extends Record<string, unknown> {
   updated_at: number | null
   preview: string
   body_text: string
+  content_source: RssContentSource
+  article_fetched_at: number | null
+  article_fetch_error: string | null
   categories_json: string
   processing_status: RssProcessingStatus
   synced_at: number
@@ -145,12 +155,24 @@ export class TauriRssRepository implements RssRepository {
         await this.sql.execute(
           `INSERT INTO rss_entries (
             id, source_id, remote_id, article_url, title, author, published_at, updated_at,
-            preview, body_text, categories_json, synced_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            preview, body_text, content_source, article_fetched_at, article_fetch_error,
+            categories_json, synced_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(source_id, remote_id) DO UPDATE SET
             article_url = excluded.article_url, title = excluded.title, author = excluded.author,
             published_at = excluded.published_at, updated_at = excluded.updated_at,
-            preview = excluded.preview, body_text = excluded.body_text,
+            preview = excluded.preview,
+            body_text = CASE
+              WHEN excluded.content_source = 'article' OR rss_entries.content_source != 'article'
+                THEN excluded.body_text ELSE rss_entries.body_text END,
+            content_source = CASE
+              WHEN excluded.content_source = 'article' OR rss_entries.content_source != 'article'
+                THEN excluded.content_source ELSE rss_entries.content_source END,
+            article_fetched_at = COALESCE(excluded.article_fetched_at, rss_entries.article_fetched_at),
+            article_fetch_error = CASE
+              WHEN excluded.content_source = 'article' THEN NULL
+              WHEN rss_entries.content_source = 'article' THEN rss_entries.article_fetch_error
+              ELSE excluded.article_fetch_error END,
             categories_json = excluded.categories_json, synced_at = excluded.synced_at`,
           [
             `${source.id}:${entry.remoteId}`,
@@ -163,6 +185,9 @@ export class TauriRssRepository implements RssRepository {
             entry.updatedAt,
             entry.preview,
             entry.bodyText,
+            entry.contentSource,
+            entry.articleFetchedAt,
+            entry.articleFetchError,
             JSON.stringify(entry.categories),
             syncedAt,
           ],
@@ -218,6 +243,29 @@ export class TauriRssRepository implements RssRepository {
       return err(normalizeError(error, '无法更新 RSS 条目状态。'))
     }
   }
+
+  async updateArticleContent(
+    id: string,
+    article: RssArticleFetchResult,
+  ): Promise<AppResult<RssEntry>> {
+    try {
+      const result = await this.sql.execute(
+        `UPDATE rss_entries SET body_text = ?, content_source = 'article',
+         article_fetched_at = ?, article_fetch_error = NULL WHERE id = ?`,
+        [article.bodyText, article.extractedAt, id],
+      )
+      if (result.rowsAffected !== 1) return err({ code: 'not-found', message: 'RSS 条目不存在。' })
+      const rows = await this.sql.select<RssEntryRow>(
+        'SELECT * FROM rss_entries WHERE id = ? LIMIT 1',
+        [id],
+      )
+      return rows[0]
+        ? ok(mapEntry(rows[0]))
+        : err({ code: 'not-found', message: 'RSS 条目不存在。' })
+    } catch (error) {
+      return err(normalizeError(error, '无法保存提取后的文章正文。'))
+    }
+  }
 }
 
 function mapSource(row: RssSourceRow): RssSource {
@@ -250,6 +298,9 @@ function mapEntry(row: RssEntryRow): RssEntry {
     updatedAt: row.updated_at == null ? null : Number(row.updated_at),
     preview: row.preview,
     bodyText: row.body_text,
+    contentSource: row.content_source,
+    articleFetchedAt: row.article_fetched_at == null ? null : Number(row.article_fetched_at),
+    articleFetchError: row.article_fetch_error,
     categories: Array.isArray(categories)
       ? categories.filter((value): value is string => typeof value === 'string')
       : [],

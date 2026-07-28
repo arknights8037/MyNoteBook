@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { RssSource } from '@/models/inbox/rss'
+import type { RssEntry, RssSource } from '@/models/inbox/rss'
 import { ok } from '@/models/shared/result'
 import type { RssRepository } from '@/repositories/inbox/RssRepository'
 import { RssService } from '@/services/inbox/RssService'
@@ -60,6 +60,51 @@ describe('RssService', () => {
       expect.objectContaining({ lastSyncedAt: 20, lastError: null }),
     )
   })
+
+  it('refreshes an unchanged feed once to backfill legacy summary-only entries', async () => {
+    const repository = createRepository()
+    repository.listEntries.mockResolvedValue(ok([entryValue()]))
+    invoke.mockResolvedValue(fetchResult())
+    const source = sourceValue()
+    const service = new RssService(
+      repository,
+      () => 'unused',
+      () => 20,
+    )
+
+    expect(await service.syncSource(source)).toEqual({ ok: true, value: 1 })
+    expect(invoke).toHaveBeenCalledWith('fetch_rss_feed', {
+      input: {
+        url: source.feedUrl,
+        etag: null,
+        lastModified: null,
+        limit: 50,
+      },
+    })
+  })
+
+  it('extracts and persists article-page content for an existing entry', async () => {
+    const repository = createRepository()
+    const entry = entryValue()
+    const updated = { ...entry, bodyText: 'complete article', contentSource: 'article' as const }
+    repository.updateArticleContent.mockResolvedValue(ok(updated))
+    invoke.mockResolvedValue({
+      title: 'Article title',
+      author: 'Alice',
+      bodyText: 'complete article',
+      extractedAt: 30,
+    })
+    const service = new RssService(repository, () => 'unused')
+
+    expect(await service.extractArticle(entry)).toEqual(ok(updated))
+    expect(invoke).toHaveBeenCalledWith('fetch_rss_article', {
+      input: { url: entry.articleUrl },
+    })
+    expect(repository.updateArticleContent).toHaveBeenCalledWith(
+      entry.id,
+      expect.objectContaining({ bodyText: 'complete article', extractedAt: 30 }),
+    )
+  })
 })
 
 function createRepository() {
@@ -72,6 +117,7 @@ function createRepository() {
     upsertEntries: vi.fn(async (_source, entries) => ok(entries.length)),
     listEntries: vi.fn(async () => ok([])),
     setEntryStatus: vi.fn(),
+    updateArticleContent: vi.fn(),
   } satisfies RssRepository
 }
 
@@ -112,8 +158,32 @@ function fetchResult() {
         updatedAt: null,
         preview: 'hello',
         bodyText: 'hello reader',
+        contentSource: 'summary' as const,
+        articleFetchedAt: null,
+        articleFetchError: null,
         categories: ['News'],
       },
     ],
+  }
+}
+
+function entryValue(): RssEntry {
+  return {
+    id: 'entry-1',
+    sourceId: 'rss-source-1',
+    remoteId: 'remote-1',
+    articleUrl: 'https://example.com/post',
+    title: 'Post',
+    author: 'Alice',
+    publishedAt: 1,
+    updatedAt: null,
+    preview: 'summary',
+    bodyText: 'summary',
+    contentSource: 'summary',
+    articleFetchedAt: null,
+    articleFetchError: null,
+    categories: [],
+    processingStatus: 'pending',
+    syncedAt: 1,
   }
 }

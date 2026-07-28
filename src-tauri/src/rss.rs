@@ -1,6 +1,7 @@
+use dom_smoothie::{Config as ReadabilityConfig, Readability};
 use feed_rs::model::{Entry, Feed, Link};
 use reqwest::{
-    header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED, LOCATION},
+    header::{CONTENT_TYPE, ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED, LOCATION},
     redirect::Policy,
     StatusCode,
 };
@@ -15,9 +16,13 @@ use url::Url;
 use crate::sensitive_data::redact_sensitive_text;
 
 const MAX_FEED_BYTES: usize = 2 * 1024 * 1024;
+const MAX_ARTICLE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ENTRIES: usize = 100;
 const MAX_BODY_CHARS: usize = 100_000;
 const MAX_REDIRECTS: usize = 5;
+const MAX_AUTO_ARTICLES: usize = 12;
+const ARTICLE_BATCH_SIZE: usize = 4;
+const MIN_FULL_CONTENT_CHARS: usize = 1_200;
 const USER_AGENT: &str = concat!("MyNoteBook/", env!("CARGO_PKG_VERSION"), " RSS Reader");
 
 #[derive(Deserialize)]
@@ -40,7 +45,25 @@ pub struct RemoteRssEntry {
     updated_at: Option<i64>,
     preview: String,
     body_text: String,
+    content_source: String,
+    article_fetched_at: Option<i64>,
+    article_fetch_error: Option<String>,
     categories: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RssArticleFetchInput {
+    url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RssArticleFetchResult {
+    title: String,
+    author: String,
+    body_text: String,
+    extracted_at: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -82,13 +105,22 @@ pub async fn fetch_rss_feed(input: RssFetchInput) -> Result<RssFetchResult, Stri
             .await
             .map_err(rss_error)?
             .map_err(rss_error)?;
-    Ok(map_feed(
+    let mut result = map_feed(
         feed,
         response.effective_url,
         response.etag,
         response.last_modified,
         limit,
-    ))
+    );
+    enrich_entries(&mut result.entries).await;
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn fetch_rss_article(
+    input: RssArticleFetchInput,
+) -> Result<RssArticleFetchResult, String> {
+    extract_article(normalize_public_url(&input.url, "文章地址")?).await
 }
 
 struct FetchDocument {
@@ -97,49 +129,78 @@ struct FetchDocument {
     etag: Option<String>,
     last_modified: Option<String>,
     body: Vec<u8>,
+    content_type: Option<String>,
 }
 
 async fn fetch_document(
+    url: Url,
+    etag: Option<String>,
+    last_modified: Option<String>,
+) -> Result<FetchDocument, String> {
+    fetch_public_document(
+        url,
+        etag,
+        last_modified,
+        "RSS 地址",
+        "application/atom+xml, application/rss+xml, application/feed+json, application/xml, text/xml, application/json;q=0.9, */*;q=0.2",
+        MAX_FEED_BYTES,
+    )
+    .await
+}
+
+async fn fetch_public_document(
     mut url: Url,
     mut etag: Option<String>,
     mut last_modified: Option<String>,
+    subject: &str,
+    accept: &str,
+    max_bytes: usize,
 ) -> Result<FetchDocument, String> {
     for redirect_count in 0..=MAX_REDIRECTS {
         let host = url
             .host_str()
-            .ok_or_else(|| "RSS 地址缺少主机名。".to_string())?
+            .ok_or_else(|| format!("{subject}缺少主机名。"))?
             .to_string();
         let addresses = resolve_public_addresses(&url).await?;
-        let client = reqwest::Client::builder()
+        let mut client_builder = reqwest::Client::builder()
             .redirect(Policy::none())
             .no_proxy()
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(25))
             .user_agent(USER_AGENT)
-            .resolve_to_addrs(&host, &addresses)
+            .resolve_to_addrs(&host, &addresses);
+        if subject == "文章地址" {
+            // A number of publishing CDNs reject non-browser HTTP/2 fingerprints while
+            // serving the same public HTML over HTTP/1.1. The feed path keeps normal
+            // negotiation; article extraction uses the more broadly compatible path.
+            client_builder = client_builder.http1_only();
+        }
+        let client = client_builder
             .build()
-            .map_err(network_error)?;
-        let mut request = client
-            .get(url.clone())
-            .header("Accept", "application/atom+xml, application/rss+xml, application/feed+json, application/xml, text/xml, application/json;q=0.9, */*;q=0.2");
+            .map_err(|error| request_error(subject, error))?;
+        let mut request = client.get(url.clone()).header("Accept", accept);
         if let Some(value) = etag.as_deref().filter(|value| !value.is_empty()) {
             request = request.header(IF_NONE_MATCH, value);
         }
         if let Some(value) = last_modified.as_deref().filter(|value| !value.is_empty()) {
             request = request.header(IF_MODIFIED_SINCE, value);
         }
-        let mut response = request.send().await.map_err(network_error)?;
+        let mut response = request
+            .send()
+            .await
+            .map_err(|error| request_error(subject, error))?;
 
         if response.status().is_redirection() {
             if redirect_count == MAX_REDIRECTS {
-                return Err("RSS 地址重定向次数过多。".to_string());
+                return Err(format!("{subject}重定向次数过多。"));
             }
             let location = response
                 .headers()
                 .get(LOCATION)
                 .and_then(|value| value.to_str().ok())
-                .ok_or_else(|| "RSS 重定向缺少有效 Location。".to_string())?;
-            let next = normalize_feed_url(url.join(location).map_err(rss_error)?.as_str())?;
+                .ok_or_else(|| format!("{subject}重定向缺少有效 Location。"))?;
+            let next =
+                normalize_public_url(url.join(location).map_err(rss_error)?.as_str(), subject)?;
             if next.host_str() != url.host_str() {
                 etag = None;
                 last_modified = None;
@@ -158,24 +219,37 @@ async fn fetch_document(
                 etag: response_etag,
                 last_modified: response_last_modified,
                 body: Vec::new(),
+                content_type: header_text(response.headers().get(CONTENT_TYPE)),
             });
         }
         if !response.status().is_success() {
             return Err(format!(
-                "RSS 服务器返回 HTTP {}。",
+                "{}服务器返回 HTTP {}。",
+                subject.trim_end_matches("地址"),
                 response.status().as_u16()
             ));
         }
         if response
             .content_length()
-            .is_some_and(|length| length > MAX_FEED_BYTES as u64)
+            .is_some_and(|length| length > max_bytes as u64)
         {
-            return Err("RSS 响应超过 2 MiB 安全上限。".to_string());
+            return Err(format!(
+                "{}响应超过安全上限。",
+                subject.trim_end_matches("地址")
+            ));
         }
+        let content_type = header_text(response.headers().get(CONTENT_TYPE));
         let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(network_error)? {
-            if body.len().saturating_add(chunk.len()) > MAX_FEED_BYTES {
-                return Err("RSS 响应超过 2 MiB 安全上限。".to_string());
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| request_error(subject, error))?
+        {
+            if body.len().saturating_add(chunk.len()) > max_bytes {
+                return Err(format!(
+                    "{}响应超过安全上限。",
+                    subject.trim_end_matches("地址")
+                ));
             }
             body.extend_from_slice(&chunk);
         }
@@ -185,9 +259,10 @@ async fn fetch_document(
             etag: response_etag,
             last_modified: response_last_modified,
             body,
+            content_type,
         });
     }
-    Err("RSS 地址重定向次数过多。".to_string())
+    Err(format!("{subject}重定向次数过多。"))
 }
 
 async fn resolve_public_addresses(url: &Url) -> Result<Vec<SocketAddr>, String> {
@@ -218,18 +293,111 @@ async fn resolve_public_addresses(url: &Url) -> Result<Vec<SocketAddr>, String> 
 }
 
 fn normalize_feed_url(value: &str) -> Result<Url, String> {
-    let mut url = Url::parse(value.trim()).map_err(|_| "请输入有效的 RSS 地址。".to_string())?;
+    normalize_public_url(value, "RSS 地址")
+}
+
+fn normalize_public_url(value: &str, subject: &str) -> Result<Url, String> {
+    let mut url = Url::parse(value.trim()).map_err(|_| format!("请输入有效的{subject}。"))?;
     if !matches!(url.scheme(), "http" | "https") {
-        return Err("RSS 地址只支持 HTTP 或 HTTPS。".to_string());
+        return Err(format!("{subject}只支持 HTTP 或 HTTPS。"));
     }
     if url.host_str().is_none() || !url.username().is_empty() || url.password().is_some() {
-        return Err("RSS 地址不能包含登录凭据，且必须具有主机名。".to_string());
+        return Err(format!("{subject}不能包含登录凭据，且必须具有主机名。"));
     }
     if url.as_str().len() > 2048 {
-        return Err("RSS 地址不能超过 2048 个字符。".to_string());
+        return Err(format!("{subject}不能超过 2048 个字符。"));
     }
     url.set_fragment(None);
     Ok(url)
+}
+
+async fn extract_article(url: Url) -> Result<RssArticleFetchResult, String> {
+    let response = fetch_public_document(
+        url,
+        None,
+        None,
+        "文章地址",
+        "text/html, application/xhtml+xml;q=0.9, */*;q=0.1",
+        MAX_ARTICLE_BYTES,
+    )
+    .await?;
+    if response.content_type.as_deref().is_some_and(|value| {
+        let value = value.to_ascii_lowercase();
+        !value.contains("text/html") && !value.contains("application/xhtml+xml")
+    }) {
+        return Err("文章链接返回的不是 HTML 页面。".to_string());
+    }
+    let effective_url = response.effective_url.to_string();
+    let html = String::from_utf8_lossy(&response.body).into_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = ReadabilityConfig {
+            max_elements_to_parse: 20_000,
+            ..Default::default()
+        };
+        let mut readability = Readability::new(html, Some(&effective_url), Some(config))
+            .map_err(|error| error.to_string())?;
+        let article = readability.parse().map_err(|error| error.to_string())?;
+        let body_text = truncate(&plain_text(article.text_content.as_ref()), MAX_BODY_CHARS);
+        if body_text.chars().count() < 200 {
+            return Err("文章页可提取的正文过短，已保留 RSS 摘要。".to_string());
+        }
+        Ok(RssArticleFetchResult {
+            title: truncate(&plain_text(&article.title), 500),
+            author: truncate(article.byline.as_deref().unwrap_or_default(), 300),
+            body_text,
+            extracted_at: now_millis(),
+        })
+    })
+    .await
+    .map_err(rss_error)?
+    .map_err(|error| format!("无法从文章页提取正文：{}", redact_sensitive_text(&error)))
+}
+
+async fn enrich_entries(entries: &mut [RemoteRssEntry]) {
+    let candidates = entries
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            let is_summary = entry.content_source == "summary";
+            let is_short = entry.body_text.chars().count() < MIN_FULL_CONTENT_CHARS;
+            (is_summary || is_short)
+                .then(|| entry.article_url.as_deref())
+                .flatten()
+                .and_then(|url| normalize_public_url(url, "文章地址").ok())
+                .map(|url| (index, url))
+        })
+        .take(MAX_AUTO_ARTICLES)
+        .collect::<Vec<_>>();
+
+    for batch in candidates.chunks(ARTICLE_BATCH_SIZE) {
+        let mut tasks = tokio::task::JoinSet::new();
+        for (index, url) in batch.iter().cloned() {
+            tasks.spawn(async move { (index, extract_article(url).await) });
+        }
+        while let Some(result) = tasks.join_next().await {
+            let Ok((index, extracted)) = result else {
+                continue;
+            };
+            let entry = &mut entries[index];
+            match extracted {
+                Ok(article) => {
+                    entry.article_fetched_at = Some(article.extracted_at);
+                    if article.body_text.chars().count() > entry.body_text.chars().count() {
+                        entry.body_text = article.body_text;
+                        entry.content_source = "article".to_string();
+                        entry.article_fetch_error = None;
+                        if entry.author.is_empty() && !article.author.is_empty() {
+                            entry.author = article.author;
+                        }
+                    } else {
+                        entry.article_fetch_error =
+                            Some("文章页正文未比 RSS 内容更完整，已保留原内容。".to_string());
+                    }
+                }
+                Err(error) => entry.article_fetch_error = Some(truncate(&error, 1_000)),
+            }
+        }
+    }
 }
 
 fn is_public_ip(ip: IpAddr) -> bool {
@@ -330,13 +498,18 @@ fn map_entry(entry: Entry, fallback_timestamp: i64) -> RemoteRssEntry {
         .as_ref()
         .map(|summary| plain_text(&summary.content))
         .unwrap_or_default();
-    let body_text = entry
+    let feed_content = entry
         .content
         .as_ref()
         .and_then(|content| content.body.as_deref())
         .map(plain_text)
-        .filter(|body| !body.is_empty())
-        .unwrap_or_else(|| summary_text.clone());
+        .filter(|body| !body.is_empty());
+    let content_source = if feed_content.is_some() {
+        "feed"
+    } else {
+        "summary"
+    };
+    let body_text = feed_content.unwrap_or_else(|| summary_text.clone());
     let published_at = entry
         .published
         .or(entry.updated)
@@ -364,6 +537,9 @@ fn map_entry(entry: Entry, fallback_timestamp: i64) -> RemoteRssEntry {
         updated_at,
         preview: truncate(preview_source, 320),
         body_text: truncate(&body_text, MAX_BODY_CHARS),
+        content_source: content_source.to_string(),
+        article_fetched_at: None,
+        article_fetch_error: None,
         categories: entry
             .categories
             .iter()
@@ -465,8 +641,12 @@ fn now_millis() -> i64 {
         .min(i64::MAX as u128) as i64
 }
 
-fn network_error(error: reqwest::Error) -> String {
-    rss_error(error.without_url())
+fn request_error(subject: &str, error: reqwest::Error) -> String {
+    format!(
+        "{}请求失败：{}",
+        subject.trim_end_matches("地址"),
+        redact_sensitive_text(&error.without_url().to_string())
+    )
 }
 
 fn rss_error(error: impl std::fmt::Display) -> String {
@@ -543,5 +723,22 @@ mod tests {
         assert!(!result.not_modified);
         assert!(!result.entries.is_empty());
         assert!(result.entries.iter().all(|entry| !entry.title.is_empty()));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires public network access"]
+    async fn real_openai_feed_extracts_article_body() {
+        let result = fetch_rss_feed(RssFetchInput {
+            url: "https://openai.com/news/rss.xml".to_string(),
+            etag: None,
+            last_modified: None,
+            limit: 3,
+        })
+        .await
+        .expect("OpenAI news feed");
+        assert!(!result.entries.is_empty());
+        assert!(result.entries.iter().any(|entry| {
+            entry.content_source == "article" && entry.body_text.chars().count() > 1_200
+        }));
     }
 }
