@@ -1,54 +1,83 @@
 <script setup lang="ts">
 import {
-  Bot,
+  Activity,
   BookOpenCheck,
-  Blocks,
-  CalendarClock,
-  ClipboardList,
+  BriefcaseBusiness,
   FileText,
+  Inbox,
+  PlugZap,
   Settings,
 } from '@lucide/vue'
 
 import type { WorkspaceSurface } from '@/models/workspace/workspaceSurface'
 import appLogoUrl from '@/public/APP_LOGO.svg'
 
-defineProps<{ activeSurface: WorkspaceSurface }>()
+defineProps<{ activeSurface: WorkspaceSurface | 'home' | 'work' }>()
 
 const emit = defineEmits<{
-  agent: []
+  home: []
+  inbox: []
+  work: []
   documents: []
   knowledge: []
-  plugins: []
-  automations: []
-  audit: []
+  extensions: []
+  activity: []
   settings: []
 }>()
 
 const primaryItems = [
-  { id: 'agent', label: 'Agent Work', icon: Bot, event: 'agent' },
+  { id: 'inbox', label: '收件箱', icon: Inbox, event: 'inbox' },
+  { id: 'work', label: '工作', icon: BriefcaseBusiness, event: 'work' },
   { id: 'document', label: '文档与视图', icon: FileText, event: 'documents' },
-  { id: 'knowledge', label: '知识控制', icon: BookOpenCheck, event: 'knowledge' },
-  { id: 'plugins', label: '插件技能', icon: Blocks, event: 'plugins' },
-  { id: 'automations', label: '自动化任务', icon: CalendarClock, event: 'automations' },
-  { id: 'audit', label: '审计记录', icon: ClipboardList, event: 'audit' },
+  { id: 'knowledge', label: '知识', icon: BookOpenCheck, event: 'knowledge' },
 ] as const
 
-function trigger(event: (typeof primaryItems)[number]['event']): void {
+const managementItems = [
+  { id: 'plugins', label: '连接与扩展', icon: PlugZap, event: 'extensions' },
+  { id: 'audit', label: '活动与审计', icon: Activity, event: 'activity' },
+] as const
+
+function trigger(
+  event: (typeof primaryItems)[number]['event'] | (typeof managementItems)[number]['event'],
+): void {
   emit(event)
 }
 </script>
 
 <template>
   <aside class="activity-rail" aria-label="主功能区" tabindex="-1">
-    <button class="activity-rail__brand" type="button" aria-label="打开 Agent Work" @click="emit('agent')">
+    <button
+      class="activity-rail__brand"
+      :class="{ 'activity-rail__brand--active': activeSurface === 'home' }"
+      type="button"
+      aria-label="打开信息面板"
+      @click="emit('home')"
+    >
       <span class="activity-rail__brand-mark"><img :src="appLogoUrl" alt="" /></span>
       <strong class="activity-rail__brand-name">Prism<span>Knowledge</span></strong>
     </button>
 
     <div class="activity-rail__panel">
       <nav class="activity-rail__nav" aria-label="工作区">
+        <span class="activity-rail__section-label">工作区</span>
         <button
           v-for="item in primaryItems"
+          :key="item.id"
+          type="button"
+          class="activity-rail__item"
+          :class="{ 'activity-rail__item--active': item.id === activeSurface }"
+          :aria-current="item.id === activeSurface ? 'page' : undefined"
+          @click="trigger(item.event)"
+        >
+          <component :is="item.icon" :size="19" />
+          <span>{{ item.label }}</span>
+        </button>
+      </nav>
+
+      <nav class="activity-rail__nav activity-rail__nav--management" aria-label="管理">
+        <span class="activity-rail__section-label">管理</span>
+        <button
+          v-for="item in managementItems"
           :key="item.id"
           type="button"
           class="activity-rail__item"

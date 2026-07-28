@@ -13,10 +13,13 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  Mail,
+  MessageCircle,
   PackagePlus,
   Plus,
   Puzzle,
   RefreshCw,
+  Rss,
   Save,
   Search,
   ServerCog,
@@ -56,8 +59,8 @@ const fileContent = ref('')
 const fileDraft = ref('')
 const query = ref('')
 const filter = ref<'all' | 'enabled' | 'invalid'>('all')
-const activeTab = defineModel<'skills' | 'mcp' | 'mcp-server' | 'builtin'>('tab', {
-  default: 'skills',
+const activeTab = defineModel<'connections' | 'skills' | 'mcp' | 'mcp-server' | 'builtin'>('tab', {
+  default: 'connections',
 })
 const filterOptions: Array<{ value: 'all' | 'enabled' | 'invalid'; label: string }> = [
   { value: 'all', label: '全部' },
@@ -91,6 +94,13 @@ const isNative = Reflect.has(globalThis, '__TAURI_INTERNALS__')
 const enabledCount = computed(() => skills.value.filter((skill) => skill.enabled).length)
 const extensionTabs = computed(() => [
   {
+    id: 'connections' as const,
+    label: '连接器',
+    description: '管理 RSS、消息与邮件来源',
+    count: null,
+    icon: Cable,
+  },
+  {
     id: 'skills' as const,
     label: 'Skills',
     description: '教会 Agent 如何完成特定工作',
@@ -122,6 +132,11 @@ const extensionTabs = computed(() => [
 const activeTabGuide = computed(
   () =>
     ({
+      connections: {
+        title: '管理信息如何进入工作空间',
+        description:
+          '账户授权、同步范围和连接状态在这里配置；采集到的内容会进入收件箱，而不是留在扩展页面。',
+      },
       skills: {
         title: '想让 Agent 学会一套固定做法？从 Skill 开始',
         description:
@@ -341,12 +356,12 @@ onMounted(() => void loadSkills())
 </script>
 
 <template>
-  <section class="plugin-skills-page" aria-label="插件技能">
+  <section class="plugin-skills-page" aria-label="连接与扩展">
     <header class="plugin-skills-page__header">
       <div>
-        <span class="plugin-skills-page__eyebrow"><Sparkles :size="14" /> AGENT EXTENSIONS</span>
-        <h1>插件技能</h1>
-        <p>兼容标准 SKILL.md 目录，并让 Agent 按需读取下属脚本、资料和资源。</p>
+        <span class="plugin-skills-page__eyebrow"><Sparkles :size="14" /> CONNECTIONS & EXTENSIONS</span>
+        <h1>连接与扩展</h1>
+        <p>统一管理外部信息来源、Agent Skills、MCP 能力和内置插件。</p>
       </div>
       <div v-if="activeTab === 'skills'" class="plugin-skills-page__header-actions">
         <div class="plugin-skills-page__summary">
@@ -435,7 +450,35 @@ onMounted(() => void loadSkills())
         </div>
       </aside>
 
-      <McpServersPanel v-if="activeTab === 'mcp'" ref="mcpPanel" :client="mcpClient" />
+      <section v-if="activeTab === 'connections'" class="connector-catalog" aria-label="连接器目录">
+        <header>
+          <div><strong>信息连接器</strong><small>配置来源，不在这里阅读内容</small></div>
+          <span>0 个已连接</span>
+        </header>
+        <div>
+          <article>
+            <span><Rss :size="20" /></span>
+            <div><strong>RSS</strong><p>订阅源、抓取频率、内容范围和解析状态。</p></div>
+            <em>规划中</em>
+          </article>
+          <article>
+            <span><MessageCircle :size="20" /></span>
+            <div><strong>IM / 消息</strong><p>协作空间、频道范围、权限和同步状态。</p></div>
+            <em>规划中</em>
+          </article>
+          <article>
+            <span><Mail :size="20" /></span>
+            <div><strong>邮件</strong><p>账户授权、文件夹范围和会话同步策略。</p></div>
+            <em>规划中</em>
+          </article>
+        </div>
+        <aside>
+          <Cable :size="17" />
+          <p><strong>已有 MCP 数据源？</strong>继续在 MCP Client 中配置。未来连接器和 MCP 资源会共同进入统一收件箱。</p>
+          <button type="button" @click="activeTab = 'mcp'">打开 MCP Client</button>
+        </aside>
+      </section>
+      <McpServersPanel v-else-if="activeTab === 'mcp'" ref="mcpPanel" :client="mcpClient" />
       <McpServerExposurePanel
         v-else-if="activeTab === 'mcp-server'"
         ref="mcpServerPanel"

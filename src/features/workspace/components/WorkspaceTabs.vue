@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
+  Activity,
   Bot,
+  BookOpenCheck,
   BrainCircuit,
   Copy,
   FileText,
+  Inbox,
   LayoutGrid,
   Minus,
   Plus,
@@ -82,7 +85,11 @@ function iconFor(tab: WorkspaceTab) {
   if (tab.kind === 'document') return FileText
   if (tab.kind === 'mindmap') return BrainCircuit
   if (tab.kind === 'view') return LayoutGrid
-  return tab.id === 'agent' ? Bot : Settings
+  if (tab.id === 'agent') return Bot
+  if (tab.id === 'inbox') return Inbox
+  if (tab.id === 'knowledge') return BookOpenCheck
+  if (tab.id === 'audit') return Activity
+  return Settings
 }
 </script>
 

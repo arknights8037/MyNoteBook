@@ -47,6 +47,42 @@ describe('WorkspaceContextSidebar Agent tasks', () => {
   })
 })
 
+describe('WorkspaceContextSidebar information architecture', () => {
+  it('groups incoming sources under one inbox navigation', async () => {
+    const wrapper = mount(WorkspaceContextSidebar, {
+      props: {
+        activeSurface: 'inbox',
+        inboxSection: 'pending',
+        knowledgeSection: 'assets',
+        pluginSection: 'connections',
+        automationSection: 'tasks',
+        auditCategory: 'all',
+        settingsSection: 'general',
+        projects: [],
+        histories: [],
+        currentProjectId: UNGROUPED_AGENT_PROJECT_ID,
+        currentHistoryId: null,
+      },
+    })
+
+    expect(wrapper.text()).toContain('待处理')
+    expect(wrapper.text()).toContain('RSS')
+    expect(wrapper.text()).toContain('消息')
+    expect(wrapper.text()).toContain('邮件')
+    const email = wrapper.findAll('.context-sidebar__item').find((item) => item.text().includes('邮件'))
+    await email?.trigger('click')
+    expect(wrapper.emitted('update:inbox-section')).toEqual([['email']])
+  })
+
+  it('switches between Agent tasks and automations inside the Work category', async () => {
+    const wrapper = createWrapper('project-1')
+
+    await wrapper.get('.context-sidebar__domain-switch button:last-child').trigger('click')
+
+    expect(wrapper.emitted('open-automations')).toHaveLength(1)
+  })
+})
+
 function createWrapper(
   currentProjectId: string,
   histories: InstanceType<typeof WorkspaceContextSidebar>['$props']['histories'] = [],
@@ -54,6 +90,7 @@ function createWrapper(
   return mount(WorkspaceContextSidebar, {
     props: {
       activeSurface: 'agent',
+      inboxSection: 'pending',
       knowledgeSection: 'overview',
       pluginSection: 'overview',
       automationSection: 'overview',

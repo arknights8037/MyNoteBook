@@ -56,6 +56,7 @@ import { applyApplicationTypography } from '@/services/appearance/applicationTyp
 import DocumentSidebar from '@/features/documents/components/DocumentSidebar.vue'
 import type {
   DocumentSidebarView,
+  InboxSection,
   WorkspaceSurface as WorkspaceSurfaceName,
 } from '@/models/workspace/workspaceSurface'
 import AgentAuthorizationModal from './home/AgentAuthorizationModal.vue'
@@ -91,6 +92,7 @@ const AuditSurface = defineLazySurface(() => import('@/features/audit/components
 const KnowledgeControlSurface = defineLazySurface(
   () => import('@/features/knowledge-control/components/KnowledgeControlSurface.vue'),
 )
+const InboxSurface = defineLazySurface(() => import('@/features/inbox/components/InboxSurface.vue'))
 const AgentPatchReviewModal = defineLazyComponent(() => import('./home/AgentPatchReviewModal.vue'))
 const CreateViewModal = defineLazyComponent(() => import('./home/CreateViewModal.vue'))
 const DeveloperInspectorDrawer = defineLazyComponent(
@@ -145,11 +147,13 @@ const editorShell = ref<EditorShellExpose | null>(null)
 const documentSidebar = ref<DocumentSidebarExpose | null>(null)
 const sidebarView = ref<DocumentSidebarView>('documents')
 const knowledgeSection = ref('assets')
-const pluginSection = ref('skills')
+const inboxSection = ref<InboxSection>('pending')
+const pluginSection = ref('connections')
 const automationSection = ref('tasks')
 const auditCategory = ref('all')
 const settingsSection = ref('general')
 const agentProjectCreateRequest = ref(0)
+const openingInformationHome = ref(false)
 
 function requestNewAgentProject(): void {
   agentProjectCreateRequest.value += 1
@@ -163,6 +167,7 @@ const {
   aiChatFullscreen,
   aiPanelMode,
   showSettings,
+  showInbox,
   showPluginSkills,
   showAutomations,
   showAudit,
@@ -171,6 +176,7 @@ const {
   openAgentWorkspace,
   openDockedAiChat,
   openSettingsSurface,
+  openInboxSurface,
   openPluginSkillsSurface,
   openAutomationsSurface,
   openAuditSurface,
@@ -357,14 +363,45 @@ const {
   dropOnGroup: handleGroupDrop,
 })
 
+const activeNavigationSurface = computed<WorkspaceSurfaceName | 'home' | 'work'>(() => {
+  if (activeSurface.value === 'agent' || activeSurface.value === 'automations') return 'work'
+  if (activeSurface.value !== 'document' || !activeWorkspaceViewId.value) {
+    return activeSurface.value
+  }
+  return workspaceViews.value.find((view) => view.id === activeWorkspaceViewId.value)?.viewType ===
+    'dashboard'
+    ? 'home'
+    : activeSurface.value
+})
+
+async function openInformationHome(): Promise<void> {
+  if (openingInformationHome.value) return
+  openingInformationHome.value = true
+  try {
+    await refreshWorkspaceViews()
+    const dashboard = workspaceViews.value.find((view) => view.viewType === 'dashboard')
+    if (dashboard) {
+      openWorkspaceView(dashboard.id)
+      return
+    }
+    openCreateView(null)
+    await createAndOpenView('dashboard')
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : String(error))
+  } finally {
+    openingInformationHome.value = false
+  }
+}
+
 const openTabs = ref<WorkspaceTab[]>([])
-const persistentSurfaceIds = new Set<WorkspaceSurfaceName>(['agent', 'knowledge'])
+const persistentSurfaceIds = new Set<WorkspaceSurfaceName>(['agent', 'inbox', 'knowledge'])
 const surfaceTitles: Partial<Record<WorkspaceSurfaceName, string>> = {
   agent: 'Agent Work',
+  inbox: '收件箱',
   knowledge: '知识控制',
-  plugins: '插件技能',
+  plugins: '连接与扩展',
   automations: '自动化任务',
-  audit: '审计记录',
+  audit: '活动与审计',
   settings: '设置',
 }
 
@@ -438,6 +475,7 @@ async function activateWorkspaceTab(tab: WorkspaceTab): Promise<void> {
   if (tab.kind === 'view') return openWorkspaceView(tab.id)
   const actions: Record<string, () => void> = {
     agent: openAgentWorkspace,
+    inbox: openInboxSurface,
     knowledge: openKnowledgeControlSurface,
     plugins: openPluginSkillsSurface,
     automations: openAutomationsSurface,
@@ -1364,13 +1402,14 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
       }"
     >
       <WorkspaceActivityRail
-        :active-surface="activeSurface"
-        @agent="openAgentWorkspace"
+        :active-surface="activeNavigationSurface"
+        @home="openInformationHome"
+        @inbox="openInboxSurface"
+        @work="openAgentWorkspace"
         @documents="openDocumentSurface"
         @knowledge="openKnowledgeControlSurface"
-        @plugins="openPluginSkillsSurface"
-        @automations="openAutomationsSurface"
-        @audit="openAuditSurface"
+        @extensions="openPluginSkillsSurface"
+        @activity="openAuditSurface"
         @settings="openSettingsSurface"
       />
       <DocumentSidebar
@@ -1434,6 +1473,7 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
       />
       <WorkspaceContextSidebar
         v-else
+        v-model:inbox-section="inboxSection"
         v-model:knowledge-section="knowledgeSection"
         v-model:plugin-section="pluginSection"
         v-model:automation-section="automationSection"
@@ -1452,6 +1492,8 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
         @new-project="requestNewAgentProject"
         @pin-project="aiConversation.toggleProjectPin"
         @delete-project="aiConversation.deleteProject"
+        @open-agent="openAgentWorkspace"
+        @open-automations="openAutomationsSurface"
       />
       <div class="workspace-main">
         <WorkspaceTabs
@@ -1463,8 +1505,15 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
         />
         <div class="workspace-main__surface">
           <Transition name="settings-surface" mode="out-in">
+            <InboxSurface
+              v-if="showInbox"
+              key="inbox"
+              :section="inboxSection"
+              @open-connections="openPluginSkillsSurface"
+            />
+
             <SettingsSurface
-              v-if="showSettings"
+              v-else-if="showSettings"
               key="settings"
               v-model:section="settingsSection"
               context-navigation

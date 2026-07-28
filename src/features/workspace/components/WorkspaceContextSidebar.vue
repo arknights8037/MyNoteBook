@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  AlertTriangle,
   Bot,
   BookOpenCheck,
   Boxes,
@@ -14,12 +15,17 @@ import {
   Folder,
   FolderOpen,
   History,
+  Inbox,
   Keyboard,
   ListChecks,
+  Mail,
+  MessageCircle,
   Palette,
   Plus,
   Pin,
+  PlugZap,
   Puzzle,
+  Rss,
   Search,
   ServerCog,
   ShieldCheck,
@@ -29,12 +35,13 @@ import {
 } from '@lucide/vue'
 import { computed, ref } from 'vue'
 
-import type { WorkspaceSurface } from '@/features/documents/components/DocumentSidebar.vue'
+import type { InboxSection, WorkspaceSurface } from '@/models/workspace/workspaceSurface'
 import type { AgentProject, AiChatHistoryItem } from '@/models/ai/aiChatHistory'
 import { UNGROUPED_AGENT_PROJECT_ID } from '@/models/ai/aiChatHistory'
 
 const props = defineProps<{
   activeSurface: WorkspaceSurface
+  inboxSection: InboxSection
   knowledgeSection: string
   pluginSection: string
   automationSection: string
@@ -48,6 +55,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:knowledge-section': [value: string]
+  'update:inbox-section': [value: InboxSection]
   'update:plugin-section': [value: string]
   'update:automation-section': [value: string]
   'update:audit-category': [value: string]
@@ -57,6 +65,8 @@ const emit = defineEmits<{
   'delete-history': [value: string]
   'new-task': [projectId: string | null]
   'new-project': []
+  'open-agent': []
+  'open-automations': []
   'pin-project': [projectId: string]
   'delete-project': [projectId: string]
   search: []
@@ -64,14 +74,23 @@ const emit = defineEmits<{
 
 const titles: Partial<Record<WorkspaceSurface, string>> = {
   agent: '任务列表',
+  inbox: '收件箱',
   knowledge: '知识控制',
-  plugins: '插件技能',
+  plugins: '连接与扩展',
   automations: '自动化任务',
-  audit: '审计记录',
+  audit: '活动与审计',
   settings: '设置选项',
 }
 
 const sections = computed(() => {
+  if (props.activeSurface === 'inbox') return [
+    { id: 'pending', label: '待处理', description: '需要阅读、判断或跟进', icon: Inbox },
+    { id: 'all', label: '全部动态', description: '所有来源的统一时间线', icon: History },
+    { id: 'rss', label: 'RSS', description: '订阅更新与增量内容', icon: Rss },
+    { id: 'messages', label: '消息', description: 'IM 与协作工具消息', icon: MessageCircle },
+    { id: 'email', label: '邮件', description: '邮件账户与会话', icon: Mail },
+    { id: 'failures', label: '采集异常', description: '授权、同步与解析问题', icon: AlertTriangle },
+  ]
   if (props.activeSurface === 'knowledge') return [
     { id: 'assets', label: '知识资产', description: '文件与 AI 对话', icon: Database },
     { id: 'knowledge', label: '知识规则', description: '规则、决策和证据', icon: ShieldCheck },
@@ -79,6 +98,7 @@ const sections = computed(() => {
     { id: 'tasks', label: '任务验收', description: '结果与外部协作', icon: ListChecks },
   ]
   if (props.activeSurface === 'plugins') return [
+    { id: 'connections', label: '连接器', description: 'RSS、消息与邮件来源', icon: PlugZap },
     { id: 'skills', label: 'Skills', description: 'Agent 工作技能', icon: Code2 },
     { id: 'mcp', label: 'MCP Client', description: '连接工具与数据源', icon: Boxes },
     { id: 'mcp-server', label: 'MCP Server', description: '对外工具策略', icon: ServerCog },
@@ -117,6 +137,7 @@ const sections = computed(() => {
 })
 
 const selectedSection = computed(() => ({
+  inbox: props.inboxSection,
   knowledge: props.knowledgeSection,
   plugins: props.pluginSection,
   automations: props.automationSection,
@@ -125,6 +146,7 @@ const selectedSection = computed(() => ({
 })[props.activeSurface] ?? '')
 
 function selectSection(id: string): void {
+  if (props.activeSurface === 'inbox') emit('update:inbox-section', id as InboxSection)
   if (props.activeSurface === 'knowledge') emit('update:knowledge-section', id)
   if (props.activeSurface === 'plugins') emit('update:plugin-section', id)
   if (props.activeSurface === 'automations') emit('update:automation-section', id)
@@ -198,6 +220,26 @@ function deleteProject(project: AgentProject): void {
         <kbd>Ctrl K</kbd>
       </button>
     </header>
+    <nav
+      v-if="activeSurface === 'agent' || activeSurface === 'automations'"
+      class="context-sidebar__domain-switch"
+      aria-label="工作分类"
+    >
+      <button
+        type="button"
+        :class="{ 'is-active': activeSurface === 'agent' }"
+        @click="emit('open-agent')"
+      >
+        <Bot :size="14" />Agent 任务
+      </button>
+      <button
+        type="button"
+        :class="{ 'is-active': activeSurface === 'automations' }"
+        @click="emit('open-automations')"
+      >
+        <CalendarClock :size="14" />自动化
+      </button>
+    </nav>
     <div v-if="activeSurface === 'agent'" class="context-sidebar__actions">
       <button type="button" @click="emit('new-project')">
         <Plus :size="15" /><span>新建项目</span>

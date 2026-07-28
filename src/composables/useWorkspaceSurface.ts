@@ -12,6 +12,7 @@ export function useWorkspaceSurface() {
   const showAiChat = computed(() => aiPanelMode.value !== 'closed')
   const aiChatFullscreen = computed(() => aiPanelMode.value === 'workspace')
   const showSettings = computed(() => primarySurface.value === 'settings')
+  const showInbox = computed(() => primarySurface.value === 'inbox')
   const showPluginSkills = computed(() => primarySurface.value === 'plugins')
   const showAutomations = computed(() => primarySurface.value === 'automations')
   const showAudit = computed(() => primarySurface.value === 'audit')
@@ -37,6 +38,10 @@ export function useWorkspaceSurface() {
 
   function openSettingsSurface(): void {
     openPrimarySurface('settings')
+  }
+
+  function openInboxSurface(): void {
+    openPrimarySurface('inbox')
   }
 
   function openPluginSkillsSurface(): void {
@@ -79,6 +84,7 @@ export function useWorkspaceSurface() {
     aiChatFullscreen,
     aiPanelMode,
     showSettings,
+    showInbox,
     showPluginSkills,
     showAutomations,
     showAudit,
@@ -87,6 +93,7 @@ export function useWorkspaceSurface() {
     openAgentWorkspace,
     openDockedAiChat,
     openSettingsSurface,
+    openInboxSurface,
     openPluginSkillsSurface,
     openAutomationsSurface,
     openAuditSurface,
