@@ -83,6 +83,7 @@ mod ai_proxy;
 mod database;
 mod document_core;
 mod domain_events;
+mod email;
 mod governance;
 mod mcp;
 pub mod mcp_server_exposure;
@@ -269,6 +270,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0029_add_dashboard_workspace_view.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 30,
+            description: "add_email_inbox",
+            sql: include_str!("../migrations/0030_add_email_inbox.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -336,6 +343,10 @@ pub fn run() {
             agent_repository::rollback_agent_transaction,
             secret_store::get_ai_api_key,
             secret_store::set_ai_api_key,
+            email::test_email_connection,
+            email::set_email_account_secret,
+            email::delete_email_account_secret,
+            email::sync_email_account,
             ai_models::fetch_ai_models,
             ai_proxy::proxy_ai_request,
             agent_cancellation::cancel_agent_tool_call,

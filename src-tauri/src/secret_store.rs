@@ -12,6 +12,7 @@ const KEYRING_SERVICE: &str = "com.local.mynotebook";
 const KEYRING_ACCOUNT: &str = "ai-secret-data-key";
 const SECRET_FILENAME: &str = "ai-secrets.v1.json";
 const SECRET_VERSION: u8 = 1;
+const LEGACY_AI_SECRET_KEY: &str = "__legacy_ai_api_key";
 
 #[derive(Default)]
 pub struct AiSecretState {
@@ -33,21 +34,38 @@ pub async fn get_ai_api_key(
     state: State<'_, AiSecretState>,
     provider: String,
 ) -> Result<String, String> {
-    if let Some(api_keys) = state.cached_api_keys.lock().map_err(secret_error)?.as_ref() {
-        return Ok(api_keys.get(&provider).cloned().unwrap_or_default());
+    get_secret_value_with_legacy(&app, &state, &provider, true).await
+}
+
+pub(crate) async fn get_secret_value(
+    app: &AppHandle,
+    state: &AiSecretState,
+    key: &str,
+) -> Result<String, String> {
+    get_secret_value_with_legacy(app, state, key, false).await
+}
+
+async fn get_secret_value_with_legacy(
+    app: &AppHandle,
+    state: &AiSecretState,
+    key: &str,
+    claim_legacy_ai_secret: bool,
+) -> Result<String, String> {
+    if let Some(api_keys) = state.cached_api_keys.lock().map_err(secret_error)?.as_mut() {
+        return Ok(resolve_secret_value(api_keys, key, claim_legacy_ai_secret));
     }
 
-    let secret_path = secret_path(&app)?;
+    let secret_path = secret_path(app)?;
     if !secret_path.is_file() {
         return Ok(String::new());
     }
-    let data_key = get_or_create_data_key(&state).await?;
+    let data_key = get_or_create_data_key(state).await?;
     let plaintext =
         tauri::async_runtime::spawn_blocking(move || decrypt_secret(&secret_path, &data_key))
             .await
             .map_err(secret_error)??;
-    let api_keys = decode_api_keys(&plaintext, &provider);
-    let api_key = api_keys.get(&provider).cloned().unwrap_or_default();
+    let mut api_keys = decode_secret_values(&plaintext);
+    let api_key = resolve_secret_value(&mut api_keys, key, claim_legacy_ai_secret);
     *state.cached_api_keys.lock().map_err(secret_error)? = Some(api_keys);
     Ok(api_key)
 }
@@ -60,13 +78,37 @@ pub async fn set_ai_api_key(
     api_key: String,
 ) -> Result<(), String> {
     let normalized = api_key.trim().to_string();
-    let secret_path = secret_path(&app)?;
-    let data_key = get_or_create_data_key(&state).await?;
-    let mut api_keys = load_api_keys(&secret_path, &data_key, &state, &provider)?;
-    if normalized.is_empty() {
-        api_keys.remove(&provider);
+    set_secret_value_with_legacy(&app, &state, &provider, normalized, true).await
+}
+
+pub(crate) async fn set_secret_value(
+    app: &AppHandle,
+    state: &AiSecretState,
+    key: &str,
+    value: String,
+) -> Result<(), String> {
+    set_secret_value_with_legacy(app, state, key, value, false).await
+}
+
+async fn set_secret_value_with_legacy(
+    app: &AppHandle,
+    state: &AiSecretState,
+    key: &str,
+    value: String,
+    claim_legacy_ai_secret: bool,
+) -> Result<(), String> {
+    let secret_path = secret_path(app)?;
+    let data_key = get_or_create_data_key(state).await?;
+    let mut api_keys = load_secret_values(&secret_path, &data_key, state)?;
+    if claim_legacy_ai_secret && !api_keys.contains_key(key) {
+        if let Some(legacy) = api_keys.remove(LEGACY_AI_SECRET_KEY) {
+            api_keys.insert(key.to_string(), legacy);
+        }
+    }
+    if value.is_empty() {
+        api_keys.remove(key);
     } else {
-        api_keys.insert(provider, normalized);
+        api_keys.insert(key.to_string(), value);
     }
     if api_keys.is_empty() {
         if secret_path.exists() {
@@ -83,11 +125,10 @@ pub async fn set_ai_api_key(
     Ok(())
 }
 
-fn load_api_keys(
+fn load_secret_values(
     path: &PathBuf,
     data_key: &[u8; 32],
     state: &AiSecretState,
-    legacy_provider: &str,
 ) -> Result<HashMap<String, String>, String> {
     if let Some(api_keys) = state.cached_api_keys.lock().map_err(secret_error)?.clone() {
         return Ok(api_keys);
@@ -95,17 +136,42 @@ fn load_api_keys(
     if !path.is_file() {
         return Ok(HashMap::new());
     }
-    decrypt_secret(path, data_key).map(|plaintext| decode_api_keys(&plaintext, legacy_provider))
+    decrypt_secret(path, data_key).map(|plaintext| decode_secret_values(&plaintext))
 }
 
+#[cfg(test)]
 fn decode_api_keys(plaintext: &str, legacy_provider: &str) -> HashMap<String, String> {
+    let mut api_keys = decode_secret_values(plaintext);
+    let _ = resolve_secret_value(&mut api_keys, legacy_provider, true);
+    api_keys
+}
+
+fn decode_secret_values(plaintext: &str) -> HashMap<String, String> {
     serde_json::from_str(plaintext).unwrap_or_else(|_| {
-        let mut api_keys = HashMap::new();
-        if !plaintext.trim().is_empty() {
-            api_keys.insert(legacy_provider.to_string(), plaintext.trim().to_string());
+        let value = plaintext.trim();
+        if value.is_empty() {
+            HashMap::new()
+        } else {
+            HashMap::from([(LEGACY_AI_SECRET_KEY.to_string(), value.to_string())])
         }
-        api_keys
     })
+}
+
+fn resolve_secret_value(
+    values: &mut HashMap<String, String>,
+    key: &str,
+    claim_legacy_ai_secret: bool,
+) -> String {
+    if let Some(value) = values.get(key) {
+        return value.clone();
+    }
+    if claim_legacy_ai_secret {
+        if let Some(value) = values.remove(LEGACY_AI_SECRET_KEY) {
+            values.insert(key.to_string(), value.clone());
+            return value;
+        }
+    }
+    String::new()
 }
 
 async fn get_or_create_data_key(state: &AiSecretState) -> Result<[u8; 32], String> {
@@ -284,6 +350,13 @@ mod tests {
         let legacy = decode_api_keys("sk-legacy", "deepseek");
         assert_eq!(
             legacy.get("deepseek").map(String::as_str),
+            Some("sk-legacy")
+        );
+
+        let email_values = decode_secret_values("sk-legacy");
+        assert_eq!(email_values.get("email:account-1"), None);
+        assert_eq!(
+            email_values.get(LEGACY_AI_SECRET_KEY).map(String::as_str),
             Some("sk-legacy")
         );
     }

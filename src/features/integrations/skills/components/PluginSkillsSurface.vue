@@ -13,7 +13,6 @@ import {
   FileText,
   Folder,
   FolderOpen,
-  Mail,
   MessageCircle,
   PackagePlus,
   Plus,
@@ -45,6 +44,7 @@ import { useMessage } from '@/ui/services'
 import McpServersPanel from '@/features/integrations/mcp/components/McpServersPanel.vue'
 import McpServerExposurePanel from '@/features/integrations/mcp/components/McpServerExposurePanel.vue'
 import type { McpClientPort } from '@/services/ports/McpClientPort'
+import EmailAccountPanel from '@/features/integrations/email/components/EmailAccountPanel.vue'
 
 withDefaults(defineProps<{ mcpClient: McpClientPort; contextNavigation?: boolean }>(), {
   contextNavigation: false,
@@ -453,7 +453,7 @@ onMounted(() => void loadSkills())
       <section v-if="activeTab === 'connections'" class="connector-catalog" aria-label="连接器目录">
         <header>
           <div><strong>信息连接器</strong><small>配置来源，不在这里阅读内容</small></div>
-          <span>0 个已连接</span>
+          <span>邮箱已开放连接</span>
         </header>
         <div>
           <article>
@@ -466,12 +466,8 @@ onMounted(() => void loadSkills())
             <div><strong>IM / 消息</strong><p>协作空间、频道范围、权限和同步状态。</p></div>
             <em>规划中</em>
           </article>
-          <article>
-            <span><Mail :size="20" /></span>
-            <div><strong>邮件</strong><p>账户授权、文件夹范围和会话同步策略。</p></div>
-            <em>规划中</em>
-          </article>
         </div>
+        <EmailAccountPanel />
         <aside>
           <Cable :size="17" />
           <p><strong>已有 MCP 数据源？</strong>继续在 MCP Client 中配置。未来连接器和 MCP 资源会共同进入统一收件箱。</p>

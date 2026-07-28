@@ -12,6 +12,7 @@ import {
 import { computed } from 'vue'
 
 import type { InboxSection } from '@/models/workspace/workspaceSurface'
+import EmailInboxPanel from './EmailInboxPanel.vue'
 
 const props = defineProps<{ section: InboxSection }>()
 const emit = defineEmits<{ openConnections: [] }>()
@@ -98,6 +99,12 @@ const visibleSources = computed(() => {
         <h2>当前没有采集异常</h2>
         <p>连接器接入后，授权、同步和解析问题会统一出现在这里。</p>
       </section>
+
+      <EmailInboxPanel
+        v-else-if="section === 'pending' || section === 'all' || section === 'email'"
+        :mode="section"
+        @open-connections="emit('openConnections')"
+      />
 
       <template v-else>
         <div class="inbox-overview-strip">

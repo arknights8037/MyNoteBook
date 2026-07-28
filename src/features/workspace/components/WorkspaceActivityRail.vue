@@ -4,6 +4,7 @@ import {
   BookOpenCheck,
   BriefcaseBusiness,
   FileText,
+  House,
   Inbox,
   PlugZap,
   Settings,
@@ -26,14 +27,15 @@ const emit = defineEmits<{
 }>()
 
 const primaryItems = [
+  { id: 'home', label: '首页', icon: House, event: 'home' },
   { id: 'inbox', label: '收件箱', icon: Inbox, event: 'inbox' },
   { id: 'work', label: '工作', icon: BriefcaseBusiness, event: 'work' },
   { id: 'document', label: '文档与视图', icon: FileText, event: 'documents' },
   { id: 'knowledge', label: '知识', icon: BookOpenCheck, event: 'knowledge' },
+  { id: 'plugins', label: '连接与扩展', icon: PlugZap, event: 'extensions' },
 ] as const
 
 const managementItems = [
-  { id: 'plugins', label: '连接与扩展', icon: PlugZap, event: 'extensions' },
   { id: 'audit', label: '活动与审计', icon: Activity, event: 'activity' },
 ] as const
 
