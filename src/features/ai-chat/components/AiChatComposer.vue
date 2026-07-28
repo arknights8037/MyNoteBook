@@ -12,7 +12,7 @@ import {
   Square,
   X,
 } from '@lucide/vue'
-import { computed, nextTick, ref, toRef } from 'vue'
+import { computed, ref, toRef } from 'vue'
 
 import type { AiProvider, AiReasoningEffort, AiSettings } from '@/models/ai/ai'
 import type { AiChatMode, AiSelectorOption } from '@/models/ai/aiChatMode'

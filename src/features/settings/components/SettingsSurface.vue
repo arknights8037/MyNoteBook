@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import {
+  ArrowLeft,
   Bot,
   Database,
   Keyboard,
   Palette,
+  RotateCcw,
   ShieldCheck,
   Settings,
   SlidersHorizontal,
@@ -507,6 +509,20 @@ onMounted(async () => {
 
 <template>
   <section class="settings-page" aria-label="设置页面">
+    <header v-if="!contextNavigation" class="settings-page__header">
+      <NButton quaternary circle aria-label="返回文章" @click="emit('close')">
+        <template #icon><NIcon :size="19"><ArrowLeft /></NIcon></template>
+      </NButton>
+      <div>
+        <p>My Notebook</p>
+        <h1>设置</h1>
+      </div>
+      <NButton secondary @click="emit('reset')">
+        <template #icon><NIcon :size="15"><RotateCcw /></NIcon></template>
+        恢复默认
+      </NButton>
+    </header>
+
     <div class="settings-layout" :class="{ 'settings-layout--context-navigation': contextNavigation }">
       <nav v-if="!contextNavigation" class="settings-nav" aria-label="设置分类">
         <button

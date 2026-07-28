@@ -1,0 +1,10 @@
+# Update these owners when domain maintainers join the project.
+* @arknights8037
+
+# Shared integration hotspots require an explicit owner review.
+/src-tauri/src/lib.rs @arknights8037
+/src-tauri/migrations/ @arknights8037
+/pnpm-lock.yaml @arknights8037
+/src-tauri/Cargo.lock @arknights8037
+/src/app/composition/ @arknights8037
+/src/styles/ @arknights8037

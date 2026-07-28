@@ -54,6 +54,7 @@ export type { WorkspaceSurface } from '@/models/workspace/workspaceSurface'
 type BrowserEvent = InstanceType<typeof globalThis.Event>
 type BrowserDragEvent = InstanceType<typeof globalThis.DragEvent>
 type BrowserInputElement = InstanceType<typeof globalThis.HTMLInputElement>
+type BrowserKeyboardEvent = InstanceType<typeof globalThis.KeyboardEvent>
 
 const props = withDefaults(defineProps<{
   documents: DocumentSummary[]
@@ -123,9 +124,9 @@ const emit = defineEmits<{
 
 const fileInput = ref<BrowserInputElement | null>(null)
 const filterQuery = ref('')
-const filterInputRef = ref<HTMLInputElement | null>(null)
+const filterInputRef = ref<BrowserInputElement | null>(null)
 
-function handleFilterKeydown(event: KeyboardEvent): void {
+function handleFilterKeydown(event: BrowserKeyboardEvent): void {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault()
     emit('search')
@@ -145,7 +146,7 @@ function clearFilter(): void {
 watch(filterQuery, (query) => {
   if (query.trim()) {
     for (const group of articleGroups.value) {
-      if (collapsedGroupIds.has(group.id)) {
+      if (props.collapsedGroupIds.has(group.id)) {
         emit('toggle-group', group.id)
       }
     }

@@ -1,25 +1,16 @@
 import { ref } from 'vue'
 
 import type { AgentRuntimeResult } from '@/services/agent/AgentRuntime'
-import { appendKnowledgeSources, type KnowledgeSource } from '@/models/knowledge/knowledgeRetrieval'
+import type { KnowledgeSource } from '@/models/knowledge/knowledgeRetrieval'
 import { buildAiPrompt } from '@/services/ai/AiPromptPolicy'
 import { normalizeDocumentTitle } from '@/models/documents/documentPresentation'
 import { buildAgentRunContext } from './agentRun/agentRunContext'
-import { persistAgentRunResult } from './agentRun/agentRunPersistence'
-import type { AgentRunOutcome } from './agentRun/agentRunResult'
 import type { AgentCommunicationResult } from '@/services/agent/AgentCommunicationService'
 import type { AgentRunContinuation, AgentRunSession, UseAgentRunOptions } from './agentRun/types'
 import { compileContextBundle } from '@/models/agent/contextBundle'
 import { auditConfiguredModelParameters } from '@/models/agent/providerCapabilities'
 import { prepareAgentRunExecution } from '@/services/agent/AgentRunExecution'
 import { resolveAgentOutputTokenLimit } from '@/services/agent/AgentToolRegistry'
-import type {
-  CognitiveResultProvenance,
-  LearningTurnResult,
-  ResearchCandidateRef,
-  ResearchResult,
-  ReviewResult,
-} from '@/models/cognitive/cognitive'
 import { prepareCognitiveRun } from '@/services/cognitive/CognitiveRunService'
 import {
   compileLearningStateContext,
@@ -35,10 +26,7 @@ import {
   selectRelevantApprovedKnowledge,
 } from './agentRun/agentRunSupport'
 import { createAgentRunRuntimeController } from './agentRun/agentRunRuntimeController'
-import {
-  describeAgentRunCompletion,
-  resolveCognitiveIntentResult,
-} from './agentRun/agentRunIntentStrategy'
+import { describeAgentRunCompletion } from './agentRun/agentRunIntentStrategy'
 import { prepareAgentRun } from './agentRun/agentRunPreparation'
 import { createExecuteToolCallback, type ReadableDocument } from './agentRun/agentRunToolExecutorFactory'
 import { resolveAgentRunOutput } from './agentRun/agentRunOutputResolution'
@@ -157,7 +145,6 @@ export function useAgentRun(options: UseAgentRunOptions) {
       { executeAgentTool, prepareReadDocumentObservation },
       { executeRustAgentTool },
       { loadEnabledSkillPrompt },
-      { formatAgentRunSummary, resolveAgentRunResult },
     ] = await Promise.all([
       import('@/services/ai/AiMarkdownService'),
       import('@/services/ai/AiSystemPrompt'),
@@ -165,17 +152,11 @@ export function useAgentRun(options: UseAgentRunOptions) {
       import('@/services/agent/AgentToolExecutor'),
       import('@/services/agent/RustAgentToolService'),
       import('@/services/integrations/SkillService'),
-      import('./agentRun/agentRunResult'),
     ])
     let sources: KnowledgeSource[] = []
     let agentRounds = 0
     let agentToolCallCount = 0
     let agentDiagnostics: Pick<AgentRuntimeResult, 'finishReason' | 'usage'> = {}
-    let researchResult: ResearchResult | null = null
-    let reviewResult: ReviewResult | null = null
-    let learningResult: LearningTurnResult | null = null
-    let agentTaskResultPersisted = false
-    let researchCandidates: ResearchCandidateRef[] = []
     const workspaceDocumentIds = resolveWorkspaceDocumentIds(
       snapshot.document.documents,
       snapshot.workspace?.rootDocumentIds ?? [],
@@ -515,7 +496,6 @@ export function useAgentRun(options: UseAgentRunOptions) {
             executeAgentTool,
             executeRustAgentTool,
             parseReadDocumentProvenance,
-            prepareReadDocumentObservation,
           })
         : null
       const output =
@@ -590,7 +570,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
         setSummary,
         runtime: { complete: runtime.complete, cancel: runtime.cancel, fail: runtime.fail },
       })
-      const { patchSet, outcome, learningResult } = resolution
+      const { patchSet, learningResult } = resolution
       cognitiveSession = resolution.cognitiveSession
       learningState = resolution.learningState
       lastRunReport.value = resolution.lastRunReport

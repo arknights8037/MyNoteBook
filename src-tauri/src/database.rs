@@ -36,7 +36,7 @@ pub(crate) async fn prepare_database_path(
     directory: &Path,
     migrator: &Migrator,
 ) -> Result<DatabasePreparation, String> {
-    fs::create_dir_all(&directory).map_err(database_error)?;
+    fs::create_dir_all(directory).map_err(database_error)?;
     let database_path = directory.join(DATABASE_FILENAME);
     let existed = database_path.is_file();
     let pool = get_pool_for_path(&database_path, true).await?;
@@ -53,7 +53,7 @@ pub(crate) async fn prepare_database_path(
         }
         migrator.run(pool.as_ref()).await.map_err(database_error)?;
         optimize_database(pool.as_ref()).await?;
-        cleanup_orphan_asset_files(pool.as_ref(), &directory).await?;
+        cleanup_orphan_asset_files(pool.as_ref(), directory).await?;
         Ok::<(), String>(())
     }
     .await;
