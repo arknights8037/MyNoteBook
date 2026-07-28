@@ -26,6 +26,19 @@ const selected = computed(
 const pendingCount = computed(
   () => messages.value.filter((message) => message.processingStatus === 'pending').length,
 )
+const unreadCount = computed(() => messages.value.filter((message) => !message.serverIsRead).length)
+const selectedAccount = computed(
+  () => accounts.value.find((account) => account.id === selected.value?.accountId) ?? null,
+)
+const latestSyncAt = computed(() =>
+  accounts.value.reduce<number | null>(
+    (latest, account) =>
+      account.lastSyncedAt && (!latest || account.lastSyncedAt > latest)
+        ? account.lastSyncedAt
+        : latest,
+    null,
+  ),
+)
 
 async function load(): Promise<void> {
   if (!native) return
@@ -80,6 +93,39 @@ async function setStatus(message: EmailMessage, status: EmailProcessingStatus): 
   }
 }
 
+function processingLabel(status: EmailProcessingStatus): string {
+  if (status === 'done') return '已处理'
+  if (status === 'archived') return '已归档'
+  return '待处理'
+}
+
+function formatListTime(timestamp: number): string {
+  const date = new Date(timestamp)
+  const now = new Date()
+  if (date.toDateString() === now.toDateString()) {
+    return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(date)
+  }
+  return new Intl.DateTimeFormat('zh-CN', {
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: '2-digit' }),
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date)
+}
+
+function formatFullTime(timestamp: number): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(timestamp))
+}
+
+function accountName(accountId: string): string {
+  return accounts.value.find((account) => account.id === accountId)?.displayName ?? '邮箱'
+}
+
 onMounted(() => void load())
 watch(
   () => props.mode,
@@ -90,15 +136,31 @@ watch(
 <template>
   <section class="email-inbox-panel" aria-label="邮件收件箱">
     <header class="email-inbox-panel__toolbar">
-      <div>
-        <strong>{{ messages.length }} 封邮件</strong
-        ><span>{{ pendingCount }} 封待处理 · {{ accounts.length }} 个账户</span>
+      <div class="email-inbox-panel__metrics" aria-label="邮件统计">
+        <div>
+          <strong>{{ messages.length }}</strong
+          ><span>当前载入</span>
+        </div>
+        <div>
+          <strong>{{ pendingCount }}</strong
+          ><span>待处理</span>
+        </div>
+        <div>
+          <strong>{{ unreadCount }}</strong
+          ><span>服务器未读</span>
+        </div>
       </div>
-      <button type="button" :disabled="!native || syncing || !accounts.length" @click="syncAll">
-        <RefreshCw :class="{ 'is-spinning': syncing }" :size="15" />同步邮箱
-      </button>
+      <div class="email-inbox-panel__sync">
+        <span v-if="latestSyncAt">LAST SYNC · {{ formatFullTime(latestSyncAt) }}</span>
+        <span v-else>尚未完成同步</span>
+        <button type="button" :disabled="!native || syncing || !accounts.length" @click="syncAll">
+          <RefreshCw :class="{ 'is-spinning': syncing }" :size="15" />{{
+            syncing ? '同步中' : '同步邮箱'
+          }}
+        </button>
+      </div>
     </header>
-    <p v-if="error" class="email-inbox-panel__error">{{ error }}</p>
+    <p v-if="error" class="email-inbox-panel__error" role="alert">{{ error }}</p>
     <div v-if="loading" class="inbox-empty-state"><span>正在读取本地邮件…</span></div>
     <div v-else-if="!accounts.length" class="inbox-empty-state">
       <span class="inbox-empty-state__icon"><Mail :size="25" /></span>
@@ -114,38 +176,52 @@ watch(
     <div v-else class="email-inbox-layout">
       <div class="email-message-list" role="listbox" aria-label="邮件列表">
         <button
-          v-for="message in messages"
+          v-for="(message, index) in messages"
           :key="message.id"
           type="button"
+          role="option"
           :class="{ 'is-active': selectedId === message.id, 'is-unread': !message.serverIsRead }"
+          :aria-selected="selectedId === message.id"
           @click="selectedId = message.id"
         >
-          <span class="email-message-list__sender"
-            ><strong>{{ message.fromName || message.fromAddress || '未知发件人' }}</strong
-            ><time>{{ new Date(message.receivedAt).toLocaleString() }}</time></span
-          >
-          <span class="email-message-list__subject">{{ message.subject }}</span>
-          <span class="email-message-list__preview">{{ message.preview }}</span>
-          <small
-            ><Paperclip v-if="message.attachmentCount" :size="11" />{{
-              message.processingStatus === 'pending'
-                ? '待处理'
-                : message.processingStatus === 'done'
-                  ? '已处理'
-                  : '已归档'
-            }}</small
-          >
+          <span class="email-message-list__index">{{ String(index + 1).padStart(2, '0') }}</span>
+          <span class="email-message-list__content">
+            <span class="email-message-list__sender"
+              ><strong>{{ message.fromName || message.fromAddress || '未知发件人' }}</strong
+              ><time>{{ formatListTime(message.receivedAt) }}</time></span
+            >
+            <span class="email-message-list__subject">{{ message.subject }}</span>
+            <span class="email-message-list__preview">{{ message.preview }}</span>
+            <span class="email-message-list__footer">
+              <small :data-status="message.processingStatus">{{
+                processingLabel(message.processingStatus)
+              }}</small>
+              <span v-if="!message.serverIsRead" class="email-message-list__unread">未读</span>
+              <span>{{ accountName(message.accountId) }}</span>
+              <span v-if="message.attachmentCount"
+                ><Paperclip :size="11" />{{ message.attachmentCount }}</span
+              >
+            </span>
+          </span>
         </button>
       </div>
       <article v-if="selected" class="email-message-detail">
         <header>
           <div>
-            <span>EMAIL · {{ selected.mailbox }}</span>
+            <span
+              >EMAIL / {{ selected.mailbox }} ·
+              {{ selectedAccount?.displayName || 'MAILBOX' }}</span
+            >
             <h2>{{ selected.subject }}</h2>
-            <p>
-              {{ selected.fromName || selected.fromAddress }}
-              <small v-if="selected.fromName">&lt;{{ selected.fromAddress }}&gt;</small>
-            </p>
+            <div class="email-message-detail__sender">
+              <span>{{
+                (selected.fromName || selected.fromAddress || '?').slice(0, 1).toUpperCase()
+              }}</span>
+              <p>
+                <strong>{{ selected.fromName || selected.fromAddress || '未知发件人' }}</strong>
+                <small v-if="selected.fromName">{{ selected.fromAddress }}</small>
+              </p>
+            </div>
           </div>
           <div class="email-message-detail__actions">
             <button
@@ -172,14 +248,27 @@ watch(
           </div>
         </header>
         <dl>
+          <dt>状态</dt>
+          <dd>
+            <span class="email-message-detail__status" :data-status="selected.processingStatus">{{
+              processingLabel(selected.processingStatus)
+            }}</span>
+          </dd>
+          <dt>账户</dt>
+          <dd>{{ selectedAccount?.emailAddress || '—' }}</dd>
           <dt>收件人</dt>
           <dd>{{ selected.toAddresses.join(', ') || '—' }}</dd>
           <dt>时间</dt>
-          <dd>{{ new Date(selected.receivedAt).toLocaleString() }}</dd>
+          <dd>{{ formatFullTime(selected.receivedAt) }}</dd>
           <dt>附件</dt>
           <dd>{{ selected.attachmentCount }} 个</dd>
+          <dt>服务端</dt>
+          <dd>{{ selected.serverIsRead ? '已读' : '未读（本地阅读不会改变）' }}</dd>
         </dl>
-        <pre>{{ selected.bodyText || selected.preview || '邮件正文为空。' }}</pre>
+        <section class="email-message-detail__body">
+          <header><span>MESSAGE BODY</span><small>安全纯文本</small></header>
+          <pre>{{ selected.bodyText || selected.preview || '邮件正文为空。' }}</pre>
+        </section>
       </article>
     </div>
   </section>
