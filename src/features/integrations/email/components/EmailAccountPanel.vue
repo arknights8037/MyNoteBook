@@ -59,8 +59,9 @@ async function sync(account: EmailAccount): Promise<void> {
   try {
     const result = await (await service()).syncAccount(account)
     if (!result.ok) {
-      error.value = result.error.message
+      const syncError = result.error.message
       await load()
+      error.value = syncError
       return
     }
     notify.success(`已同步 ${result.value} 封邮件`)
@@ -74,8 +75,9 @@ async function remove(account: EmailAccount): Promise<void> {
   if (!globalThis.confirm(`删除邮箱连接“${account.displayName}”？本地同步邮件也会删除。`)) return
   const result = await (await service()).deleteAccount(account.id)
   if (!result.ok) {
-    error.value = result.error.message
+    const removeError = result.error.message
     await load()
+    error.value = removeError
     return
   }
   accounts.value = accounts.value.filter((candidate) => candidate.id !== account.id)

@@ -9,7 +9,9 @@ import type { SqlClient, SqlExecuteResult, SqlValue } from '@/repositories/share
 
 class Client implements SqlClient {
   database = new DatabaseSync(':memory:')
+  rawExecuteValues: SqlValue[][] = []
   async execute(sql: string, values: SqlValue[] = []): Promise<SqlExecuteResult> {
+    this.rawExecuteValues.push(values)
     const result = this.database.prepare(sql).run(...values.map(normalizeValue))
     return { rowsAffected: Number(result.changes) }
   }
@@ -68,6 +70,7 @@ describe('TauriEmailRepository', () => {
       serverIsRead: false,
     }
     expect(await repository.upsertMessages(account, [remote], 3)).toEqual({ ok: true, value: 1 })
+    expect(client.rawExecuteValues.flat().some((value) => typeof value === 'boolean')).toBe(false)
     const listed = await repository.listMessages({ status: 'pending' })
     expect(listed).toMatchObject({
       ok: true,

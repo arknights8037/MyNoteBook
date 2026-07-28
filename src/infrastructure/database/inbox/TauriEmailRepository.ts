@@ -161,7 +161,7 @@ export class TauriEmailRepository implements EmailRepository {
             message.preview,
             message.bodyText,
             message.attachmentCount,
-            message.serverIsRead,
+            message.serverIsRead ? 1 : 0,
             syncedAt,
           ],
         )

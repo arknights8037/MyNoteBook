@@ -5,10 +5,12 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { createEmailService } from '@/app/composition/emailServiceFactory'
 import type { EmailAccount, EmailMessage, EmailProcessingStatus } from '@/models/inbox/email'
 import type { EmailService } from '@/services/inbox/EmailService'
+import { useMessage } from '@/ui/services'
 
 const props = defineProps<{ mode: 'pending' | 'all' | 'email' }>()
 const emit = defineEmits<{ openConnections: [] }>()
 const native = Reflect.has(globalThis, '__TAURI_INTERNALS__')
+const notify = useMessage()
 const accounts = ref<EmailAccount[]>([])
 const messages = ref<EmailMessage[]>([])
 const selectedId = ref('')
@@ -49,12 +51,17 @@ async function load(): Promise<void> {
 async function syncAll(): Promise<void> {
   syncing.value = true
   error.value = ''
+  let syncedMessages = 0
+  let syncError = ''
   try {
     for (const account of accounts.value) {
       const result = await (await service()).syncAccount(account)
-      if (!result.ok) error.value = result.error.message
+      if (result.ok) syncedMessages += result.value
+      else syncError = result.error.message
     }
     await load()
+    if (syncError) error.value = syncError
+    else notify.success(`邮箱同步完成，读取 ${syncedMessages} 封邮件`)
   } finally {
     syncing.value = false
   }

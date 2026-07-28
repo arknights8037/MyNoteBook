@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { EmailService } from '@/services/inbox/EmailService'
-import { ok } from '@/models/shared/result'
+import { err, ok } from '@/models/shared/result'
 import type { EmailRepository } from '@/repositories/inbox/EmailRepository'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
@@ -52,6 +52,32 @@ describe('EmailService', () => {
       lastSyncedAt: 20,
       lastError: null,
       updatedAt: 20,
+    })
+  })
+
+  it('records a local persistence failure as the account sync error', async () => {
+    const repository = createRepository()
+    const account = accountValue()
+    invoke.mockResolvedValue([{ remoteUid: 1, subject: 'Hello' }])
+    repository.upsertMessages.mockResolvedValue(
+      err({ code: 'database-error', message: '无法保存同步邮件。' }),
+    )
+    const service = new EmailService(
+      repository,
+      () => 'unused',
+      () => 30,
+    )
+
+    const result = await service.syncAccount(account)
+
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'database-error', message: '无法保存同步邮件。' },
+    })
+    expect(repository.updateSyncState).toHaveBeenCalledWith(account.id, {
+      lastSyncedAt: null,
+      lastError: '无法保存同步邮件。',
+      updatedAt: 30,
     })
   })
 })

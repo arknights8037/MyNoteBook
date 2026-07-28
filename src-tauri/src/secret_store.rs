@@ -439,4 +439,35 @@ mod tests {
             .expect("run real Provider smoke");
         assert!(status.success(), "real Provider smoke failed");
     }
+
+    #[test]
+    #[ignore = "requires a configured real email account and network access"]
+    fn real_email_imap_sync_smoke() {
+        let local_app_data = std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA");
+        let path = PathBuf::from(local_app_data)
+            .join("com.local.mynotebook")
+            .join(SECRET_FILENAME);
+        let key = load_or_create_keyring_key().expect("load email data key");
+        let plaintext = decrypt_secret(&path, &key).expect("decrypt email credentials");
+        let values = decode_secret_values(&plaintext);
+        let account_id = std::env::var("MYNOTEBOOK_EMAIL_SMOKE_ACCOUNT_ID").expect("account id");
+        let password = values
+            .get(&format!("email:{account_id}"))
+            .filter(|value| !value.is_empty())
+            .expect("configured email credential")
+            .to_string();
+        let count = crate::email::real_sync_smoke(
+            account_id,
+            std::env::var("MYNOTEBOOK_EMAIL_SMOKE_HOST").expect("host"),
+            std::env::var("MYNOTEBOOK_EMAIL_SMOKE_PORT")
+                .expect("port")
+                .parse()
+                .expect("valid port"),
+            std::env::var("MYNOTEBOOK_EMAIL_SMOKE_USERNAME").expect("username"),
+            std::env::var("MYNOTEBOOK_EMAIL_SMOKE_MAILBOX").unwrap_or_else(|_| "INBOX".into()),
+            password,
+        )
+        .expect("real email sync");
+        eprintln!("real email sync returned {count} messages");
+    }
 }

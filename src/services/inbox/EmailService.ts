@@ -88,7 +88,14 @@ export class EmailService {
         },
       })
       const stored = await this.repository.upsertMessages(account, messages, syncedAt)
-      if (!stored.ok) return stored
+      if (!stored.ok) {
+        await this.repository.updateSyncState(account.id, {
+          lastSyncedAt: account.lastSyncedAt,
+          lastError: stored.error.message,
+          updatedAt: syncedAt,
+        })
+        return stored
+      }
       const syncState = await this.repository.updateSyncState(account.id, {
         lastSyncedAt: syncedAt,
         lastError: null,

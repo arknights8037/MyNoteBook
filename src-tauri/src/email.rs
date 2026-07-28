@@ -302,6 +302,27 @@ fn sync_messages(
     Ok(messages)
 }
 
+#[cfg(test)]
+pub(crate) fn real_sync_smoke(
+    account_id: String,
+    host: String,
+    port: u16,
+    username: String,
+    mailbox: String,
+    password: String,
+) -> Result<usize, String> {
+    let input = EmailSyncInput {
+        account_id,
+        host,
+        port,
+        username,
+        mailbox,
+        limit: 5,
+    };
+    validate_connection(&input.host, input.port, &input.username, &input.mailbox)?;
+    sync_messages(input, password, 5).map(|messages| messages.len())
+}
+
 fn connect_imap(
     host: &str,
     port: u16,
