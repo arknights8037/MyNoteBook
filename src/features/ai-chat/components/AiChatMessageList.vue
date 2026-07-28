@@ -160,6 +160,7 @@ watch(
   <div
     ref="messagesElement"
     class="ai-chat-popover__messages"
+    :class="{ 'ai-chat-popover__messages--welcome': messages.length === 0 }"
     aria-live="polite"
     @scroll="handleMessagesScroll"
   >

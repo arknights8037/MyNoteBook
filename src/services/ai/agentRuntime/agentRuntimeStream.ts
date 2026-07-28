@@ -53,6 +53,7 @@ export async function runAgentStream(config: AgentStreamConfig): Promise<AgentRu
         ? ''
         : '最终回复使用简短自然语言。成功提交提案工具后不要再次输出 JSON、工具参数或重复正文；没有写入建议时直接回答、说明限制或提出必要问题。',
       input.outputContract ? formatAgentOutputContractInstruction(input.outputContract) : '',
+      '读取约束：read_document 返回的是按稳定块分页的 canonical Markdown，不是默认整篇读取。结果中的 blocks/returnedBlocks 表示本页块范围，truncated/nextCursor 表示后续页。优先用搜索片段和 blockIds 定向读取；只有结论确实依赖未返回部分时才用 nextCursor 续页。不得用相同 documentId、cursor、maxChars、blockIds 重复读取，Runtime 会复用而不再次访问文件。',
       '过程透明要求：开始执行时先调用 report_progress；每次获得会改变后续动作的关键 Observation 后，在调用下一个业务工具或生成最终结果前再次调用 report_progress；改变计划或准备提交提案时也必须报告。summary、evidence、nextAction 会作为三个自然段直接展示给用户，因此要具体说明正在做什么、刚得到什么以及接下来做什么。只写可审计的决策摘要，不得填写隐藏思维链、逐步内心推理或无法从上下文验证的猜测。',
     ]
       .filter(Boolean)

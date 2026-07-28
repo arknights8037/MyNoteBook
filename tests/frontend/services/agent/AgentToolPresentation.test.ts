@@ -82,4 +82,37 @@ describe('AgentToolPresentation', () => {
       url: null,
     })
   })
+
+  it('describes a read-document page with its canonical block range', () => {
+    const result = presentAgentToolCall({
+      ...toolCall(
+        JSON.stringify({
+          id: 'document-1',
+          title: 'Agent Runtime',
+          blocks: [
+            { id: 'block-24', blockIndex: 24 },
+            { id: 'block-31', blockIndex: 31 },
+          ],
+          returnedBlocks: 8,
+          truncated: true,
+          nextCursor: 32,
+        }),
+      ),
+      toolName: 'read_document',
+      argumentsJson: JSON.stringify({
+        documentId: 'document-1',
+        cursor: 24,
+        maxChars: 24_000,
+      }),
+    })
+
+    expect(result.inputFields).toEqual(
+      expect.arrayContaining([
+        { label: '文档', value: 'document-1' },
+        { label: '起始块', value: '24' },
+        { label: '字符预算', value: '24000' },
+      ]),
+    )
+    expect(result.resultText).toBe('《Agent Runtime》 · 第 25–32 块 · 本次 8 块 · 后续仍有内容')
+  })
 })

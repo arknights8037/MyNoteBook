@@ -416,6 +416,45 @@ describe('AI SDK Agent tool lifecycle', () => {
     expect(executeTool).toHaveBeenCalledOnce()
   })
 
+  it('reuses an identical successful document read without reading the file again', async () => {
+    let repeatedResult: unknown
+    agentHarness.run = async (tools) => {
+      const args = { documentId: 'doc-1', cursor: 12, maxChars: 16_000 }
+      await tools.read_document?.execute(args)
+      repeatedResult = await tools.read_document?.execute(args)
+    }
+    const executeTool = vi.fn(async () => ({
+      ok: true,
+      value: {
+        id: 'doc-1',
+        title: 'Runtime',
+        blocks: [],
+        returnedBlocks: 0,
+        truncated: false,
+      },
+    }))
+
+    await runAiSdkAgent({
+      taskId: 'task-duplicate-read',
+      prompt: '检查资料',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      createId: (() => {
+        let index = 0
+        return () => `call-duplicate-read-${++index}`
+      })(),
+      executeTool,
+      recordToolCall: async () => undefined,
+    })
+
+    expect(executeTool).toHaveBeenCalledOnce()
+    expect(repeatedResult).toMatchObject({
+      reusedObservation: true,
+      message: expect.stringContaining('复用上一条 Observation'),
+    })
+  })
+
   it('automatically retries an explicitly retryable read failure', async () => {
     const progress: Array<{ timelineEvent?: { kind: string } }> = []
     const executeTool = vi.fn()

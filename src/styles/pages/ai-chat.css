@@ -902,7 +902,7 @@
 
 .ai-chat-popover__messages {
   display: grid;
-  align-content: stretch;
+  align-content: start;
   gap: 12px;
   min-height: 0;
   overflow: auto;
@@ -911,6 +911,10 @@
   background: transparent;
   overflow-anchor: auto;
   scroll-behavior: smooth;
+}
+
+.ai-chat-popover__messages--welcome {
+  align-content: stretch;
 }
 
 .ai-agent-loop {

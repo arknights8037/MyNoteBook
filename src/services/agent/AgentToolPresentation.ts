@@ -33,6 +33,9 @@ const FIELD_LABELS: Record<string, string> = {
   relativePath: '文件',
   scope: '范围',
   limit: '数量上限',
+  cursor: '起始块',
+  maxChars: '字符预算',
+  blockIds: '指定块',
   markdown: '原文 Markdown',
   content: '内容',
   before: '修改前内容',
@@ -156,12 +159,35 @@ function projectDisplayItem(value: unknown): AgentToolDisplayItem {
 function extractResultText(value: unknown): string {
   if (typeof value === 'string') return compactText(value, 1_200)
   if (!isRecord(value)) return ''
+  if (typeof value.title === 'string' && typeof value.returnedBlocks === 'number') {
+    const blocks = Array.isArray(value.blocks) ? value.blocks.filter(isRecord) : []
+    const firstIndex = firstNumber(blocks[0]?.blockIndex, blocks[0]?.block_index)
+    const lastBlock = blocks.at(-1)
+    const lastIndex = firstNumber(lastBlock?.blockIndex, lastBlock?.block_index)
+    const range =
+      firstIndex === null || lastIndex === null
+        ? ''
+        : firstIndex === lastIndex
+          ? `第 ${firstIndex + 1} 块`
+          : `第 ${firstIndex + 1}–${lastIndex + 1} 块`
+    const state = value.truncated === true ? '后续仍有内容' : '已到文档末尾'
+    return [`《${value.title}》`, range, `本次 ${value.returnedBlocks} 块`, state]
+      .filter(Boolean)
+      .join(' · ')
+  }
+  if (value.reusedObservation === true && typeof value.message === 'string') {
+    return compactText(value.message, 1_200)
+  }
   for (const key of ['summary', 'message', 'output', 'stdout', 'text']) {
     if (typeof value[key] === 'string') return compactText(value[key], 1_200)
   }
   if (value.proposalCaptured === true) return '修改提案已进入确认队列。'
   if (value.created === true) return '草稿已创建，可前往对应管理页审阅。'
   return ''
+}
+
+function firstNumber(...values: unknown[]): number | null {
+  return values.find((value): value is number => typeof value === 'number') ?? null
 }
 
 function inferResultCount(value: unknown, items: AgentToolDisplayItem[]): number | null {

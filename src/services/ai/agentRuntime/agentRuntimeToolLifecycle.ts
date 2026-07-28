@@ -31,6 +31,7 @@ export interface ToolLifecycleContext {
   proposedPatches: AgentPatchProposal[]
   inFlightTools: Set<Promise<unknown>>
   failedCallSignatures: Set<string>
+  completedReadSignatures: Set<string>
   stepStartedAt: Map<number, number>
   resolvedStepDecisions: Set<number>
   activeStepNumber: number
@@ -142,6 +143,14 @@ export async function executeTracked(
   const signature = createToolCallSignature(name, args)
   if (ctx.failedCallSignatures.has(signature)) {
     execution = { ok: false, error: `工具 ${name} 的相同参数已经失败；请调整参数或停止。` }
+  } else if (isDeduplicatedReadTool(name) && ctx.completedReadSignatures.has(signature)) {
+    execution = {
+      ok: true,
+      value: {
+        reusedObservation: true,
+        message: `相同的 ${name} 读取已在本次运行中完成；请复用上一条 Observation。`,
+      },
+    }
   } else if (!policyAllowsTool) {
     execution = { ok: false, error: `ExecutionPolicy 不允许工具 ${name}。` }
   } else if (name === 'request_authorizer_input' && !policy.allowUserInput) {
@@ -251,7 +260,20 @@ export async function executeTracked(
     if (ctx.failures >= policy.maxToolFailures) throw new Error('Agent 工具失败次数达到上限。')
     return { ok: false, error: safeExecutionError }
   }
+  if (isDeduplicatedReadTool(name)) ctx.completedReadSignatures.add(signature)
   return safeValue
+}
+
+function isDeduplicatedReadTool(name: string): boolean {
+  return [
+    'get_current_document',
+    'get_selected_blocks',
+    'get_document_outline',
+    'search_documents',
+    'list_document_groups',
+    'read_document',
+    'read_skill_file',
+  ].includes(name)
 }
 
 export function execute(

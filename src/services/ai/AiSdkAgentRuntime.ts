@@ -45,6 +45,7 @@ export async function runAiSdkAgent(input: AgentRuntimeInput): Promise<AgentRunt
     proposedPatches,
     inFlightTools: new Set(),
     failedCallSignatures: new Set(),
+    completedReadSignatures: new Set(),
     stepStartedAt: new Map(),
     resolvedStepDecisions: new Set(),
     activeStepNumber: 0,

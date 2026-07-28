@@ -82,7 +82,7 @@ const timelineItems = computed<TimelineItem[]>(() => {
       event,
       toolCall,
       toolLabel: toolCall ? getToolLabel(toolCall.toolName) : '',
-      argumentsSummary: toolCall ? summarizeToolArguments(toolCall.argumentsJson) : '',
+      argumentsSummary: toolCall ? summarizeToolArguments(toolCall) : '',
       resultSummary: toolCall ? summarizeToolResult(toolCall) : '',
       resultPreview: toolCall ? getToolResultPreview(toolCall) : '',
       inputFields: toolCall ? getToolInputFields(toolCall) : [],
@@ -223,9 +223,27 @@ function formatToolDetail(value: string | null, maxLength = 8_000): string {
   return formatted.length > maxLength ? `${formatted.slice(0, maxLength)}\n… 已截断` : formatted
 }
 
-function summarizeToolArguments(value: string): string {
-  const call = { argumentsJson: value, resultJson: null } as RuntimeToolCall
-  const first = presentAgentToolCall(call).inputFields[0]
+function summarizeToolArguments(toolCall: RuntimeToolCall): string {
+  const presentation = presentAgentToolCall(toolCall)
+  if (toolCall.toolName === 'read_document') {
+    const fields = new Map(presentation.inputFields.map((field) => [field.label, field.value]))
+    const document = fields.get('文档')
+    const selectedBlocks = fields.get('指定块')
+    const cursor = fields.get('起始块')
+    const budget = fields.get('字符预算')
+    return [
+      document ? `文档：${document}` : '',
+      selectedBlocks
+        ? `指定块：${selectedBlocks}`
+        : cursor
+          ? `从第 ${Number(cursor) + 1} 块分页`
+          : '从第 1 块分页',
+      budget ? `预算 ${budget} 字符` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  }
+  const first = presentation.inputFields[0]
   return first ? `${first.label}：${first.value}` : '无参数'
 }
 

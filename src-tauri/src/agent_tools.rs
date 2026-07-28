@@ -737,13 +737,12 @@ impl Tool for ReadDocumentTool {
                 continue;
             }
             let block_chars = block.plain_text.chars().count() + block.content_json.chars().count();
-            if estimated_chars.saturating_add(block_chars) > max_chars {
-                if returned_blocks.is_empty() {
-                    return Err(NativeToolError(
-                        "下一个 canonical 块超过 maxChars 预算；请提高预算或用更小的目标块。"
-                            .to_string(),
-                    ));
-                }
+            if !should_include_read_block(
+                estimated_chars,
+                block_chars,
+                max_chars,
+                !returned_blocks.is_empty(),
+            )? {
                 break;
             }
             estimated_chars = estimated_chars.saturating_add(block_chars);
@@ -783,6 +782,30 @@ impl Tool for ReadDocumentTool {
             estimated_chars,
         }))
     }
+}
+
+fn should_include_read_block(
+    estimated_chars: usize,
+    block_chars: usize,
+    preferred_max_chars: usize,
+    page_has_blocks: bool,
+) -> Result<bool, NativeToolError> {
+    if estimated_chars.saturating_add(block_chars) <= preferred_max_chars {
+        return Ok(true);
+    }
+    if page_has_blocks {
+        return Ok(false);
+    }
+    if block_chars > MAX_DOCUMENT_OUTPUT_LIMIT {
+        return Err(NativeToolError(
+            "下一个 canonical 块超过单次读取安全上限；请使用更小的目标块。".to_string(),
+        ));
+    }
+    // A canonical block cannot be split without losing its editable structure. Treat maxChars as
+    // the preferred page size for the first block and return one oversized block when it still
+    // fits the absolute safety limit. This avoids failing and rereading the same page with a larger
+    // budget.
+    Ok(true)
 }
 
 #[tauri::command]
@@ -1207,8 +1230,8 @@ fn native_error(error: impl fmt::Display) -> NativeToolError {
 mod tests {
     use super::{
         build_fts_query, build_shell_command, discover_local_tools, is_safe_tool_name,
-        resolve_shell_limits, FindBlocksByRegexArgs, FindBlocksByRegexTool, RegexBlock,
-        ReplaceBlocksByRegexArgs, ReplaceBlocksByRegexTool,
+        resolve_shell_limits, should_include_read_block, FindBlocksByRegexArgs,
+        FindBlocksByRegexTool, RegexBlock, ReplaceBlocksByRegexArgs, ReplaceBlocksByRegexTool,
     };
     use rig_core::tool::Tool;
 
@@ -1255,6 +1278,13 @@ mod tests {
         assert!(resolve_shell_limits(Some(999), None).is_err());
         assert!(resolve_shell_limits(Some(30_001), None).is_err());
         assert!(resolve_shell_limits(None, Some(70_000)).is_err());
+    }
+
+    #[test]
+    fn canonical_read_page_returns_one_oversized_block_without_forcing_a_retry() {
+        assert!(should_include_read_block(0, 24_001, 24_000, false).unwrap());
+        assert!(!should_include_read_block(8_000, 17_000, 24_000, true).unwrap());
+        assert!(should_include_read_block(0, 65_537, 24_000, false).is_err());
     }
 
     #[tokio::test]

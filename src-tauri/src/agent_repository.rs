@@ -1383,11 +1383,15 @@ fn normalize_visible_markdown(value: &str) -> String {
         };
         let linked = link.replace_all(&line_without_prefix, "$1");
         for character in linked.chars() {
-            if matches!(
-                character,
-                '#' | '*' | '_' | '~' | '`' | '|' | '[' | ']' | '$' | '\\'
-            ) {
+            if character == '|' {
                 visible.push(' ');
+            } else if matches!(
+                character,
+                '#' | '*' | '_' | '~' | '`' | '[' | ']' | '$' | '\\'
+            ) {
+                // Inline Markdown markers disappear in the Tiptap projection. Removing them here
+                // preserves adjacency for content such as `foo`、`bar`; replacing them with spaces
+                // would make an otherwise identical accepted document fail projection validation.
             } else {
                 visible.push(character);
             }
@@ -1516,6 +1520,22 @@ mod tests {
         )
         .unwrap();
         validate_patch_after(&projection, "- [x] 已完成", "task-patch").unwrap();
+    }
+
+    #[test]
+    fn patch_after_validation_preserves_adjacent_inline_code_semantics() {
+        let projection = validate_and_project_tiptap(
+            r#"{"type":"doc","content":[{"type":"paragraph","attrs":{"id":"commands"},"content":[{"type":"text","text":"/research、/review、/learn"}]}]}"#,
+            true,
+        )
+        .unwrap();
+
+        validate_patch_after(
+            &projection,
+            "`/research`、`/review`、`/learn`",
+            "inline-code-patch",
+        )
+        .unwrap();
     }
 
     #[tokio::test]

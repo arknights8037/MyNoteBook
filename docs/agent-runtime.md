@@ -175,7 +175,7 @@ command 先由本地 `AgentCommandService` 展开为 Patch。每个 Patch 保存
 
 模型可见的复杂提案工具是 `submit_document_edits`。输入按 `documents` 分组，每个 documentId 只出现一次；一个提案可以包含多个已读取文档，以同步维护分散在多处的同一事实。`replace` edit 只接受 `targetBlockIds`，插入 edit 只接受 `anchorBlockId`，Runtime 根据读取快照补齐内部 Patch 的 `blockId`、expected revision 和 before。
 
-`read_document` 支持 `cursor`、`maxChars` 和 `blockIds`。模型可见结果包含短 `plainText` 摘要、稳定 block provenance 和可编辑的 canonical `markdown`，并用 `truncated` / `nextCursor` 明确分页；原生 `contentJson` 只在本地转换边界用于生成 Markdown，不再重复发送给模型。结构化块不能只按可见文本往返：`tableBlock` 的 `plainText` 是 TSV 投影，仅用于阅读和检索；修改时必须以 `markdown` 为结构基线，并提交完整 Markdown pipe table。工具入口会拒绝把 tableBlock 替换为 TSV、空格对齐文本或普通段落，也会用 canonical Markdown 识别真正的结构 no-op；Rust 保存边界允许“可见文本相同、节点从普通段落修复为合法表格”的结构变更。
+`read_document` 支持 `cursor`、`maxChars` 和 `blockIds`。模型可见结果包含短 `plainText` 摘要、稳定 block provenance 和可编辑的 canonical `markdown`，并用 `truncated` / `nextCursor` 明确分页；相同参数的成功读取在同一次运行中直接复用上一条 Observation，不再次访问文件。`maxChars` 是分页目标；canonical 块无法安全拆分时可返回一个仍在 65,536 字符安全上限内的完整块，避免先失败再放大预算重读。原生 `contentJson` 只在本地转换边界用于生成 Markdown，不再重复发送给模型。结构化块不能只按可见文本往返：`tableBlock` 的 `plainText` 是 TSV 投影，仅用于阅读和检索；修改时必须以 `markdown` 为结构基线，并提交完整 Markdown pipe table。工具入口会拒绝把 tableBlock 替换为 TSV、空格对齐文本或普通段落，也会用 canonical Markdown 识别真正的结构 no-op；Rust 保存边界允许“可见文本相同、节点从普通段落修复为合法表格”的结构变更。
 
 写入提案在进入确认队列前先执行批级约束。每个文档内的目标块必须互不重叠，同一块既要改写又要补充时必须合并为一个完整 `replace` edit。`replace_block`、`insert_blocks` 等简单命令也不能在同一文档中重复锚定同一块，正则替换不能与其他块修改混在同一批中。
 
