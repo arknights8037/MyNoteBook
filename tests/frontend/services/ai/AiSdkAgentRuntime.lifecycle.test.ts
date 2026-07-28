@@ -217,7 +217,8 @@ describe('AI SDK Agent tool lifecycle', () => {
         }),
       ]),
     )
-    expect(agentHarness.instructions).toContain('过程透明要求')
+    expect(agentHarness.instructions).toContain('可以调用 report_progress')
+    expect(agentHarness.instructions).toContain('不需要为每个 Observation 单独汇报')
     expect(agentHarness.instructions).toContain('不得填写隐藏思维链')
   })
 
@@ -253,7 +254,7 @@ describe('AI SDK Agent tool lifecycle', () => {
       activeTools: ['submit_document_edits'],
       maxRetries: 0,
     })
-    expect(agentHarness.instructions).toContain('本次 Runtime 实际可用工具：submit_document_edits')
+    expect(agentHarness.instructions).not.toContain('本次 Runtime 实际可用工具')
   })
 
   it('emits a visible decision before its tool and a summary decision at the end', async () => {

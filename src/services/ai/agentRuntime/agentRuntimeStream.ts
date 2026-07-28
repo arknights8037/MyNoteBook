@@ -42,19 +42,18 @@ export async function runAgentStream(config: AgentStreamConfig): Promise<AgentRu
     model: createAiSdkModel(input.settings),
     instructions: [
       input.systemPrompt,
-      `本次 Runtime 实际可用工具：${activeToolNames.length > 0 ? activeToolNames.join('、') : '无'}。未列出的工具不可调用。`,
       !input.outputContract && input.intent === 'create'
-        ? '本次任务要求创建独立页面或文档。请在完成必要判断后主动调用 create_document 提案工具。'
+        ? '本次任务要求创建独立页面、文档或分组。请根据用户目标选择 create_document 或 create_group。'
         : '',
       input.outputContract
         ? ''
-        : '写入建议通过 Runtime 暴露的原生提案工具提交：replace_text_by_regex、replace_block、insert_blocks、create_document、create_group、submit_document_edits。跨文档或复杂修改统一使用 submit_document_edits。工具成功只表示提案已捕获并等待用户确认。',
+        : '写入建议必须通过 Runtime 实际暴露的提案工具提交；工具成功只表示提案已捕获并等待用户确认。',
       input.outputContract
         ? ''
         : '最终回复使用简短自然语言。成功提交提案工具后不要再次输出 JSON、工具参数或重复正文；没有写入建议时直接回答、说明限制或提出必要问题。',
       input.outputContract ? formatAgentOutputContractInstruction(input.outputContract) : '',
-      '读取约束：read_document 返回的是按稳定块分页的 canonical Markdown，不是默认整篇读取。结果中的 blocks/returnedBlocks 表示本页块范围，truncated/nextCursor 表示后续页。优先用搜索片段和 blockIds 定向读取；只有结论确实依赖未返回部分时才用 nextCursor 续页。不得用相同 documentId、cursor、maxChars、blockIds 重复读取，Runtime 会复用而不再次访问文件。',
-      '过程透明要求：开始执行时先调用 report_progress；每次获得会改变后续动作的关键 Observation 后，在调用下一个业务工具或生成最终结果前再次调用 report_progress；改变计划或准备提交提案时也必须报告。summary、evidence、nextAction 会作为三个自然段直接展示给用户，因此要具体说明正在做什么、刚得到什么以及接下来做什么。只写可审计的决策摘要，不得填写隐藏思维链、逐步内心推理或无法从上下文验证的猜测。',
+      'read_document 按稳定块分页返回 canonical Markdown；需要后续内容时使用 nextCursor，已知目标块时优先使用 blockIds。Runtime 会自动复用同参数读取。',
+      '长任务、计划发生明显变化或需要向用户解释等待原因时，可以调用 report_progress；普通工具步骤由 Runtime 自动展示，不需要为每个 Observation 单独汇报。只报告可验证的阶段摘要，不得填写隐藏思维链。',
     ]
       .filter(Boolean)
       .join('\n\n'),

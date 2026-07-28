@@ -28,7 +28,7 @@ Ask 使用普通流式 Markdown 请求；Edit 生成受控 Patch；Agent 使用�
 ```text
 Command -> AgentRunEvent -> reducer -> AgentRunLifecycleState
                                   -> UI runtime projection
-                                  -> scheduler
+                                  -> deterministic lifecycle transitions
 ```
 
 模型输出仍是有限动作协议，工具调用、审批请求、结构化提案和最终回答由对应 effect 执行。`research / review / learning` 的结果解释由 intent strategy 处理，不进入 Run reducer。
@@ -217,11 +217,11 @@ command 先由本地 `AgentCommandService` 展开为 Patch。每个 Patch 保存
 
 ## 11. 运行状态与已知限制
 
-界面把 Agent loop 嵌入当前 assistant 消息，以同一时间线交错显示模型 step、工具、Observation 后的重新判断、自动重试、授权等待和终态。模型 step 只显示可验证的行动摘要，不暴露隐藏思维链；工具参数摘要、结果预览和耗时可查看，完整审计详情可展开，运行中可停止。
+界面把 Agent loop 摘要嵌入当前 assistant 消息，以同一时间线交错显示模型 step、工具、Observation 后的重新判断、自动重试、授权等待和终态。模型 step 只显示可验证的行动摘要，不暴露隐藏思维链；工具参数摘要、结果预览和耗时可查看。完整详情可切换到脱离消息宽度的宽视图，运行中仍可停止。
 
 C1.5-R 维护后，`ToolLoopAgent` 使用流式执行。Provider 明确返回的 reasoning delta 会在任务运行期间写入当前 assistant 消息的“思考中”区域，不再等终态一次性补齐；这只是 Provider 输出通道，不等同于应用内部隐藏推理。Runtime 会缓冲并屏蔽以 JSON 对象、数组或 fenced JSON 开头的协议内容，防止结构化提案被误显示成过程说明。
 
-可观察 loop 按 `需求 -> 决策摘要 -> Tool running/completed（Observation）-> 下一轮决策 -> Summary` 实时追加到当前 assistant 消息。决策摘要在真实 tool call 开始前由工具名和已脱敏参数生成，表达“下一步做什么及目的”，不展示或伪造模型隐藏思维链；轮数随 step 事件实时更新，不再等终态回填。无工具的最后一轮明确记录“整理最终 summary”，并单独跟踪 summary 生成状态。
+可观察 loop 按 `需求 -> 决策摘要 -> Tool running/completed（Observation）-> 下一轮决策 -> Summary` 实时追加到当前 assistant 消息。决策摘要在真实 tool call 开始前由工具名和已脱敏参数生成，表达“下一步做什么及目的”，不展示或伪造模型隐藏思维链；`report_progress` 只供长任务或显著计划变化时选用，不再要求每个 Observation 后额外调用。轮数随 step 事件实时更新，不再等终态回填。
 
 当前文档和选区在工具边界统一投影成 canonical Markdown：`get_current_document` 与 `get_selected_blocks` 只向模型返回文档元数据、稳定块标识和 Markdown，不返回 Tiptap JSON。编辑器与数据库内部仍保留 Tiptap 树用于结构编辑、版本校验和事务保存。
 

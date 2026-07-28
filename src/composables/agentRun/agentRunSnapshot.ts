@@ -55,7 +55,7 @@ export function createAgentEditPlan(input: {
           ? inferredBlocks
           : document.blocks.slice(0, 1)
   }
-  if (targetBlocks.length === 0 || document.revision === null) return null
+  if (mode === 'edit' && (targetBlocks.length === 0 || document.revision === null)) return null
 
   const task = createAgentTask({
     id: input.createId(),
@@ -78,7 +78,7 @@ export function createAgentEditPlan(input: {
   return {
     task,
     targetBlocks,
-    expectedRevision: document.revision,
+    expectedRevision: document.revision ?? 0,
     usesSelection,
     foundTargetScope,
   }

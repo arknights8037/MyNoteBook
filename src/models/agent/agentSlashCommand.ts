@@ -47,7 +47,7 @@ export const AGENT_SLASH_COMMANDS: readonly AgentSlashCommand[] = [
     placeholder: '描述要创建的页面和内容',
     defaultPrompt: '请根据当前页面创建一篇结构完整的新文档。',
     systemInstruction:
-      '当前为创建模式。最终只能提出一个 create_document command，不能修改当前文档，也不能与其他 command 或 patch 混用。标题、位置或范围不明确时先向授权人提问。',
+      '当前为创建模式。根据用户目标提出一项 create_document 或 create_group 创建提案，不能修改当前文档，也不能与其他修改混用。只有标题、位置或范围会实质改变结果且无法自行确认时才向授权人提问。',
   },
   {
     name: 'interactive',

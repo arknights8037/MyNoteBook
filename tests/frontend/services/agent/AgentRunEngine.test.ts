@@ -26,6 +26,5 @@ describe('AgentRunEngine', () => {
       'RunCompleted',
     ])
     expect(engine.state.phase).toBe('completed')
-    expect(engine.schedule()).toEqual({ type: 'STOP' })
   })
 })

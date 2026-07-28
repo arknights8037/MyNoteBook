@@ -975,6 +975,17 @@
   background: color-mix(in srgb, var(--color-status-error) 9%, transparent);
 }
 
+.ai-agent-loop__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ai-agent-loop__expand:hover {
+  color: var(--color-agent-accent);
+  background: color-mix(in srgb, var(--color-agent-accent) 9%, transparent);
+}
+
 .ai-agent-loop__trace {
   min-width: 0;
 }
@@ -1032,6 +1043,120 @@
 
 .ai-agent-loop__trace[open] > summary > svg {
   transform: rotate(180deg);
+}
+
+.ai-agent-loop--detail-workspace {
+  position: fixed;
+  z-index: 2600;
+  inset: clamp(12px, 3vw, 38px);
+  width: auto;
+  max-width: none;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  border-color: color-mix(in srgb, var(--color-agent-accent) 20%, var(--color-border-default));
+  border-radius: 14px;
+  padding: 0 clamp(16px, 2.5vw, 34px);
+  background: color-mix(in srgb, var(--color-bg-elevated) 98%, transparent);
+  box-shadow:
+    0 0 0 100vmax rgb(17 18 16 / 38%),
+    0 28px 80px rgb(17 18 16 / 24%);
+}
+
+.ai-agent-loop--detail-workspace .ai-agent-loop__header {
+  min-height: 52px;
+}
+
+.ai-agent-loop--detail-workspace .ai-agent-loop__identity {
+  color: var(--color-agent-accent);
+  font-size: 12px;
+}
+
+.ai-agent-loop--detail-workspace .ai-agent-loop__header small {
+  font-size: 11px;
+}
+
+.ai-agent-loop--detail-workspace .ai-agent-loop__trace[open] {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.ai-agent-loop--detail-workspace .ai-agent-loop__trace > summary {
+  min-height: 58px;
+}
+
+.ai-agent-loop--detail-workspace .ai-agent-loop__trace > summary strong {
+  font-size: 13px;
+}
+
+.ai-agent-loop--detail-workspace .ai-agent-loop__trace > summary small {
+  font-size: 11px;
+}
+
+.ai-agent-loop--detail-workspace .ai-agent-timeline {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  overflow: auto;
+  padding: 10px 4px 30px;
+  scrollbar-gutter: stable;
+}
+
+.ai-agent-loop--detail-workspace .ai-agent-tool-step > summary {
+  min-height: 48px;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto 16px;
+  gap: 12px;
+}
+
+.ai-agent-loop--detail-workspace .ai-agent-tool-step__copy strong,
+.ai-agent-loop--detail-workspace .ai-agent-timeline__step strong {
+  font-size: 12px;
+}
+
+.ai-agent-loop--detail-workspace .ai-agent-tool-step__copy small,
+.ai-agent-loop--detail-workspace .ai-agent-tool-step__status,
+.ai-agent-loop--detail-workspace .ai-agent-tool-step time,
+.ai-agent-loop--detail-workspace .ai-agent-timeline__narrative p {
+  font-size: 11px;
+}
+
+.ai-agent-loop--detail-workspace .ai-agent-tool-step__details {
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+  gap: 16px;
+  padding: 8px 18px 18px 30px;
+}
+
+.ai-agent-loop--detail-workspace .ai-agent-tool-step__raw {
+  grid-column: 1 / -1;
+}
+
+.ai-agent-loop--detail-workspace .ai-agent-tool-step__details pre {
+  max-height: min(48vh, 520px);
+}
+
+.ai-agent-loop--detail-workspace .ai-agent-loop__phase {
+  min-height: 48px;
+}
+
+@media (max-width: 720px) {
+  .ai-agent-loop--detail-workspace {
+    inset: 0;
+    border: 0;
+    border-radius: 0;
+    padding: 0 14px;
+  }
+
+  .ai-agent-loop--detail-workspace .ai-agent-tool-step > summary {
+    grid-template-columns: 18px minmax(0, 1fr) auto 16px;
+  }
+
+  .ai-agent-loop--detail-workspace .ai-agent-tool-step__status {
+    display: none;
+  }
+
+  .ai-agent-loop--detail-workspace .ai-agent-tool-step__details {
+    padding-left: 24px;
+  }
 }
 
 .ai-agent-runbar__pulse {

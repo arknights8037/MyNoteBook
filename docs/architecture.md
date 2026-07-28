@@ -44,7 +44,7 @@ Vue/Tiptap 编辑状态
 用户消息或 Slash Command
   -> useAgentRun
   -> AgentRun Command / Event / Reducer
-  -> Plan scheduler + intent strategy
+  -> Lifecycle state machine + intent strategy
   -> Context Bundle + ExecutionPolicy
   -> AI SDK ToolLoopAgent
   -> 内置 Tools / MCP / Skills

@@ -60,4 +60,25 @@ describe('agentRunSnapshot', () => {
     expect(plan?.foundTargetScope).toBe(true)
     expect(plan?.task.contextScope).toBe('current_document')
   })
+
+  it('allows an Agent run without an editable current document', () => {
+    const settings = createAiSettings('openai')
+    settings.model = 'test-model'
+    const snapshot = captureAgentRunSnapshot({
+      prompt: '检查本机开发环境并给出建议',
+      requestedMode: 'agent',
+      settings,
+      document: {
+        id: '', title: '', tags: [], sourceUrl: '', author: '', text: '', revision: null,
+        blocks: [], selectedBlocks: [], hasBlockSelection: false, documents: [],
+      },
+    })
+
+    const plan = createAgentEditPlan({ snapshot, mode: 'agent', createId: () => 'task-free' })
+
+    expect(plan).not.toBeNull()
+    expect(plan?.expectedRevision).toBe(0)
+    expect(plan?.targetBlocks).toEqual([])
+    expect(plan?.task.sessionId).toBe('')
+  })
 })

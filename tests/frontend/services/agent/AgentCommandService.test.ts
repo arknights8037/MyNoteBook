@@ -169,6 +169,22 @@ describe('AgentCommandService', () => {
     })
   })
 
+  it('creates a root document when no current document exists', async () => {
+    const patches = await createAgentCommandPatches({
+      command: { tool: 'create_document', title: '环境检查', content: '# 环境检查\n\n正文' },
+      taskId: 'task',
+      documentId: '',
+      expectedVersion: 0,
+      blocks: [],
+      createId: () => 'new-document',
+    })
+
+    expect(patches[0]).toMatchObject({
+      operation: 'create_document',
+      parentDocumentId: null,
+    })
+  })
+
   it('allows a document proposal under a group discovered during the task', async () => {
     const patches = await createAgentCommandPatches({
       command: {

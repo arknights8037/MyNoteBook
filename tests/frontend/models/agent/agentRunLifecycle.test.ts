@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 import {
   createIdleAgentRunLifecycle,
   reduceAgentRunEvent,
-  scheduleAgentRun,
   type AgentPlanStep,
   type AgentRunEvent,
 } from '@/models/agent/agentRunLifecycle'
@@ -40,26 +39,6 @@ describe('agentRunLifecycle', () => {
     expect(state.phase).toBe('waiting_user')
     expect(state.currentStepId).toBe('tool')
     expect(state.pendingApproval).toMatchObject({ id: 'approval-1', stepId: 'tool' })
-    expect(scheduleAgentRun(state)).toEqual({ type: 'WAIT', reason: 'user' })
-  })
-
-  it('lets the scheduler derive the next runnable step from dependencies', () => {
-    let state = reduceAgentRunEvent(createIdleAgentRunLifecycle(), {
-      type: 'TaskCreated',
-      runId: 'run-1',
-      goal: '整理资料',
-      occurredAt: 1,
-    })
-    state = reduceAgentRunEvent(state, { type: 'PlanGenerated', steps, occurredAt: 2 })
-    expect(scheduleAgentRun(state)).toEqual({ type: 'EXECUTE_STEP', stepId: 'reason' })
-
-    state = reduceAgentRunEvent(state, { type: 'StepStarted', stepId: 'reason', occurredAt: 3 })
-    state = reduceAgentRunEvent(state, {
-      type: 'StepSucceeded',
-      stepId: 'reason',
-      occurredAt: 4,
-    })
-    expect(scheduleAgentRun(state)).toEqual({ type: 'EXECUTE_STEP', stepId: 'tool' })
   })
 
   it('keeps tool-call failure separate from the run terminal lifecycle', () => {

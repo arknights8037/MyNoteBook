@@ -56,7 +56,7 @@ export const AGENT_TOOL_REGISTRY: readonly AgentToolDefinition[] = [
   {
     name: 'read_document',
     description:
-      '按文档 ID 分页读取 revision、canonical Markdown 和稳定 block id；结果截断时使用 nextCursor，已知目标块时使用 blockIds。',
+      '按文档 ID 分页读取 revision、canonical Markdown 和稳定 block id；结果截断时使用 nextCursor，已知目标块时使用 blockIds。结构化块修改必须以返回的 canonical Markdown 为基线。',
     risk: 'read',
     requiresConfirmation: false,
     maxCallsPerTask: 32,
@@ -72,7 +72,8 @@ export const AGENT_TOOL_REGISTRY: readonly AgentToolDefinition[] = [
   },
   {
     name: 'read_mind_map',
-    description: '按稳定节点 ID 分层读取思维导图子树；可限制深度和节点数，并按需包含注释与来源。',
+    description:
+      '按稳定节点 ID 分层读取思维导图子树；未知导图 ID 时先用 list_mind_maps 定位，可限制深度和节点数并按需包含注释与来源。',
     risk: 'read',
     requiresConfirmation: false,
     maxCallsPerTask: 24,
@@ -106,7 +107,7 @@ export const AGENT_TOOL_REGISTRY: readonly AgentToolDefinition[] = [
   {
     name: 'report_progress',
     description:
-      '向用户报告简短、可验证的阶段决策摘要，包括当前判断、依据的 Observation 和下一步动作；不得输出隐藏思维链。',
+      '长任务、计划显著变化或等待时，向用户报告简短、可验证的阶段摘要；普通工具步骤无需调用，不得输出隐藏思维链。',
     risk: 'read',
     requiresConfirmation: false,
     maxCallsPerTask: 36,
@@ -213,7 +214,7 @@ export const AGENT_TOOL_REGISTRY: readonly AgentToolDefinition[] = [
   {
     name: 'submit_document_edits',
     description:
-      '按文档分组提交一批复杂或跨文档修改；目标必须来自本次读取且互不重叠，只进入确认队列。',
+      '按文档分组提交一批复杂或跨文档修改；每个文档只声明一次，replace 使用 targetBlockIds，插入使用 anchorBlockId，目标必须来自本次读取且互不重叠。只进入确认队列。',
     risk: 'write',
     requiresConfirmation: true,
     maxCallsPerTask: 4,

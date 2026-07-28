@@ -128,24 +128,26 @@ export async function prepareAgentRun(input: {
 
   let editPlan: AgentEditPlan | null = null
   if (mode === 'edit' || mode === 'agent') {
-    const flushResult = await options.document.flushBeforeEdit()
-    if (!flushResult.ok) {
-      return { ok: false, error: '当前文档保存失败，暂不能发起 Agent 修改。' }
-    }
-    if (snapshot.document.id === activeDocumentId) {
-      snapshot.document.revision = flushResult.revision ?? snapshot.document.revision
-      snapshot.explicitTargets = snapshot.explicitTargets.map((target) =>
-        target.kind === 'document' && target.id === activeDocumentId
-          ? {
-              ...target,
-              revision: snapshot.document.revision ?? undefined,
-              content: target.content?.replace(
-                /revision=(?:unknown|\d+)/g,
-                `revision=${snapshot.document.revision ?? 'unknown'}`,
-              ),
-            }
-          : target,
-      )
+    if (snapshot.document.id) {
+      const flushResult = await options.document.flushBeforeEdit()
+      if (!flushResult.ok && mode === 'edit') {
+        return { ok: false, error: '当前文档保存失败，暂不能发起文档修改。' }
+      }
+      if (flushResult.ok && snapshot.document.id === activeDocumentId) {
+        snapshot.document.revision = flushResult.revision ?? snapshot.document.revision
+        snapshot.explicitTargets = snapshot.explicitTargets.map((target) =>
+          target.kind === 'document' && target.id === activeDocumentId
+            ? {
+                ...target,
+                revision: snapshot.document.revision ?? undefined,
+                content: target.content?.replace(
+                  /revision=(?:unknown|\d+)/g,
+                  `revision=${snapshot.document.revision ?? 'unknown'}`,
+                ),
+              }
+            : target,
+        )
+      }
     }
     snapshot.document = await hydrateCanonicalDocumentSnapshot(snapshot.document, options.document)
     editPlan = createAgentEditPlan({ snapshot, mode, createId: options.createId })

@@ -104,8 +104,14 @@ export function restrictToolsForIntent(policy: ExecutionPolicy, intent: AgentRun
     'request_authorizer_input',
     'report_progress',
   ]
+  const diagnosticReadTools = [
+    'execute_shell',
+    'inspect_environment_paths',
+    'discover_local_tools',
+    'get_system_info',
+  ]
   if (intent === 'plan' || intent === 'research' || intent === 'review' || intent === 'learning') {
-    policy.allowedTools = [...sharedReadTools, 'mcp:*']
+    policy.allowedTools = [...sharedReadTools, ...diagnosticReadTools, 'mcp:*']
     policy.allowWriteProposals = false
     policy.riskLevel = 'read_only'
     return

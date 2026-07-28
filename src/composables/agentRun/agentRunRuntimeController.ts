@@ -289,7 +289,6 @@ export function createAgentRunRuntimeController(createId: () => string) {
     complete,
     fail,
     cancel,
-    schedule: () => engine.schedule(),
     reset,
   }
 }

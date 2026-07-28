@@ -85,7 +85,7 @@ export async function createAgentCommandPatches(input: {
         documentTitle: title,
         parentDocumentId:
           input.command.parentDocumentId === undefined
-            ? input.documentId
+            ? input.documentId || null
             : input.command.parentDocumentId,
       },
     ]

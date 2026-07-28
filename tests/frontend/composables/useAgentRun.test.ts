@@ -334,6 +334,7 @@ describe('useAgentRun', () => {
     expect(agentLoop.mock.calls[0]?.[0].executionPolicy.allowedTools).not.toContain(
       'submit_document_edits',
     )
+    expect(agentLoop.mock.calls[0]?.[0].executionPolicy.allowedTools).toContain('execute_shell')
     expect(agentLoop.mock.calls[0]?.[0].outputContract?.id).toBe('research-result')
     expect(run.messages.value.at(-1)?.researchResult?.items[0]?.kind).toBe('claim')
     expect(run.messages.value.at(-1)?.cognitiveProvenance).toMatchObject({

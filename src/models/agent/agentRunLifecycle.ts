@@ -79,13 +79,6 @@ export type AgentRunEvent =
   | (AgentRunEventBase & { type: 'RunFailed'; error: string })
   | (AgentRunEventBase & { type: 'RunCancelled' })
 
-export type AgentRunScheduleAction =
-  | { type: 'WAIT'; reason: 'user' | 'external' }
-  | { type: 'EXECUTE_STEP'; stepId: string }
-  | { type: 'COMPLETE' }
-  | { type: 'BLOCKED' }
-  | { type: 'STOP' }
-
 export function createIdleAgentRunLifecycle(): AgentRunLifecycleState {
   return {
     id: null,
@@ -184,28 +177,6 @@ export function reduceAgentRunEvent(
   }
 }
 
-export function scheduleAgentRun(state: AgentRunLifecycleState): AgentRunScheduleAction {
-  if (state.phase === 'waiting_user') return { type: 'WAIT', reason: 'user' }
-  if (state.phase === 'waiting_external') return { type: 'WAIT', reason: 'external' }
-  if (isTerminalPhase(state.phase)) return { type: 'STOP' }
-
-  const running = state.plan.find((step) => step.status === 'running')
-  if (running) return { type: 'EXECUTE_STEP', stepId: running.id }
-
-  const succeeded = new Set(
-    state.plan.filter((step) => step.status === 'succeeded').map((step) => step.id),
-  )
-  const runnable = state.plan.find(
-    (step) =>
-      step.status === 'pending' && step.dependsOn.every((dependency) => succeeded.has(dependency)),
-  )
-  if (runnable) return { type: 'EXECUTE_STEP', stepId: runnable.id }
-  if (state.plan.length > 0 && state.plan.every((step) => step.status === 'succeeded')) {
-    return { type: 'COMPLETE' }
-  }
-  return { type: 'BLOCKED' }
-}
-
 function cloneStep(step: AgentPlanStep): AgentPlanStep {
   return { ...step, dependsOn: [...step.dependsOn] }
 }
@@ -242,8 +213,4 @@ function terminalState(
     error,
     completedAt,
   }
-}
-
-function isTerminalPhase(phase: AgentRunPhase): boolean {
-  return phase === 'completed' || phase === 'failed' || phase === 'cancelled'
 }

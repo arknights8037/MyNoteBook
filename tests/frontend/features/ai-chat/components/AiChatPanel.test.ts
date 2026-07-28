@@ -201,6 +201,21 @@ describe('AiChatPanel runtime visibility', () => {
     expect(wrapper.find('button[aria-label="停止 Agent"]').exists()).toBe(false)
   })
 
+  it('opens runtime details in a wide workspace outside the message width', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+    const expand = wrapper.get('button[aria-label="在宽视图中展开运行详情"]')
+
+    await expand.trigger('click')
+
+    const wideView = wrapper.get('.ai-agent-loop--detail-workspace')
+    expect(wideView.attributes('role')).toBe('dialog')
+    expect(Reflect.get(wideView.get('.ai-agent-loop__trace').element, 'open')).toBe(true)
+
+    globalThis.dispatchEvent(new globalThis.KeyboardEvent('keydown', { key: 'Escape' }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.ai-agent-loop').classes()).not.toContain('ai-agent-loop--detail-workspace')
+  })
+
   it('opens an internal document directly from a tool result', async () => {
     const wrapper = createWrapper(runtimeState('completed'))
 

@@ -9,6 +9,8 @@ import {
   ExternalLink,
   FileText,
   LoaderCircle,
+  Maximize2,
+  Minimize2,
   Square,
 } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -34,7 +36,18 @@ const emit = defineEmits<{
 }>()
 
 const runtimeClock = ref(Date.now())
+const detailWorkspaceOpen = ref(false)
 let runtimeClockTimer: ReturnType<typeof globalThis.setInterval> | null = null
+
+function toggleDetailWorkspace(): void {
+  detailWorkspaceOpen.value = !detailWorkspaceOpen.value
+}
+
+function handleDetailWorkspaceKeydown(
+  event: InstanceType<typeof globalThis.KeyboardEvent>,
+): void {
+  if (event.key === 'Escape' && detailWorkspaceOpen.value) detailWorkspaceOpen.value = false
+}
 
 // Pre-computed lookup map: toolCallId -> toolCall (eliminates O(n) find per template access)
 const toolCallMap = computed(() => {
@@ -304,36 +317,63 @@ watch(
   { immediate: true },
 )
 
+watch(
+  detailWorkspaceOpen,
+  (open) => {
+    if (open) globalThis.addEventListener('keydown', handleDetailWorkspaceKeydown)
+    else globalThis.removeEventListener('keydown', handleDetailWorkspaceKeydown)
+  },
+)
+
 onBeforeUnmount(() => {
   if (runtimeClockTimer) globalThis.clearInterval(runtimeClockTimer)
+  globalThis.removeEventListener('keydown', handleDetailWorkspaceKeydown)
 })
 </script>
 
 <template>
-  <section
-    class="ai-agent-loop"
-    :class="`ai-agent-loop--${state.status}`"
-    role="status"
-    aria-label="Agent 运行轨迹"
-  >
+  <Teleport to="body" :disabled="!detailWorkspaceOpen">
+    <section
+      class="ai-agent-loop"
+      :class="[
+        `ai-agent-loop--${state.status}`,
+        { 'ai-agent-loop--detail-workspace': detailWorkspaceOpen },
+      ]"
+      :role="detailWorkspaceOpen ? 'dialog' : 'status'"
+      :aria-modal="detailWorkspaceOpen ? 'true' : undefined"
+      aria-label="Agent 运行轨迹"
+    >
     <header class="ai-agent-loop__header">
       <span class="ai-agent-loop__identity"><Activity :size="14" /> Agent loop</span>
       <small>{{ runtimeMeta }} · {{ providerLabel }} / {{ model }}</small>
-      <button
-        v-if="active"
-        type="button"
-        aria-label="停止 Agent"
-        title="停止 Agent"
-        @click="emit('stop')"
-      >
-        <Square :size="12" fill="currentColor" />
-      </button>
+      <span class="ai-agent-loop__actions">
+        <button
+          v-if="hasTimeline"
+          type="button"
+          class="ai-agent-loop__expand"
+          :aria-label="detailWorkspaceOpen ? '退出宽视图' : '在宽视图中展开运行详情'"
+          :title="detailWorkspaceOpen ? '退出宽视图' : '展开运行详情'"
+          @click="toggleDetailWorkspace"
+        >
+          <Minimize2 v-if="detailWorkspaceOpen" :size="13" />
+          <Maximize2 v-else :size="13" />
+        </button>
+        <button
+          v-if="active"
+          type="button"
+          aria-label="停止 Agent"
+          title="停止 Agent"
+          @click="emit('stop')"
+        >
+          <Square :size="12" fill="currentColor" />
+        </button>
+      </span>
     </header>
 
     <details
       v-if="hasTimeline"
       class="ai-agent-loop__trace"
-      :open="isTraceInitiallyOpen"
+      :open="detailWorkspaceOpen || isTraceInitiallyOpen"
     >
       <summary class="ai-agent-loop__trace-summary">
         <span>
@@ -527,5 +567,6 @@ onBeforeUnmount(() => {
       <CircleX v-else :size="14" class="ai-agent-loop__error" aria-hidden="true" />
       <strong>{{ state.detail || step || '正在分析上下文' }}</strong>
     </div>
-  </section>
+    </section>
+  </Teleport>
 </template>

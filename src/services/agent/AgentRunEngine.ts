@@ -1,11 +1,9 @@
 import {
   createIdleAgentRunLifecycle,
   reduceAgentRunEvent,
-  scheduleAgentRun,
   type AgentPlanStep,
   type AgentRunEvent,
   type AgentRunLifecycleState,
-  type AgentRunScheduleAction,
 } from '@/models/agent/agentRunLifecycle'
 
 export type AgentRunCommand =
@@ -50,10 +48,6 @@ export class AgentRunEngine {
       this.onEvent?.(event, this.currentState)
     }
     return this.currentState
-  }
-
-  schedule(): AgentRunScheduleAction {
-    return scheduleAgentRun(this.currentState)
   }
 
   reset(): void {
