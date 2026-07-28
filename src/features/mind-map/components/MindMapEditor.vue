@@ -47,6 +47,7 @@ let pendingExternalContent: MindMapContent | null = null
 const selectedNodeId = ref<string | null>(null)
 const rootSelected = computed(() => selectedNodeId.value === props.content.rootNodeId)
 const contextNodeId = ref<string | null>(null)
+const contextMenuOpen = ref(false)
 let panPointerId: number | null = null
 let panX = 0
 let panY = 0
@@ -266,6 +267,7 @@ function topicFromTarget(
 }
 
 function handlePointerDown(event: InstanceType<typeof globalThis.PointerEvent>): void {
+  if (event.button === 0) contextMenuOpen.value = false
   const target = event.target
   // The edit overlay is a sibling of <me-tpc>, so it looks like blank canvas to the
   // custom pan handler. Let it receive its native pointer/focus events untouched.
@@ -451,7 +453,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <ContextMenuRoot :modal="false">
+  <ContextMenuRoot v-model:open="contextMenuOpen" :modal="false">
     <ContextMenuTrigger as-child>
       <div
         class="mind-map-editor-shell"

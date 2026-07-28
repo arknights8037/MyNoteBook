@@ -1,6 +1,8 @@
 # 后续开发路线图
 
-本文只维护尚未完成的工作。已完成实现以 [当前架构](architecture.md)、[Agent Runtime](agent-runtime.md) 和代码测试为准，历史过程通过 Git 追溯。
+本文只维护尚未完成的工作。产品方向以 [产品定位与愿景](product-positioning.md) 为准；已完成实现以 [当前架构](architecture.md)、[Agent Runtime](agent-runtime.md) 和代码测试为准，历史过程通过 Git 追溯。
+
+路线图中的技术阶段最终服务于“收集 → 理解 → 组织 → 委派 → 表达 → 沉淀”的持续工作循环。任何新增里程碑都需要说明它修复了哪一种工作断裂、如何保留上下文，以及结果如何在下一轮工作中复用。
 
 ## 总体策略
 

@@ -272,7 +272,7 @@ pub fn run() {
         .setup(|app| {
             #[cfg(target_os = "windows")]
             if let Some(window) = app.get_webview_window("main") {
-                let hwnd = window.hwnd()?.0 as *mut core::ffi::c_void;
+                let hwnd = window.hwnd()?.0;
                 let corner_preference = DWMWCP_ROUND;
                 unsafe {
                     apply_fixed_light_acrylic(hwnd);

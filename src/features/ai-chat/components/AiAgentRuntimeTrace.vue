@@ -111,20 +111,6 @@ function getRuntimeMeta(state: AgentRuntimeViewState): string {
   return items.join(' · ')
 }
 
-function getRuntimeTimelineEvents(state: AgentRuntimeViewState): AgentTimelineEvent[] {
-  if (state.timelineEvents?.length) return state.timelineEvents
-  return state.toolCalls.map((call) => ({
-    id: `tool:${call.id}`,
-    kind: 'tool',
-    status:
-      call.status === 'running' ? 'running' : call.status === 'completed' ? 'completed' : 'failed',
-    detail: summarizeToolResult(call),
-    occurredAt: call.startedAt,
-    completedAt: call.completedAt,
-    toolCallId: call.id,
-  }))
-}
-
 function isRuntimeTraceInitiallyOpen(state: AgentRuntimeViewState): boolean {
   return (
     state.status === 'running' || state.status === 'waiting_authorizer' || state.status === 'failed'
@@ -212,14 +198,6 @@ function formatMcpToolLabel(toolName: string): string {
 }
 
 type RuntimeToolCall = AgentRuntimeViewState['toolCalls'][number]
-
-function getTimelineTool(
-  event: AgentTimelineEvent,
-  state: AgentRuntimeViewState,
-): RuntimeToolCall | null {
-  if (!event.toolCallId) return null
-  return state.toolCalls.find((call) => call.id === event.toolCallId) ?? null
-}
 
 function getTimelineStepTitle(event: AgentTimelineEvent): string {
   if (event.kind === 'retry') return '正在重试'

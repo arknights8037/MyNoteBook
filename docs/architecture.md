@@ -1,10 +1,12 @@
 # 当前架构与模块边界
 
-本文是 MyNoteBook 当前架构的事实入口。它描述已经存在的实现、代码所有权和必须保持的依赖方向；认知系统契约与后续设计见 [认知系统集成设计](cognitive-system-integration.md)，未完成事项见 [后续开发路线图](roadmap.md)。
+本文是 MyNoteBook 当前架构的事实入口。它描述已经存在的实现、代码所有权和必须保持的依赖方向。产品定位、工作循环与品牌原则见 [产品定位与愿景](product-positioning.md)；认知系统契约与后续设计见 [认知系统集成设计](cognitive-system-integration.md)，未完成事项见 [后续开发路线图](roadmap.md)。
 
 ## 1. 产品与技术边界
 
-MyNoteBook 是 Vue 3 + Tiptap 前端、Tauri/Rust 桌面壳和 SQLite 本地存储组成的单机应用，不是 React 应用，也不是由多个服务组成的分布式系统。
+MyNoteBook 的产品类别是本地优先的 AI 桌面工作中枢。它通过收集、理解、组织、委派、表达和沉淀的持续循环，为知识工作保留可继续的上下文。当前技术实现由 Vue 3 + Tiptap 前端、Tauri/Rust 桌面壳和 SQLite 本地存储组成，是单机桌面应用，不是 React 应用，也不是由多个服务组成的分布式系统。
+
+产品愿景不能改变当前事实边界：尚未实现的信息来源、后台能力和外部应用接入必须明确标记为未来方向；Agent、View 和模型输出不能被宣传或实现为绕过用户判断的第二事实源。
 
 当前系统包含八个相互约束的领域：
 
@@ -108,13 +110,13 @@ Rust command 应立即委托给对应模块。数据库访问必须复用 `datab
 
 扁平层只用于模块入口，业务文件必须继续按领域放入二级目录：
 
-| 区域 | 二级模块 |
-| --- | --- |
-| `src/services` | `agent`、`ai`、`automation`、`cognitive`、`documents`、`knowledge`、`integrations`、`security`、`workspace`、`appearance`、`ports` |
-| `src/models` | `agent`、`ai`、`automation`、`cognitive`、`documents`、`knowledge`、`integrations`、`workspace`、`settings`、`shared` |
-| `src/repositories` | `agent`、`audit`、`automation`、`cognitive`、`documents`、`knowledge`、`workspace`、`shared` |
-| `src/editor` | `components`、`blocks`、`core`、`commands`、`formatting`、`io`、`composables` |
-| `src/infrastructure/database` | `agent`、`audit`、`automation`、`cognitive`、`documents`、`knowledge`、`workspace`、`shared` |
+| 区域                          | 二级模块                                                                                                                           |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `src/services`                | `agent`、`ai`、`automation`、`cognitive`、`documents`、`knowledge`、`integrations`、`security`、`workspace`、`appearance`、`ports` |
+| `src/models`                  | `agent`、`ai`、`automation`、`cognitive`、`documents`、`knowledge`、`integrations`、`workspace`、`settings`、`shared`              |
+| `src/repositories`            | `agent`、`audit`、`automation`、`cognitive`、`documents`、`knowledge`、`workspace`、`shared`                                       |
+| `src/editor`                  | `components`、`blocks`、`core`、`commands`、`formatting`、`io`、`composables`                                                      |
+| `src/infrastructure/database` | `agent`、`audit`、`automation`、`cognitive`、`documents`、`knowledge`、`workspace`、`shared`                                       |
 
 跨模块引用统一使用 `@/` 别名，模块内部不通过旧目录位置建立隐式耦合。前端单元与集成测试保存在 `tests/frontend`，目录结构镜像 `src`，并与源码一起纳入版本控制和 lint。
 

@@ -38,7 +38,6 @@ export interface ToolExecutorFactoryInput {
     toolResult: unknown,
     documentId: string,
   ) => ReadableDocument | null
-  prepareReadDocumentObservation: (rawResult: unknown) => unknown
 }
 
 export function createExecuteToolCallback(input: ToolExecutorFactoryInput) {
@@ -55,7 +54,6 @@ export function createExecuteToolCallback(input: ToolExecutorFactoryInput) {
     executeAgentTool,
     executeRustAgentTool,
     parseReadDocumentProvenance,
-    prepareReadDocumentObservation,
   } = input
 
   return async (request: AgentToolRequest): Promise<AgentToolExecutionResult> => {
