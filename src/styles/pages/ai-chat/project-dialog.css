@@ -70,6 +70,56 @@
   font-weight: 650;
 }
 
+.ai-chat-project-dialog__workspace-search {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: grid;
+  min-height: 36px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 8px;
+  padding: 0 9px;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-elevated);
+}
+
+.ai-chat-project-dialog__workspace-search:focus-within {
+  border-color: var(--color-agent-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-agent-accent) 11%, transparent);
+}
+
+.ai-chat-project-dialog__workspace-search input {
+  min-width: 0;
+  height: 34px;
+  border: 0;
+  outline: 0;
+  color: var(--color-text-primary);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+}
+
+.ai-chat-project-dialog__workspace-search button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  padding: 0;
+  color: var(--color-text-tertiary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.ai-chat-project-dialog__workspace-search button:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-subtle);
+}
+
 .ai-chat-project-dialog__workspace {
   display: grid;
   min-height: 38px;

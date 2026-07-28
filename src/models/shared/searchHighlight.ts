@@ -28,5 +28,6 @@ export function splitHighlight(text: string, query: string): HighlightSegment[] 
  * Check if text contains the query (case-insensitive).
  */
 export function matchesFilter(text: string, query: string): boolean {
-  return query.trim() !== '' && text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+  return query.trim() !== '' && matchesSearchFields(query, [{ text }])
 }
+import { matchesSearchFields } from './searchRanking'

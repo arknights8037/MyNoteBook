@@ -154,6 +154,25 @@ describe('AiChatPanel runtime visibility', () => {
     expect(wrapper.emitted('update:prompt')?.at(-1)).toEqual(['@差旅制度 '])
   })
 
+  it('fuzzily matches document titles and group paths in the @ selector', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+    await wrapper.setProps({
+      prompt: '@amvp',
+      targetOptions: [
+        {
+          kind: 'document',
+          id: 'runtime-note',
+          title: 'Agent 维护计划',
+          subtitle: 'Agent MVP / 工程 · 知识库页面',
+        },
+        { kind: 'document', id: 'other', title: '会议纪要', subtitle: '日常 · 知识库页面' },
+      ],
+    })
+
+    expect(wrapper.findAll('.ai-target-menu button')).toHaveLength(1)
+    expect(wrapper.get('.ai-target-menu').text()).toContain('Agent 维护计划')
+  })
+
   it('shows and clears one item from the multi-target mode', async () => {
     const wrapper = createWrapper(runtimeState('completed'))
     await wrapper.setProps({
@@ -598,6 +617,37 @@ describe('AiChatPanel runtime visibility', () => {
     expect(wrapper.emitted('new-task')?.at(-1)).toEqual(['project-1'])
   })
 
+  it('filters project workspace groups before updating the selection', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+    await wrapper.setProps({
+      docked: true,
+      currentProjectId: 'project-1',
+      currentWorkspaceRootIds: [],
+      projects: [
+        {
+          id: 'project-1',
+          name: 'Runtime',
+          workspaceRootIds: [],
+          pinnedAt: null,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+      workspaceOptions: [
+        { label: 'Agent MVP', value: 'group-agent', searchText: '工具协议' },
+        { label: 'Studio Site', value: 'group-studio', searchText: '视觉规范' },
+      ],
+    })
+
+    await wrapper.get('button[aria-label="配置项目：Runtime"]').trigger('click')
+    await wrapper.get('input[aria-label="筛选项目文档分组"]').setValue('工具协议')
+    expect(wrapper.findAll('.ai-chat-workspace-settings fieldset > label')).toHaveLength(1)
+    expect(wrapper.get('.ai-chat-workspace-settings fieldset > label').text()).toContain('Agent MVP')
+
+    await wrapper.get('.ai-chat-workspace-settings input[type="checkbox"]').setValue(true)
+    expect(wrapper.emitted('update-workspace')?.at(-1)).toEqual(['project-1', ['group-agent']])
+  })
+
   it('inherits the selected project from the main new-task button', async () => {
     const wrapper = createWrapper(runtimeState('completed'))
     await wrapper.setProps({
@@ -680,6 +730,31 @@ describe('AiChatPanel runtime visibility', () => {
     expect(wrapper.emitted('create-project')?.at(-1)).toEqual([
       { name: 'StudioSite', workspaceRootIds: ['group-studio'] },
     ])
+  })
+
+  it('filters workspace groups by compact title or contained page metadata', async () => {
+    const wrapper = createWrapper(runtimeState('completed'))
+    await wrapper.setProps({
+      docked: true,
+      workspaceOptions: [
+        {
+          label: 'Agent MVP',
+          value: 'group-agent',
+          searchText: 'Runtime 维护计划 工具协议',
+        },
+        { label: 'Studio Site', value: 'group-studio', searchText: '视觉规范' },
+      ],
+    })
+
+    await wrapper.get('button[aria-label="新建 Agent 项目"]').trigger('click')
+    const search = wrapper.get('input[aria-label="搜索文档分组"]')
+    await search.setValue('agntmvp')
+    expect(wrapper.findAll('.ai-chat-project-dialog__workspace')).toHaveLength(1)
+    expect(wrapper.get('.ai-chat-project-dialog__workspace').text()).toContain('Agent MVP')
+
+    await search.setValue('工具协议')
+    expect(wrapper.findAll('.ai-chat-project-dialog__workspace')).toHaveLength(1)
+    expect(wrapper.get('.ai-chat-project-dialog__workspace').text()).toContain('Agent MVP')
   })
 
   it('can create an empty project without requiring a name or workspace', async () => {

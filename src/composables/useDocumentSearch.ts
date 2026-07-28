@@ -2,6 +2,7 @@ import { computed, getCurrentScope, onScopeDispose, ref, watch, type Ref } from 
 
 import type { DocumentId, DocumentSummary } from '@/models/documents/document'
 import { displayDocumentTitle } from '@/models/documents/documentPresentation'
+import { rankSearchItems } from '@/models/shared/searchRanking'
 
 interface DocumentSearchOptions {
   documents: Ref<DocumentSummary[]>
@@ -22,29 +23,31 @@ export function useDocumentSearch(options: DocumentSearchOptions) {
   let searchGeneration = 0
 
   const searchResults = computed(() => {
-    const query = searchQuery.value.trim().toLocaleLowerCase()
+    const query = searchQuery.value.trim()
     if (!query) return []
 
-    const localResults = options.documents.value.filter((document) => {
-      const searchableText = [
-        displayDocumentTitle(document),
-        document.plainText,
-        document.tags.join(' '),
-        document.sourceUrl,
-        document.author,
-        document.description,
-      ]
-        .join('\n')
-        .toLocaleLowerCase()
-      return searchableText.includes(query)
-    })
+    const fields = (document: DocumentSummary) => [
+      { text: displayDocumentTitle(document), weight: 3 },
+      { text: document.tags.join(' '), weight: 1.8 },
+      { text: document.description, weight: 1.3 },
+      { text: document.plainText, weight: 1 },
+      { text: document.sourceUrl, weight: 0.8 },
+      { text: document.author, weight: 0.8 },
+    ]
+    const localResults = rankSearchItems(options.documents.value, query, fields)
 
     const seen = new Set<DocumentId>()
-    return [...remoteResults.value, ...localResults].filter((document) => {
+    const uniqueResults = [...remoteResults.value, ...localResults].filter((document) => {
       if (seen.has(document.id)) return false
       seen.add(document.id)
       return true
     })
+    const rankedResults = rankSearchItems(uniqueResults, query, fields)
+    const rankedIds = new Set(rankedResults.map((document) => document.id))
+    return [
+      ...rankedResults,
+      ...uniqueResults.filter((document) => !rankedIds.has(document.id)),
+    ]
   })
 
   watch(

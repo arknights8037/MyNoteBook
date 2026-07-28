@@ -10,8 +10,10 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Pin,
+  Search,
   SlidersHorizontal,
   Trash2,
+  X,
 } from '@lucide/vue'
 import {
   DropdownMenuContent,
@@ -23,6 +25,7 @@ import {
 import { computed, ref } from 'vue'
 
 import { UNGROUPED_AGENT_PROJECT_ID, type AgentProject } from '@/models/ai/aiChatHistory'
+import { rankSearchItems } from '@/models/shared/searchRanking'
 import type { AiChatPanelHistoryItem, AiChatWorkspaceOption } from './aiChatPanelTypes'
 
 type BrowserEvent = InstanceType<typeof globalThis.Event>
@@ -54,9 +57,16 @@ const emit = defineEmits<{
 }>()
 
 const showWorkspaceSettings = ref(false)
+const workspaceFilterQuery = ref('')
 const collapsedProjectIds = ref<Set<string>>(new Set())
 const ungroupedHistory = computed(() =>
   props.chatHistory.filter((item) => item.projectId === UNGROUPED_AGENT_PROJECT_ID),
+)
+const filteredWorkspaceOptions = computed(() =>
+  rankSearchItems(props.workspaceOptions, workspaceFilterQuery.value, (option) => [
+    { text: option.label, weight: 3 },
+    { text: option.searchText ?? '', weight: 1 },
+  ]),
 )
 
 function toggleProjectExpanded(projectId: string): void {
@@ -92,6 +102,7 @@ function openProjectSettings(projectId: string): void {
   if (props.currentProjectId !== projectId) emit('select-project', projectId)
   showWorkspaceSettings.value =
     props.currentProjectId === projectId ? !showWorkspaceSettings.value : true
+  if (showWorkspaceSettings.value) workspaceFilterQuery.value = ''
 }
 
 function deleteProject(project: AgentProject): void {
@@ -359,7 +370,27 @@ function formatHistoryTime(timestamp: number): string {
           </label>
           <fieldset>
             <legend>允许检索的文档分组</legend>
-            <label v-for="option in workspaceOptions" :key="option.value">
+            <div v-if="workspaceOptions.length" class="ai-chat-workspace-settings__search">
+              <Search :size="13" aria-hidden="true" />
+              <input
+                v-model="workspaceFilterQuery"
+                type="search"
+                placeholder="搜索分组或页面"
+                aria-label="筛选项目文档分组"
+              />
+              <button
+                v-if="workspaceFilterQuery"
+                type="button"
+                aria-label="清空项目分组搜索"
+                @click="workspaceFilterQuery = ''"
+              >
+                <X :size="12" />
+              </button>
+            </div>
+            <small v-if="workspaceOptions.length && filteredWorkspaceOptions.length === 0">
+              没有匹配的文档分组
+            </small>
+            <label v-for="option in filteredWorkspaceOptions" :key="option.value">
               <input
                 type="checkbox"
                 :checked="currentWorkspaceRootIds.includes(option.value)"

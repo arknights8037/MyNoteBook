@@ -1,6 +1,7 @@
 import { computed, nextTick, ref, type Ref } from 'vue'
 
 import type { AgentExplicitTarget, AgentTargetOption } from '@/models/agent/agentTarget'
+import { rankSearchItems } from '@/models/shared/searchRanking'
 import {
   filterAgentSlashCommands,
   resolveAgentSlashCommand,
@@ -32,17 +33,17 @@ export function useComposerMenus(config: ComposerMenusConfig) {
   })
   const filteredTargetOptions = computed(() => {
     if (targetMenuDismissed.value || targetQuery.value === null) return []
-    return config.targetOptions.value
-      .filter(
-        (option) =>
-          !config.explicitTargets.value.some(
-            (target) => target.kind === option.kind && target.id === option.id,
-          ),
-      )
-      .filter((option) =>
-        `${option.title} ${option.subtitle}`.toLocaleLowerCase().includes(targetQuery.value ?? ''),
-      )
-      .slice(0, 8)
+    const available = config.targetOptions.value.filter(
+      (option) =>
+        !config.explicitTargets.value.some(
+          (target) => target.kind === option.kind && target.id === option.id,
+        ),
+    )
+    return rankSearchItems(available, targetQuery.value, (option) => [
+      { text: option.title, weight: 3 },
+      { text: option.subtitle, weight: 1.4 },
+      { text: option.kind === 'document' ? '文档 页面 document page' : '知识资产 asset' },
+    ]).slice(0, 8)
   })
 
   function resetMenus(): void {

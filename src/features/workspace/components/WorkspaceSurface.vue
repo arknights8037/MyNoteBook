@@ -567,21 +567,88 @@ const currentAgentRuntimeProjectId = computed(() =>
   currentAiProjectId.value === UNGROUPED_AGENT_PROJECT_ID ? '' : currentAiProjectId.value,
 )
 const agentWorkspaceOptions = computed(() =>
-  documents.value
-    .filter((document) => document.documentKind === 'group' && !document.isDeleted)
-    .map((document) => ({ label: document.title, value: document.id })),
+  buildAgentWorkspaceOptions(documents.value),
 )
 const currentAgentWorkspaceRootIds = computed(() => currentAiProject.value?.workspaceRootIds ?? [])
 const agentTargetOptions = computed<AgentTargetOption[]>(() =>
-  documents.value
-    .filter((document) => document.documentKind === 'article' && !document.isDeleted)
-    .map((document) => ({
-      kind: 'document',
-      id: document.id,
-      title: displayTitle(document),
-      subtitle: document.id === currentDocumentId.value ? '当前页面' : '知识库页面',
-    })),
+  buildAgentTargetOptions(documents.value, currentDocumentId.value),
 )
+
+function buildAgentWorkspaceOptions(availableDocuments: DocumentSummary[]) {
+  const documentById = new Map(availableDocuments.map((document) => [document.id, document]))
+  return availableDocuments
+    .filter((document) => document.documentKind === 'group' && !document.isDeleted)
+    .map((group) => ({
+      label: displayDocumentTitle(group),
+      value: group.id,
+      searchText: [
+        group.description,
+        group.tags.join(' '),
+        ...availableDocuments
+          .filter(
+            (document) =>
+              document.documentKind === 'article' &&
+              !document.isDeleted &&
+              belongsToDocumentGroup(document, group.id, documentById),
+          )
+          .map(displayDocumentTitle),
+      ]
+        .filter(Boolean)
+        .join(' '),
+    }))
+}
+
+function buildAgentTargetOptions(
+  availableDocuments: DocumentSummary[],
+  activeDocumentId: string,
+): AgentTargetOption[] {
+  const documentById = new Map(availableDocuments.map((document) => [document.id, document]))
+  return availableDocuments
+    .filter((document) => document.documentKind === 'article' && !document.isDeleted)
+    .map((document) => {
+      const groupPath = getDocumentGroupPath(document, documentById)
+      return {
+        kind: 'document',
+        id: document.id,
+        title: displayDocumentTitle(document),
+        subtitle: [groupPath, document.id === activeDocumentId ? '当前页面' : '知识库页面']
+          .filter(Boolean)
+          .join(' · '),
+      }
+    })
+}
+
+function belongsToDocumentGroup(
+  document: DocumentSummary,
+  groupId: string,
+  documentById: Map<string, DocumentSummary>,
+): boolean {
+  let parentId = document.parentId
+  const visited = new Set<string>()
+  while (parentId && !visited.has(parentId)) {
+    if (parentId === groupId) return true
+    visited.add(parentId)
+    parentId = documentById.get(parentId)?.parentId ?? null
+  }
+  return false
+}
+
+function getDocumentGroupPath(
+  document: DocumentSummary,
+  documentById: Map<string, DocumentSummary>,
+): string {
+  const titles: string[] = []
+  let parentId = document.parentId
+  const visited = new Set<string>()
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId)
+    const parent = documentById.get(parentId)
+    if (!parent) break
+    if (parent.documentKind === 'group') titles.unshift(displayDocumentTitle(parent))
+    parentId = parent.parentId
+  }
+  return titles.join(' / ')
+}
 
 watch(
   documents,

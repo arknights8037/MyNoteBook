@@ -42,4 +42,5 @@ export interface AiChatPanelHistoryItem {
 export interface AiChatWorkspaceOption {
   label: string
   value: string
+  searchText?: string
 }

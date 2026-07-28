@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { Check, Folder, FolderPlus } from '@lucide/vue'
-import { nextTick, ref, watch } from 'vue'
+import { Check, Folder, FolderPlus, Search, X } from '@lucide/vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import { NButton, NIcon, NModal } from '@/ui'
+import { rankSearchItems } from '@/models/shared/searchRanking'
+import type { AiChatWorkspaceOption } from './aiChatPanelTypes'
 
 type BrowserEvent = InstanceType<typeof globalThis.Event>
 type BrowserInputElement = InstanceType<typeof globalThis.HTMLInputElement>
 
 const props = defineProps<{
-  workspaceOptions: Array<{ label: string; value: string }>
+  workspaceOptions: AiChatWorkspaceOption[]
   projectCount: number
 }>()
 
@@ -21,10 +23,18 @@ const emit = defineEmits<{
 const nameElement = ref<BrowserInputElement | null>(null)
 const projectName = ref('')
 const workspaceRootIds = ref<string[]>([])
+const workspaceQuery = ref('')
+const filteredWorkspaceOptions = computed(() =>
+  rankSearchItems(props.workspaceOptions, workspaceQuery.value, (option) => [
+    { text: option.label, weight: 3 },
+    { text: option.searchText ?? '', weight: 1 },
+  ]),
+)
 
 function resetForm(): void {
   projectName.value = ''
   workspaceRootIds.value = []
+  workspaceQuery.value = ''
 }
 
 function close(): void {
@@ -77,11 +87,34 @@ watch(show, (isOpen) => {
       </label>
       <fieldset>
         <legend>默认工作区 <small>可多选，也可以稍后配置</small></legend>
+        <label v-if="workspaceOptions.length" class="ai-chat-project-dialog__workspace-search">
+          <Search :size="14" aria-hidden="true" />
+          <input
+            v-model="workspaceQuery"
+            type="search"
+            placeholder="搜索分组或其中的页面"
+            aria-label="搜索文档分组"
+          />
+          <button
+            v-if="workspaceQuery"
+            type="button"
+            aria-label="清空分组搜索"
+            @click="workspaceQuery = ''"
+          >
+            <X :size="13" />
+          </button>
+        </label>
         <p v-if="workspaceOptions.length === 0" class="ai-chat-project-dialog__empty">
           暂无文档分组，将创建一个空项目。
         </p>
+        <p
+          v-else-if="filteredWorkspaceOptions.length === 0"
+          class="ai-chat-project-dialog__empty"
+        >
+          没有匹配的文档分组。
+        </p>
         <label
-          v-for="option in workspaceOptions"
+          v-for="option in filteredWorkspaceOptions"
           :key="option.value"
           class="ai-chat-project-dialog__workspace"
         >

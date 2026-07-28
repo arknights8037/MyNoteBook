@@ -18,6 +18,19 @@ describe('useDocumentSearch', () => {
     expect(search.searchResults.value.map(({ id }) => id)).toEqual(['two'])
   })
 
+  it('matches compact and abbreviated document queries and ranks titles first', () => {
+    const search = createSearch([
+      document('path-match', { title: '实施记录', description: 'Agent Runtime' }),
+      document('title-match', { title: 'Agent Runtime 维护' }),
+    ])
+
+    search.searchQuery.value = 'agentruntime'
+    expect(search.searchResults.value.map(({ id }) => id)).toEqual(['title-match', 'path-match'])
+
+    search.searchQuery.value = 'arm'
+    expect(search.searchResults.value.map(({ id }) => id)).toContain('title-match')
+  })
+
   it('owns modal lifecycle and resets the query when closed', () => {
     const onOpen = vi.fn()
     const search = createSearch([], onOpen)
@@ -41,7 +54,8 @@ describe('useDocumentSearch', () => {
   it('loads full-text matches on demand for lightweight startup summaries', async () => {
     vi.useFakeTimers()
     const matched = document('matched', { plainText: 'SQLite 全文检索结果' })
-    const searchDocuments = vi.fn().mockResolvedValue([matched])
+    const semanticMatch = document('semantic', { plainText: '由原生检索器返回的相关结果' })
+    const searchDocuments = vi.fn().mockResolvedValue([matched, semanticMatch])
     const search = useDocumentSearch({
       documents: ref([document('lightweight')]),
       getGroupArticleCount: () => 0,
@@ -53,7 +67,7 @@ describe('useDocumentSearch', () => {
     await vi.advanceTimersByTimeAsync(120)
 
     expect(searchDocuments).toHaveBeenCalledWith('全文', 50)
-    expect(search.searchResults.value.map(({ id }) => id)).toEqual(['matched'])
+    expect(search.searchResults.value.map(({ id }) => id)).toEqual(['matched', 'semantic'])
     expect(search.getSearchSnippet(search.searchResults.value[0]!)).toContain('SQLite 全文检索结果')
     expect(search.isSearching.value).toBe(false)
     vi.useRealTimers()
