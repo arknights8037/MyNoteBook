@@ -202,7 +202,8 @@ onMounted(() => void load())
       </div>
       <p class="email-account-modal__hint">
         Gmail、Outlook 等服务可能关闭普通密码 IMAP。当前版本支持标准密码或应用专用密码，OAuth
-        账户授权将在后续接入。
+        账户授权将在后续接入。服务器声明支持时会自动发送 RFC 2971 IMAP
+        ID，兼容网易系邮箱的客户端身份检查。
       </p>
       <p v-if="error" class="email-account-panel__notice email-account-panel__notice--error">
         <AlertTriangle :size="15" />{{ error }}

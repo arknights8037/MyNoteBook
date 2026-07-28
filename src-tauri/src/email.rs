@@ -1,8 +1,10 @@
 use mail_parser::MessageParser;
-use native_tls::TlsConnector;
+use native_tls::{TlsConnector, TlsStream};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
+    io::{Read, Write},
+    net::TcpStream,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, State};
@@ -15,6 +17,122 @@ use crate::{
 const MAX_SYNC_MESSAGES: usize = 50;
 const MAX_MESSAGE_BYTES: usize = 1_048_576;
 const MAX_BODY_CHARS: usize = 200_000;
+const CLIENT_NAME: &str = "MyNoteBook";
+const CLIENT_VENDOR: &str = "MyNoteBook Project";
+const CLIENT_SUPPORT_URL: &str = "https://github.com/arknights8037/MyNoteBook";
+const MAX_ID_RESPONSE_BYTES: usize = 262_144;
+const PARSEABLE_ID_RESPONSE: &[u8] = b"* OK IMAP ID response received\r\n";
+
+#[derive(Debug)]
+struct ImapIdentityTransport<T> {
+    inner: T,
+    outgoing_prefix: Vec<u8>,
+    ignore_outgoing_line: bool,
+    expected_id_tag: Option<Vec<u8>>,
+    id_response: Vec<u8>,
+    pending_read: VecDeque<u8>,
+}
+
+impl<T> ImapIdentityTransport<T> {
+    fn new(inner: T) -> Self {
+        Self {
+            inner,
+            outgoing_prefix: Vec::new(),
+            ignore_outgoing_line: false,
+            expected_id_tag: None,
+            id_response: Vec::new(),
+            pending_read: VecDeque::new(),
+        }
+    }
+
+    fn observe_write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            if *byte == b'\n' {
+                self.outgoing_prefix.clear();
+                self.ignore_outgoing_line = false;
+                continue;
+            }
+            if self.ignore_outgoing_line {
+                continue;
+            }
+            if self.outgoing_prefix.len() < 128 {
+                self.outgoing_prefix.push(*byte);
+            }
+            let tokens = self
+                .outgoing_prefix
+                .split(|candidate| candidate.is_ascii_whitespace())
+                .filter(|token| !token.is_empty())
+                .collect::<Vec<_>>();
+            if byte.is_ascii_whitespace() && tokens.len() >= 2 {
+                if tokens[1].eq_ignore_ascii_case(b"ID") {
+                    self.expected_id_tag = Some(tokens[0].to_vec());
+                }
+                self.outgoing_prefix.clear();
+                self.ignore_outgoing_line = true;
+            }
+        }
+    }
+
+    fn copy_pending(&mut self, output: &mut [u8]) -> usize {
+        let count = output.len().min(self.pending_read.len());
+        for destination in output.iter_mut().take(count) {
+            *destination = self.pending_read.pop_front().expect("pending byte");
+        }
+        count
+    }
+}
+
+impl<T: Read> Read for ImapIdentityTransport<T> {
+    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+        if output.is_empty() {
+            return Ok(0);
+        }
+        if !self.pending_read.is_empty() {
+            return Ok(self.copy_pending(output));
+        }
+        let Some(tag) = self.expected_id_tag.clone() else {
+            return self.inner.read(output);
+        };
+
+        loop {
+            let mut buffer = [0_u8; 4096];
+            let read = self.inner.read(&mut buffer)?;
+            if read == 0 {
+                return Ok(0);
+            }
+            self.id_response.extend_from_slice(&buffer[..read]);
+            if self.id_response.len() > MAX_ID_RESPONSE_BYTES {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "IMAP ID response exceeded the safety limit",
+                ));
+            }
+            if let Some((tagged_start, tagged_end)) =
+                find_tagged_completion(&self.id_response, &tag)
+            {
+                self.pending_read.extend(PARSEABLE_ID_RESPONSE);
+                self.pending_read
+                    .extend(&self.id_response[tagged_start..tagged_end]);
+                self.pending_read.extend(&self.id_response[tagged_end..]);
+                self.id_response.clear();
+                self.expected_id_tag = None;
+                return Ok(self.copy_pending(output));
+            }
+        }
+    }
+}
+
+impl<T: Write> Write for ImapIdentityTransport<T> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(bytes)?;
+        self.observe_write(&bytes[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -130,12 +248,11 @@ pub async fn sync_email_account(
 }
 
 fn test_connection_blocking(input: EmailConnectionInput) -> Result<(), String> {
-    let tls = TlsConnector::builder().build().map_err(email_error)?;
-    let client =
-        imap::connect((input.host.as_str(), input.port), &input.host, &tls).map_err(email_error)?;
+    let client = connect_imap(&input.host, input.port)?;
     let mut session = client
         .login(&input.username, input.password)
         .map_err(|(error, _)| email_error(error))?;
+    send_client_identity(&mut session)?;
     session.examine(&input.mailbox).map_err(email_error)?;
     session.logout().map_err(email_error)
 }
@@ -145,12 +262,11 @@ fn sync_messages(
     password: String,
     limit: usize,
 ) -> Result<Vec<RemoteEmailMessage>, String> {
-    let tls = TlsConnector::builder().build().map_err(email_error)?;
-    let client =
-        imap::connect((input.host.as_str(), input.port), &input.host, &tls).map_err(email_error)?;
+    let client = connect_imap(&input.host, input.port)?;
     let mut session = client
         .login(&input.username, password)
         .map_err(|(error, _)| email_error(error))?;
+    send_client_identity(&mut session)?;
     session.examine(&input.mailbox).map_err(email_error)?;
     let mut all_ids: Vec<u32> = session
         .search("ALL")
@@ -184,6 +300,77 @@ fn sync_messages(
     messages.sort_by(|left, right| right.received_at.cmp(&left.received_at));
     session.logout().map_err(email_error)?;
     Ok(messages)
+}
+
+fn connect_imap(
+    host: &str,
+    port: u16,
+) -> Result<imap::Client<ImapIdentityTransport<TlsStream<TcpStream>>>, String> {
+    let tcp = TcpStream::connect((host, port)).map_err(email_error)?;
+    let connector = TlsConnector::builder().build().map_err(email_error)?;
+    let tls = connector.connect(host, tcp).map_err(email_error)?;
+    let mut client = imap::Client::new(ImapIdentityTransport::new(tls));
+    client.read_greeting().map_err(email_error)?;
+    Ok(client)
+}
+
+fn send_client_identity<T: Read + Write>(session: &mut imap::Session<T>) -> Result<(), String> {
+    let capabilities = session.capabilities().map_err(email_error)?;
+    if capabilities.has_str("ID") {
+        session
+            .run_command_and_check_ok(client_identity_command())
+            .map_err(email_error)?;
+    }
+    Ok(())
+}
+
+fn client_identity_command() -> String {
+    format!(
+        "ID (\"name\" {} \"version\" {} \"vendor\" {} \"support-url\" {})",
+        quote_id_value(CLIENT_NAME),
+        quote_id_value(env!("CARGO_PKG_VERSION")),
+        quote_id_value(CLIENT_VENDOR),
+        quote_id_value(CLIENT_SUPPORT_URL),
+    )
+}
+
+fn quote_id_value(value: &str) -> String {
+    format!(
+        "\"{}\"",
+        value
+            .chars()
+            .filter(|character| !character.is_control())
+            .take(255)
+            .collect::<String>()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+    )
+}
+
+fn find_tagged_completion(response: &[u8], tag: &[u8]) -> Option<(usize, usize)> {
+    let mut line_start = 0;
+    while line_start < response.len() {
+        let relative_end = response[line_start..]
+            .windows(2)
+            .position(|window| window == b"\r\n")?;
+        let line_end = line_start + relative_end;
+        let line = &response[line_start..line_end];
+        if line.starts_with(tag)
+            && line.get(tag.len()) == Some(&b' ')
+            && line[tag.len() + 1..]
+                .split(|byte| byte.is_ascii_whitespace())
+                .next()
+                .is_some_and(|status| {
+                    status.eq_ignore_ascii_case(b"OK")
+                        || status.eq_ignore_ascii_case(b"NO")
+                        || status.eq_ignore_ascii_case(b"BAD")
+                })
+        {
+            return Some((line_start, line_end + 2));
+        }
+        line_start = line_end + 2;
+    }
+    None
 }
 
 fn parse_message(
@@ -292,15 +479,53 @@ fn now_millis() -> i64 {
 }
 
 fn email_error(error: impl std::fmt::Display) -> String {
-    format!(
-        "邮箱连接失败：{}",
-        redact_sensitive_text(&error.to_string())
-    )
+    let redacted = redact_sensitive_text(&error.to_string());
+    if redacted.to_ascii_lowercase().contains("unsafe login") {
+        return "邮箱服务器返回 Unsafe Login。客户端已支持 RFC 2971 IMAP ID；请确认已在邮箱后台开启 IMAP 并使用授权码，若仍失败请联系邮箱服务商。".to_string();
+    }
+    format!("邮箱连接失败：{redacted}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+
+    #[derive(Debug)]
+    struct MockStream {
+        read: Cursor<Vec<u8>>,
+        written: Vec<u8>,
+    }
+
+    impl Read for MockStream {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let position = self.read.position() as usize;
+            let source = self.read.get_ref();
+            if position >= source.len() {
+                return Ok(0);
+            }
+            let line_length = source[position..]
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map(|offset| offset + 1)
+                .unwrap_or(source.len() - position);
+            let count = buffer.len().min(line_length);
+            buffer[..count].copy_from_slice(&source[position..position + count]);
+            self.read.set_position((position + count) as u64);
+            Ok(count)
+        }
+    }
+
+    impl Write for MockStream {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.written.extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn parses_mime_message_without_retaining_html() {
@@ -317,5 +542,42 @@ mod tests {
     fn rejects_control_characters_and_credentialed_hosts() {
         assert!(validate_connection("user:pass@example.com", 993, "user", "INBOX").is_err());
         assert!(validate_connection("imap.example.com", 993, "user", "INBOX\r\nBAD").is_err());
+    }
+
+    #[test]
+    fn builds_rfc_2971_client_identity_without_command_delimiters() {
+        let command = client_identity_command();
+        assert_eq!(
+            command,
+            concat!(
+                "ID (\"name\" \"MyNoteBook\" \"version\" \"0.1.0\" ",
+                "\"vendor\" \"MyNoteBook Project\" ",
+                "\"support-url\" \"https://github.com/arknights8037/MyNoteBook\")"
+            )
+        );
+        assert!(!command.contains(['\r', '\n']));
+        assert_eq!(
+            quote_id_value("client \\\"name\"\n"),
+            "\"client \\\\\\\"name\\\"\""
+        );
+    }
+
+    #[test]
+    fn sends_identity_after_login_when_server_advertises_id() {
+        let responses = concat!(
+            "a1 OK Logged in\r\n",
+            "* CAPABILITY IMAP4rev1 ID\r\n",
+            "a2 OK CAPABILITY completed\r\n",
+            "* ID (\"name\" \"NetEase\")\r\n",
+            "a3 OK ID completed\r\n",
+        );
+        let stream = MockStream {
+            read: Cursor::new(responses.as_bytes().to_vec()),
+            written: Vec::new(),
+        };
+        let client = imap::Client::new(ImapIdentityTransport::new(stream));
+        let mut session = client.login("user", "password").expect("login");
+
+        send_client_identity(&mut session).expect("client identity");
     }
 }
