@@ -562,7 +562,7 @@
 .context-sidebar__folder-row {
   display: grid;
   min-height: 34px;
-  grid-template-columns: 22px minmax(0, 1fr) 28px 28px;
+  grid-template-columns: 22px minmax(0, 1fr) 28px 28px 28px;
   align-items: center;
   border-radius: 5px;
 }
@@ -577,6 +577,7 @@
 }
 
 .context-sidebar__folder-toggle,
+.context-sidebar__project-new,
 .context-sidebar__project-pin {
   display: grid;
   width: 26px;
@@ -598,6 +599,7 @@
   transform: rotate(90deg);
 }
 
+.context-sidebar__project-new,
 .context-sidebar__project-pin {
   opacity: 0;
 }
@@ -621,6 +623,8 @@
   opacity: 0;
 }
 
+.context-sidebar__folder-row:hover .context-sidebar__project-new,
+.context-sidebar__project-new:focus-visible,
 .context-sidebar__folder-row:hover .context-sidebar__project-pin,
 .context-sidebar__project-pin:focus-visible,
 .context-sidebar__project-pin.is-pinned {
@@ -639,6 +643,7 @@
 }
 
 .context-sidebar__project-pin:hover,
+.context-sidebar__project-new:hover,
 .context-sidebar__project-pin.is-pinned {
   color: var(--workspace-glass-accent, #2867b2);
   background: var(--color-bg-elevated, #fff);
@@ -716,6 +721,11 @@ button.context-sidebar__folder {
   position: relative;
   display: block;
   min-width: 0;
+}
+
+.context-sidebar__history-row.is-draft .context-sidebar__item {
+  border: 1px dashed color-mix(in srgb, var(--workspace-glass-accent, #2867b2) 42%, transparent);
+  color: var(--workspace-glass-accent, #2867b2);
 }
 
 .context-sidebar__history-row .context-sidebar__item {

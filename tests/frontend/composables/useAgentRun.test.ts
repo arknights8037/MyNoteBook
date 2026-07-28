@@ -106,6 +106,77 @@ describe('useAgentRun', () => {
     expect(run.workflow.activeConversationId.value).toBe('a2a-request-1')
   })
 
+  it('runs different conversations concurrently without sharing message state', async () => {
+    const firstGate = deferred<string>()
+    const secondGate = deferred<string>()
+    let callIndex = 0
+    completion.mockImplementation(async (input) => {
+      const gate = callIndex++ === 0 ? firstGate : secondGate
+      const output = await gate.promise
+      input.onDelta(output)
+      return output
+    })
+    const settings = ref(createAiSettings('openai'))
+    settings.value.model = 'test-model'
+    const run = createRun(settings, snapshot(), async () => true)
+    const firstMessages = ref<AiConversationMessage[]>([])
+    const secondMessages = ref<AiConversationMessage[]>([])
+    const createSession = (id: string, prompt: string, messages: Ref<AiConversationMessage[]>) => ({
+      mode: ref<'ask' | 'edit' | 'agent' | 'auto'>('ask'),
+      prompt: ref(prompt),
+      messages,
+      error: ref(''),
+      workspace: {
+        projectId: ref('project-1'),
+        projectName: ref('Project'),
+        rootDocumentIds: ref<string[]>([]),
+        conversationId: ref<string | null>(id),
+        ensureConversationId: () => id,
+      },
+    })
+
+    const firstRun = run.workflow.run(
+      undefined,
+      undefined,
+      createSession('conversation-1', '第一个任务', firstMessages),
+    )
+    const secondRun = run.workflow.run(
+      undefined,
+      undefined,
+      createSession('conversation-2', '第二个任务', secondMessages),
+    )
+    await vi.waitFor(
+      () => {
+        expect({
+          calls: completion.mock.calls.length,
+          firstMessages: firstMessages.value.map((message) => message.role),
+          secondMessages: secondMessages.value.map((message) => message.role),
+          firstRuntime: run.workflow.runtimeStateFor('conversation-1').detail,
+          secondRuntime: run.workflow.runtimeStateFor('conversation-2').detail,
+        }).toMatchObject({
+          calls: 2,
+          firstMessages: ['user', 'assistant'],
+          secondMessages: ['user', 'assistant'],
+          firstRuntime: '正在生成回答',
+          secondRuntime: '正在生成回答',
+        })
+        expect(run.isRunning.value).toBe(true)
+      },
+      { timeout: 3_000 },
+    )
+
+    firstGate.resolve('第一个结果')
+    await firstRun
+    expect(run.isRunning.value).toBe(true)
+    expect(firstMessages.value.at(-1)?.content).toContain('第一个结果')
+    expect(secondMessages.value.at(-1)?.content).toBe('')
+
+    secondGate.resolve('第二个结果')
+    await secondRun
+    expect(run.isRunning.value).toBe(false)
+    expect(secondMessages.value.at(-1)?.content).toContain('第二个结果')
+  })
+
   it('aborts an active completion and restores the running state', async () => {
     completion.mockImplementation(
       (input) =>
@@ -120,7 +191,10 @@ describe('useAgentRun', () => {
     const run = createRun(settings, snapshot(), async () => true)
 
     const promise = run.workflow.run()
-    await vi.waitFor(() => expect(run.isRunning.value).toBe(true))
+    await vi.waitFor(() => {
+      expect(run.isRunning.value).toBe(true)
+      expect(completion).toHaveBeenCalledOnce()
+    })
     run.workflow.stop()
     await promise
 

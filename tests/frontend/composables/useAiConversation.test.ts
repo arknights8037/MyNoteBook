@@ -1,4 +1,4 @@
-import { effectScope, ref } from 'vue'
+import { effectScope, nextTick, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAiConversation } from '@/composables/useAiConversation'
@@ -21,6 +21,7 @@ function createConversation(
       prompt: string,
       settings: ReturnType<typeof createAiSettings>,
     ) => Promise<string>
+    historyStore?: AgentWorkspaceHistoryStore
   } = {},
 ) {
   const scope = effectScope()
@@ -36,7 +37,7 @@ function createConversation(
       createId: () => 'new-history',
       stop,
       notify: options.notify,
-      historyStore: memoryHistoryStore(options.persistedState),
+      historyStore: options.historyStore ?? memoryHistoryStore(options.persistedState),
       generateTitle: options.generateTitle,
       persistHistory:
         options.persistHistory === undefined ? undefined : ref(options.persistHistory),
@@ -57,13 +58,15 @@ describe('useAiConversation', () => {
     vi.useRealTimers()
   })
 
-  it('clears the active conversation and stops a running request', () => {
-    const { conversation, error, scope, stop } = createConversation({ running: true })
+  it('clears the active conversation and stops only its running request', () => {
+    const { conversation, error, scope, stop } = createConversation()
     conversation.messages.value = [message('user-1', 'user', 'hello')]
+    conversation.prompt.value = '继续处理'
+    const session = conversation.beginRunSession()
 
     conversation.clear()
 
-    expect(stop).toHaveBeenCalledOnce()
+    expect(stop).toHaveBeenCalledWith(session?.id)
     expect(conversation.messages.value).toEqual([])
     expect(error.value).toBe('')
     scope.stop()
@@ -159,8 +162,10 @@ describe('useAiConversation', () => {
     expect(active.conversation.deleteHistory('saved-history')).toBe(true)
     expect(active.conversation.messages.value).toEqual([])
 
-    const running = createConversation({ running: true })
+    const running = createConversation()
     running.conversation.messages.value = [message('user-1', 'user', 'keep')]
+    running.conversation.prompt.value = '继续运行'
+    running.conversation.beginRunSession()
     expect(running.conversation.editMessage('user-1')).toBe(false)
     expect(running.conversation.forkAtMessage('user-1')).toBe(false)
     expect(running.conversation.selectHistory('saved-history')).toBe(false)
@@ -243,14 +248,14 @@ describe('useAiConversation', () => {
     scope.stop()
   })
 
-  it('explains why project creation is unavailable during an Agent run', () => {
+  it('allows another project to be created while an Agent task is running', () => {
     const notify = vi.fn()
     const { conversation, scope } = createConversation({ running: true, notify })
 
-    conversation.createProject({ name: 'Should not exist' })
+    conversation.createProject({ name: 'Parallel project' })
 
-    expect(conversation.projects.value).toHaveLength(1)
-    expect(notify).toHaveBeenCalledWith('请先停止当前 Agent 任务，再新建项目')
+    expect(conversation.projects.value).toHaveLength(2)
+    expect(conversation.projects.value.at(-1)?.name).toBe('Parallel project')
     scope.stop()
   })
 
@@ -268,6 +273,56 @@ describe('useAiConversation', () => {
     expect(conversation.startTask(DEFAULT_AGENT_PROJECT_ID)).toBe(true)
     expect(conversation.activeProjectId.value).toBe(DEFAULT_AGENT_PROJECT_ID)
     expect(conversation.messages.value).toEqual([])
+    scope.stop()
+  })
+
+  it('does not persist an empty task window before the user sends input', async () => {
+    const save = vi.fn(async () => undefined)
+    const historyStore: AgentWorkspaceHistoryStore = {
+      load: vi.fn(async () => createEmptyAgentWorkspaceHistory()),
+      save,
+    }
+    const { conversation, scope } = createConversation({ historyStore })
+    await Promise.resolve()
+
+    expect(conversation.startTask(DEFAULT_AGENT_PROJECT_ID)).toBe(true)
+    await vi.runAllTimersAsync()
+
+    expect(conversation.currentHistoryId.value).toBe('new-history')
+    expect(conversation.history.value).toEqual([
+      expect.objectContaining({
+        id: 'new-history',
+        projectId: DEFAULT_AGENT_PROJECT_ID,
+        title: '新对话',
+        messageCount: 0,
+        transient: true,
+      }),
+    ])
+    expect(save).not.toHaveBeenCalled()
+    scope.stop()
+  })
+
+  it('keeps a running task isolated after another empty task is opened', async () => {
+    const { conversation, scope } = createConversation()
+    await Promise.resolve()
+    conversation.prompt.value = '后台整理资料'
+    const session = conversation.beginRunSession()!
+    session.messages.value.push(message('run-user', 'user', '后台整理资料', 'agent'))
+    await nextTick()
+
+    expect(conversation.startTask(null)).toBe(true)
+    const draftId = conversation.currentHistoryId.value
+    session.messages.value.push(message('run-assistant', 'assistant', '整理完成', 'agent'))
+    await nextTick()
+
+    expect(conversation.currentHistoryId.value).toBe(draftId)
+    expect(draftId).not.toBe(session.id)
+    expect(conversation.messages.value).toEqual([])
+    expect(conversation.history.value.find((item) => item.id === session.id)).toMatchObject({
+      projectId: DEFAULT_AGENT_PROJECT_ID,
+      messageCount: 2,
+    })
+    conversation.finishRunSession(session.id)
     scope.stop()
   })
 
@@ -368,12 +423,19 @@ describe('useAiConversation', () => {
     scope.stop()
   })
 
-  it('explains why a new task cannot be started during an Agent run', () => {
-    const notify = vi.fn()
-    const { conversation, scope } = createConversation({ running: true, notify })
+  it('opens a second task while the first task keeps running in isolation', () => {
+    const { conversation, scope } = createConversation()
+    conversation.prompt.value = '第一个任务'
+    const session = conversation.beginRunSession()
 
-    expect(conversation.startTask(null)).toBe(false)
-    expect(notify).toHaveBeenCalledWith('请先停止当前 Agent 任务，再新建任务')
+    expect(session).not.toBeNull()
+    expect(conversation.startTask(null)).toBe(true)
+    expect(conversation.currentHistoryId.value).not.toBe(session!.id)
+    expect(conversation.history.value.find((item) => item.transient)).toMatchObject({
+      title: '新对话',
+      projectId: UNGROUPED_AGENT_PROJECT_ID,
+    })
+    expect(conversation.isConversationRunning(session!.id)).toBe(true)
     scope.stop()
   })
 })

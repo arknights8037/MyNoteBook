@@ -36,6 +36,7 @@ export interface AiChatPanelHistoryItem {
   provider: string
   model: string
   pinnedAt: number | null
+  transient?: boolean
 }
 
 export interface AiChatWorkspaceOption {

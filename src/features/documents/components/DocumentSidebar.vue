@@ -111,6 +111,7 @@ const emit = defineEmits<{
   properties: [document: DocumentSummary]
   rename: [document: DocumentSummary]
   delete: [document: DocumentSummary]
+  'delete-group': [group: DocumentSummary]
   restore: [document: DocumentSummary]
   'permanently-delete': [document: DocumentSummary]
   'article-drag-start': [event: BrowserDragEvent, document: DocumentSummary]
@@ -238,7 +239,15 @@ const articleGroups = computed(() =>
 )
 const ungroupedArticleNodes = computed(() => documentForest.value.rootNodes)
 
-function openFilePicker(): void {
+function openFilePicker(mode: 'files' | 'folder'): void {
+  if (!fileInput.value) return
+  if (mode === 'folder') {
+    fileInput.value.setAttribute('webkitdirectory', '')
+    fileInput.value.setAttribute('directory', '')
+  } else {
+    fileInput.value.removeAttribute('webkitdirectory')
+    fileInput.value.removeAttribute('directory')
+  }
   fileInput.value?.click()
 }
 
@@ -312,6 +321,7 @@ defineExpose({ openFilePicker })
       ref="fileInput"
       class="file-input-hidden"
       type="file"
+      multiple
       :accept="importFileAccept"
       @change="emit('file-change', $event)"
     />
@@ -386,6 +396,11 @@ defineExpose({ openFilePicker })
                         @select="emit('rename', group)"
                         ><Pencil :size="14" />重命名分组</DropdownMenuItem
                       >
+                      <DropdownMenuItem
+                        class="document-card-menu__item document-card-menu__item--danger"
+                        @select="emit('delete-group', group)"
+                        ><Trash2 :size="14" />删除整个分组</DropdownMenuItem
+                      >
                     </DropdownMenuContent>
                   </DropdownMenuPortal>
                 </DropdownMenuRoot>
@@ -404,6 +419,11 @@ defineExpose({ openFilePicker })
               >
               <ContextMenuItem class="document-card-menu__item" @select="emit('rename', group)"
                 ><Pencil :size="14" />重命名分组</ContextMenuItem
+              >
+              <ContextMenuItem
+                class="document-card-menu__item document-card-menu__item--danger"
+                @select="emit('delete-group', group)"
+                ><Trash2 :size="14" />删除整个分组</ContextMenuItem
               >
             </ContextMenuContent>
           </ContextMenuPortal>

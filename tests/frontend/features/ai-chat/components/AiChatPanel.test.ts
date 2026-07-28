@@ -580,10 +580,10 @@ describe('AiChatPanel runtime visibility', () => {
     expect(wrapper.get('.ai-chat-history').classes()).toContain('ai-chat-history--collapsed')
     expect(globalThis.localStorage?.getItem('my-notebook:agent-history-collapsed')).toBe('true')
     await wrapper.get('.ai-chat-history__new').trigger('click')
-    expect(wrapper.emitted('new-task')?.at(-1)).toEqual([null])
+    expect(wrapper.emitted('new-task')?.at(-1)).toEqual(['project-1'])
   })
 
-  it('separates ungrouped tasks from project task creation', async () => {
+  it('inherits the selected project from the main new-task button', async () => {
     const wrapper = createWrapper(runtimeState('completed'))
     await wrapper.setProps({
       docked: true,
@@ -600,8 +600,8 @@ describe('AiChatPanel runtime visibility', () => {
       ],
     })
 
-    await wrapper.get('button[aria-label="新建未分组任务"]').trigger('click')
-    expect(wrapper.emitted('new-task')?.at(-1)).toEqual([null])
+    await wrapper.get('button[aria-label="在当前项目中新建任务"]').trigger('click')
+    expect(wrapper.emitted('new-task')?.at(-1)).toEqual(['project-1'])
 
     await wrapper.get('button[aria-label="在项目中新建任务：StudioSite"]').trigger('click')
     expect(wrapper.emitted('new-task')?.at(-1)).toEqual(['project-1'])

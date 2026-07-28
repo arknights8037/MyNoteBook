@@ -317,6 +317,7 @@ const {
   openWorkspaceView,
   deleteMindMap,
   deleteWorkspaceView,
+  deleteItemsInContainers,
   handleMindMapDragStart,
   handleWorkspaceViewDragStart,
   handleWorkspacePageDragEnd,
@@ -455,6 +456,7 @@ const {
   lastAppliedAgentTask,
   lastAppliedPatchSet,
   restoreForDocument: restoreAgentStateForDocument,
+  queueAgentPatchReview,
   toggleAgentPatchAccepted,
   updateAgentPatchAfter,
   setAllPendingAgentPatchesAccepted,
@@ -533,7 +535,14 @@ function scheduleAgentRollbackToastDismissal(): void {
   agentRollbackToastTimer = globalThis.setTimeout(dismissAgentRollbackToast, 9_000)
 }
 const activeAgentTask = computed(
-  () => agentTasks.value.find((task) => task.status === 'running') ?? pendingAgentTask.value,
+  () =>
+    agentTasks.value.find(
+      (task) =>
+        task.status === 'running' && task.conversationId === currentAiChatHistoryId.value,
+    ) ??
+    (pendingAgentTask.value?.conversationId === currentAiChatHistoryId.value
+      ? pendingAgentTask.value
+      : null),
 )
 const aiConversation = useAiConversation({
   settings: aiSettings,
@@ -646,13 +655,17 @@ const agentRun = useAgentRun({
     pendingTask: pendingAgentTask,
     pendingPatchSet: pendingAgentPatchSet,
     showModal: showAgentPatchModal,
+    queueReview: queueAgentPatchReview,
     getRepository: getAgentRepository,
     updateTaskPersistence: updateAgentTaskPersistence,
   },
 })
+const activeAiConversationRunning = computed(() =>
+  agentRun.isConversationRunning(currentAiChatHistoryId.value),
+)
 const agentRuntimeState = computed(() =>
-  agentRun.activeConversationId.value === currentAiChatHistoryId.value
-    ? agentRun.runtimeState.value
+  currentAiChatHistoryId.value
+    ? agentRun.runtimeStateFor(currentAiChatHistoryId.value)
     : createIdleAgentRuntimeState(),
 )
 const agentCommunicationWorker = useAgentCommunicationWorker({
@@ -694,9 +707,15 @@ const {
   shareHtml,
   isPreparingShare,
   importFileAccept,
+  pendingImportFiles,
+  skippedImportFileCount,
+  importGroupTitle,
+  isImporting,
   openImportDialog: importDocumentFile,
-  chooseImportFormat,
+  chooseImportSource,
   handleImportFileChange,
+  cancelPendingImport,
+  confirmImport,
   openShareView,
   exportCurrentDocument,
 } = useDocumentTransferActions({
@@ -862,7 +881,44 @@ function syncTheme(): void {
 }
 
 async function runAiAssistant(): Promise<void> {
-  await agentRun.run()
+  const session = aiConversation.beginRunSession()
+  if (!session) return
+  const project = aiProjects.value.find((candidate) => candidate.id === session.projectId) ?? null
+  const explicitTargets = ref(explicitAgentTargets.value.map((target) => ({ ...target })))
+  try {
+    await agentRun.run(undefined, undefined, {
+      mode: session.mode,
+      prompt: session.prompt,
+      messages: session.messages,
+      error: session.error,
+      explicitTargets,
+      workspace: {
+        projectId: ref(project?.id ?? ''),
+        projectName: ref(project?.name ?? '未分组任务'),
+        rootDocumentIds: ref([...(project?.workspaceRootIds ?? [])]),
+        conversationId: ref(session.id),
+        ensureConversationId: () => session.id,
+        requestConversationTitle: aiConversation.requestConversationTitle,
+      },
+    })
+  } finally {
+    aiConversation.finishRunSession(session.id)
+  }
+}
+
+function selectAiHistory(historyId: string): void {
+  explicitAgentTargets.value = []
+  homeAiMessageActions.selectHistory(historyId)
+}
+
+function selectAiProject(projectId: string): void {
+  explicitAgentTargets.value = []
+  aiConversation.selectProject(projectId)
+}
+
+function startAiTask(projectId: string | null): void {
+  explicitAgentTargets.value = []
+  aiConversation.startTask(projectId)
 }
 
 function selectAgentTarget(target: AgentTargetOption): void {
@@ -903,7 +959,7 @@ function researchKnowledgeAssets(assets: KnowledgeAsset[]): void {
 }
 
 function stopAiAssistant(): void {
-  agentRun.stop()
+  agentRun.stop(currentAiChatHistoryId.value)
 }
 
 function answerAgentAuthorization(requestId: string, answer: string): void {
@@ -951,7 +1007,7 @@ const { handleGlobalKeydown, handleDeveloperToolKeydown } = useHomeKeyboardShort
 })
 
 function clearAiChat(): void {
-  agentRun.resetRuntime()
+  agentRun.resetRuntime(currentAiChatHistoryId.value)
   aiConversation.clear()
 }
 
@@ -966,7 +1022,7 @@ function closeAiChat(): void {
 const researchReviewActions = useResearchReviewActions({
   messages: aiMessages,
   getResearchCandidateService: dependencies.agentRunServices.getResearchCandidateService,
-  isRunning: aiIsRunning,
+  isRunning: activeAiConversationRunning,
   currentDocumentId,
   selectDocument,
   runAgent: (prompt) => agentRun.run(prompt),
@@ -1051,6 +1107,102 @@ async function restoreDocument(document: DocumentSummary): Promise<void> {
   await restoreWorkspaceDocument(document)
 }
 
+async function deleteEntireGroup(group: DocumentSummary): Promise<void> {
+  const containerIds = collectEntireGroupItemIds(group.id)
+  const descendants = documents.value.filter(
+    (item) => item.documentKind === 'article' && containerIds.has(item.id),
+  )
+  const mindMapCount = mindMaps.value.filter((item) => containerIds.has(item.id)).length
+  const workspaceViewCount = workspaceViews.value.filter((item) =>
+    containerIds.has(item.id),
+  ).length
+  const permanentCount = mindMapCount + workspaceViewCount
+  const confirmed = await confirmEntireGroupRemoval(
+    group,
+    descendants.length,
+    mindMapCount,
+    workspaceViewCount,
+  )
+  if (!confirmed) return
+  const authorized = await requestSensitiveAuthorization(
+    '删除整个分组',
+    permanentCount
+      ? `分组和文档将移入回收站，另有 ${permanentCount} 个视图将被永久删除。`
+      : '分组及其文档将移入回收站。',
+  )
+  if (!authorized) return
+
+  const documentsDeleted = await deleteDocument(group, {
+    confirmed: true,
+    authorized: true,
+    notify: false,
+    additionalDescendants: descendants,
+  })
+  if (!documentsDeleted) return
+
+  const workspaceItemsDeleted = await deleteItemsInContainers(containerIds)
+  if (!workspaceItemsDeleted.ok) {
+    message.error(`分组文档已移入回收站，但部分视图删除失败：${workspaceItemsDeleted.message}`)
+    return
+  }
+  message.success(
+    workspaceItemsDeleted.count
+      ? `整个分组已移除，${workspaceItemsDeleted.count} 个视图已删除`
+      : '整个分组已移入回收站',
+  )
+}
+
+function collectEntireGroupItemIds(groupId: string): Set<string> {
+  const itemParents = [
+    ...documents.value
+      .filter((item) => item.documentKind === 'article')
+      .map((item) => ({ id: item.id, parentId: item.parentId })),
+    ...mindMaps.value.map((item) => ({ id: item.id, parentId: item.parentId })),
+    ...workspaceViews.value.map((item) => ({ id: item.id, parentId: item.parentId })),
+  ]
+  const collected = new Set<string>([groupId])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const item of itemParents) {
+      if (item.parentId && collected.has(item.parentId) && !collected.has(item.id)) {
+        collected.add(item.id)
+        changed = true
+      }
+    }
+  }
+  return collected
+}
+
+function confirmEntireGroupRemoval(
+  group: DocumentSummary,
+  documentCount: number,
+  mindMapCount: number,
+  workspaceViewCount: number,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value: boolean): void => {
+      if (settled) return
+      settled = true
+      resolve(value)
+    }
+    const parts = [`${documentCount} 个文档`]
+    if (mindMapCount) parts.push(`${mindMapCount} 个思维导图`)
+    if (workspaceViewCount) parts.push(`${workspaceViewCount} 个结构化视图`)
+    const hasPermanentItems = mindMapCount + workspaceViewCount > 0
+    dialog.warning({
+      title: '删除整个分组',
+      content: `移除「${displayTitle(group)}」及其中的 ${parts.join('、')}？分组和文档可从回收站恢复${hasPermanentItems ? '，思维导图和结构化视图将永久删除' : ''}。`,
+      positiveText: '删除整个分组',
+      negativeText: '取消',
+      onPositiveClick: () => finish(true),
+      onNegativeClick: () => finish(false),
+      onClose: () => finish(false),
+    })
+  })
+}
+
 function confirmDocumentRemoval(
   document: DocumentSummary,
   descendantCount: number,
@@ -1122,6 +1274,9 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
   close: closeAiChat,
   selectTarget: selectAgentTarget,
   clearTarget: clearAgentTarget,
+  selectHistory: selectAiHistory,
+  selectProject: selectAiProject,
+  startTask: startAiTask,
   writeMessageToChildDocument: homeAiMessageActions.writeMessageToChildDocument,
 })
 </script>
@@ -1193,6 +1348,7 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
         @properties="openDocumentProperties"
         @rename="startRename"
         @delete="deleteDocument"
+        @delete-group="deleteEntireGroup"
         @restore="restoreDocument"
         @permanently-delete="permanentlyDeleteDocument"
         @article-drag-start="handleArticleDragStart"
@@ -1216,10 +1372,10 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
         :current-project-id="currentAiProjectId"
         :current-history-id="currentAiChatHistoryId"
         @search="openSearch"
-        @select-project="aiConversation.selectProject"
-        @select-history="aiConversation.selectHistory"
+        @select-project="selectAiProject"
+        @select-history="selectAiHistory"
         @delete-history="aiConversation.deleteHistory"
-        @new-task="aiConversation.startTask"
+        @new-task="startAiTask"
         @new-project="requestNewAgentProject"
         @pin-project="aiConversation.toggleProjectPin"
         @delete-project="aiConversation.deleteProject"
@@ -1464,7 +1620,13 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
       <ImportDocumentModal
         v-if="showImportModal"
         v-model:show="showImportModal"
-        @select="chooseImportFormat"
+        v-model:group-title="importGroupTitle"
+        :pending-count="pendingImportFiles.length"
+        :skipped-count="skippedImportFileCount"
+        :busy="isImporting"
+        @select="chooseImportSource"
+        @confirm="confirmImport"
+        @cancel="cancelPendingImport"
       />
 
       <SharePreviewModal

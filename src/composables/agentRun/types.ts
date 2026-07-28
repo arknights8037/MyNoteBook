@@ -55,6 +55,7 @@ export interface AgentRunPatchWorkflow {
   pendingTask: Ref<AgentTask | null>
   pendingPatchSet: Ref<AgentPatchSet | null>
   showModal: Ref<boolean>
+  queueReview?: (task: AgentTask, patchSet: AgentPatchSet) => void
   getRepository: () => Promise<AgentRepository>
   updateTaskPersistence: (task: AgentTask) => Promise<void>
 }

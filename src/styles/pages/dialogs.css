@@ -95,6 +95,37 @@
   font-size: 12px;
 }
 
+.import-batch-confirm {
+  display: grid;
+  gap: 16px;
+}
+
+.import-batch-confirm__summary,
+.import-batch-confirm__hint {
+  margin: 0;
+  color: #666662;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.import-batch-confirm__summary strong {
+  color: #315f8f;
+  font-size: 18px;
+}
+
+.import-batch-confirm__field {
+  display: grid;
+  gap: 7px;
+  color: #3f3f3c;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.import-batch-confirm__hint {
+  color: #858581;
+  font-size: 12px;
+}
+
 .document-properties {
   display: grid;
   margin: 0;

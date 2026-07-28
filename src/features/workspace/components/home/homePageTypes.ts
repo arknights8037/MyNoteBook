@@ -27,7 +27,7 @@ export interface CreateDocumentOptions {
 }
 
 export interface DocumentSidebarExpose {
-  openFilePicker: () => void
+  openFilePicker: (mode: 'files' | 'folder') => void
 }
 
 export interface MarkdownFileInput {
@@ -41,7 +41,7 @@ interface MarkdownFileList {
   [index: number]: MarkdownFile
 }
 
-interface MarkdownFile {
+export interface MarkdownFile {
   name: string
   path?: string
   webkitRelativePath?: string

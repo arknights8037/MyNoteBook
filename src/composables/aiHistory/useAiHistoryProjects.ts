@@ -31,10 +31,13 @@ export function createAiHistoryProjects(
     if (projectId === null) {
       state.activeProjectId.value = UNGROUPED_AGENT_PROJECT_ID
       state.currentId.value = null
-      persistence.persist()
       return true
     }
-    return Boolean(selectProject(projectId))
+    const project = state.projects.value.find((candidate) => candidate.id === projectId) ?? null
+    if (!project) return false
+    state.activeProjectId.value = project.id
+    state.currentId.value = null
+    return true
   }
 
   function selectProject(projectId: string): AgentProject | null {

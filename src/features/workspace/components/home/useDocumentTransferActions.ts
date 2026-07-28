@@ -1,4 +1,4 @@
-import { computed, nextTick, ref, type ComputedRef, type Ref } from 'vue'
+import { computed, ref, type ComputedRef, type Ref } from 'vue'
 
 import type { CreateWorkspaceDocumentOptions } from '@/composables/useDocumentWorkspace'
 import type { UseDocumentAutosaveReturn } from '@/composables/useDocumentAutosave'
@@ -10,8 +10,14 @@ import type {
 } from '@/models/documents/document'
 import type { AppError } from '@/models/shared/result'
 import type { DocumentTransferService } from '@/services/documents/DocumentTransferService'
-import type { DocumentImportFormat } from '@/features/documents/documentFile'
-import type { DocumentSidebarExpose, EditorShellExpose, MarkdownFileInput } from './homePageTypes'
+import { inferDocumentImportFormat } from '@/features/documents/documentFile'
+import { createEmptyDocumentContent } from '@/editor/io/documentTemplate'
+import type {
+  DocumentSidebarExpose,
+  EditorShellExpose,
+  MarkdownFile,
+  MarkdownFileInput,
+} from './homePageTypes'
 
 interface DocumentTransferActionsOptions {
   getDocumentTransfer: () => Promise<DocumentTransferService>
@@ -37,37 +43,71 @@ interface DocumentTransferActionsOptions {
 }
 
 export function useDocumentTransferActions(options: DocumentTransferActionsOptions) {
-  const selectedImportFormat = ref<DocumentImportFormat | null>(null)
+  const pendingImportFiles = ref<MarkdownFile[]>([])
+  const skippedImportFileCount = ref(0)
+  const importGroupTitle = ref('导入的文档')
+  const isImporting = ref(false)
   const shareHtml = ref('')
   const isPreparingShare = ref(false)
-  const importFileAccept = computed(() =>
-    selectedImportFormat.value === 'json'
-      ? '.json,application/json'
-      : '.md,.markdown,text/markdown,text/plain',
+  const importFileAccept = computed(
+    () => '.json,.md,.markdown,application/json,text/markdown',
   )
 
   function openImportDialog(): void {
+    clearPendingImport()
     options.showImportModal.value = true
   }
 
-  async function chooseImportFormat(format: DocumentImportFormat): Promise<void> {
-    const authorized = await options.authorize('导入文档', '导入会在知识库中创建新页面。')
-    if (!authorized) return
-
-    selectedImportFormat.value = format
-    options.showImportModal.value = false
-    await nextTick()
-    options.documentSidebar.value?.openFilePicker()
+  function chooseImportSource(mode: 'files' | 'folder'): void {
+    // Keep this call synchronous with the user's click. Chromium may block a file chooser
+    // after an awaited authorization dialog because the transient user activation is lost.
+    options.documentSidebar.value?.openFilePicker(mode)
   }
 
   async function handleImportFileChange(event: { target: unknown }): Promise<void> {
     const input = event.target as MarkdownFileInput
-    const file = input.files?.[0]
+    const files: MarkdownFile[] = []
+    for (let index = 0; index < (input.files?.length ?? 0); index += 1) {
+      const file = input.files?.[index]
+      if (file) files.push(file)
+    }
+    // A native FileList is live in Chromium. Clear only after taking the snapshot above.
     input.value = ''
-    if (!file) return
+    if (!files.length) return
 
-    const importFormat = selectedImportFormat.value
-    selectedImportFormat.value = null
+    const supported: MarkdownFile[] = []
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index]
+      if (file && inferDocumentImportFormat(file.name)) supported.push(file)
+    }
+    skippedImportFileCount.value = files.length - supported.length
+    if (!supported.length) {
+      options.notify.error('未找到可导入的 Markdown 或 JSON 文件。')
+      return
+    }
+
+    pendingImportFiles.value = supported
+    importGroupTitle.value = suggestImportGroupTitle(supported)
+    options.showImportModal.value = true
+  }
+
+  function cancelPendingImport(): void {
+    options.showImportModal.value = false
+    clearPendingImport()
+  }
+
+  async function confirmImport(createGroup: boolean): Promise<void> {
+    if (isImporting.value || !pendingImportFiles.value.length) return
+    const authorized = await options.authorize(
+      '批量导入文档',
+      `即将在知识库中创建 ${pendingImportFiles.value.length} 个页面。`,
+    )
+    if (!authorized) return
+
+    const files = [...pendingImportFiles.value]
+    const skippedCount = skippedImportFileCount.value
+    const groupTitle = options.normalizeTitle(importGroupTitle.value) || '导入的文档'
+    isImporting.value = true
 
     await options.runDocumentAction(async () => {
       const flushResult = await options.autosave.flushBeforeDocumentChange()
@@ -75,21 +115,54 @@ export function useDocumentTransferActions(options: DocumentTransferActionsOptio
 
       try {
         const documentTransfer = await options.getDocumentTransfer()
-        const parsed = documentTransfer.parseImport({
-          fileName: file.name,
-          text: await file.text(),
-          format: importFormat,
-        })
-        const created = await options.createDocument(parsed.title, {
-          parentId: options.getActiveGroupId(),
-          content: parsed.content,
-          plainText: parsed.plainText,
-          sourceUrl: file.path || file.webkitRelativePath || file.name,
-        })
-        if (!created) return
+        const parsedFiles = []
+        let failedCount = 0
+        for (const file of files) {
+          try {
+            parsedFiles.push({
+              file,
+              parsed: documentTransfer.parseImport({ fileName: file.name, text: await file.text() }),
+            })
+          } catch {
+            failedCount += 1
+          }
+        }
+        if (!parsedFiles.length) {
+          options.notify.error('所选文件均无法解析，请检查文件内容。')
+          return
+        }
 
-        await options.loadDocument(created.id, created)
-        options.notify.success(parsed.format === 'json' ? 'JSON 已导入' : 'Markdown 已导入')
+        let parentId = options.getActiveGroupId()
+        if (createGroup) {
+          const group = await options.createDocument(groupTitle, {
+            documentKind: 'group',
+            content: createEmptyDocumentContent(),
+            plainText: '',
+          })
+          if (!group) return
+          parentId = group.id
+        }
+
+        const createdDocuments: DocumentRecord[] = []
+        for (const { file, parsed } of parsedFiles) {
+          const created = await options.createDocument(parsed.title, {
+            parentId,
+            content: parsed.content,
+            plainText: parsed.plainText,
+            sourceUrl: file.path || file.webkitRelativePath || file.name,
+          })
+          if (created) createdDocuments.push(created)
+          else failedCount += 1
+        }
+        if (!createdDocuments.length) return
+
+        await options.loadDocument(createdDocuments[0]!.id, createdDocuments[0])
+        const ignoredCount = skippedCount + failedCount
+        options.notify.success(
+          ignoredCount
+            ? `已导入 ${createdDocuments.length} 个文档，跳过 ${ignoredCount} 个文件`
+            : `已导入 ${createdDocuments.length} 个文档`,
+        )
       } catch (error) {
         options.actionError.value = {
           code: 'validation-error',
@@ -99,6 +172,15 @@ export function useDocumentTransferActions(options: DocumentTransferActionsOptio
         options.notify.error(options.actionError.value.message)
       }
     })
+    isImporting.value = false
+    options.showImportModal.value = false
+    clearPendingImport()
+  }
+
+  function clearPendingImport(): void {
+    pendingImportFiles.value = []
+    skippedImportFileCount.value = 0
+    importGroupTitle.value = '导入的文档'
   }
 
   async function openShareView(): Promise<void> {
@@ -164,10 +246,23 @@ export function useDocumentTransferActions(options: DocumentTransferActionsOptio
     shareHtml,
     isPreparingShare,
     importFileAccept,
+    pendingImportFiles,
+    skippedImportFileCount,
+    importGroupTitle,
+    isImporting,
     openImportDialog,
-    chooseImportFormat,
+    chooseImportSource,
     handleImportFileChange,
+    cancelPendingImport,
+    confirmImport,
     openShareView,
     exportCurrentDocument,
   }
+}
+
+function suggestImportGroupTitle(files: MarkdownFile[]): string {
+  const folderName = files
+    .map((file) => file.webkitRelativePath?.split(/[\\/]/)[0]?.trim())
+    .find((name) => name)
+  return folderName || '导入的文档'
 }

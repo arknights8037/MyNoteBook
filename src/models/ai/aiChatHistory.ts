@@ -51,6 +51,8 @@ export interface AiChatHistoryItem {
   model: string
   pinnedAt: number | null
   messages: AiChatHistoryMessage[]
+  /** In-memory visual anchor for an empty task. Never written to the history store. */
+  transient?: boolean
 }
 
 export interface AgentWorkspaceHistoryState {
