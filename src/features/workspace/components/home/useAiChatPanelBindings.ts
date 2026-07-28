@@ -37,6 +37,9 @@ interface AiChatPanelBindingsOptions {
   close: () => void
   selectTarget: (target: AgentTargetOption) => void
   clearTarget: (targetId: string) => void
+  selectHistory: (historyId: string) => void
+  selectProject: (projectId: string) => void
+  startTask: (projectId: string | null) => void
   writeMessageToChildDocument: (messageId: string) => Promise<DocumentId | null | void>
 }
 
@@ -99,12 +102,12 @@ export function useAiChatPanelBindings(options: AiChatPanelBindingsOptions) {
     onForkMessage: conversation.forkAtMessage,
     onEditMessage: conversation.editMessage,
     onRetryMessage: homeActions.retryMessage,
-    onSelectHistory: homeActions.selectHistory,
+    onSelectHistory: options.selectHistory,
     onDeleteHistory: conversation.deleteHistory,
-    onSelectProject: conversation.selectProject,
+    onSelectProject: options.selectProject,
     onCreateProject: conversation.createProject,
     onDeleteProject: conversation.deleteProject,
-    onNewTask: conversation.startTask,
+    onNewTask: options.startTask,
     onPinProject: conversation.toggleProjectPin,
     onPinHistory: conversation.toggleHistoryPin,
     onMoveHistory: conversation.moveHistoryToProject,

@@ -161,6 +161,7 @@ MyNoteBook 的目标不是增加更多孤立工具，而是建立一个长期存
 ## 技术与维护文档
 
 - [产品定位与愿景](docs/product-positioning.md)：产品类别、工作循环、差异化和品牌表达。
+- [可组合情报与工作看板](docs/dashboard-composer.md)：可控组件排版、Widget 架构、RSS/IM/自动化卡片与分阶段落地方案。
 - [当前架构与模块边界](docs/architecture.md)：代码所有权、领域边界、真实能力和已知偏差。
 - [Agent Runtime 与工具协议](docs/agent-runtime.md)：运行循环、上下文、权限、工具、审计和 Patch 确认。
 - [认知系统集成设计](docs/cognitive-system-integration.md)：Cognitive Mode、知识控制模板和 Knowledge Candidate。

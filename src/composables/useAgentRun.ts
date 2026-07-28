@@ -1,7 +1,8 @@
-import { ref } from 'vue'
+import { computed, ref, shallowReactive } from 'vue'
 
 import type { AgentRuntimeResult } from '@/services/agent/AgentRuntime'
 import type { KnowledgeSource } from '@/models/knowledge/knowledgeRetrieval'
+import { createIdleAgentRuntimeState } from '@/models/agent/agentRuntime'
 import { buildAiPrompt } from '@/services/ai/AiPromptPolicy'
 import { normalizeDocumentTitle } from '@/models/documents/documentPresentation'
 import { buildAgentRunContext } from './agentRun/agentRunContext'
@@ -46,23 +47,63 @@ export type {
   AgentRunSession,
 } from './agentRun/types'
 
+let agentRunModulesPromise: ReturnType<typeof loadAgentRunModulesUncached> | null = null
+
+function loadAgentRunModules() {
+  return (agentRunModulesPromise ??= loadAgentRunModulesUncached())
+}
+
+async function loadAgentRunModulesUncached() {
+  const [
+    { runAiMarkdownCompletion },
+    { buildAiSystemPrompt },
+    { runAgentToolLoop },
+    { executeAgentTool, prepareReadDocumentObservation },
+    { executeRustAgentTool },
+    { loadEnabledSkillPrompt },
+    { parseReadDocumentProvenance, validateDocumentEditProvenance },
+  ] = await Promise.all([
+    import('@/services/ai/AiMarkdownService'),
+    import('@/services/ai/AiSystemPrompt'),
+    import('@/services/agent/AgentRuntime'),
+    import('@/services/agent/AgentToolExecutor'),
+    import('@/services/agent/RustAgentToolService'),
+    import('@/services/integrations/SkillService'),
+    import('@/services/agent/AgentEditProposalGuard'),
+  ])
+  return {
+    runAiMarkdownCompletion,
+    buildAiSystemPrompt,
+    runAgentToolLoop,
+    executeAgentTool,
+    prepareReadDocumentObservation,
+    executeRustAgentTool,
+    loadEnabledSkillPrompt,
+    parseReadDocumentProvenance,
+    validateDocumentEditProvenance,
+  }
+}
+
 export function useAgentRun(options: UseAgentRunOptions) {
-  let abortController: AbortController | null = null
-  let runActive = false
-  const runtime = createAgentRunRuntimeController(options.createId)
-  const {
-    runtimeState,
-    waitForAuthorizerInput,
-    answerAuthorization,
-    cancelPendingAuthorization,
-    applyProgressUpdate,
-    recordExecutionResult,
-    setSummary,
-  } = runtime
+  type RuntimeController = ReturnType<typeof createAgentRunRuntimeController>
+  const fallbackRuntime = createAgentRunRuntimeController(options.createId)
+  const runtimes = shallowReactive(new Map<string, RuntimeController>())
+  const activeRuns = shallowReactive(
+    new Map<string, { abortController: AbortController; runtime: RuntimeController }>(),
+  )
   const lastTaskId = ref<string | null>(null)
   const lastRunIssue = ref('')
   const lastRunReport = ref<AgentCommunicationResult | null>(null)
   const activeConversationId = ref<string | null>(null)
+  const selectedConversationId = computed(
+    () => (options.workspace ? options.workspace.conversationId.value : activeConversationId.value),
+  )
+  const selectedRuntime = computed(
+    () => runtimes.get(selectedConversationId.value ?? '') ?? fallbackRuntime,
+  )
+  const runtimeState = computed(() => selectedRuntime.value.runtimeState.value)
+  const lifecycleState = computed(() => selectedRuntime.value.lifecycleState.value)
+  const runEvents = computed(() => selectedRuntime.value.runEvents.value)
   const hasCognitivePersistence = () => Boolean(options.services?.getCognitiveSessionService)
   const getCognitiveSessionService = async () => {
     const provider = options.services?.getCognitiveSessionService
@@ -82,20 +123,37 @@ export function useAgentRun(options: UseAgentRunOptions) {
     }
     const basePrompt = promptOverride?.trim() || runContext.prompt.value.trim()
     const prompt = continuation ? buildContinuationPrompt(basePrompt, continuation) : basePrompt
-    if (runActive) {
-      lastRunIssue.value = 'Agent Runtime 已有任务正在运行。'
-      return
-    }
     if (!prompt) {
       lastRunIssue.value = 'Agent 请求内容为空。'
+      return
+    }
+    const workspace = runContext.workspace ?? options.workspace
+    const runKey =
+      workspace?.conversationId.value?.trim() ||
+      workspace?.ensureConversationId() ||
+      options.createId()
+    if (activeRuns.has(runKey)) {
+      lastRunIssue.value = '当前任务已经在运行。'
       return
     }
     lastTaskId.value = null
     lastRunIssue.value = ''
     lastRunReport.value = null
     const runId = options.createId()
-    runActive = true
-    abortController = new AbortController()
+    const abortController = new AbortController()
+    const runtime = createAgentRunRuntimeController(options.createId)
+    const {
+      runtimeState,
+      waitForAuthorizerInput,
+      cancelPendingAuthorization,
+      applyProgressUpdate,
+      recordExecutionResult,
+      setSummary,
+    } = runtime
+    runtimes.set(runKey, runtime)
+    activeRuns.set(runKey, { abortController, runtime })
+    activeConversationId.value = runKey
+    options.isRunning.value = true
     runtime.start({ runId, goal: prompt, detail: '正在准备 Agent 任务' })
 
     const originalPrompt = prompt
@@ -114,15 +172,13 @@ export function useAgentRun(options: UseAgentRunOptions) {
       const message = formatAiErrorMessage(error)
       failRun(message)
       runtime.fail(message)
-      runActive = false
-      abortController = null
+      finishRun(runKey, runtime)
       return
     }
     if (!prepared.ok) {
       failRun(prepared.error)
       runtime.fail(prepared.error)
-      runActive = false
-      abortController = null
+      finishRun(runKey, runtime)
       return
     }
     const {
@@ -136,23 +192,19 @@ export function useAgentRun(options: UseAgentRunOptions) {
     } = prepared.value
     const { agentIntent, learningStateBeforeRun, learningUserAttempt } = prepared.value
     let { cognitiveSession, learningState } = prepared.value
-    activeConversationId.value = conversationId || null
+    activeConversationId.value = conversationId || runKey
 
-    const [
-      { runAiMarkdownCompletion },
-      { buildAiSystemPrompt },
-      { runAgentToolLoop },
-      { executeAgentTool, prepareReadDocumentObservation },
-      { executeRustAgentTool },
-      { loadEnabledSkillPrompt },
-    ] = await Promise.all([
-      import('@/services/ai/AiMarkdownService'),
-      import('@/services/ai/AiSystemPrompt'),
-      import('@/services/agent/AgentRuntime'),
-      import('@/services/agent/AgentToolExecutor'),
-      import('@/services/agent/RustAgentToolService'),
-      import('@/services/integrations/SkillService'),
-    ])
+    const {
+      runAiMarkdownCompletion,
+      buildAiSystemPrompt,
+      runAgentToolLoop,
+      executeAgentTool,
+      prepareReadDocumentObservation,
+      executeRustAgentTool,
+      loadEnabledSkillPrompt,
+      parseReadDocumentProvenance,
+      validateDocumentEditProvenance,
+    } = await loadAgentRunModules()
     let sources: KnowledgeSource[] = []
     let agentRounds = 0
     let agentToolCallCount = 0
@@ -164,8 +216,6 @@ export function useAgentRun(options: UseAgentRunOptions) {
     workspaceDocumentIds.add(snapshot.document.id)
     const discoveredDocumentIds = new Set(workspaceDocumentIds)
     const readableDocuments = new Map<string, ReadableDocument>()
-    const { parseReadDocumentProvenance, validateDocumentEditProvenance } =
-      await import('@/services/agent/AgentEditProposalGuard')
     const taskApprovedMcpServerIds = new Set<string>()
 
     if (editPlan) lastTaskId.value = editPlan.task.id
@@ -632,20 +682,43 @@ export function useAgentRun(options: UseAgentRunOptions) {
       syncRuntimeMessage()
     } finally {
       cancelPendingAuthorization('Agent 任务已经结束。')
-      options.isRunning.value = false
-      runActive = false
-      abortController = null
+      finishRun(runKey, runtime)
     }
   }
 
-  function stop(): void {
-    cancelPendingAuthorization('用户停止了 Agent。')
-    abortController?.abort()
+  function finishRun(runKey: string, runtime: RuntimeController): void {
+    if (activeRuns.get(runKey)?.runtime === runtime) activeRuns.delete(runKey)
+    options.isRunning.value = activeRuns.size > 0
   }
 
-  function resetRuntime(): void {
-    runtime.reset()
-    activeConversationId.value = null
+  function stop(conversationId?: string | null): void {
+    const requestedId = conversationId ?? selectedConversationId.value
+    const active = requestedId ? activeRuns.get(requestedId) : null
+    const target = active ?? (activeRuns.size === 1 ? [...activeRuns.values()][0] : null)
+    target?.runtime.cancelPendingAuthorization('用户停止了 Agent。')
+    target?.abortController.abort()
+  }
+
+  function answerAuthorization(requestId: string, answer: string): boolean {
+    for (const { runtime } of activeRuns.values()) {
+      if (runtime.answerAuthorization(requestId, answer)) return true
+    }
+    return false
+  }
+
+  function isConversationRunning(conversationId: string | null): boolean {
+    return Boolean(conversationId && activeRuns.has(conversationId))
+  }
+
+  function runtimeStateFor(conversationId: string | null) {
+    return runtimes.get(conversationId ?? '')?.runtimeState.value ?? createIdleAgentRuntimeState()
+  }
+
+  function resetRuntime(conversationId?: string | null): void {
+    const targetId = conversationId ?? selectedConversationId.value
+    if (targetId) runtimes.delete(targetId)
+    else fallbackRuntime.reset()
+    if (activeConversationId.value === targetId) activeConversationId.value = null
   }
 
   return {
@@ -653,12 +726,14 @@ export function useAgentRun(options: UseAgentRunOptions) {
     stop,
     answerAuthorization,
     runtimeState,
-    lifecycleState: runtime.lifecycleState,
-    runEvents: runtime.runEvents,
+    lifecycleState,
+    runEvents,
     lastTaskId,
     lastRunIssue,
     lastRunReport,
     activeConversationId,
+    isConversationRunning,
+    runtimeStateFor,
     resetRuntime,
   }
 }

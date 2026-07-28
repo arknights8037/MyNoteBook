@@ -19,6 +19,31 @@ const content: TiptapDocumentJson = {
 }
 
 describe('useAgentPatchWorkflow', () => {
+  it('queues parallel patch reviews instead of overwriting the active task', async () => {
+    const { workflow } = createWorkflow()
+    const firstTask = task()
+    const secondTask = { ...task(), id: 'task-2', conversationId: 'conversation-2' }
+    const secondPatchSet = {
+      ...patchSet(),
+      taskId: 'task-2',
+      patches: patchSet().patches.map((item) => ({
+        ...item,
+        patchId: 'patch-2',
+        taskId: 'task-2',
+      })),
+    }
+
+    workflow.queueAgentPatchReview(firstTask, patchSet())
+    workflow.queueAgentPatchReview(secondTask, secondPatchSet)
+
+    expect(workflow.pendingAgentTask.value?.id).toBe('task-1')
+    expect(workflow.queuedAgentReviews.value).toHaveLength(1)
+    await workflow.rejectPendingAgentPatches()
+    expect(workflow.pendingAgentTask.value?.id).toBe('task-2')
+    expect(workflow.pendingAgentPatchSet.value?.taskId).toBe('task-2')
+    expect(workflow.showAgentPatchModal.value).toBe(true)
+  })
+
   it('owns patch selection and edited proposal content', () => {
     const { workflow } = createWorkflow()
     workflow.pendingAgentPatchSet.value = patchSet()

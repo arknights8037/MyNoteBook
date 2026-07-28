@@ -12,9 +12,6 @@ export async function createPersistedAgentTask(
     options.tasks.value = options.tasks.value.filter((candidate) => candidate.id !== task.id)
     return createdTask.error.message
   }
-  options.patches.pendingTask.value = null
-  options.patches.pendingPatchSet.value = null
-  options.patches.showModal.value = false
   return null
 }
 
@@ -32,9 +29,12 @@ export async function persistAgentRunResult(input: {
     input.task.currentStep = '等待用户确认修改'
     const updatedTask = await repository.updateTask(input.task)
     if (!updatedTask.ok) throw new Error(updatedTask.error.message)
-    input.patches.pendingTask.value = input.task
-    input.patches.pendingPatchSet.value = input.patchSet
-    input.patches.showModal.value = true
+    if (input.patches.queueReview) input.patches.queueReview(input.task, input.patchSet)
+    else {
+      input.patches.pendingTask.value = input.task
+      input.patches.pendingPatchSet.value = input.patchSet
+      input.patches.showModal.value = true
+    }
     return
   }
   if (input.outcome !== 'no_change' && input.outcome !== 'blocked') return

@@ -34,14 +34,34 @@ describe('DocumentSidebar', () => {
     expect(wrapper.emitted('create-view')).toContainEqual(['group'])
   })
 
-  it('owns the file input and exposes a narrow picker command', () => {
+  it('configures the native picker for multiple files or a folder', () => {
     const click = vi.spyOn(globalThis.HTMLInputElement.prototype, 'click').mockImplementation(() => {})
     const wrapper = createWrapper([])
+    const input = wrapper.get('input[type="file"]')
 
-    ;(wrapper.vm as unknown as { openFilePicker: () => void }).openFilePicker()
+    const sidebar = wrapper.vm as unknown as {
+      openFilePicker: (mode: 'files' | 'folder') => void
+    }
+    sidebar.openFilePicker('folder')
+    expect(input.attributes()).toHaveProperty('webkitdirectory')
 
-    expect(click).toHaveBeenCalledOnce()
+    sidebar.openFilePicker('files')
+    expect(input.attributes()).not.toHaveProperty('webkitdirectory')
+
+    expect(click).toHaveBeenCalledTimes(2)
     click.mockRestore()
+  })
+
+  it('offers a direct whole-group removal action', async () => {
+    const group = summary('group', null, 'group')
+    const wrapper = createWrapper([group])
+    const deleteItem = wrapper
+      .findAll('.document-group .document-card-menu__item')
+      .find((item) => item.text() === '删除整个分组')
+
+    expect(deleteItem).toBeDefined()
+    await deleteItem!.trigger('select')
+    expect(wrapper.emitted('delete-group')).toEqual([[group]])
   })
 
   it('requests a view change without mutating parent state', async () => {

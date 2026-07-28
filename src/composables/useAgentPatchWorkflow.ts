@@ -44,6 +44,7 @@ export interface UseAgentPatchWorkflowOptions {
 export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
   const pendingAgentTask = ref<AgentTask | null>(null)
   const pendingAgentPatchSet = ref<AgentPatchSet | null>(null)
+  const queuedAgentReviews = ref<Array<{ task: AgentTask; patchSet: AgentPatchSet }>>([])
   const showAgentPatchModal = ref(false)
   const isApplyingAgentPatches = ref(false)
   const lastAppliedAgentTask = ref<AgentTask | null>(null)
@@ -76,6 +77,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
     }
 
     if (options.tasks) options.tasks.value = recovered.value.tasks
+    queuedAgentReviews.value = []
     pendingAgentTask.value = recovered.value.pendingTask
     pendingAgentPatchSet.value = recovered.value.pendingPatchSet
     showAgentPatchModal.value = Boolean(
@@ -84,6 +86,24 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
     lastAppliedAgentTask.value = recovered.value.lastAppliedTask
     lastAppliedPatchSet.value = recovered.value.lastAppliedPatchSet
     lastAppliedAgentTransactionId.value = recovered.value.lastAppliedTransaction?.id ?? null
+  }
+
+  function queueAgentPatchReview(task: AgentTask, patchSet: AgentPatchSet): void {
+    if (!pendingAgentTask.value || !pendingAgentPatchSet.value) {
+      pendingAgentTask.value = task
+      pendingAgentPatchSet.value = patchSet
+      showAgentPatchModal.value = true
+      return
+    }
+    queuedAgentReviews.value = [...queuedAgentReviews.value, { task, patchSet }]
+  }
+
+  function openNextAgentPatchReview(): void {
+    const next = queuedAgentReviews.value[0] ?? null
+    queuedAgentReviews.value = queuedAgentReviews.value.slice(1)
+    pendingAgentTask.value = next?.task ?? null
+    pendingAgentPatchSet.value = next?.patchSet ?? null
+    showAgentPatchModal.value = Boolean(next)
   }
 
   function toggleAgentPatchAccepted(patchId: string, accepted: boolean): void {
@@ -124,9 +144,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
         return
       }
     }
-    pendingAgentTask.value = null
-    pendingAgentPatchSet.value = null
-    showAgentPatchModal.value = false
+    openNextAgentPatchReview()
     options.notify.success('已拒绝 Agent 修改')
   }
 
@@ -320,9 +338,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
     lastAppliedAgentTask.value = task
     lastAppliedPatchSet.value = patchSet
     lastAppliedAgentTransactionId.value = transactionId
-    pendingAgentTask.value = null
-    pendingAgentPatchSet.value = null
-    showAgentPatchModal.value = false
+    openNextAgentPatchReview()
   }
 
   async function reportPendingAgentError(error: string): Promise<void> {
@@ -382,6 +398,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
   return {
     pendingAgentTask,
     pendingAgentPatchSet,
+    queuedAgentReviews,
     pendingAgentPatches,
     pendingAgentAcceptedPatches,
     showAgentPatchModal,
@@ -390,6 +407,7 @@ export function useAgentPatchWorkflow(options: UseAgentPatchWorkflowOptions) {
     lastAppliedPatchSet,
     lastAppliedAgentTransactionId,
     restoreForDocument,
+    queueAgentPatchReview,
     toggleAgentPatchAccepted,
     updateAgentPatchAfter,
     setAllPendingAgentPatchesAccepted,

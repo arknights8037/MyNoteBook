@@ -475,6 +475,14 @@
   background: var(--color-agent-thinking-bg);
 }
 
+.ai-chat-history__item.is-draft {
+  border-style: dashed;
+}
+
+.ai-chat-history__item.is-draft strong {
+  color: var(--color-agent-accent);
+}
+
 .ai-chat-history__select {
   display: grid;
   min-width: 0;

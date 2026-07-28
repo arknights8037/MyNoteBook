@@ -35,14 +35,37 @@ interface UseDocumentTrashOptions {
   confirmDelete?: DocumentWorkspaceConfirmation
 }
 
+interface DeleteDocumentControl {
+  confirmed?: boolean
+  authorized?: boolean
+  notify?: boolean
+  additionalDescendants?: DocumentSummary[]
+}
+
 export function useDocumentTrash(options: UseDocumentTrashOptions) {
-  async function deleteDocument(document: DocumentSummary): Promise<void> {
-    const descendants = collectArticleDescendants(options.documents.value, document.id)
-    if (!(await confirmRemoval(document, descendants.length, false))) return
-    if (!(await authorize('删除页面', `即将把「${displayDocumentTitle(document)}」移入回收站。`))) {
-      return
+  async function deleteDocument(
+    document: DocumentSummary,
+    control: DeleteDocumentControl = {},
+  ): Promise<boolean> {
+    const descendantMap = new Map(
+      [
+        ...collectArticleDescendants(options.documents.value, document.id),
+        ...(control.additionalDescendants ?? []),
+      ].map((candidate) => [candidate.id, candidate]),
+    )
+    descendantMap.delete(document.id)
+    const descendants = [...descendantMap.values()]
+    if (!control.confirmed && !(await confirmRemoval(document, descendants.length, false))) {
+      return false
+    }
+    if (
+      !control.authorized &&
+      !(await authorize('删除页面', `即将把「${displayDocumentTitle(document)}」移入回收站。`))
+    ) {
+      return false
     }
 
+    let deleted = false
     await options.runAction(async () => {
       const targets = [document, ...descendants]
       const deletingCurrent = targets.some(
@@ -69,12 +92,16 @@ export function useDocumentTrash(options: UseDocumentTrashOptions) {
         if (target)
           await options.loadDocument(target.id, 'contentJson' in target ? target : undefined)
       }
-      options.notify.success(
-        descendants.length
-          ? `页面及 ${descendants.length} 个子页面已移入回收站`
-          : '页面已移入回收站',
-      )
+      deleted = true
+      if (control.notify !== false) {
+        options.notify.success(
+          descendants.length
+            ? `页面及 ${descendants.length} 个子页面已移入回收站`
+            : '页面已移入回收站',
+        )
+      }
     })
+    return deleted
   }
 
   async function restoreDocument(document: DocumentSummary): Promise<void> {

@@ -9,6 +9,7 @@ import {
   Code2,
   Database,
   FileClock,
+  FilePlus2,
   FileText,
   Folder,
   FolderOpen,
@@ -156,6 +157,15 @@ function selectProject(projectId: string): void {
   emit('select-project', projectId)
 }
 
+function startTaskFromCurrentSelection(): void {
+  emit(
+    'new-task',
+    props.currentProjectId && props.currentProjectId !== UNGROUPED_AGENT_PROJECT_ID
+      ? props.currentProjectId
+      : null,
+  )
+}
+
 function readCollapsedProjectIds(): Set<string> {
   try {
     const value = JSON.parse(globalThis.localStorage?.getItem('my-notebook:agent-project-folders') ?? '[]')
@@ -192,7 +202,7 @@ function deleteProject(project: AgentProject): void {
       <button type="button" @click="emit('new-project')">
         <Plus :size="15" /><span>新建项目</span>
       </button>
-      <button type="button" @click="emit('new-task', currentProjectId || null)">
+      <button type="button" @click="startTaskFromCurrentSelection">
         <FileText :size="15" /><span>新建任务</span>
       </button>
     </div>
@@ -218,6 +228,15 @@ function deleteProject(project: AgentProject): void {
           </button>
           <button
             type="button"
+            class="context-sidebar__project-new"
+            :aria-label="`在项目中新建任务：${project.name}`"
+            title="新建任务"
+            @click.stop="emit('new-task', project.id)"
+          >
+            <FilePlus2 :size="13" />
+          </button>
+          <button
+            type="button"
             class="context-sidebar__project-pin"
             :class="{ 'is-pinned': project.pinnedAt !== null }"
             :aria-label="`${project.pinnedAt !== null ? '取消置顶' : '置顶'}项目：${project.name}`"
@@ -239,6 +258,7 @@ function deleteProject(project: AgentProject): void {
             v-for="history in historiesForProject(project.id)"
             :key="history.id"
             class="context-sidebar__history-row"
+            :class="{ 'is-draft': history.transient }"
           >
             <button
               type="button"
@@ -247,9 +267,12 @@ function deleteProject(project: AgentProject): void {
               :title="history.title"
               @click="emit('select-history', history.id)"
             >
-              <FileClock :size="15" /><span><strong>{{ history.title }}</strong><small>{{ history.messageCount }} 条消息</small></span>
+              <FilePlus2 v-if="history.transient" :size="15" />
+              <FileClock v-else :size="15" />
+              <span><strong>{{ history.title }}</strong><small>{{ history.transient ? '草稿 · 尚未保存' : `${history.messageCount} 条消息` }}</small></span>
             </button>
             <button
+              v-if="!history.transient"
               type="button"
               class="context-sidebar__history-delete"
               :aria-label="`删除对话：${history.title}`"
@@ -260,12 +283,33 @@ function deleteProject(project: AgentProject): void {
           </div>
         </template>
       </div>
-      <div v-if="ungroupedHistories.length" class="context-sidebar__project">
-        <div class="context-sidebar__folder"><Folder :size="16" /><span>未分组</span></div>
+      <div
+        v-if="ungroupedHistories.length || currentProjectId === UNGROUPED_AGENT_PROJECT_ID"
+        class="context-sidebar__project"
+      >
+        <div
+          class="context-sidebar__folder-row"
+          :class="{ 'is-active': currentProjectId === UNGROUPED_AGENT_PROJECT_ID }"
+        >
+          <span></span>
+          <button type="button" class="context-sidebar__folder" @click="emit('new-task', null)">
+            <Folder :size="16" /><span>未分组</span>
+          </button>
+          <button
+            type="button"
+            class="context-sidebar__project-new"
+            aria-label="新建未分组任务"
+            title="新建任务"
+            @click="emit('new-task', null)"
+          >
+            <FilePlus2 :size="13" />
+          </button>
+        </div>
         <div
           v-for="history in ungroupedHistories"
           :key="history.id"
           class="context-sidebar__history-row"
+          :class="{ 'is-draft': history.transient }"
         >
           <button
             type="button"
@@ -274,9 +318,12 @@ function deleteProject(project: AgentProject): void {
             :title="history.title"
             @click="emit('select-history', history.id)"
           >
-            <FileClock :size="15" /><span><strong>{{ history.title }}</strong><small>{{ history.messageCount }} 条消息</small></span>
+            <FilePlus2 v-if="history.transient" :size="15" />
+            <FileClock v-else :size="15" />
+            <span><strong>{{ history.title }}</strong><small>{{ history.transient ? '草稿 · 尚未保存' : `${history.messageCount} 条消息` }}</small></span>
           </button>
           <button
+            v-if="!history.transient"
             type="button"
             class="context-sidebar__history-delete"
             :aria-label="`删除对话：${history.title}`"

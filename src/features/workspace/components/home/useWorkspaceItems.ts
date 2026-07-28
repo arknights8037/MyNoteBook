@@ -146,6 +146,31 @@ export function useWorkspaceItems(options: WorkspaceItemsOptions) {
     options.notify.success('视图已删除')
   }
 
+  async function deleteItemsInContainers(
+    containerIds: ReadonlySet<string>,
+  ): Promise<{ ok: true; count: number } | { ok: false; message: string }> {
+    const targetMindMaps = mindMaps.value.filter(
+      (item) => item.parentId !== null && containerIds.has(item.parentId),
+    )
+    const targetViews = workspaceViews.value.filter(
+      (item) => item.parentId !== null && containerIds.has(item.parentId),
+    )
+
+    for (const item of targetMindMaps) {
+      const result = await (await mindMapService()).delete(item.id)
+      if (!result.ok) return { ok: false, message: result.error.message }
+      mindMaps.value = mindMaps.value.filter((candidate) => candidate.id !== item.id)
+      if (activeMindMapId.value === item.id) activeMindMapId.value = null
+    }
+    for (const item of targetViews) {
+      const result = await (await workspaceViewService()).delete(item.id)
+      if (!result.ok) return { ok: false, message: result.error.message }
+      workspaceViews.value = workspaceViews.value.filter((candidate) => candidate.id !== item.id)
+      if (activeWorkspaceViewId.value === item.id) activeWorkspaceViewId.value = null
+    }
+    return { ok: true, count: targetMindMaps.length + targetViews.length }
+  }
+
   function handleMindMapDragStart(event: DragEvent, mindMapId: string): void {
     if (options.isBusy.value) return event.preventDefault()
     draggedMindMapId.value = mindMapId
@@ -406,6 +431,7 @@ export function useWorkspaceItems(options: WorkspaceItemsOptions) {
     createAndOpenMindMap,
     deleteMindMap,
     deleteWorkspaceView,
+    deleteItemsInContainers,
     handleMindMapDragStart,
     handleWorkspaceViewDragStart,
     handleWorkspacePageDragEnd,

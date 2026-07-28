@@ -68,6 +68,26 @@ describe('useDocumentWorkspace', () => {
     expect(workspace.deletedDocuments.value.some((item) => item.id === document.id)).toBe(true)
     expect(workspace.currentDocumentId.value).not.toBe(document.id)
   })
+
+  it('soft deletes explicitly supplied descendants from a mixed workspace hierarchy', async () => {
+    const repository = new MemoryDocumentRepository()
+    const workspace = createWorkspace(repository)
+    await workspace.initializeDocuments()
+    const group = await workspace.createDocument('项目组', { documentKind: 'group' })
+    const nestedDocument = await workspace.createDocument('地图下的文档', { parentId: 'map-1' })
+
+    expect(group).not.toBeNull()
+    expect(nestedDocument).not.toBeNull()
+    await workspace.deleteDocument(group!, {
+      confirmed: true,
+      authorized: true,
+      additionalDescendants: [nestedDocument!],
+    })
+
+    expect(workspace.deletedDocuments.value.map((item) => item.id)).toEqual(
+      expect.arrayContaining([group!.id, nestedDocument!.id]),
+    )
+  })
 })
 
 function createWorkspace(repository: MemoryDocumentRepository) {

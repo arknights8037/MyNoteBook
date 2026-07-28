@@ -80,6 +80,14 @@ function startTask(projectId: string | null): void {
   emit('new-task', projectId)
 }
 
+function startTaskFromCurrentSelection(): void {
+  startTask(
+    props.currentProjectId && props.currentProjectId !== UNGROUPED_AGENT_PROJECT_ID
+      ? props.currentProjectId
+      : null,
+  )
+}
+
 function openProjectSettings(projectId: string): void {
   if (props.currentProjectId !== projectId) emit('select-project', projectId)
   showWorkspaceSettings.value =
@@ -149,13 +157,17 @@ function formatHistoryTime(timestamp: number): string {
     <button
       type="button"
       class="ai-chat-history__new"
-      aria-label="新建未分组任务"
-      :title="collapsed ? '新建未分组任务' : undefined"
-      @click="startTask(null)"
+      :aria-label="
+        currentProjectId === UNGROUPED_AGENT_PROJECT_ID ? '新建未分组任务' : '在当前项目中新建任务'
+      "
+      :title="collapsed ? '新建任务' : undefined"
+      @click="startTaskFromCurrentSelection"
     >
       <FilePlus2 :size="15" />
       <span v-if="!collapsed">新建任务</span>
-      <small v-if="!collapsed">未分组</small>
+      <small v-if="!collapsed">
+        {{ currentProjectId === UNGROUPED_AGENT_PROJECT_ID ? '未分组' : '当前项目' }}
+      </small>
     </button>
     <div v-if="!collapsed" class="ai-chat-project-list" role="list">
       <section
@@ -189,7 +201,10 @@ function formatHistoryTime(timestamp: number): string {
             v-for="historyItem in ungroupedHistory"
             :key="historyItem.id"
             class="ai-chat-history__item ai-chat-history__item--movable"
-            :class="{ 'is-active': currentHistoryId === historyItem.id }"
+            :class="{
+              'is-active': currentHistoryId === historyItem.id,
+              'is-draft': historyItem.transient,
+            }"
             role="listitem"
           >
             <button
@@ -199,9 +214,10 @@ function formatHistoryTime(timestamp: number): string {
               @click="emit('select-history', historyItem.id)"
             >
               <strong>{{ historyItem.title }}</strong>
-              <small>{{ formatHistoryTime(historyItem.updatedAt) }}</small>
+              <small>{{ historyItem.transient ? '草稿 · 尚未保存' : formatHistoryTime(historyItem.updatedAt) }}</small>
             </button>
             <button
+              v-if="!historyItem.transient"
               type="button"
               class="ai-chat-history__pin"
               :class="{ 'is-pinned': historyItem.pinnedAt !== null }"
@@ -211,6 +227,7 @@ function formatHistoryTime(timestamp: number): string {
               <Pin :size="12" />
             </button>
             <DropdownMenuRoot>
+              <template v-if="!historyItem.transient">
               <DropdownMenuTrigger as-child>
                 <button
                   type="button"
@@ -251,8 +268,10 @@ function formatHistoryTime(timestamp: number): string {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenuPortal>
+              </template>
             </DropdownMenuRoot>
             <button
+              v-if="!historyItem.transient"
               type="button"
               class="ai-chat-history__delete"
               :aria-label="`删除聊天记录：${historyItem.title}`"
@@ -297,6 +316,7 @@ function formatHistoryTime(timestamp: number): string {
             type="button"
             class="ai-chat-project__action"
             :aria-label="`在项目中新建任务：${project.name}`"
+            title="新建任务"
             @click="startTask(project.id)"
           >
             <FilePlus2 :size="13" />
@@ -369,7 +389,10 @@ function formatHistoryTime(timestamp: number): string {
             v-for="historyItem in projectHistory(project.id)"
             :key="historyItem.id"
             class="ai-chat-history__item"
-            :class="{ 'is-active': currentHistoryId === historyItem.id }"
+            :class="{
+              'is-active': currentHistoryId === historyItem.id,
+              'is-draft': historyItem.transient,
+            }"
             role="listitem"
           >
             <button
@@ -379,9 +402,10 @@ function formatHistoryTime(timestamp: number): string {
               @click="emit('select-history', historyItem.id)"
             >
               <strong>{{ historyItem.title }}</strong>
-              <small>{{ formatHistoryTime(historyItem.updatedAt) }}</small>
+              <small>{{ historyItem.transient ? '草稿 · 尚未保存' : formatHistoryTime(historyItem.updatedAt) }}</small>
             </button>
             <button
+              v-if="!historyItem.transient"
               type="button"
               class="ai-chat-history__pin"
               :class="{ 'is-pinned': historyItem.pinnedAt !== null }"
@@ -391,6 +415,7 @@ function formatHistoryTime(timestamp: number): string {
               <Pin :size="12" />
             </button>
             <button
+              v-if="!historyItem.transient"
               type="button"
               class="ai-chat-history__delete"
               :aria-label="`删除聊天记录：${historyItem.title}`"
