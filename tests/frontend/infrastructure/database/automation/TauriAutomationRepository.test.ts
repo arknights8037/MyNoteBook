@@ -90,7 +90,10 @@ describe('automation and audit repositories', () => {
       );
       CREATE TABLE approvals (
         id TEXT PRIMARY KEY, entity_id TEXT NOT NULL, entity_type TEXT NOT NULL,
-        decision TEXT NOT NULL, details_json TEXT NOT NULL, created_at INTEGER NOT NULL
+        approval_kind TEXT NOT NULL DEFAULT 'mutation_approval',
+        status TEXT NOT NULL DEFAULT 'pending', decision TEXT NOT NULL,
+        request_json TEXT NOT NULL DEFAULT '{}', details_json TEXT NOT NULL,
+        run_id TEXT, created_at INTEGER NOT NULL, decided_at INTEGER
       );
       CREATE TABLE view_snapshots (
         id TEXT PRIMARY KEY, view_id TEXT NOT NULL, source_snapshot_hash TEXT NOT NULL,

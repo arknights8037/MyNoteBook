@@ -66,6 +66,11 @@ describe('MindMapEditor with MindElixir', () => {
       .element.dispatchEvent(
         new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }),
       )
+    wrapper
+      .get('.mind-map-editor')
+      .element.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }),
+      )
     await wrapper.vm.$nextTick()
     await vi.waitFor(() => expect(document.querySelector('.document-card-menu')).toBeNull())
     wrapper.unmount()

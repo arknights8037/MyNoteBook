@@ -254,7 +254,7 @@ function topicFromTarget(target: InstanceType<typeof globalThis.EventTarget> | n
 }
 
 function handlePointerDown(event: InstanceType<typeof globalThis.PointerEvent>): void {
-  if (event.button === 0) contextMenuOpen.value = false
+  if (event.button === 0) closeContextMenuAfterPrimaryAction()
   const target = event.target
   // The edit overlay is a sibling of <me-tpc>, so it looks like blank canvas to the
   // custom pan handler. Let it receive its native pointer/focus events untouched.
@@ -280,6 +280,19 @@ function handlePointerDown(event: InstanceType<typeof globalThis.PointerEvent>):
   if (shell instanceof globalThis.HTMLElement && typeof shell.setPointerCapture === 'function') {
     shell.setPointerCapture(event.pointerId)
   }
+}
+
+function closeContextMenuAfterPrimaryAction(): void {
+  contextMenuOpen.value = false
+  // Reka handles the same pointer event after this capture handler and may publish
+  // its previous open state again. Reassert the user intent after the event settles.
+  globalThis.queueMicrotask(() => {
+    contextMenuOpen.value = false
+  })
+}
+
+function handlePrimaryClick(event: InstanceType<typeof globalThis.MouseEvent>): void {
+  if (event.button === 0) closeContextMenuAfterPrimaryAction()
 }
 
 function handleDoubleClick(event: InstanceType<typeof globalThis.MouseEvent>): void {
@@ -442,6 +455,7 @@ onBeforeUnmount(() => {
       <div
         class="mind-map-editor-shell"
         @pointerdown.capture="handlePointerDown"
+        @click.capture="handlePrimaryClick"
         @pointermove.capture="handlePointerMove"
         @pointerup.capture="handlePointerUp"
         @pointercancel.capture="handlePointerUp"

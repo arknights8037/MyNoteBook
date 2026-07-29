@@ -154,7 +154,7 @@ ExecutionPolicy 后续版本必须在每次模型 turn 和 tool batch 后累计�
 
 当前已冻结累计预算协议，但除输出和模型轮次外尚未实现跨 turn 的累计硬限制，不得在文档或 UI 中描述成已经实现的累计成本预算。
 
-## 6. Phase 2：Node + PI 纵向原型
+## 6. Phase 2：Node + PI 纵向原型（已完成）
 
 ### 目标
 
@@ -163,6 +163,8 @@ ExecutionPolicy 后续版本必须在每次模型 turn 和 tool batch 后累计�
 ### 决策结果（2026-07-29）
 
 纵向原型和定向对比已完成，决策门选择 **保留 AI SDK**。PI 已证明可以适配共享 Runtime contracts、Tool Manifest、NDJSON 工具 RPC 和 Patch 提案边界，但真实 Provider/Tauri 代理、授权等待与 structured-output repair 尚未达到现有 AI SDK 的生产证据强度。Phase 3 首次迁出 WebView 时只改变运行位置，不同时更换模型循环。完整证据、缺口与重新开启条件见 [Phase 2 PI Runtime 原型与决策记录](pi-runtime-phase2-decision.md)。
+
+合并后维护已补齐新审批字段的前端审计测试基线，并消除 Mind Map 右键菜单在主点击关闭时的事件竞态；Phase 2 相关定向回归保持通过。
 
 ### 原型链路
 

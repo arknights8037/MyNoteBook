@@ -56,6 +56,8 @@ Node 不导入数据库实现，不连接 SQLite。读取工具和 MCP 经 `PiTo
 
 定向自动化覆盖串联工具、并行工具、MCP 业务错误、progress、独立 ID、Patch 转换、reasoning/content、usage、finish reason、structured descriptor、duplicate run、取消唯一终态和 NDJSON 取消等待。Rust 定向测试覆盖 Worker 异常退出时只把仍在 `pending/running` 的对应 Run 标记为 `interrupted`，同时由现有 trigger 将治理 `task_run` 投影为 failed；已完成 Run 不受影响。
 
+合并后的全量前端回归曾暴露两项外围维护问题：Automation/Audit 测试内存库仍使用 migration `0036` 之前的审批字段，以及 Mind Map ContextMenu 在同一主点击事件中的关闭状态可能被组件内部事件回写。两项均已修正并加入定向回归；它们不改变 PI 决策、Runtime Port 或生产 Patch 边界。当前仓库仍没有 `tests/e2e` 用例，因此不得把 Playwright 命令可启动描述为已经具备端到端覆盖。
+
 ## 决策理由
 
 1. PI 的事件和工具模型适合 Node Worker，原型没有发现架构性阻断。
