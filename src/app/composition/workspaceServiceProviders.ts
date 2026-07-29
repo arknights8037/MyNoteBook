@@ -18,8 +18,11 @@ import type { WorkspaceViewService } from '@/services/workspace/WorkspaceViewSer
 import type { McpClientPort } from '@/services/ports/McpClientPort'
 import type { AuthorizationStorePort } from '@/services/ports/AuthorizationStorePort'
 import { TauriAuthorizationStore } from '@/infrastructure/database/agent/TauriAuthorizationStore'
+import { loadAppSettings } from '@/models/settings/settings'
 
 export interface WorkspaceServiceProviders {
+  runtimeOwner: 'webview' | 'rust_worker'
+  runtimeDataDirectory: () => string | undefined
   getCognitiveSessionService: () => Promise<CognitiveSessionService>
   getMindMapService: () => Promise<MindMapService>
   getKnowledgeRepository: () => Promise<KnowledgeRepository>
@@ -36,6 +39,9 @@ export function createWorkspaceServiceProviders(
   mcpClient: McpClientPort,
 ): WorkspaceServiceProviders {
   return {
+    runtimeOwner:
+      import.meta.env.VITE_AGENT_RUNTIME_OWNER === 'rust_worker' ? 'rust_worker' : 'webview',
+    runtimeDataDirectory: () => loadAppSettings().dataDirectory ?? undefined,
     getCognitiveSessionService: lazyProvider(createCognitiveSessionService),
     getMindMapService: lazyProvider(createMindMapService),
     getKnowledgeRepository: lazyProvider(createKnowledgeRepository),

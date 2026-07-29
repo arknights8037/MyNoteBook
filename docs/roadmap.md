@@ -211,14 +211,16 @@ AgentRunRequest
 
 ### 实施状态（进行中）
 
-已落地第一批进程边界基础，但尚未切换生产 Runtime：
+已落地可运行的 sidecar 纵向链路，但默认生产 Runtime 尚未切换：
 
-- 共享 contracts 已冻结 Worker v1 envelope，覆盖实例身份、`runtime.hello`、`run.start/cancel/steer/event/result/error`、`tool.invoke/result`、`authorization.request/result`、heartbeat 和 shutdown。
-- `@mynotebook/agent-runtime-worker` 已提供与具体模型循环解耦的 Node Worker Host，负责并发 Run 路由、事件/唯一结果转发、取消、授权 steering、双向 RPC 等待和主动 heartbeat。
+- 共享 contracts 已冻结 Worker v1 envelope，覆盖实例身份、Run、Tool、工具审计、凭据解析、Authorization、heartbeat 和 shutdown。
+- `@mynotebook/agent-runtime-worker` 已提供 Node Worker Host 和真实 `AiSdkWorkerRuntime`；AI SDK 模型循环、流式事件、Tool Manifest 消费、独立 Tool Call ID、提案捕获、structured-output repair、取消与唯一终态均位于 sidecar。
 - Rust `AgentWorkerSupervisor` 已提供自包含 Worker 路径解析、stdin/stdout NDJSON、实例校验、heartbeat 超时、受控重启、活动 Run 跟踪、崩溃 `interrupted` 终态、Tauri commands 和窗口重建状态快照。
-- UI 侧 `TauriAgentRuntimeAdapter` 已实现 Runtime Port 的 command/event 投影，但尚未接入 `useAgentRun`。
+- Rust dispatcher 已接管 Provider 凭据解析、工具审计、canonical 文档/检索/Skill/本机工具和 MCP 调用；Node 不访问 SQLite、MCP 配置或密钥文件。
+- Node SEA + esbuild 构建可生成按 Tauri target-triple 命名的自包含 sidecar，构建时会执行真实进程协议 smoke；`externalBin` 桌面构建已通过，不要求最终用户安装 Node。
+- `useAgentRun` 可由 composition 通过 `VITE_AGENT_RUNTIME_OWNER=rust_worker` 选择 Tauri Runtime Port；默认仍为 `webview`，Ask/Edit 路径不变。
 
-当前生产 Agent 仍使用 WebView 内的 `AiSdkAgentRuntimeAdapter`。Rust Domain Tool/MCP dispatcher、Provider 请求代理、工具审计、AI SDK Worker 入口、自包含二进制打包和生产切流仍是本阶段剩余工作；在这些边界通过验收前，不得把当前基础切片描述成后台 Agent 或已完成的 Runtime 迁移。
+剩余工作是迁移 Mind Map 与资源草稿工具、补齐真实 Provider/Tauri 网络策略验收、让 UI 消费 Rust 活动/等待快照、移除 WebView Agent fallback，并迁出 A2A polling。在 sidecar 覆盖所有生产 Agent 模式且完成真实凭据 smoke 前，不得把可选链路描述成默认后台 Agent。
 
 ### 目标
 

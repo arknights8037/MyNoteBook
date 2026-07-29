@@ -19,7 +19,7 @@ use tokio::{
 use crate::database;
 
 const PROTOCOL_VERSION: u64 = 1;
-const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(20);
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(45);
 const MAX_RESTARTS: u32 = 3;
 const STATUS_EVENT: &str = "agent-runtime://worker-status";
 const MESSAGE_EVENT: &str = "agent-runtime://worker-message";
@@ -245,7 +245,7 @@ async fn request_supervisor(
 
 async fn run_supervisor(
     app: AppHandle,
-    program: PathBuf,
+    launch: WorkerLaunch,
     data_directory: Option<String>,
     mut receiver: mpsc::Receiver<SupervisorCommand>,
 ) {
@@ -267,7 +267,8 @@ async fn run_supervisor(
         })
         .await;
 
-        let spawn_result = Command::new(&program)
+        let spawn_result = Command::new(&launch.program)
+            .args(&launch.args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -280,7 +281,7 @@ async fn run_supervisor(
                     snapshot.status = AgentWorkerStatus::Unavailable;
                     snapshot.last_error = Some(format!(
                         "无法启动 Agent Worker {}：{error}",
-                        program.display()
+                        launch.program.display()
                     ));
                 })
                 .await;
@@ -356,6 +357,7 @@ async fn run_supervisor(
         let mut last_heartbeat = Instant::now();
         let mut worker_instance_id: Option<String> = None;
         let mut active_run_ids = HashSet::<String>::new();
+        let mut run_requests = HashMap::<String, Value>::new();
         let mut pending_authorizations = HashMap::<String, String>::new();
         let mut intentional_shutdown = false;
         let mut exit_description = "stdout closed".to_string();
@@ -377,6 +379,7 @@ async fn run_supervisor(
                                 &mut stdin,
                                 &mut active_run_ids,
                                 &mut claimed_run_ids,
+                                &mut run_requests,
                                 &mut pending_authorizations,
                             ).await;
                             if outcome.shutdown {
@@ -401,10 +404,14 @@ async fn run_supervisor(
                         Ok(Some(line)) => match handle_worker_line(
                             &app,
                             &line,
-                            &mut stdin,
-                            &mut worker_instance_id,
-                            &mut active_run_ids,
-                            &mut pending_authorizations,
+                            &mut WorkerLineContext {
+                                stdin: &mut stdin,
+                                worker_instance_id: &mut worker_instance_id,
+                                active_run_ids: &mut active_run_ids,
+                                run_requests: &mut run_requests,
+                                pending_authorizations: &mut pending_authorizations,
+                                data_directory: data_directory.clone(),
+                            },
                         ).await {
                             Ok(heartbeat) => {
                                 if heartbeat {
@@ -458,6 +465,7 @@ async fn run_supervisor(
                 .await;
             }
             active_run_ids.clear();
+            run_requests.clear();
             restart_count += 1;
             should_restart = restart_count <= MAX_RESTARTS;
             update_snapshot(&app, |snapshot| {
@@ -499,6 +507,7 @@ async fn handle_command(
     stdin: &mut ChildStdin,
     active_run_ids: &mut HashSet<String>,
     claimed_run_ids: &mut HashSet<String>,
+    run_requests: &mut HashMap<String, Value>,
     pending_authorizations: &mut HashMap<String, String>,
 ) -> CommandOutcome {
     let mut shutdown = false;
@@ -520,12 +529,13 @@ async fn handle_command(
                             "version": PROTOCOL_VERSION,
                             "type": "run.start",
                             "requestId": request_id,
-                            "request": request,
+                            "request": request.clone(),
                         }),
                     )
                     .await
                     {
                         Ok(()) => {
+                            run_requests.insert(run_id.clone(), request.clone());
                             active_run_ids.insert(run_id);
                             Ok(())
                         }
@@ -623,13 +633,19 @@ async fn handle_command(
     CommandOutcome { shutdown, reason }
 }
 
+struct WorkerLineContext<'a> {
+    stdin: &'a mut ChildStdin,
+    worker_instance_id: &'a mut Option<String>,
+    active_run_ids: &'a mut HashSet<String>,
+    run_requests: &'a mut HashMap<String, Value>,
+    pending_authorizations: &'a mut HashMap<String, String>,
+    data_directory: Option<String>,
+}
+
 async fn handle_worker_line(
     app: &AppHandle,
     line: &str,
-    stdin: &mut ChildStdin,
-    worker_instance_id: &mut Option<String>,
-    active_run_ids: &mut HashSet<String>,
-    pending_authorizations: &mut HashMap<String, String>,
+    context: &mut WorkerLineContext<'_>,
 ) -> Result<bool, String> {
     let message: Value = serde_json::from_str(line)
         .map_err(|error| format!("Agent Worker 返回无效 JSON：{error}"))?;
@@ -657,7 +673,7 @@ async fn handle_worker_line(
                 .filter(|value| !value.trim().is_empty())
                 .ok_or_else(|| "Agent Worker identity 缺少实例 ID。".to_string())?
                 .to_string();
-            *worker_instance_id = Some(id.clone());
+            *context.worker_instance_id = Some(id.clone());
             update_snapshot(app, |snapshot| {
                 snapshot.status = AgentWorkerStatus::Running;
                 snapshot.worker_instance_id = Some(id);
@@ -672,12 +688,12 @@ async fn handle_worker_line(
                 .get("workerInstanceId")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "heartbeat 缺少 workerInstanceId。".to_string())?;
-            if worker_instance_id.as_deref() != Some(id) {
+            if context.worker_instance_id.as_deref() != Some(id) {
                 return Err("heartbeat 来自未知 Worker 实例。".to_string());
             }
             update_snapshot(app, |snapshot| {
                 snapshot.last_heartbeat_at = Some(now_millis());
-                snapshot.active_run_ids = sorted_run_ids(active_run_ids);
+                snapshot.active_run_ids = sorted_run_ids(context.active_run_ids);
             })
             .await;
             Ok(true)
@@ -689,13 +705,14 @@ async fn handle_worker_line(
                 .ok_or_else(|| "run.event 缺少 event。".to_string())?;
             if is_terminal_event(&event) {
                 if let Some(run_id) = event.get("runId").and_then(Value::as_str) {
-                    active_run_ids.remove(run_id);
+                    context.active_run_ids.remove(run_id);
+                    context.run_requests.remove(run_id);
                 }
             }
             app.emit(RUN_EVENT, event)
                 .map_err(|error| format!("无法转发 Runtime event：{error}"))?;
             update_snapshot(app, |snapshot| {
-                snapshot.active_run_ids = sorted_run_ids(active_run_ids);
+                snapshot.active_run_ids = sorted_run_ids(context.active_run_ids);
             })
             .await;
             Ok(false)
@@ -707,12 +724,13 @@ async fn handle_worker_line(
                 .and_then(Value::as_str)
                 .or_else(|| message.get("runId").and_then(Value::as_str))
             {
-                active_run_ids.remove(run_id);
+                context.active_run_ids.remove(run_id);
+                context.run_requests.remove(run_id);
             }
             app.emit(MESSAGE_EVENT, message)
                 .map_err(|error| format!("无法转发 Worker 消息：{error}"))?;
             update_snapshot(app, |snapshot| {
-                snapshot.active_run_ids = sorted_run_ids(active_run_ids);
+                snapshot.active_run_ids = sorted_run_ids(context.active_run_ids);
             })
             .await;
             Ok(false)
@@ -727,31 +745,100 @@ async fn handle_worker_line(
                 .and_then(|request| request.get("authorizationId"))
                 .and_then(Value::as_str)
                 .ok_or_else(|| "authorization.request 缺少 authorizationId。".to_string())?;
-            pending_authorizations.insert(authorization_id.to_string(), request_id.to_string());
+            context
+                .pending_authorizations
+                .insert(authorization_id.to_string(), request_id.to_string());
             app.emit(AUTHORIZATION_EVENT, message)
                 .map_err(|error| format!("无法转发授权请求：{error}"))?;
             Ok(false)
         }
         "tool.invoke" => {
-            let request_id = message
+            let request = message
                 .get("request")
-                .and_then(|request| request.get("requestId"))
+                .ok_or_else(|| "tool.invoke 缺少 request。".to_string())?;
+            let request_id = request
+                .get("requestId")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "tool.invoke 缺少 requestId。".to_string())?;
             app.emit(MESSAGE_EVENT, message.clone())
                 .map_err(|error| format!("无法记录工具 RPC：{error}"))?;
+            let run_id = request
+                .get("runId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "tool.invoke 缺少 runId。".to_string())?;
+            let result = dispatch_worker_tool(
+                app,
+                context.data_directory.clone(),
+                request,
+                context.run_requests.get(run_id),
+            )
+            .await;
             write_message(
-                stdin,
+                context.stdin,
+                &match result {
+                    Ok(value) => json!({
+                        "version": PROTOCOL_VERSION,
+                        "type": "tool.result",
+                        "requestId": request_id,
+                        "result": { "ok": true, "value": value }
+                    }),
+                    Err(error) => json!({
+                        "version": PROTOCOL_VERSION,
+                        "type": "tool.result",
+                        "requestId": request_id,
+                        "result": {
+                            "ok": false,
+                            "error": crate::sensitive_data::redact_sensitive_text(&error),
+                            "errorCode": "domain_tool_error",
+                            "retryable": false
+                        }
+                    }),
+                },
+            )
+            .await?;
+            Ok(false)
+        }
+        "tool.record" => {
+            let request_id = message
+                .get("requestId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "tool.record 缺少 requestId。".to_string())?;
+            let call = message
+                .get("call")
+                .ok_or_else(|| "tool.record 缺少 call。".to_string())?;
+            record_worker_tool_call(app, context.data_directory.clone(), call).await?;
+            write_message(
+                context.stdin,
                 &json!({
                     "version": PROTOCOL_VERSION,
-                    "type": "tool.result",
+                    "type": "tool.recorded",
+                    "requestId": request_id
+                }),
+            )
+            .await?;
+            Ok(false)
+        }
+        "credential.request" => {
+            let request = message
+                .get("request")
+                .ok_or_else(|| "credential.request 缺少 request。".to_string())?;
+            let request_id = request
+                .get("requestId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "credential.request 缺少 requestId。".to_string())?;
+            let provider = request
+                .get("provider")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "credential.request 缺少 provider。".to_string())?;
+            let state = app.state::<crate::secret_store::AiSecretState>();
+            let credential = crate::secret_store::get_secret_value(app, &state, provider).await?;
+            write_message(
+                context.stdin,
+                &json!({
+                    "version": PROTOCOL_VERSION,
+                    "type": "credential.result",
                     "requestId": request_id,
-                    "result": {
-                        "ok": false,
-                        "error": "Rust Domain Tool dispatcher 尚未接入 Worker。",
-                        "errorCode": "domain_tool_dispatcher_not_connected",
-                        "retryable": false
-                    }
+                    "credential": credential
                 }),
             )
             .await?;
@@ -764,6 +851,302 @@ async fn handle_worker_line(
         }
         other => Err(format!("Agent Worker 消息类型 {other} 不受支持。")),
     }
+}
+
+async fn dispatch_worker_tool(
+    app: &AppHandle,
+    data_directory: Option<String>,
+    request: &Value,
+    run_request: Option<&Value>,
+) -> Result<Value, String> {
+    let tool_name = request
+        .get("toolName")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "tool.invoke 缺少 toolName。".to_string())?;
+    let call_id = request
+        .get("internalToolCallId")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let arguments = request
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let source = request.get("source").and_then(Value::as_object);
+    if source
+        .and_then(|source| source.get("kind"))
+        .and_then(Value::as_str)
+        == Some("mcp")
+    {
+        let server_id = source
+            .and_then(|source| source.get("serverId"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| "MCP tool source 缺少 serverId。".to_string())?;
+        let source_tool_name = source
+            .and_then(|source| source.get("toolName"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| "MCP tool source 缺少 toolName。".to_string())?;
+        let arguments = arguments
+            .as_object()
+            .cloned()
+            .ok_or_else(|| "MCP 工具参数必须是对象。".to_string())?;
+        return crate::mcp::call_mcp_tool(crate::mcp::CallMcpToolInput {
+            data_directory: effective_data_directory(app, data_directory)?,
+            call_id,
+            server_id: server_id.to_string(),
+            tool_name: source_tool_name.to_string(),
+            arguments,
+        })
+        .await;
+    }
+
+    match tool_name {
+        "get_current_document" => {
+            let document_id = current_document_id(run_request)?;
+            execute_native_tool(
+                app,
+                data_directory,
+                call_id,
+                "read_document",
+                json!({ "documentId": document_id, "maxChars": 65536 }),
+            )
+            .await
+        }
+        "get_selected_blocks" => {
+            let document_id = current_document_id(run_request)?;
+            let block_ids = context_block_ids(run_request, &document_id);
+            if block_ids.is_empty() {
+                return Ok(json!([]));
+            }
+            execute_native_tool(
+                app,
+                data_directory,
+                call_id,
+                "read_document",
+                json!({
+                    "documentId": document_id,
+                    "blockIds": block_ids,
+                    "maxChars": 65536
+                }),
+            )
+            .await
+            .map(|value| value.get("blocks").cloned().unwrap_or_else(|| json!([])))
+        }
+        "get_document_outline" => {
+            let document_id = current_document_id(run_request)?;
+            let document = execute_native_tool(
+                app,
+                data_directory,
+                call_id,
+                "read_document",
+                json!({ "documentId": document_id, "maxChars": 65536 }),
+            )
+            .await?;
+            Ok(Value::Array(
+                document
+                    .get("blocks")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter(|block| {
+                        block.get("blockType").and_then(Value::as_str) == Some("heading")
+                    })
+                    .map(|block| {
+                        json!({
+                            "id": block.get("id").cloned().unwrap_or(Value::Null),
+                            "text": block.get("plainText").cloned().unwrap_or(Value::Null),
+                            "index": block.get("blockIndex").cloned().unwrap_or(Value::Null)
+                        })
+                    })
+                    .collect(),
+            ))
+        }
+        "find_blocks_by_regex" => {
+            let document_id = current_document_id(run_request)?;
+            let document = execute_native_tool(
+                app,
+                data_directory.clone(),
+                None,
+                "read_document",
+                json!({ "documentId": document_id, "maxChars": 65536 }),
+            )
+            .await?;
+            let blocks = document
+                .get("blocks")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|block| {
+                    json!({
+                        "id": block.get("id").cloned().unwrap_or(Value::Null),
+                        "type": block.get("blockType").cloned().unwrap_or(Value::Null),
+                        "text": block.get("plainText").cloned().unwrap_or(Value::Null),
+                        "index": block.get("blockIndex").cloned().unwrap_or(Value::Null)
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut enriched = arguments.as_object().cloned().unwrap_or_default();
+            enriched.insert("blocks".to_string(), Value::Array(blocks));
+            execute_native_tool(
+                app,
+                data_directory,
+                call_id,
+                "find_blocks_by_regex",
+                Value::Object(enriched),
+            )
+            .await
+        }
+        "read_skill_file" => {
+            let values = arguments.as_object().cloned().unwrap_or_default();
+            let skill_id = values
+                .get("skillId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let relative_path = values
+                .get("relativePath")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            crate::skills::read_skill_file(
+                app.clone(),
+                crate::skills::SkillFileInput {
+                    data_directory,
+                    skill_id,
+                    relative_path,
+                    require_enabled: Some(true),
+                },
+            )
+            .map(Value::String)
+        }
+        "search_documents"
+        | "list_document_groups"
+        | "read_document"
+        | "execute_shell"
+        | "inspect_environment_paths"
+        | "discover_local_tools"
+        | "get_system_info" => {
+            execute_native_tool(app, data_directory, call_id, tool_name, arguments).await
+        }
+        "list_mind_maps"
+        | "read_mind_map"
+        | "create_automation_draft"
+        | "create_skill_draft"
+        | "create_mcp_server_draft" => Err(format!(
+            "工具 {tool_name} 尚未迁移到 Rust Worker dispatcher。"
+        )),
+        other => Err(format!("Worker 不允许未注册的领域工具 {other}。")),
+    }
+}
+
+async fn execute_native_tool(
+    app: &AppHandle,
+    data_directory: Option<String>,
+    call_id: Option<String>,
+    name: &str,
+    arguments: Value,
+) -> Result<Value, String> {
+    let output = crate::agent_tools::execute_rig_tool(
+        app.clone(),
+        crate::agent_tools::ExecuteRigToolInput {
+            data_directory,
+            call_id,
+            name: name.to_string(),
+            arguments_json: serde_json::to_string(&arguments).map_err(worker_error)?,
+        },
+    )
+    .await?;
+    serde_json::from_str(&output).map_err(worker_error)
+}
+
+async fn record_worker_tool_call(
+    app: &AppHandle,
+    data_directory: Option<String>,
+    call: &Value,
+) -> Result<(), String> {
+    let connection = database::open_database(app, data_directory).await?;
+    let text = |name: &str| {
+        call.get(name)
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| format!("tool.record 缺少 {name}。"))
+    };
+    let optional_text = |name: &str| {
+        call.get(name)
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    };
+    sqlx::query(
+        "INSERT INTO agent_tool_calls (
+           id, task_id, run_id, turn_id, provider_tool_call_id, tool_name,
+           arguments_json, result_json, status, started_at, completed_at, error,
+           correlation_id, causation_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           result_json = excluded.result_json,
+           status = excluded.status,
+           completed_at = excluded.completed_at,
+           error = excluded.error",
+    )
+    .bind(text("id")?)
+    .bind(text("taskId")?)
+    .bind(text("runId")?)
+    .bind(optional_text("turnId"))
+    .bind(optional_text("providerToolCallId"))
+    .bind(text("toolName")?)
+    .bind(text("argumentsJson")?)
+    .bind(optional_text("resultJson"))
+    .bind(text("status")?)
+    .bind(
+        call.get("startedAt")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| "tool.record 缺少 startedAt。".to_string())?,
+    )
+    .bind(call.get("completedAt").and_then(Value::as_i64))
+    .bind(optional_text("error"))
+    .bind(text("runId")?)
+    .bind(optional_text("turnId").or_else(|| {
+        call.get("runId")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    }))
+    .execute(connection.as_ref())
+    .await
+    .map_err(database_error)?;
+    Ok(())
+}
+
+fn current_document_id(run_request: Option<&Value>) -> Result<String, String> {
+    run_request
+        .and_then(|request| request.get("contextBundle"))
+        .and_then(|bundle| bundle.get("scope"))
+        .and_then(|scope| scope.get("documentId"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| "AgentRunRequest contextBundle 缺少当前 documentId。".to_string())
+}
+
+fn context_block_ids(run_request: Option<&Value>, document_id: &str) -> Vec<String> {
+    run_request
+        .and_then(|request| request.get("contextBundle"))
+        .and_then(|bundle| bundle.get("sources"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|source| source.get("documentId").and_then(Value::as_str) == Some(document_id))
+        .filter_map(|source| source.get("blockId").and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn effective_data_directory(
+    app: &AppHandle,
+    data_directory: Option<String>,
+) -> Result<String, String> {
+    database::configured_data_directory(app, data_directory)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(worker_error)
 }
 
 async fn write_message(stdin: &mut ChildStdin, message: &Value) -> Result<(), String> {
@@ -805,16 +1188,41 @@ fn sorted_run_ids(run_ids: &HashSet<String>) -> Vec<String> {
     values
 }
 
-fn resolve_worker_program(app: &AppHandle) -> Result<PathBuf, String> {
+struct WorkerLaunch {
+    program: PathBuf,
+    args: Vec<String>,
+}
+
+fn resolve_worker_program(app: &AppHandle) -> Result<WorkerLaunch, String> {
     if let Some(path) = env::var_os("MYNOTEBOOK_AGENT_WORKER_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
-            return Ok(path);
+            return Ok(WorkerLaunch {
+                program: path,
+                args: Vec::new(),
+            });
         }
         return Err(format!(
             "MYNOTEBOOK_AGENT_WORKER_PATH 指向的文件不存在：{}",
             path.display()
         ));
+    }
+    if cfg!(debug_assertions) {
+        if let Some(script) = env::var_os("MYNOTEBOOK_AGENT_WORKER_SCRIPT") {
+            let script = PathBuf::from(script);
+            if !script.is_file() {
+                return Err(format!(
+                    "MYNOTEBOOK_AGENT_WORKER_SCRIPT 指向的文件不存在：{}",
+                    script.display()
+                ));
+            }
+            return Ok(WorkerLaunch {
+                program: PathBuf::from(
+                    env::var_os("MYNOTEBOOK_NODE_PATH").unwrap_or_else(|| "node".into()),
+                ),
+                args: vec![script.to_string_lossy().into_owned()],
+            });
+        }
     }
     let filename = if cfg!(windows) {
         "agent-runtime-worker.exe"
@@ -827,7 +1235,10 @@ fn resolve_worker_program(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(worker_error)?
         .join(filename);
     if path.is_file() {
-        Ok(path)
+        Ok(WorkerLaunch {
+            program: path,
+            args: Vec::new(),
+        })
     } else {
         Err(format!(
             "安装包中缺少自包含 Agent Worker：{}",
@@ -911,6 +1322,20 @@ mod tests {
         assert!(is_terminal_event(&json!({ "type": "run.completed" })));
         assert!(is_terminal_event(&json!({ "type": "run.failed" })));
         assert!(!is_terminal_event(&json!({ "type": "tool.completed" })));
+        let request = json!({
+            "contextBundle": {
+                "scope": { "documentId": "doc-1" },
+                "sources": [
+                    { "documentId": "doc-1", "blockId": "block-1" },
+                    { "documentId": "doc-2", "blockId": "block-2" }
+                ]
+            }
+        });
+        assert_eq!(current_document_id(Some(&request)).unwrap(), "doc-1");
+        assert_eq!(
+            context_block_ids(Some(&request), "doc-1"),
+            vec!["block-1".to_string()]
+        );
     }
 
     #[tokio::test]

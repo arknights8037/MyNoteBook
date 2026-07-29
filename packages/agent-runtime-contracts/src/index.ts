@@ -265,6 +265,12 @@ export interface AgentWorkerAuthorizationRequest {
   allowFreeText: boolean
 }
 
+export interface AgentWorkerCredentialRequest {
+  requestId: string
+  runId: string
+  provider: AiProvider
+}
+
 export interface AgentWorkerError {
   code:
     | AgentRuntimeContractError['code']
@@ -316,6 +322,17 @@ export type AgentWorkerHostMessage =
     }
   | {
       version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'credential.result'
+      requestId: string
+      credential: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'tool.recorded'
+      requestId: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
       type: 'shutdown'
       reason: string
     }
@@ -363,9 +380,20 @@ export type AgentWorkerMessage =
     }
   | {
       version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'tool.record'
+      requestId: string
+      call: AgentToolCall
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
       type: 'authorization.request'
       requestId: string
       request: AgentWorkerAuthorizationRequest
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'credential.request'
+      request: AgentWorkerCredentialRequest
     }
   | {
       version: typeof AGENT_WORKER_PROTOCOL_VERSION

@@ -49,6 +49,7 @@ jobs:
           pnpm --filter @mynotebook/agent-runtime-worker typecheck
           pnpm --filter @mynotebook/agent-runtime-worker test
           pnpm --filter @mynotebook/agent-runtime-worker build
+          pnpm --filter @mynotebook/agent-runtime-worker build:sidecar
 
       - name: Build web assets
         run: pnpm build

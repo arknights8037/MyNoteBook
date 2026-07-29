@@ -128,6 +128,41 @@ describe('AgentWorkerHost', () => {
     })
     await expect(authorizationPromise).resolves.toBe('允许')
 
+    const credentialPromise = bridge.resolveCredential({
+      requestId: 'credential-rpc',
+      runId: 'run-1',
+      provider: 'openai',
+    })
+    expect(channel.sent.at(-1)).toMatchObject({ type: 'credential.request' })
+    channel.receive({
+      version: 1,
+      type: 'credential.result',
+      requestId: 'credential-rpc',
+      credential: 'sk-test',
+    })
+    await expect(credentialPromise).resolves.toBe('sk-test')
+
+    const recordPromise = bridge.recordToolCall({
+      id: 'call-1',
+      taskId: 'work-1',
+      runId: 'run-1',
+      turnId: 'turn-1',
+      providerToolCallId: null,
+      toolName: 'search_documents',
+      argumentsJson: '{}',
+      resultJson: null,
+      status: 'running',
+      startedAt: 1,
+      completedAt: null,
+      error: null,
+    })
+    const recordMessage = channel.sent.at(-1)
+    expect(recordMessage).toMatchObject({ type: 'tool.record' })
+    const recordRequestId =
+      recordMessage?.type === 'tool.record' ? recordMessage.requestId : 'missing'
+    channel.receive({ version: 1, type: 'tool.recorded', requestId: recordRequestId })
+    await expect(recordPromise).resolves.toBeUndefined()
+
     await host.stop('test complete')
   })
 

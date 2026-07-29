@@ -1,17 +1,19 @@
-import {
-  AGENT_WORKER_PROTOCOL_VERSION,
-  AgentRuntimeContractError,
-  type AgentRunRequestV1,
-  type AgentRunSteerInput,
-  type AgentRuntimePort,
-  type AgentWorkerAuthorizationRequest,
-  type AgentWorkerError,
-  type AgentWorkerHostMessage,
-  type AgentWorkerIdentity,
-  type AgentWorkerMessage,
-  type AgentWorkerToolInvocation,
-  type AgentWorkerToolResult,
+import type {
+  AgentRunRequestV1,
+  AgentRunSteerInput,
+  AgentRuntimePort,
+  AgentWorkerAuthorizationRequest,
+  AgentWorkerCredentialRequest,
+  AgentWorkerError,
+  AgentWorkerHostMessage,
+  AgentWorkerIdentity,
+  AgentWorkerMessage,
+  AgentWorkerToolInvocation,
+  AgentWorkerToolResult,
+  AgentToolCall,
 } from '@mynotebook/agent-runtime-contracts'
+
+const AGENT_WORKER_PROTOCOL_VERSION = 1 as const
 
 export interface AgentWorkerChannel {
   send(message: AgentWorkerMessage): void
@@ -28,6 +30,8 @@ export interface AgentWorkerRuntimeBridge {
     request: AgentWorkerAuthorizationRequest,
     signal?: AbortSignal,
   ): Promise<string>
+  resolveCredential(request: AgentWorkerCredentialRequest, signal?: AbortSignal): Promise<string>
+  recordToolCall(call: AgentToolCall, signal?: AbortSignal): Promise<void>
 }
 
 export interface AgentWorkerHostOptions {
@@ -60,6 +64,8 @@ export class AgentWorkerHost {
   private readonly activeRunPromises = new Map<string, Promise<void>>()
   private readonly pendingTools = new Map<string, PendingHostReply<AgentWorkerToolResult>>()
   private readonly pendingAuthorizations = new Map<string, PendingHostReply<string>>()
+  private readonly pendingCredentials = new Map<string, PendingHostReply<string>>()
+  private readonly pendingToolRecords = new Map<string, PendingHostReply<void>>()
   private readonly createId: () => string
   private readonly now: () => number
   private readonly heartbeatIntervalMs: number
@@ -81,6 +87,8 @@ export class AgentWorkerHost {
     this.runtime = options.createRuntime({
       invokeTool: (request, signal) => this.invokeTool(request, signal),
       requestAuthorization: (request, signal) => this.requestAuthorization(request, signal),
+      resolveCredential: (request, signal) => this.resolveCredential(request, signal),
+      recordToolCall: (call, signal) => this.recordToolCall(call, signal),
     })
   }
 
@@ -138,6 +146,12 @@ export class AgentWorkerHost {
         return
       case 'authorization.result':
         this.resolvePending(this.pendingAuthorizations, message.requestId, message.answer)
+        return
+      case 'credential.result':
+        this.resolvePending(this.pendingCredentials, message.requestId, message.credential)
+        return
+      case 'tool.recorded':
+        this.resolvePending(this.pendingToolRecords, message.requestId, undefined)
         return
       case 'shutdown':
         void this.stop(message.reason)
@@ -228,6 +242,27 @@ export class AgentWorkerHost {
     })
   }
 
+  private resolveCredential(
+    request: AgentWorkerCredentialRequest,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    return this.waitForHostReply(this.pendingCredentials, request.requestId, signal, () => {
+      this.send({ version: AGENT_WORKER_PROTOCOL_VERSION, type: 'credential.request', request })
+    })
+  }
+
+  private recordToolCall(call: AgentToolCall, signal?: AbortSignal): Promise<void> {
+    const requestId = this.createId()
+    return this.waitForHostReply(this.pendingToolRecords, requestId, signal, () => {
+      this.send({
+        version: AGENT_WORKER_PROTOCOL_VERSION,
+        type: 'tool.record',
+        requestId,
+        call,
+      })
+    })
+  }
+
   private waitForHostReply<T>(
     pending: Map<string, PendingHostReply<T>>,
     requestId: string,
@@ -264,7 +299,12 @@ export class AgentWorkerHost {
   }
 
   private rejectPending(reason: string): void {
-    for (const pending of [this.pendingTools, this.pendingAuthorizations]) {
+    for (const pending of [
+      this.pendingTools,
+      this.pendingAuthorizations,
+      this.pendingCredentials,
+      this.pendingToolRecords,
+    ]) {
       for (const reply of pending.values()) {
         reply.abortCleanup()
         reply.reject(new Error(reason))
@@ -299,14 +339,32 @@ export class AgentWorkerHost {
 }
 
 function normalizeWorkerError(error: unknown): AgentWorkerError {
-  if (error instanceof AgentRuntimeContractError) {
-    return { code: error.code, message: error.message, retryable: false }
+  const code = runtimeContractErrorCode(error)
+  if (code) {
+    return {
+      code,
+      message: error instanceof Error ? error.message : String(error),
+      retryable: false,
+    }
   }
   return {
     code: 'runtime_error',
     message: error instanceof Error ? error.message : String(error),
     retryable: false,
   }
+}
+
+function runtimeContractErrorCode(
+  error: unknown,
+): 'duplicate_run' | 'run_not_found' | 'invalid_steer' | 'authorization_not_found' | null {
+  if (!error || typeof error !== 'object' || !('code' in error)) return null
+  const code = Reflect.get(error, 'code')
+  return code === 'duplicate_run' ||
+    code === 'run_not_found' ||
+    code === 'invalid_steer' ||
+    code === 'authorization_not_found'
+    ? code
+    : null
 }
 
 function abortError(signal: AbortSignal | undefined): Error {

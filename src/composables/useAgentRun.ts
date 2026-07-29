@@ -65,6 +65,7 @@ async function loadAgentRunModulesUncached() {
     { runAiMarkdownCompletion },
     { buildAiSystemPrompt },
     { AiSdkAgentRuntimeAdapter },
+    { TauriAgentRuntimeAdapter },
     { AgentRuntimeClient },
     { buildDomainToolManifest },
     { executeAgentTool, prepareReadDocumentObservation },
@@ -75,6 +76,7 @@ async function loadAgentRunModulesUncached() {
     import('@/services/ai/AiMarkdownService'),
     import('@/services/ai/AiSystemPrompt'),
     import('@/services/ai/AiSdkAgentRuntime'),
+    import('@/infrastructure/runtime/TauriAgentRuntimeAdapter'),
     import('@/services/agent/AgentRuntimeClient'),
     import('@/services/agent/DomainToolManifest'),
     import('@/services/agent/AgentToolExecutor'),
@@ -86,6 +88,7 @@ async function loadAgentRunModulesUncached() {
     runAiMarkdownCompletion,
     buildAiSystemPrompt,
     AiSdkAgentRuntimeAdapter,
+    TauriAgentRuntimeAdapter,
     AgentRuntimeClient,
     buildDomainToolManifest,
     executeAgentTool,
@@ -221,6 +224,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
       runAiMarkdownCompletion,
       buildAiSystemPrompt,
       AiSdkAgentRuntimeAdapter,
+      TauriAgentRuntimeAdapter,
       AgentRuntimeClient,
       buildDomainToolManifest,
       executeAgentTool,
@@ -640,31 +644,47 @@ export function useAgentRun(options: UseAgentRunOptions) {
           : mode === 'agent' && editPlan
             ? await (async () => {
                 if (!runtimeContextBundle) throw new Error('Agent Runtime 缺少 Context Bundle。')
-                const adapter = new AiSdkAgentRuntimeAdapter({
-                  createId: options.createId,
-                  resolveCredential: async () => snapshot.settings.apiKey,
-                  executeTool: executeToolCallback!,
-                  recordToolCall: async (call) => {
-                    const result = await (
-                      await options.patches.getRepository()
-                    ).recordToolCall(call)
-                    if (!result.ok) throw new Error(result.error.message)
-                  },
-                  requestAuthorizerInput: (request) =>
-                    waitForAuthorizerInput(request, editPlan.task),
-                  answerAuthorization: runtime.answerAuthorization,
-                  resolveOutputContract: (descriptor) => {
-                    const contract = cognitiveRun?.outputContract
-                    return contract &&
-                      contract.id === descriptor.id &&
-                      contract.version === descriptor.version
-                      ? contract
-                      : null
-                  },
-                  validateDocumentEditProposal: (proposal) =>
-                    validateDocumentEditProvenance(proposal, [...readableDocuments.values()]),
-                })
-                runtimeAuthorizationBridge = adapter
+                const sidecarOwned = options.services?.runtimeOwner === 'rust_worker'
+                const adapter = sidecarOwned
+                  ? new TauriAgentRuntimeAdapter({
+                      dataDirectory: options.services?.runtimeDataDirectory?.(),
+                      requestAuthorizerInput: (request) =>
+                        waitForAuthorizerInput(
+                          {
+                            id: request.authorizationId,
+                            question: request.question,
+                            context: request.context,
+                            options: request.options,
+                            allowFreeText: request.allowFreeText,
+                          },
+                          editPlan.task,
+                        ),
+                    })
+                  : new AiSdkAgentRuntimeAdapter({
+                      createId: options.createId,
+                      resolveCredential: async () => snapshot.settings.apiKey,
+                      executeTool: executeToolCallback!,
+                      recordToolCall: async (call) => {
+                        const result = await (
+                          await options.patches.getRepository()
+                        ).recordToolCall(call)
+                        if (!result.ok) throw new Error(result.error.message)
+                      },
+                      requestAuthorizerInput: (request) =>
+                        waitForAuthorizerInput(request, editPlan.task),
+                      answerAuthorization: runtime.answerAuthorization,
+                      resolveOutputContract: (descriptor) => {
+                        const contract = cognitiveRun?.outputContract
+                        return contract &&
+                          contract.id === descriptor.id &&
+                          contract.version === descriptor.version
+                          ? contract
+                          : null
+                      },
+                      validateDocumentEditProposal: (proposal) =>
+                        validateDocumentEditProvenance(proposal, [...readableDocuments.values()]),
+                    })
+                runtimeAuthorizationBridge = sidecarOwned ? null : adapter
                 const client = new AgentRuntimeClient(adapter)
                 const active = activeRuns.get(runKey)
                 if (active) {
@@ -717,6 +737,33 @@ export function useAgentRun(options: UseAgentRunOptions) {
                   correlationId: editPlan.task.correlationId,
                   causationId: editPlan.task.causationId,
                 })
+                if (sidecarOwned) {
+                  for (const call of result.toolCalls) {
+                    if (
+                      call.status !== 'completed' ||
+                      !call.resultJson ||
+                      !['read_document', 'get_current_document'].includes(call.toolName)
+                    ) {
+                      continue
+                    }
+                    try {
+                      const value = JSON.parse(call.resultJson) as unknown
+                      const argumentsValue = JSON.parse(call.argumentsJson) as unknown
+                      const documentId =
+                        call.toolName === 'read_document' &&
+                        typeof argumentsValue === 'object' &&
+                        argumentsValue !== null &&
+                        'documentId' in argumentsValue &&
+                        typeof argumentsValue.documentId === 'string'
+                          ? argumentsValue.documentId
+                          : snapshot.document.id
+                      const provenance = parseReadDocumentProvenance(value, documentId)
+                      if (provenance) readableDocuments.set(documentId, provenance)
+                    } catch {
+                      // Malformed audit payloads must not turn a completed sidecar run into a UI failure.
+                    }
+                  }
+                }
                 return result
               })().then((result) => {
                 agentRounds = result.rounds

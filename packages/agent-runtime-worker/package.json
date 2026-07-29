@@ -8,14 +8,20 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "build:sidecar": "node scripts/build-sea.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@mynotebook/agent-runtime-contracts": "workspace:*"
+    "@ai-sdk/anthropic": "^4.0.12",
+    "@ai-sdk/openai-compatible": "^3.0.7",
+    "@mynotebook/agent-runtime-contracts": "workspace:*",
+    "ai": "^7.0.22"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
+    "esbuild": "0.28.1",
+    "postject": "1.0.0-alpha.6",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9"
   }

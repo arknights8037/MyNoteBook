@@ -71,10 +71,10 @@ pub struct SkillStateInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillFileInput {
-    data_directory: Option<String>,
-    skill_id: String,
-    relative_path: String,
-    require_enabled: Option<bool>,
+    pub(crate) data_directory: Option<String>,
+    pub(crate) skill_id: String,
+    pub(crate) relative_path: String,
+    pub(crate) require_enabled: Option<bool>,
 }
 
 #[derive(Deserialize)]

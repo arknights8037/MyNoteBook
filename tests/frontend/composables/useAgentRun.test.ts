@@ -20,12 +20,23 @@ const completion = vi.hoisted(() => vi.fn())
 const agentLoop = vi.hoisted(() => vi.fn())
 const listMcpTools = vi.hoisted(() => vi.fn())
 const callMcpTool = vi.hoisted(() => vi.fn())
+const sidecarStartRun = vi.hoisted(() => vi.fn())
 
 vi.mock('@/services/ai/AiMarkdownService', () => ({
   runAiMarkdownCompletion: completion,
 }))
 vi.mock('@/services/agent/AgentRuntime', () => ({
   runAgentToolLoop: agentLoop,
+}))
+vi.mock('@/infrastructure/runtime/TauriAgentRuntimeAdapter', () => ({
+  TauriAgentRuntimeAdapter: class {
+    startRun = sidecarStartRun
+    cancelRun = vi.fn(async () => undefined)
+    steerRun = vi.fn(async () => undefined)
+    subscribeEvents() {
+      return () => undefined
+    }
+  },
 }))
 describe('useAgentRun', () => {
   beforeEach(() => {
@@ -39,6 +50,8 @@ describe('useAgentRun', () => {
     listMcpTools.mockResolvedValue([])
     callMcpTool.mockReset()
     callMcpTool.mockResolvedValue({ ok: true })
+    sidecarStartRun.mockReset()
+    sidecarStartRun.mockResolvedValue(noChangeAgentResult(1))
   })
 
   it('freezes document and model context before the first asynchronous boundary', async () => {
@@ -104,6 +117,32 @@ describe('useAgentRun', () => {
     expect(run.prompt.value).toBe('当前输入框内容')
     expect(detachedMessages.value.map((item) => item.role)).toEqual(['user', 'assistant'])
     expect(run.workflow.activeConversationId.value).toBe('a2a-request-1')
+  })
+
+  it('routes Agent mode through the Rust-owned sidecar port when composition selects it', async () => {
+    const settings = ref(createAiSettings('openai'))
+    settings.value.model = 'sidecar-model'
+    const run = createRun(
+      settings,
+      snapshot(),
+      async () => true,
+      'agent',
+      '检查当前文档',
+      [],
+      undefined,
+      { runtimeOwner: 'rust_worker', runtimeDataDirectory: () => 'C:/data' },
+    )
+
+    await run.workflow.run()
+
+    expect(sidecarStartRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: expect.any(String),
+        objective: expect.stringContaining('检查当前文档'),
+        modelPolicy: expect.objectContaining({ model: 'sidecar-model' }),
+      }),
+    )
+    expect(agentLoop).not.toHaveBeenCalled()
   })
 
   it('runs different conversations concurrently without sharing message state', async () => {
@@ -837,11 +876,13 @@ function createRun(
   initialPrompt = '总结当前文档',
   canonicalBlocks: DocumentBlock[] = [],
   cognitiveSessionService?: CognitiveSessionService,
+  serviceOverrides: Partial<AgentRunServiceDependencies> = {},
 ) {
   const messages = ref<AiConversationMessage[]>([])
   const isRunning = ref(false)
   const prompt = ref(initialPrompt)
   const services: AgentRunServiceDependencies = {
+    ...serviceOverrides,
     mcpClient: {
       listTools: listMcpTools,
       callTool: callMcpTool,

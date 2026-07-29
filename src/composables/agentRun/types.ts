@@ -19,6 +19,8 @@ import type { McpClientPort } from '@/services/ports/McpClientPort'
 import type { AuthorizationStorePort } from '@/services/ports/AuthorizationStorePort'
 
 export interface AgentRunServiceDependencies {
+  runtimeOwner?: 'webview' | 'rust_worker'
+  runtimeDataDirectory?: () => string | undefined
   getCognitiveSessionService?: () => Promise<CognitiveSessionService>
   getMindMapService?: () => Promise<MindMapService>
   getKnowledgeRepository?: () => Promise<KnowledgeRepository>

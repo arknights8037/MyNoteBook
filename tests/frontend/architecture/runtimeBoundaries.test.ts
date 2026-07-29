@@ -13,6 +13,7 @@ describe('Runtime architecture boundaries', () => {
       'packages/pi-agent-worker/src/PiToolAdapter.ts',
       'packages/pi-agent-worker/src/StdioPiToolRpcClient.ts',
       'packages/agent-runtime-worker/src/AgentWorkerHost.ts',
+      'packages/agent-runtime-worker/src/AiSdkWorkerRuntime.ts',
       'packages/agent-runtime-worker/src/StdioAgentWorkerChannel.ts',
       'src/models/agent/agentRuntimeContract.ts',
       'src/services/agent/AgentRuntimeClient.ts',
@@ -29,6 +30,8 @@ describe('Runtime architecture boundaries', () => {
   it('keeps the Phase 3 worker host independent from PI and application infrastructure', () => {
     for (const file of [
       'packages/agent-runtime-worker/src/AgentWorkerHost.ts',
+      'packages/agent-runtime-worker/src/AiSdkWorkerRuntime.ts',
+      'packages/agent-runtime-worker/src/main.ts',
       'packages/agent-runtime-worker/src/StdioAgentWorkerChannel.ts',
     ]) {
       const source = readFileSync(resolve(root, file), 'utf8')
