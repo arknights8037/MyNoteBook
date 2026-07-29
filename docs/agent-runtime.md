@@ -1,10 +1,10 @@
 # Agent Runtime 与工具协议
 
-MyNoteBook 的 Agent 是受控的本地知识协作者。它可以读取许可范围内的文档、知识和外部工具结果，生成回答或结构化修改提案；它不能绕过本地权限、确认与可信写入边界。
+MyNoteBook 的 Agent 是受控的本地知识协作者。它可以读取许可范围内的文档、知识和外部工具结果，生成回答或结构化修改提案；它不能绕过本地权限、确认与可信写入边界。本文先记录当前生产事实；未来 Runtime Port、Worker 与 PI 决策门见 [后续开发路线图](roadmap.md)，均不能当作已实现能力。
 
 ## 1. 入口与执行流程
 
-`useAgentRun` 只负责连接一次交互式运行的准备、执行、收敛和终态。`prepareAgentRun()` 冻结输入、恢复 Cognitive Session 并创建任务；`AgentRunEngine` 接受 command、产生 event，并用纯 reducer 更新稳定生命周期；`prepareAgentRunExecution()` 冻结模型执行输入，最后由 `runAgentToolLoop` 将 Agent 模式交给 `AiSdkAgentRuntime` 的 AI SDK `ToolLoopAgent`。
+当前生产 Runtime 位于 Vue/WebView。`useAgentRun` 连接一次交互式运行的准备、执行、收敛和终态；`prepareAgentRun()` 冻结输入、恢复 Cognitive Session 并创建任务；`AgentRunEngine` 接受 command、产生 event，并用纯 reducer 更新稳定生命周期；`prepareAgentRunExecution()` 冻结模型执行输入，最后由 `runAgentToolLoop` 将 Agent 模式交给 `AiSdkAgentRuntime` 的 AI SDK `ToolLoopAgent`。
 
 ```text
 用户输入 / Slash Command
@@ -59,6 +59,8 @@ Command -> AgentRunEvent -> reducer -> AgentRunLifecycleState
 - `maxRetries`
 
 当前通用默认值为最多 48 轮、15 分钟、10 次工具失败和 4 次重试；标准化边界允许 1–96 轮、1 秒–45 分钟和 0–20 次工具失败。`maxRetries` 会直接传给 Provider SDK；显式返回 `retryable=true` 的幂等只读工具也可在该上限内自动重试，写入提案、草稿和未知副作用工具不会自动重试。复杂批量提案 `submit_document_edits` 每个任务最多可修正提交 4 次，且相同失败参数仍禁止原样重放。具体任务、intent 或 Cognitive Mode 可以收紧这些值，但不能绕过 Runtime 检查。
+
+`tokenBudget` 当前主要影响单次模型请求的输出参数，并保存 usage；它还不是跨整次 Run 按 input、output、total token 和 cost 逐轮扣减的累计预算器，也没有统一限制 model turns 与 parallel tools。累计预算属于路线图 Phase 0 的契约工作。
 
 内置和 MCP 工具带有代码级 tags。Cognitive Run 编译时把 tags 解析成稳定工具名，并与基础 `allowedTools` 取交集；denied tags 优先。Runtime 热路径不解释 tags，Mode、Template 与 Skill 都不能重新加入基础策略未授权的工具。
 
@@ -122,6 +124,16 @@ Agent MVP 使用文档 command/Patch 契约。Runtime 也可注入版本化 `Age
 
 等待授权的请求会同步取消。资源草稿等不可安全中断的短事务会在写完审计后结束，不在中间留下未记录副作用。
 
+### 5.1 三类授权与审批语义
+
+当前 `requiresConfirmation` 在不同工具上混合表达调用前授权和写入后审批。目标契约必须拆成三类，避免 Adapter 或 Workflow 把一次确认错误复用到另一类副作用：
+
+- `executionAuthorization`：调用工具前的授权。目标规则是 MCP 只有 `serverTrusted && readOnly` 时可免逐次确认。
+- `mutationApproval`：Patch 已生成后，对文档或正式知识写入的审批；继续走 Diff、revision 校验和 Rust transaction。
+- `externalActionApproval`：发送邮件、提交外部系统等不可逆动作执行前的审批。
+
+这三类语义目前尚未形成统一数据契约；路线图 Phase 0 负责定义，不能仅通过改名把旧字段视为已迁移。
+
 ## 6. 内置工具
 
 当前 Registry 共注册 25 个内置工具：
@@ -160,7 +172,7 @@ Rust 正则引擎限制 pattern、flags、块数量、replacement 和编译内�
 
 ## 7. MCP、Skills 与外部边界
 
-Agent 运行开始时对已启用 MCP Server 执行 `tools/list`，将 JSON Schema 转换成 provider-safe 的 `mcp__...` 工具。服务只有同时满足“本地标记 trusted”和工具声明 `readOnlyHint: true` 才免逐次授权；其他工具在调用前等待授权人确认。
+Agent 运行开始时对已启用 MCP Server 执行 `tools/list`，将 JSON Schema 转换成 provider-safe 的 `mcp__...` 工具。当前代码实际设置 `requiresConfirmation = !serverTrusted`；`readOnlyHint` 只参与 tag 和重试判断。因此，受信任 Server 上未声明只读的工具目前也会免逐次授权。这不符合目标安全不变量，必须在路线图 Phase 0 修复为只有 `serverTrusted && readOnly` 才可免除 `executionAuthorization`。
 
 用户明确要求添加 MCP 时，任务 Agent 可经授权调用 `create_mcp_server_draft`。该工具只保存无密钥的 stdio 或 HTTP 配置，使用新 ID 避免覆盖已有服务，并强制保持 disabled、untrusted；新服务不会在当前任务中启动、连接或加入工具目录。Skill 创建沿用同一资源草稿边界，只写入停用的 `SKILL.md`，由用户在管理页审阅后启用。
 
@@ -173,6 +185,8 @@ Agent 任务按项目组管理。左侧采用项目文件夹树，项目下直�
 文档目标与项目分组选择器共用宽容的本地匹配：统一处理大小写、全半角、重音、空格和标点，支持紧凑查询与有界有序缩写，并按标题、分组路径和补充元数据排序。文档选项会显示所属分组路径；分组也可通过其后代页面标题定位。
 
 项目、作业区和整组任务消息以版本化状态快照保存到 SQLite `agent_workspace_state`，不再使用 WebView localStorage 保存业务历史。旧历史键在启动时只删除、不迁移。侧栏中新建但尚无消息的任务是 `transient` 内存锚点；发送第一条消息后才进入持久化快照，避免空任务污染历史。`agent_tasks` 同时保存 `project_id` 和 `conversation_id`，因此重启后仍可从项目、会话、任务三层追踪作业归属；任务本身的 Patch、工具调用、确认和事务继续使用既有规范化审计表。
+
+当前身份模型尚未收敛：`AgentTask.id`、通用 `task_runs.id`、前端临时 run ID 和 Provider tool-call ID 分属不同层，部分 Agent 调用还把 document ID 复用于 `sessionId`。因此目前不存在贯穿 Workflow、Run、Turn 和 Tool Call 的稳定 ID 契约。路线图将分别引入 `work_item_id`、`workflow_id`、`run_id`、`turn_id`、`tool_call_id` 和可选 `provider_tool_call_id`；`session_id` 只表示对话或认知连续性。
 
 项目还提供本地 Agent 请求通信队列。持有 capability token 的调用方先通过 stdio MCP 读取项目、资料根、任务和 A2A 分支目录，再可在指定项目下创建稳定分支，并把任务路由到 `project_id` / `branch_id`。桌面应用轮询后会在该项目资料范围内运行现有 `useAgentRun`；同一分支复用同一条持久化任务记录，父分支关系随历史快照保存。未提供路由参数的旧调用继续作为未分组独立任务处理。请求保存 `request_mode`、路由和版本化 decision envelope；批准、拒绝与修订都返回 action、reply、request/task、结果摘要和时间等可审计信息。跨文档写入只对本次运行已成功读取且 revision 未变化的文档开放，最终结果仍是待审阅 Patch。MCP 的提交动作不会批准或应用修改；查询 Patch 后必须另行批准或拒绝，应用仍走同一 Rust transaction。
 
@@ -238,5 +252,14 @@ Run lifecycle、Plan snapshot、运行级事件和 Step/tool timeline 会绑定�
 - `/research` 已绑定 Research Mode、结构化结果与 Candidate 确认闭环。`/review` 已绑定 Review Mode、`review-result` v1 contract、Cognitive Session 和只读 issue UI；来源 revision/block 会在结果边界重新验证，失效来源产生 stale/outdated finding。Review run 不具备写提案权限，只有用户明确处理单项 issue 时才另起 `/edit` 运行进入现有 Patch 确认链。
 - `/learn` 已绑定 Learning Mode、`learning-turn` v1 contract 与多轮 Cognitive Session。首次解释题由本地状态机生成且不请求 Provider；后续普通回复按 conversation 恢复 `waiting_user` session，将用户回复保存为 Attempt 后再更新理解状态、提示层级和下一问题。Learning 运行没有文档或正式知识写权限，临时候选理解记录只保存在结果消息中。
 - 自动化有定义和运行队列，但没有后台无人值守模型调度器。
+- 普通 Agent Run 没有 durable checkpoint/resume；应用重启后不能从中间 tool step 恢复。Learning Session 的跨 run 继续和待确认 Patch 的恢复不等同于恢复同一个 Run。
+- Runtime、授权等待和 A2A polling 仍由 Vue/WebView 生命周期承载；窗口或应用退出会终止当前执行。
+- 当前没有稳定 `run_id` 贯穿前端投影、`agent_tasks`、`task_runs` 和 Provider turn，也没有保存可重放的完整模型轨迹。
 - MCP Prompts、Roots、Sampling、OAuth、旧 SSE 和跨任务长连接尚未开放。
 - 真实 DeepSeek Provider、stdio/Streamable HTTP MCP、真实 CLI 外部进程和隔离数据恢复已通过 G0 smoke；Windows 干净安装包仍属于发布流程检查。
+
+## 12. 未来 Runtime Port（尚未实现）
+
+路线图将定义 `startRun`、`cancelRun`、`steerRun` 和 `subscribeEvents` 作为唯一 Runtime v1 边界，并先把现有 AI SDK `ToolLoopAgent` 包装为首个 adapter。该 Port 用于替换 Runtime 实现，不允许在生产链路旁再建立第二套并行执行循环。
+
+`resumeRun` 不属于 v1 承诺：在 durable checkpoint 尚未落地时，等待外部事件或用户审批会结束当前 Agent Run，由 Workflow 持久化等待条件，并以新的 `run_id` 和 `causation_id` 继续。PI 只有在 Node 纵向原型通过决策门后才能成为 Worker 内部候选实现；在此之前，AI SDK Runtime 仍是唯一生产实现。

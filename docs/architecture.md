@@ -1,10 +1,12 @@
 # 当前架构与模块边界
 
-本文是 MyNoteBook 当前架构的事实入口，已按 2026-07-28 主干代码与 migration 0001–0028 复核。它描述已经存在的实现、代码所有权和必须保持的依赖方向。产品定位、工作循环与品牌原则见 [产品定位与愿景](product-positioning.md)；认知系统契约见 [认知系统集成](cognitive-system-integration.md)，未完成事项见 [后续开发路线图](roadmap.md)。
+本文是 MyNoteBook 当前架构的事实入口，已按 2026-07-29 主干代码与 migration `0001`–`0035` 复核。它描述已经存在的实现、代码所有权和必须保持的依赖方向。产品定位、工作循环与品牌原则见 [产品定位与愿景](product-positioning.md)；认知系统契约见 [认知系统集成](cognitive-system-integration.md)，未完成事项和目标边界见 [后续开发路线图](roadmap.md)。
 
 ## 1. 产品与技术边界
 
 MyNoteBook 的产品类别是本地优先的 AI 桌面工作中枢。它通过收集、理解、组织、委派、表达和沉淀的持续循环，为知识工作保留可继续的上下文。当前技术实现由 Vue 3 + Tiptap 前端、Tauri/Rust 桌面壳和 SQLite 本地存储组成，是单机桌面应用，不是 React 应用，也不是由多个服务组成的分布式系统。
+
+当前生产 Agent Runtime 寄生于 Vue/WebView，由 AI SDK `ToolLoopAgent` 执行；TypeScript repositories 通过 `plugin-sql` 与 Rust SQLx 共同访问同一个 SQLite。项目目前没有 Node Worker、后台 sidecar、托盘常驻或 daemon。这些能力只属于路线图中的既定方向或决策门。
 
 产品愿景不能改变当前事实边界：尚未实现的信息来源、后台能力和外部应用接入必须明确标记为未来方向；Agent、View 和模型输出不能被宣传或实现为绕过用户判断的第二事实源。
 
@@ -56,6 +58,8 @@ Vue/Tiptap 编辑状态
 
 模型流式输出、工具结果和 MCP 返回值都不能直接成为文档写入。完整协议见 [Agent Runtime](agent-runtime.md)。
 
+这条链路当前由 `useAgentRun` 所在的 WebView 生命周期拥有。将 Runtime 移出 WebView 是目标方向，不是已经完成的架构事实。
+
 ### Knowledge、Work 与 View
 
 ```text
@@ -95,6 +99,10 @@ Knowledge Object 可锚定 document/block/revision。Context Compiler 已读取�
 - `bin/mynotebook-mcp.rs`：独立 stdio MCP Server；默认只读，能力令牌开启项目目录、A2A 分支和受控任务/审批工具。
 
 Rust command 应立即委托给对应模块。数据库访问必须复用 `database.rs` 管理的路径、迁移和连接设置。
+
+### 目标边界摘要（尚未实现）
+
+后续按路线图逐步把 SQLite、连接器、凭据、Workflow 状态和副作用收敛到 Rust Core。Node 仅可作为可替换的 Agent Worker，通过受控 RPC 调用 Rust 领域工具，禁止直接访问 SQLite。现有 AI SDK Runtime 在 PI 原型决策门完成前仍是唯一生产 Agent Loop；PI 若被采用，也只是 Runtime Port 的 Worker 内部实现，不接管权限、Workflow、MCP、Skill、Secret 或 Patch transaction。
 
 ## 4. 前端模块所有权
 
@@ -153,7 +161,7 @@ Rust command 应立即委托给对应模块。数据库访问必须复用 `datab
 1. 模型和外部工具不能直接更新规范文档或正式知识。
 2. 文档修改必须经过 command/Patch、本地验证、用户确认和 Rust transaction。
 3. 工具执行前必须先写 `running` 审计；审计失败时不执行工具。
-4. MCP Server 本地信任和工具 `readOnlyHint` 必须同时满足才可免逐次确认。
+4. 目标安全不变量是：MCP Server 本地信任和工具 `readOnlyHint` 必须同时满足才可免逐次确认。当前代码仍只按 `serverTrusted` 计算 `requiresConfirmation`，尚未满足该不变量；修复列入路线图 Phase 0。
 5. Context Bundle、来源 revision、ExecutionPolicy 和 Provider 参数必须可追溯。
 6. View、Artifact、模型回复和外部 Result 都不是事实来源。
 7. 已发布 migration 不修改；Schema 变化只能增加新 migration。
@@ -166,6 +174,10 @@ Rust command 应立即委托给对应模块。数据库访问必须复用 `datab
 - Tool Tags 已在运行前编译成 `ExecutionPolicy.allowedTools`，Runtime 热路径仍只检查稳定工具名；Mode/Template/Skill 不能扩大基础策略。
 - Knowledge Object 已扩展研究候选所需类型、正文、结构化数据、认知 provenance、多来源、Validation 和 rejected 状态；候选 UI 会在接受前重新验证来源 revision 和稳定 block，并只将显式接受项转为 `approved`。
 - Run lifecycle、Plan、运行级事件和 tool timeline 已绑定 assistant 消息并持久化；规范工具审计仍保存在独立数据库表中。
+- Agent Runtime、授权等待和 A2A polling 仍依附 Vue/WebView；普通 Agent Run 没有 durable checkpoint/resume，窗口退出后不能从中间 tool step 接管。
+- `AgentTask.id`、`task_runs.id`、前端临时 run ID 和当前把 document ID 复用于 `sessionId` 的做法尚未收敛为统一 ID 语义。
+- `tokenBudget` 当前主要约束单次输出参数，没有基于累计 input/output usage、成本、模型轮次和并行工具数的统一预算器。
+- Rust SQLx 与 TypeScript `plugin-sql` 仍是双数据库访问路径；Rust 成为唯一写入者是既定迁移方向，不是当前事实。
 - Review 已完成真实 DeepSeek/Tauri smoke；Research、Learning 和 Windows 发布升级的剩余真实环境验收单独记录在路线图，不用历史测试总数代替当前结论。
 - 工具描述已集中到 `AgentToolRegistry`，但前端输入 schema、Rust 安全 schema 和部分展示元数据尚未完全单源化。
 - 自动化当前只管理定义、待运行队列与历史；后台模型执行 worker 尚未实现。

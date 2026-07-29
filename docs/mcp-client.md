@@ -7,7 +7,7 @@ MyNoteBook 可以作为 MCP Client 连接用户显式导入并启用的外部服
 - 工具发现：管理页可测试连接并显示服务提供的工具。
 - Resource 发现与读取：Integration Gateway 提供 `resources/list` 和 `resources/read`，保留 30 秒超时与有界会话。
 - Agent 动态工具：每次 Agent 运行开始时读取所有已启用服务的工具 schema，并注册为原生 function calling 工具。
-- 调用保护：服务默认不可信。只有用户在本地明确标记 Server 为可信，并且工具声明 `readOnlyHint: true` 时才可直接调用；其他工具每次调用前都必须由授权人确认。
+- 调用保护（当前实现）：服务默认不可信，`requiresConfirmation` 实际只由 `!serverTrusted` 决定；`readOnlyHint` 只影响工具标签和只读重试。因此受信任 Server 上的非只读工具当前也会免逐次确认。这是已知 P0 差距，不是目标策略。
 
 ## 导入格式
 
@@ -49,6 +49,7 @@ MyNoteBook 可以作为 MCP Client 连接用户显式导入并启用的外部服
 - 导入 `stdio` 配置等同于授权应用启动其中指定的外部程序。只导入可信配置。
 - MCP 工具不能绕过 MyNoteBook 的文档 Patch/Diff 确认协议。
 - MCP annotations 只是风险参考，不能建立本地信任。导入或重新导入配置不会自动设置 `trusted`；信任必须在管理页单独确认，也可以随时撤销。
+- 目标安全不变量是只有 `serverTrusted && readOnlyHint` 才可免除调用前授权；对应代码修复、授权语义拆分和安全测试列入 [路线图 Phase 0](roadmap.md#4-phase-0安全与基础契约)。
 - MCP 返回内容会作为外部、不可信工具结果交给模型，不会直接写入文档。
 - 当前版本会把 `env` 和 `headers` 保存在本机 `mcp-servers.json`。如果配置包含长期密钥，应限制数据目录访问；将 MCP 凭据迁移到系统密钥库列为后续安全增强。
 - 当前连接采用“发现/调用时建立，完成后关闭”的有界会话，单次初始化、发现或调用默认最多等待 30 秒。
@@ -62,7 +63,7 @@ MyNoteBook 可以作为 MCP Client 连接用户显式导入并启用的外部服
 
 ## MyNoteBook MCP Server 与 Agent 通信
 
-以下内容已按 2026-07-28 的 `mcp_server_exposure.rs` 与 `mynotebook-mcp.rs` 核对。对外工具名固定为八个：`search_knowledge`、`list_agent_projects`、`create_agent_branch`、`submit_agent_request`、`submit_cognitive_request`、`get_agent_request`、`decide_agent_request` 和 `revise_agent_request`。
+以下内容已按 2026-07-29 的 `mcp_server_exposure.rs` 与 `mynotebook-mcp.rs` 核对。对外工具名固定为八个：`search_knowledge`、`list_agent_projects`、`create_agent_branch`、`submit_agent_request`、`submit_cognitive_request`、`get_agent_request`、`decide_agent_request` 和 `revise_agent_request`。
 
 `src-tauri/src/bin/mynotebook-mcp.rs` 是独立 stdio Server。未配置 `MYNOTEBOOK_AGENT_CAPABILITY_TOKEN` 时，它以 SQLite `query_only` 模式公开当前有效 Rule、Decision、开放 TaskRun、指定 Context Bundle 和知识搜索。
 

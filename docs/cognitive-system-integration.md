@@ -1,6 +1,6 @@
 # 认知系统集成
 
-> 实现状态（2026-07-28）：Research、Review 和 Learning 已绑定同一 Agent Runtime、Cognitive Session、Output Contract 与结果 UI。Review 已完成真实 DeepSeek/Tauri smoke；Research 和 Learning 的真实 Provider/Tauri 纵向 smoke 仍待执行。Learning 使用 `waiting_user` 跨 run 保存 Attempt、当前问题、提示层级与理解状态；首次不直接给答案，状态变化必须有用户尝试 evidence，候选理解不写正式知识。
+> 实现状态（2026-07-29）：Research、Review 和 Learning 已绑定同一 Agent Runtime、Cognitive Session、Output Contract 与结果 UI。Review 已完成真实 DeepSeek/Tauri smoke；Research 和 Learning 的真实 Provider/Tauri 纵向 smoke 仍待执行。Learning 使用 `waiting_user` 跨 run 保存 Attempt、当前问题、提示层级与理解状态；首次不直接给答案，状态变化必须有用户尝试 evidence，候选理解不写正式知识。
 
 ## 1. 目标
 
@@ -117,7 +117,7 @@ Prompt 编译顺序固定为：
 2. Mode/Template/Skill 都不能开放基础策略禁止的写入或工具。
 3. `deniedToolTags` 优先于 `allowedToolTags`。
 4. Tool Tags 在运行前解析成稳定工具名并写入 ExecutionPolicy。
-5. MCP 工具即使标签允许，仍必须通过本地信任、`readOnlyHint` 和逐次授权检查。
+5. Cognitive Tool Tag 编译可以禁止 `external.may_write`，但普通 Agent 的 MCP 调用前确认当前只按 `serverTrusted` 判断，尚未把 `readOnlyHint` 纳入免确认条件。目标规则是仅 `serverTrusted && readOnlyHint` 可免 `executionAuthorization`，修复见 [路线图 Phase 0](roadmap.md#4-phase-0安全与基础契约)。
 6. Output Contract 只控制返回结构，不能执行写入。
 
 第一版 tags 至少覆盖：

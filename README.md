@@ -123,6 +123,14 @@ Agent Work 是用户看见和控制任务的工作台，Work 是任务结果进�
 - revision 冲突保护、批量 Patch transaction 和安全撤销。
 - 版本化 Knowledge、Work、View、Governance 和 Cognitive 协议。
 
+## 运行时演进方向
+
+当前生产 Agent Runtime 仍运行在 Vue/WebView 中，使用 AI SDK `ToolLoopAgent`；应用没有后台 Worker、Node sidecar、托盘常驻或 daemon。Rust SQLx 与 TypeScript `plugin-sql` 目前也都会访问 SQLite，因此 Rust 尚不是严格的单一数据库进程所有者。
+
+既定方向是逐步让 Rust Core 成为 SQLite、连接器、凭据、Workflow 状态和副作用的唯一所有者，并把 Agent Runtime 放到可替换的 Worker 边界。Node Worker 不直接访问 SQLite。现有 Patch → Diff → 人工确认 → Rust transaction → rollback 链路保持不变。PI 只是需要通过纵向原型决策门的候选 Runtime 实现，目前并未采用。
+
+阶段依赖、Runtime v1 契约、AI SDK/PI 决策门和退出条件统一见 [后续开发路线图](docs/roadmap.md)。
+
 ## 可组合情报与工作面板（演进方向）
 
 MyNoteBook 计划提供一个受控的 Dashboard Composer。用户可以从内置 Vue Widget 库中选择卡片，自行拖拽、缩放和配置页面，把最重要的外部信号、工作状态和决策入口组合成自己的工作台。
@@ -166,7 +174,7 @@ MyNoteBook 的目标不是增加更多孤立工具，而是建立一个长期存
 - [当前架构与模块边界](docs/architecture.md)：代码所有权、领域边界、真实能力和已知偏差。
 - [Agent Runtime 与工具协议](docs/agent-runtime.md)：运行循环、上下文、权限、工具、审计和 Patch 确认。
 - [认知系统集成设计](docs/cognitive-system-integration.md)：Cognitive Mode、知识控制模板和 Knowledge Candidate。
-- [后续开发路线图](docs/roadmap.md)：尚未完成的稳定性门禁与产品里程碑。
+- [后续开发路线图](docs/roadmap.md)：运行时演进的权威边界、阶段依赖、交付物与退出条件。
 - [数据库持久化与运维](docs/database.md)：Schema 所有权、迁移、数据目录和备份恢复。
 - [自动化任务与审计](docs/automations.md)：自动化定义、运行队列及当前执行边界。
 - [MCP Client 与外部协议](docs/mcp-client.md)：Tools、Resources、只读 MCP Server 和 Delegation 边界。

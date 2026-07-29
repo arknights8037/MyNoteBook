@@ -2,7 +2,7 @@
 
 > 代码核对日期：2026-07-29；与《PI 接入资料：第一批（必须信息）》配套使用。
 >
-> 本文把“当前事实”“已知问题”和“PI 接入前需要决策的事项”分开。它不是最终迁移方案。
+> 本文把“当前事实”“已知问题”和“PI 接入前需要决策的事项”分开，作为评审输入保留。权威架构方向、阶段依赖和退出条件见 [后续开发路线图](roadmap.md)。
 
 ## 1. 当前架构与所有权
 
@@ -219,7 +219,7 @@ export function createAiSdkModel(settings: AiSettings): LanguageModel {
 | ------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
 | 保留现有 Provider，PI 只接 Agent core | `AiSettings`、secret store、Rust proxy、现有模型兼容性 | 需要抽出稳定 `streamFn`/model port，并统一 tool call/event 格式                                         |
 | 切到 `pi-ai` + `pi-agent-core`        | 可删减 AI SDK Agent/手写双路径                         | 需验证 Anthropic/OpenAI-compatible/Qwen reasoning、Tauri proxy fetch、structured output 和 usage 一致性 |
-| 先做 PI Tool Adapter，Provider 暂不迁 | Domain executors、policy、audit、Patch 安全边界可保留  | 两套 agent loop 会短期共存，必须保证同一 run 只由一个 loop owner 驱动                                   |
+| 先做 PI Tool Adapter，Provider 暂不迁 | Domain executors、policy、audit、Patch 安全边界可保留  | 两个 adapter 可为原型同时存在于代码库，但同一 `run_id` 只能选一个；决策门前生产流量仍只走 AI SDK        |
 
 在做选择前应先用一个只读工具、一个 MCP 工具、一个 Patch proposal 和一次取消做纵向 prototype；不要先迁全部工具。
 
@@ -279,7 +279,7 @@ Rust tools/list
 
 **当前代码事实**：`createMcpRuntimeTools()` 设置 `requiresConfirmation = !serverTrusted`；`readOnlyHint` 只决定 `external.read` / `external.may_write` tag 和只读重试，不参与普通 Agent 的调用前确认。因此 trusted server 暴露的非只读工具当前也会免逐次确认。项目现有说明写的是“trusted + readOnly 才免确认”，两者不一致。一次任务也可选择“允许本次任务”缓存 untrusted server 的后续授权。
 
-这应在 PI Adapter 前先修正并加契约测试：预期安全策略若仍是“trusted + readOnly”，应显式写成 `requiresConfirmation = !(serverTrusted && readOnly)`，并确保 Cognitive tag 过滤不能替代调用时授权。
+这应在 PI Adapter 前先修正并加契约测试：目标安全策略应显式写成 `requiresConfirmation = !(serverTrusted && readOnly)`，并确保 Cognitive tag 过滤不能替代调用时授权。
 
 ### 4.4 MCP 保留建议所需的 Adapter 点
 
@@ -332,11 +332,11 @@ Skill 当前：
 
 ## 6. 具体问题（按严重程度）
 
-### P0：PI 接入前必须决定 SQLite 单一所有者
+### P0：按既定方向收敛 SQLite 单一所有者
 
 当前 TS plugin-sql 与 Rust SQLx 都访问 `editor.db`。Rust 掌握 migration、canonical document projection 和关键 transaction；TS 直接完成大量 repository CRUD。Node/PI 若直接写库会引入第三个 writer、第三套 connection pool、第三套 schema model 和关闭/迁移协调。
 
-最低要求：PI prototype 只通过现有 port/RPC 调用业务能力，不直接连接 SQLite；最终再在“Rust 单一 DB owner”或“Node 单一 DB owner”中二选一。
+方向已经确定：Rust Core 逐步成为 SQLite、连接器、凭据、Workflow 状态和副作用的唯一所有者。PI prototype 与未来 Node Worker 只通过 Runtime/Tool RPC 调用 Rust 领域能力，禁止直接连接 SQLite；存量 WebView `plugin-sql` 写路径按路线图迁移，不能新增第三个 writer。
 
 ### P1：运行时只能依附前端，不能可靠后台执行/恢复
 
@@ -346,7 +346,7 @@ Skill 当前：
 
 ### P1：Tool contract 与错误语义未单源化
 
-同一工具可能同时存在：Registry definition、AI SDK Zod schema、TS argument parser、Rust Rig JSON Schema/Rust Args、MCP descriptor、UI presentation。`requiresConfirmation` 还混合“调用前授权”和“写后 Patch 审批”两类语义。MCP 已出现具体偏差：实现只检查 `serverTrusted`，现有架构说明却要求 `serverTrusted && readOnly`。
+同一工具可能同时存在：Registry definition、AI SDK Zod schema、TS argument parser、Rust Rig JSON Schema/Rust Args、MCP descriptor、UI presentation。`requiresConfirmation` 还混合“调用前授权”和“写后 Patch 审批”两类语义。MCP 已出现具体偏差：实现只检查 `serverTrusted`，目标安全不变量则要求 `serverTrusted && readOnly`。
 
 PI Adapter 若直接建立在其中任意一层，会保留漂移。应先形成可生成 provider schema 的 Domain Tool manifest，executor 和 UI metadata 引用同一稳定 ID/version。
 
@@ -374,30 +374,30 @@ Ask/Edit 手写 HTTP，Agent 使用 AI SDK。Provider capability、reasoning 参
 | 插件/动态 Skill             | 动态 Skill 和动态 MCP server/tool 已支持；Vue Widget/plugin 第一阶段仍是随应用编译注册，不执行任意用户 JS/Vue/HTML/SQL。                                                                                                   |
 | 移动端/Web client 连接 Core | 当前没有远程 Core API、鉴权、多客户端同步或 headless service。`cfg_attr(mobile)` 和跨平台 icon 不代表产品支持。                                                                                                            |
 
-### 7.2 PI/Node 发布前必须明确的要求
+### 7.2 PI/Node 发布前必须验证的要求
 
-1. Windows 安装包是否必须完全自包含 Node Runtime；若是，需确定 external sidecar、单文件编译或独立 Rust-hosted JS runtime，而不是依赖用户 PATH。
-2. Runtime 是随 Tauri 生命周期启动的 sidecar，还是可脱离 UI 的独立 daemon；二者影响升级、锁、托盘、日志、授权 UI 和崩溃恢复。
-3. UI 关闭后是否只是隐藏到托盘，还是 daemon 真正继续跑；高风险动作等待用户时如何唤醒 UI。
+1. Windows 安装包中的 Worker 必须自包含，不能依赖用户安装 Node 或配置 PATH；具体打包形式需由原型和安装升级验收确定。
+2. 进程形态按阶段推进：先由 Rust 通过 stdio 启动和监督 Worker，再完成托盘后台与 lease，稳定后才评估独立 daemon；不得在 PI 原型阶段提前承诺最终形态。
+3. 托盘阶段需要验证窗口隐藏时任务继续、高风险动作等待用户时能够唤醒 UI，以及 Worker 崩溃检测、重启、日志和升级边界。
 4. 远程 IM/webhook 是否允许云 Relay，以及哪些原始内容、凭据、附件能离开本机。
 5. 后续 macOS/Linux 是否要求与 Windows 同期；当前 `execute_shell` 和 native window 行为需要平台 adapter。
 6. 是否允许未来 Web/mobile 只作为客户端连接本地 Core；若允许，需要稳定 RPC、身份和并发写入协议。
 
 ## 8. PI 适配准备度矩阵
 
-| 模块                                          | 建议状态                     | 原因                                                |
-| --------------------------------------------- | ---------------------------- | --------------------------------------------------- |
-| Document/Knowledge repositories               | 保留                         | 已有 ports、revision、canonical projection 与测试   |
-| Rust document transaction                     | 必须保留到数据所有权决策完成 | 是 Patch 安全、审计和 rollback 的可信边界           |
-| Tool Registry metadata                        | 保留并单源化                 | 风险、tag、call cap 有价值；schema 需合并           |
-| Tool executors                                | 大部分保留                   | 已是 Domain result 协议，适合外包一层 PiToolAdapter |
-| MCP Client                                    | 保留                         | Rust rmcp 已支持 stdio/http/resource/cancel/trust   |
-| Skill loader                                  | 保留                         | summary + 按需读取适合作为 Runtime context hook     |
-| Context Bundle / ExecutionPolicy              | 保留                         | 是运行可审计和权限收敛核心                          |
-| AI SDK `ToolLoopAgent`                        | PI prototype 后决定替换      | 当前生产可用，但与目标 PI core 职责重叠             |
-| Ask/Edit 手写 Provider path                   | 应逐步统一                   | 与 Agent path 重复；不宜在第一步大爆炸迁移          |
-| `useAgentRun` UI 状态                         | 拆成 client projection       | 不能成为 daemon/core runtime owner                  |
-| `agent_workspace_state` conversation snapshot | 短期兼容，长期拆分           | 适合 UI aggregate，不适合后台可恢复 run log         |
+| 模块                                          | 建议状态                | 原因                                                |
+| --------------------------------------------- | ----------------------- | --------------------------------------------------- |
+| Document/Knowledge repositories               | 保留                    | 已有 ports、revision、canonical projection 与测试   |
+| Rust document transaction                     | 必须长期保留            | 是 Patch 安全、审计和 rollback 的可信边界           |
+| Tool Registry metadata                        | 保留并单源化            | 风险、tag、call cap 有价值；schema 需合并           |
+| Tool executors                                | 大部分保留              | 已是 Domain result 协议，适合外包一层 PiToolAdapter |
+| MCP Client                                    | 保留                    | Rust rmcp 已支持 stdio/http/resource/cancel/trust   |
+| Skill loader                                  | 保留                    | summary + 按需读取适合作为 Runtime context hook     |
+| Context Bundle / ExecutionPolicy              | 保留                    | 是运行可审计和权限收敛核心                          |
+| AI SDK `ToolLoopAgent`                        | PI prototype 后决定替换 | 当前生产可用，但与目标 PI core 职责重叠             |
+| Ask/Edit 手写 Provider path                   | 应逐步统一              | 与 Agent path 重复；不宜在第一步大爆炸迁移          |
+| `useAgentRun` UI 状态                         | 拆成 client projection  | 不能成为 daemon/core runtime owner                  |
+| `agent_workspace_state` conversation snapshot | 短期兼容，长期拆分      | 适合 UI aggregate，不适合后台可恢复 run log         |
 
 ## 9. 建议的最小验证性原型范围
 
@@ -409,7 +409,7 @@ Ask/Edit 手写 HTTP，Agent 使用 AI SDK。Provider capability、reasoning 参
 4. 最后加入 `submit_document_edits`，只生成现有 `AgentPatchSet`，继续走原 UI Diff 和 Rust transaction。
 5. 对照保存 tool audit、Context Bundle、usage、finish reason；确认不会产生第二套 Tool Registry、MCP Client 或文档写入协议。
 
-原型完成后再决定：只用 `pi-agent-core` 接现有模型层，还是同时切 `pi-ai`；以及 Node 作为 Tauri sidecar 还是独立 daemon。
+原型完成后只决定 Runtime 实现：保留 AI SDK、仅用 `pi-agent-core` 接现有模型层，或同时采用 `pi-ai`。Worker 的进程演进顺序与 Rust 数据所有权已经由路线图确定，不在此原型中重新二选一。
 
 ## 10. 供评审者继续阅读的文件
 

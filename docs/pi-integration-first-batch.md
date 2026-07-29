@@ -2,6 +2,8 @@
 
 > 代码核对日期：2026-07-29；分支：`main`。本文只记录当前代码已经存在的能力，并把未来方案明确标成“建议/待定”。
 >
+> 状态说明：本文作为当前架构快照保留，不是目标架构规范。后续既定方向、PI 决策门和迁移阶段以 [后续开发路线图](roadmap.md) 为准。
+>
 > 脱敏说明：没有读取或收录用户数据目录中的 `editor.db`、`mcp-servers.json`、凭据文件、邮件正文或真实运行日志。仓库扫描未发现真实 API Key、Token、密码或私有服务地址；测试中的 `current-key` 是固定假值。公开 Provider 默认地址保留。
 
 ## 0. 先给结论
@@ -484,7 +486,7 @@ fn main() {
 
 启动流程：Tauri builder setup 主窗口和插件；Vue mount 后 `main.ts` 等待一帧并 `show()`。数据库第一次访问时前端先调用 `prepare_database`，Rust migration/优化完成后再 `Database.load()`。关闭时只有文档 autosave 对 `onCloseRequested` 做等待保护；没有托盘接管或后台进程续跑逻辑。
 
-当前边界不完全符合题目中的 A/B/C：没有 Node；业务编排主要在 Vue，数据库 schema/关键事务在 Rust，但 TS 也直接 SQL。若按“数据事实所有者”判断，Rust migration + transaction 是当前最接近的 canonical owner；若引入 PI，必须明确 Node 是通过 RPC 调 Rust，还是成为唯一 DB owner，不能保留 TS + Rust + Node 三方写库。
+当前边界不完全符合题目中的 A/B/C：没有 Node；业务编排主要在 Vue，数据库 schema/关键事务在 Rust，但 TS 也直接 SQL。若按“数据事实所有者”判断，Rust migration + transaction 是当前最接近的 canonical owner。后续方向现已确定为 Rust Core 单一所有者、Node 仅通过 RPC 调 Rust，不能保留 TS + Rust + Node 三方写库；具体迁移阶段以路线图为准。
 
 ## 6. 数据库结构
 
@@ -567,7 +569,7 @@ Agent 模型不能执行 SQL，也不能直接写文档表。它可以：执行�
 ## 8. 最严重的三个架构问题
 
 1. **数据库访问权没有真正单一化。** Rust 掌握 schema 和关键事务，TypeScript repositories 又直接 SQL；若 PI/Node 再直接连接 SQLite，会形成三个 writer 和三套 transaction/cancellation 生命周期。
-2. **Tool contract 多处重复，并已出现权限语义偏差。** Registry 元数据、AI SDK Zod schema、Rust Rig JSON Schema、Rust Args、MCP 暴露和 UI 展示并非同一来源。当前代码只用 `serverTrusted` 判断 MCP 是否免确认，`readOnlyHint` 没有参与该判定，与项目文档描述的“trusted + readOnly”策略不一致；这既是安全风险，也会直接增加 `DomainTool -> PiToolAdapter` 的维护成本。
+2. **Tool contract 多处重复，并已出现权限语义偏差。** Registry 元数据、AI SDK Zod schema、Rust Rig JSON Schema、Rust Args、MCP 暴露和 UI 展示并非同一来源。当前代码只用 `serverTrusted` 判断 MCP 是否免确认，`readOnlyHint` 没有参与该判定，与“trusted + readOnly”目标策略不一致；这既是安全风险，也会直接增加 `DomainTool -> PiToolAdapter` 的维护成本。
 3. **运行时绑定 WebView 生命周期且状态模型分裂。** Agent/A2A worker 在 Vue 中运行；关闭应用不能继续。对话和终态 trace 是单行 JSON snapshot，执行审计又在规范化表中；普通 run 不能 checkpoint/resume，后台 daemon 也无法仅凭稳定 run record 接管。
 
 次一级问题见第二批资料：双 Provider 路径、累积 Token 预算未强制扣减、普通 Edit 与 Agent 写入协议仍有兼容分支。
