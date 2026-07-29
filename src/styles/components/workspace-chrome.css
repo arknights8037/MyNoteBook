@@ -270,8 +270,7 @@
 
 .activity-rail__brand--active .activity-rail__brand-mark {
   border-color: color-mix(in srgb, var(--workspace-glass-accent, #2867b2) 45%, transparent);
-  box-shadow: 0 0 0 2px
-    color-mix(in srgb, var(--workspace-glass-accent, #2867b2) 14%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--workspace-glass-accent, #2867b2) 14%, transparent);
 }
 
 .workspace-main {
@@ -389,6 +388,29 @@
   color: var(--workspace-glass-text-primary, var(--color-text-primary, #292927));
   font-size: 12px;
   font-weight: 680;
+}
+
+.workspace-tabs__home-label {
+  display: flex;
+  min-width: 180px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px;
+  color: var(--color-text-secondary, #686864);
+  user-select: none;
+}
+
+.workspace-tabs__home-label span {
+  color: var(--color-text-primary, #292927);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.workspace-tabs__home-label small {
+  color: var(--color-text-tertiary, #92928d);
+  font-size: 8px;
+  letter-spacing: 0.1em;
 }
 
 .context-sidebar__domain-switch {
@@ -531,7 +553,9 @@
   color: var(--workspace-glass-text-muted, var(--color-text-tertiary, #8d8d88));
   background: transparent;
   cursor: pointer;
-  transition: color 0.1s ease, background 0.1s ease;
+  transition:
+    color 0.1s ease,
+    background 0.1s ease;
 }
 
 .sidebar-search-inline__clear:hover {

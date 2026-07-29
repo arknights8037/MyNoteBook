@@ -125,11 +125,21 @@ textarea {
     var(--workspace-agent-width);
 }
 
+.editor-workspace--home {
+  --workspace-leading-width: var(--workspace-rail-width);
+  grid-template-columns: var(--workspace-rail-width) minmax(0, 1fr);
+}
+
 .editor-workspace:has(> .activity-rail:hover),
 .editor-workspace:has(> .activity-rail .activity-rail__item:focus-visible) {
   --workspace-rail-width: var(--workspace-rail-expanded-width);
   --workspace-sidebar-width: 0px;
   grid-template-columns: var(--workspace-rail-expanded-width) 0 minmax(0, 1fr);
+}
+
+.editor-workspace--home:has(> .activity-rail:hover),
+.editor-workspace--home:has(> .activity-rail .activity-rail__item:focus-visible) {
+  grid-template-columns: var(--workspace-rail-expanded-width) minmax(0, 1fr);
 }
 
 .editor-workspace--ai-docked:has(> .activity-rail:hover),

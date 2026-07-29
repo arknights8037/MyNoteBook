@@ -1376,6 +1376,7 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
     <section
       class="editor-workspace"
       :class="{
+        'editor-workspace--home': activeSurface === 'home',
         'editor-workspace--ai-workspace': showAiChat && aiChatFullscreen,
         'editor-workspace--ai-docked': showAiChat && !aiChatFullscreen,
       }"
@@ -1476,9 +1477,9 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
       />
       <div class="workspace-main">
         <WorkspaceTabs
-          v-if="activeSurface !== 'home'"
           :tabs="openTabs"
           :active-key="activeTabKey"
+          :chrome-only="activeSurface === 'home'"
           @activate="activateWorkspaceTab"
           @close="closeWorkspaceTab"
           @create="openCreateView()"
