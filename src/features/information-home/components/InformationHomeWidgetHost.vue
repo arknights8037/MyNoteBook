@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Copy, Trash2 } from '@lucide/vue'
+import { ChevronRight, Copy, Trash2 } from '@lucide/vue'
 import { computed, onErrorCaptured, ref } from 'vue'
 
 import type { InformationHomeSummary, InformationHomeWidget } from '@/models/home/informationHome'
@@ -40,6 +40,9 @@ const renderError = ref('')
 const metrics = ref<Array<{ value: number; label: string }>>([])
 const showSizeMenu = ref(false)
 const sizeMenuPosition = ref({ x: 0, y: 0 })
+const activeSubmenu = ref<'size' | null>(null)
+const widthOptions = Array.from({ length: 11 }, (_, index) => index + 2)
+const heightOptions = Array.from({ length: 9 }, (_, index) => index + 2)
 const sizePresets = [
   { w: 4, h: 3 },
   { w: 6, h: 4 },
@@ -60,22 +63,31 @@ function refresh(): void {
   if (props.widget.widgetType === 'rss-news') void rssWidget.value?.refresh()
 }
 
-function selectSize(size: { w: number; h: number }): void {
+function selectSize(size: { w: number; h: number }, close = true): void {
   emit('resize', size)
-  showSizeMenu.value = false
+  if (close) showSizeMenu.value = false
 }
 
 function openWidgetContextMenu(event: BrowserMouseEvent): void {
   if (!props.editing) return
   event.preventDefault()
   event.stopPropagation()
-  const width = 176
-  const height = 252
+  const width = 444
+  const height = 300
   sizeMenuPosition.value = {
     x: Math.max(8, Math.min(event.clientX, globalThis.innerWidth - width - 8)),
     y: Math.max(8, Math.min(event.clientY, globalThis.innerHeight - height - 8)),
   }
+  activeSubmenu.value = null
   showSizeMenu.value = true
+}
+
+function selectWidth(width: number): void {
+  selectSize({ w: width, h: props.widget.layout.desktop.h }, false)
+}
+
+function selectHeight(height: number): void {
+  selectSize({ w: props.widget.layout.desktop.w, h: height }, false)
 }
 
 function copyWidget(): void {
@@ -166,21 +178,73 @@ function removeWidget(): void {
         @click.stop
         @contextmenu.prevent.stop
       >
-        <p><strong>卡片尺寸</strong><small>拖动右下角可自由缩放</small></p>
-        <button
-          v-for="size in sizePresets"
-          :key="`${size.w}x${size.h}`"
-          type="button"
-          role="menuitem"
-          class="home-widget-size-menu__preset"
-          :class="{
-            'is-active': widget.layout.desktop.w === size.w && widget.layout.desktop.h === size.h,
-          }"
-          @click="selectSize(size)"
-        >
-          <span>{{ size.w }} × {{ size.h }}</span
-          ><small>{{ size.w === 12 ? '全宽' : '网格' }}</small>
-        </button>
+        <p><strong>卡片操作</strong><small>拖动右下角可自由缩放和放置</small></p>
+        <div class="home-widget-size-menu__submenu-host" @mouseenter="activeSubmenu = 'size'">
+          <button
+            type="button"
+            role="menuitem"
+            aria-haspopup="menu"
+            :aria-expanded="activeSubmenu === 'size'"
+            @click="activeSubmenu = activeSubmenu === 'size' ? null : 'size'"
+          >
+            <span>卡片尺寸</span
+            ><small>{{ widget.layout.desktop.w }} × {{ widget.layout.desktop.h }}</small
+            ><ChevronRight :size="13" />
+          </button>
+          <div
+            v-if="activeSubmenu === 'size'"
+            class="home-widget-size-menu__submenu"
+            role="menu"
+            aria-label="卡片尺寸"
+          >
+            <section>
+              <header><strong>宽度</strong><small>网格列数</small></header>
+              <div>
+                <button
+                  v-for="width in widthOptions"
+                  :key="`width-${width}`"
+                  type="button"
+                  :class="{ 'is-active': widget.layout.desktop.w === width }"
+                  @click="selectWidth(width)"
+                >
+                  {{ width }}
+                </button>
+              </div>
+            </section>
+            <section>
+              <header><strong>高度</strong><small>网格行数</small></header>
+              <div>
+                <button
+                  v-for="height in heightOptions"
+                  :key="`height-${height}`"
+                  type="button"
+                  :class="{ 'is-active': widget.layout.desktop.h === height }"
+                  @click="selectHeight(height)"
+                >
+                  {{ height }}
+                </button>
+              </div>
+            </section>
+            <section>
+              <header><strong>常用尺寸</strong><small>宽 × 高</small></header>
+              <div class="is-presets">
+                <button
+                  v-for="size in sizePresets"
+                  :key="`${size.w}x${size.h}`"
+                  type="button"
+                  class="home-widget-size-menu__preset"
+                  :class="{
+                    'is-active':
+                      widget.layout.desktop.w === size.w && widget.layout.desktop.h === size.h,
+                  }"
+                  @click="selectSize(size)"
+                >
+                  {{ size.w }} × {{ size.h }}
+                </button>
+              </div>
+            </section>
+          </div>
+        </div>
         <hr />
         <button type="button" role="menuitem" @click="copyWidget">
           <Copy :size="13" /><span>复制卡片</span>

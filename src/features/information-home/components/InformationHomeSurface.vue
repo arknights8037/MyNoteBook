@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, Pencil, Plus, RotateCcw, Undo2, X } from '@lucide/vue'
+import { Check, ChevronRight, Pencil, Plus, RotateCcw, Undo2, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { createEmailService } from '@/app/composition/emailServiceFactory'
@@ -19,9 +19,11 @@ import type {
   InformationHomeService,
   InformationHomeSignal,
 } from '@/services/home/InformationHomeService'
-import { getInformationHomeWidgetDefinition } from '../informationHomeWidgetRegistry'
+import {
+  getInformationHomeWidgetDefinition,
+  INFORMATION_HOME_WIDGET_REGISTRY,
+} from '../informationHomeWidgetRegistry'
 import InformationHomeGrid from './InformationHomeGrid.vue'
-import InformationHomeWidgetLibrary from './InformationHomeWidgetLibrary.vue'
 
 type BrowserMouseEvent = InstanceType<typeof globalThis.MouseEvent>
 
@@ -36,9 +38,9 @@ const home = ref<InformationHome | null>(null)
 const draft = ref<InformationHomePayload>(createDefaultInformationHomePayload(createId))
 const summaries = ref<InformationHomeSummary[]>([])
 const editing = ref(false)
-const showLibrary = ref(false)
 const showMenu = ref(false)
 const menuPosition = ref({ x: 0, y: 0 })
+const activeSubmenu = ref<'add' | 'layout' | null>(null)
 const undoStack = ref<InformationHomePayload[]>([])
 const loading = ref(false)
 const saving = ref(false)
@@ -80,25 +82,32 @@ function beginEdit(): void {
 }
 
 function openContextMenu(event: BrowserMouseEvent): void {
-  const width = 240
-  const height = editing.value ? 212 : 112
+  const width = 558
+  const height = editing.value ? 340 : 300
   menuPosition.value = {
     x: Math.max(8, Math.min(event.clientX, globalThis.innerWidth - width - 8)),
     y: Math.max(8, Math.min(event.clientY, globalThis.innerHeight - height - 8)),
   }
+  activeSubmenu.value = null
   showMenu.value = true
 }
 
-function openWidgetLibrary(): void {
+function closeContextMenu(): void {
+  showMenu.value = false
+  activeSubmenu.value = null
+}
+
+function addWidgetFromMenu(type: InformationHomeWidgetType): void {
   if (!editing.value) beginEdit()
-  showLibrary.value = true
+  if (!editing.value) return
+  addWidget(type)
+  activeSubmenu.value = null
   showMenu.value = false
 }
 
 function cancelEdit(): void {
   if (home.value) draft.value = clone(home.value.payload)
   undoStack.value = []
-  showLibrary.value = false
   editing.value = false
 }
 
@@ -111,7 +120,6 @@ async function save(): Promise<void> {
   home.value = result.value
   draft.value = clone(result.value.payload)
   undoStack.value = []
-  showLibrary.value = false
   editing.value = false
 }
 
@@ -379,7 +387,7 @@ onBeforeUnmount(() => {
     class="dashboard-surface information-home-surface"
     :class="{ 'dashboard-surface--editing': editing }"
     aria-label="首页信息面板"
-    @click="showMenu = false"
+    @click="closeContextMenu"
     @contextmenu.prevent="openContextMenu"
   >
     <p v-if="!native" class="dashboard-widget-state">独立首页数据需要在 Tauri 桌面应用中读取。</p>
@@ -398,26 +406,95 @@ onBeforeUnmount(() => {
         v-if="!editing"
         type="button"
         role="menuitem"
+        class="information-home-menu__entry"
         :disabled="settingsSaving"
+        @mouseenter="activeSubmenu = null"
         @click="beginEdit"
       >
         <Pencil :size="15" /><span
           ><strong>编辑布局</strong><small>移动、缩放或移除卡片</small></span
         >
       </button>
-      <button type="button" role="menuitem" :disabled="settingsSaving" @click="openWidgetLibrary">
-        <Plus :size="15" /><span><strong>添加卡片</strong><small>从信息模块库选择</small></span>
-      </button>
-      <template v-if="editing">
-        <button type="button" role="menuitem" :disabled="!undoStack.length" @click="undoFromMenu">
-          <Undo2 :size="15" /><span><strong>撤销</strong><small>撤回最近一次布局修改</small></span>
+      <div class="information-home-menu__submenu-host" @mouseenter="activeSubmenu = 'add'">
+        <button
+          type="button"
+          role="menuitem"
+          class="information-home-menu__entry"
+          aria-haspopup="menu"
+          :aria-expanded="activeSubmenu === 'add'"
+          :disabled="settingsSaving"
+          @click="activeSubmenu = activeSubmenu === 'add' ? null : 'add'"
+        >
+          <Plus :size="15" /><span
+            ><strong>添加卡片</strong><small>选择要加入的功能模块</small></span
+          ><ChevronRight :size="14" />
         </button>
-        <button type="button" role="menuitem" @click="resetFromMenu">
-          <RotateCcw :size="15" /><span
-            ><strong>恢复默认</strong><small>重置内置卡片布局</small></span
+        <div
+          v-if="activeSubmenu === 'add'"
+          class="information-home-menu__submenu"
+          role="menu"
+          aria-label="添加卡片"
+        >
+          <button
+            v-for="definition in INFORMATION_HOME_WIDGET_REGISTRY"
+            :key="definition.type"
+            type="button"
+            role="menuitem"
+            class="information-home-menu__entry"
+            @click="addWidgetFromMenu(definition.type)"
           >
+            <span
+              ><strong>{{ definition.title }}</strong
+              ><small>{{ definition.description }}</small></span
+            >
+          </button>
+        </div>
+      </div>
+      <div
+        v-if="editing"
+        class="information-home-menu__submenu-host"
+        @mouseenter="activeSubmenu = 'layout'"
+      >
+        <button
+          type="button"
+          role="menuitem"
+          class="information-home-menu__entry"
+          aria-haspopup="menu"
+          :aria-expanded="activeSubmenu === 'layout'"
+          @click="activeSubmenu = activeSubmenu === 'layout' ? null : 'layout'"
+        >
+          <Undo2 :size="15" /><span><strong>布局操作</strong><small>撤销或恢复默认布局</small></span
+          ><ChevronRight :size="14" />
         </button>
-      </template>
+        <div
+          v-if="activeSubmenu === 'layout'"
+          class="information-home-menu__submenu"
+          role="menu"
+          aria-label="布局操作"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            class="information-home-menu__entry"
+            :disabled="!undoStack.length"
+            @click="undoFromMenu"
+          >
+            <Undo2 :size="15" /><span
+              ><strong>撤销</strong><small>撤回最近一次布局修改</small></span
+            >
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            class="information-home-menu__entry"
+            @click="resetFromMenu"
+          >
+            <RotateCcw :size="15" /><span
+              ><strong>恢复默认</strong><small>重置内置卡片布局</small></span
+            >
+          </button>
+        </div>
+      </div>
     </div>
     <div v-if="native && !loading" class="dashboard-surface__workspace">
       <InformationHomeGrid
@@ -438,12 +515,6 @@ onBeforeUnmount(() => {
         @resize="resizeWidget"
         @update-settings="updateWidgetSettings"
       />
-      <Transition name="dashboard-library"
-        ><InformationHomeWidgetLibrary
-          v-if="editing && showLibrary"
-          @add="addWidget"
-          @close="showLibrary = false"
-      /></Transition>
     </div>
     <div v-if="native && !loading && editing" class="information-home-controls is-editing">
       <button type="button" @click="cancelEdit"><X :size="16" />取消</button>

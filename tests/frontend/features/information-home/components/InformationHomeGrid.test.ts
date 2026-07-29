@@ -1,4 +1,5 @@
 import { mount } from '@vue/test-utils'
+import { GridItem, GridLayout } from 'grid-layout-plus'
 import { nextTick } from 'vue'
 import { describe, expect, it } from 'vitest'
 
@@ -29,6 +30,10 @@ describe('InformationHomeGrid', () => {
 
     expect(wrapper.find('.vgl-item__resizer').exists()).toBe(true)
     expect(wrapper.get('.vgl-item').classes()).toContain('vgl-item--resizable')
+    expect(wrapper.getComponent(GridLayout).props('verticalCompact')).toBe(false)
+    expect(wrapper.getComponent(GridLayout).props('preventCollision')).toBe(true)
+    expect(wrapper.getComponent(GridItem).props('minH')).toBe(2)
+    expect(wrapper.getComponent(GridItem).props('minW')).toBe(2)
 
     await wrapper.setProps({ editing: false })
     expect(wrapper.find('.vgl-item__resizer').exists()).toBe(false)

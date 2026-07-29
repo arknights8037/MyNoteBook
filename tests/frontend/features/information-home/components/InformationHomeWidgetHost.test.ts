@@ -54,20 +54,36 @@ describe('InformationHomeWidgetHost', () => {
     expect(menu).not.toBeNull()
     expect(menu?.style.left).toBe('120px')
     expect(menu?.style.top).toBe('160px')
+    const sizeMenuButton = Array.from(
+      menu?.querySelectorAll<HTMLButtonElement>(':scope > div > button') ?? [],
+    ).find((button) => button.textContent?.includes('卡片尺寸'))
+    sizeMenuButton?.click()
+    await nextTick()
+    expect(document.body.querySelector('[aria-label="卡片尺寸"]')).not.toBeNull()
     const sizeButtons = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>('.home-widget-size-menu__preset'),
     )
     expect(sizeButtons.map((button) => button.textContent)).toEqual([
-      '4 × 3网格',
-      '6 × 4网格',
-      '8 × 5网格',
-      '12 × 5全宽',
+      '4 × 3',
+      '6 × 4',
+      '8 × 5',
+      '12 × 5',
     ])
     expect(sizeButtons[1]?.classList.contains('is-active')).toBe(true)
 
+    const heightSection = Array.from(
+      document.body.querySelectorAll<HTMLElement>('.home-widget-size-menu__submenu section'),
+    ).find((section) => section.querySelector('header')?.textContent?.includes('高度'))
+    const heightSeven = Array.from(
+      heightSection?.querySelectorAll<HTMLButtonElement>('button') ?? [],
+    ).find((button) => button.textContent?.trim() === '7')
+    heightSeven?.click()
+    await nextTick()
+    expect(wrapper.emitted('resize')?.[0]).toEqual([{ w: 6, h: 7 }])
+
     sizeButtons[2]?.click()
     await nextTick()
-    expect(wrapper.emitted('resize')).toEqual([[{ w: 8, h: 5 }]])
+    expect(wrapper.emitted('resize')?.[1]).toEqual([{ w: 8, h: 5 }])
     expect(document.body.querySelector('[aria-label="卡片右键菜单"]')).toBeNull()
 
     await wrapper.get('.dashboard-widget-frame').trigger('contextmenu', {

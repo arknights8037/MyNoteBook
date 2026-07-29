@@ -47,7 +47,6 @@ describe('InformationHomeSurface', () => {
       global: {
         stubs: {
           InformationHomeGrid: { template: '<div data-test="home-grid" />' },
-          InformationHomeWidgetLibrary: { template: '<aside data-test="widget-library" />' },
         },
       },
     })
@@ -67,8 +66,12 @@ describe('InformationHomeSurface', () => {
       .findAll('[role="menuitem"]')
       .find((button) => button.text().includes('添加卡片'))
     await addButton?.trigger('click')
+    expect(wrapper.get('[aria-label="添加卡片"]').text()).toContain('待办列表')
+    const todoButton = wrapper
+      .findAll('[aria-label="添加卡片"] [role="menuitem"]')
+      .find((button) => button.text().includes('待办列表'))
+    await todoButton?.trigger('click')
 
-    expect(wrapper.find('[data-test="widget-library"]').exists()).toBe(true)
     expect(
       wrapper.findAll('.information-home-controls button').map((button) => button.text()),
     ).toEqual(['取消', '保存布局'])
@@ -77,8 +80,12 @@ describe('InformationHomeSurface', () => {
       clientX: 160,
       clientY: 200,
     })
-    expect(wrapper.get('[role="menu"]').text()).toContain('撤销')
-    expect(wrapper.get('[role="menu"]').text()).toContain('恢复默认')
+    const layoutButton = wrapper
+      .findAll('[role="menuitem"]')
+      .find((button) => button.text().includes('布局操作'))
+    await layoutButton?.trigger('click')
+    expect(wrapper.get('[aria-label="布局操作"]').text()).toContain('撤销')
+    expect(wrapper.get('[aria-label="布局操作"]').text()).toContain('恢复默认')
     wrapper.unmount()
   })
 })
