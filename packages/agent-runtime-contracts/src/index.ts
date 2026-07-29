@@ -224,3 +224,159 @@ export class AgentRuntimeContractError extends Error {
     this.name = 'AgentRuntimeContractError'
   }
 }
+
+export const AGENT_WORKER_PROTOCOL_VERSION = 1 as const
+
+export interface AgentWorkerIdentity {
+  protocolVersion: typeof AGENT_WORKER_PROTOCOL_VERSION
+  workerInstanceId: string
+  pid: number
+  runtime: 'ai-sdk'
+  runtimeVersion: string
+}
+
+export interface AgentWorkerToolInvocation {
+  requestId: string
+  runId: string
+  turnId: string | null
+  internalToolCallId: string
+  providerToolCallId: string | null
+  toolName: string
+  arguments: Record<string, unknown>
+  source: DomainToolManifestEntry['source']
+}
+
+export interface AgentWorkerToolResult {
+  ok: boolean
+  value?: unknown
+  error?: string
+  errorCode?: string
+  retryable?: boolean
+  retryAfterMs?: number
+  isError?: boolean
+}
+
+export interface AgentWorkerAuthorizationRequest {
+  authorizationId: string
+  runId: string
+  question: string
+  context: string
+  options: string[]
+  allowFreeText: boolean
+}
+
+export interface AgentWorkerError {
+  code:
+    | AgentRuntimeContractError['code']
+    | 'worker_protocol_error'
+    | 'worker_unavailable'
+    | 'runtime_error'
+  message: string
+  retryable: boolean
+}
+
+export type AgentWorkerHostMessage =
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'runtime.hello'
+      supervisorInstanceId: string
+      protocolVersion: typeof AGENT_WORKER_PROTOCOL_VERSION
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.start'
+      requestId: string
+      request: AgentRunRequestV1
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.cancel'
+      requestId: string
+      runId: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.steer'
+      requestId: string
+      runId: string
+      input: AgentRunSteerInput
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'tool.result'
+      requestId: string
+      result: AgentWorkerToolResult
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'authorization.result'
+      requestId: string
+      authorizationId: string
+      answer: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'shutdown'
+      reason: string
+    }
+
+export type AgentWorkerMessage =
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'runtime.hello'
+      identity: AgentWorkerIdentity
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.event'
+      event: AgentRuntimeEvent
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.result'
+      requestId: string
+      result: AgentRunResult
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.error'
+      requestId: string
+      runId: string
+      error: AgentWorkerError
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.cancelled'
+      requestId: string
+      runId: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.steered'
+      requestId: string
+      runId: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'tool.invoke'
+      request: AgentWorkerToolInvocation
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'authorization.request'
+      requestId: string
+      request: AgentWorkerAuthorizationRequest
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'heartbeat'
+      workerInstanceId: string
+      activeRunIds: string[]
+      occurredAt: number
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'shutdown'
+      workerInstanceId: string
+      reason: string
+    }

@@ -7,6 +7,7 @@ export default tseslint.config(
   {
     ignores: [
       'dist/**',
+      'packages/*/dist/**',
       'coverage/**',
       'prettier.config.cjs',
       'src-tauri/target/**',

@@ -1,10 +1,12 @@
 # Agent Runtime 与工具协议
 
-MyNoteBook 的 Agent 是受控的本地知识协作者。它可以读取许可范围内的文档、知识和外部工具结果，生成回答或结构化修改提案；它不能绕过本地权限、确认与可信写入边界。本文先记录当前生产事实；Runtime Port 与 AI SDK Adapter 已落地，Phase 2 决策保留 AI SDK，Worker 和后台执行仍见 [后续开发路线图](roadmap.md)，不能当作已实现能力。
+MyNoteBook 的 Agent 是受控的本地知识协作者。它可以读取许可范围内的文档、知识和外部工具结果，生成回答或结构化修改提案；它不能绕过本地权限、确认与可信写入边界。本文先记录当前生产事实；Runtime Port 与 AI SDK Adapter 已落地，Phase 2 决策保留 AI SDK。Phase 3 已开始落地 Worker Host、Rust Supervisor 和 UI 侧 Tauri Runtime Adapter 的进程边界基础，但生产模型循环尚未切出 WebView，不能把这些基础设施当作后台执行能力。
 
 ## 1. 入口与执行流程
 
 当前生产 Runtime 仍位于 Vue/WebView。`useAgentRun` 冻结输入并构造可序列化 `AgentRunRequest v1`，通过 `AgentRuntimeClient` 的 `startRun/cancelRun/steerRun/subscribeEvents` 驱动 `AiSdkAgentRuntimeAdapter`；`prepareAgentRun()` 恢复 Cognitive Session 并创建任务；`AgentRunEngine` 继续提供 UI lifecycle projection。
+
+Phase 3 的非生产基础链路已经存在：`TauriAgentRuntimeAdapter -> Rust AgentWorkerSupervisor -> NDJSON Worker Host`。Supervisor 维护 Worker 实例、heartbeat、重启计数、活动 Run 与崩溃终态，Worker Host 维护 Runtime Port 和 Tool/Authorization RPC 等待。该链路尚未连接 AI SDK Worker 入口、Rust Domain Tool dispatcher 或 Provider 代理，因此 `useAgentRun` 不会选择它。
 
 ```text
 用户输入 / Slash Command

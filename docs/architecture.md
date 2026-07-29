@@ -6,7 +6,7 @@
 
 MyNoteBook 的产品类别是本地优先的 AI 桌面工作中枢。它通过收集、理解、组织、委派、表达和沉淀的持续循环，为知识工作保留可继续的上下文。当前技术实现由 Vue 3 + Tiptap 前端、Tauri/Rust 桌面壳和 SQLite 本地存储组成，是单机桌面应用，不是 React 应用，也不是由多个服务组成的分布式系统。
 
-当前生产 Agent Runtime 仍由 Vue/WebView 生命周期托管，但 `useAgentRun` 只通过 `AgentRuntimeClient` 和 Runtime Port 驱动 `AiSdkAgentRuntimeAdapter`；Adapter 内部继续使用 AI SDK `ToolLoopAgent`。TypeScript repositories 通过 `plugin-sql` 与 Rust SQLx 共同访问同一个 SQLite。项目目前没有 Node Worker、后台 sidecar、托盘常驻或 daemon。这些能力只属于路线图中的既定方向或决策门。
+当前生产 Agent Runtime 仍由 Vue/WebView 生命周期托管，但 `useAgentRun` 只通过 `AgentRuntimeClient` 和 Runtime Port 驱动 `AiSdkAgentRuntimeAdapter`；Adapter 内部继续使用 AI SDK `ToolLoopAgent`。TypeScript repositories 通过 `plugin-sql` 与 Rust SQLx 共同访问同一个 SQLite。Phase 3 已加入 Node Worker Host、Rust Supervisor 和 UI 侧 Tauri Runtime Adapter 的非生产基础，但尚无 AI SDK Worker 入口、自包含 sidecar 产物或生产切流；项目仍没有后台 Agent、托盘常驻或 daemon。
 
 产品愿景不能改变当前事实边界：尚未实现的信息来源、后台能力和外部应用接入必须明确标记为未来方向；Agent、View 和模型输出不能被宣传或实现为绕过用户判断的第二事实源。
 
@@ -87,6 +87,7 @@ Knowledge Object 可锚定 document/block/revision。Context Compiler 已读取�
 - `agent_repository.rs`：Agent task、Context Bundle、Patch、事务与审计持久化。
 - `agent_tools.rs`：数据库工具、只读命令和 Rust 线性时间正则执行。
 - `agent_cancellation.rs`：按 tool call ID 取消正在运行的原生或 MCP future。
+- `agent_worker_supervisor.rs`：Phase 3 Worker 子进程身份、NDJSON 通道、heartbeat、重启、活动 Run 快照和崩溃终态；当前尚未接管生产 Agent。
 - `ai_models.rs` / `ai_proxy.rs`：Provider 模型列表、请求代理、流式响应和敏感信息边界。
 - `work.rs`：TaskRun、Verifier、ChangeSet 和 Approval 的原子状态变更。
 - `views.rs`：View snapshot/dependency 发布及 override 保护。
@@ -113,6 +114,7 @@ Rust command 应立即委托给对应模块。数据库访问必须复用 `datab
 - `src/composables`：Vue 生命周期和跨组件响应式工作流。
 - `src/services`：应用用例与框架无关的领域编排。
 - `src/repositories`：持久化端口；`src/infrastructure` 提供 Tauri/SQLite 实现。
+- `src/infrastructure/runtime`：Rust-owned Worker 的 Tauri Runtime Port 适配；当前只作为 Phase 3 非生产基础存在。
 - `src/models`：领域类型、版本化协议、默认值和纯校验。
 - `src/editor`：Tiptap/ProseMirror 集成和编辑器纯算法。
 - `src/ui`：不包含产品工作流的通用展示原语。

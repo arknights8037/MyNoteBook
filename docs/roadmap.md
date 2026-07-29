@@ -209,6 +209,17 @@ AgentRunRequest
 
 ## 7. Phase 3：Runtime 移出 WebView
 
+### 实施状态（进行中）
+
+已落地第一批进程边界基础，但尚未切换生产 Runtime：
+
+- 共享 contracts 已冻结 Worker v1 envelope，覆盖实例身份、`runtime.hello`、`run.start/cancel/steer/event/result/error`、`tool.invoke/result`、`authorization.request/result`、heartbeat 和 shutdown。
+- `@mynotebook/agent-runtime-worker` 已提供与具体模型循环解耦的 Node Worker Host，负责并发 Run 路由、事件/唯一结果转发、取消、授权 steering、双向 RPC 等待和主动 heartbeat。
+- Rust `AgentWorkerSupervisor` 已提供自包含 Worker 路径解析、stdin/stdout NDJSON、实例校验、heartbeat 超时、受控重启、活动 Run 跟踪、崩溃 `interrupted` 终态、Tauri commands 和窗口重建状态快照。
+- UI 侧 `TauriAgentRuntimeAdapter` 已实现 Runtime Port 的 command/event 投影，但尚未接入 `useAgentRun`。
+
+当前生产 Agent 仍使用 WebView 内的 `AiSdkAgentRuntimeAdapter`。Rust Domain Tool/MCP dispatcher、Provider 请求代理、工具审计、AI SDK Worker 入口、自包含二进制打包和生产切流仍是本阶段剩余工作；在这些边界通过验收前，不得把当前基础切片描述成后台 Agent 或已完成的 Runtime 迁移。
+
 ### 目标
 
 让 Agent 执行不再由 Vue 生命周期拥有。

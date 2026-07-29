@@ -12,13 +12,28 @@ describe('Runtime architecture boundaries', () => {
       'packages/pi-agent-worker/src/PiAgentRuntimePrototype.ts',
       'packages/pi-agent-worker/src/PiToolAdapter.ts',
       'packages/pi-agent-worker/src/StdioPiToolRpcClient.ts',
+      'packages/agent-runtime-worker/src/AgentWorkerHost.ts',
+      'packages/agent-runtime-worker/src/StdioAgentWorkerChannel.ts',
       'src/models/agent/agentRuntimeContract.ts',
       'src/services/agent/AgentRuntimeClient.ts',
       'src/services/ai/AiSdkAgentRuntime.ts',
+      'src/infrastructure/runtime/TauriAgentRuntimeAdapter.ts',
     ]) {
       const source = readFileSync(resolve(root, file), 'utf8')
       expect(source, file).not.toMatch(
         /from ['"]vue['"]|@tauri-apps\/plugin-sql|@\/infrastructure\/|\bsqlite\b|\bsqlx\b/i,
+      )
+    }
+  })
+
+  it('keeps the Phase 3 worker host independent from PI and application infrastructure', () => {
+    for (const file of [
+      'packages/agent-runtime-worker/src/AgentWorkerHost.ts',
+      'packages/agent-runtime-worker/src/StdioAgentWorkerChannel.ts',
+    ]) {
+      const source = readFileSync(resolve(root, file), 'utf8')
+      expect(source, file).not.toMatch(
+        /pi-agent|@tauri-apps|@\/|plugin-sql|\bsqlite\b|\bsqlx\b|from ['"]vue['"]/i,
       )
     }
   })
