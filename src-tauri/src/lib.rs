@@ -302,6 +302,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0034_add_dingtalk_inbox.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 35,
+            description: "add_information_home",
+            sql: include_str!("../migrations/0035_add_information_home.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

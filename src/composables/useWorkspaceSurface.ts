@@ -6,12 +6,13 @@ type AiPanelMode = 'closed' | 'docked' | 'workspace'
 type PrimarySurface = Exclude<WorkspaceSurface, 'agent'>
 
 export function useWorkspaceSurface() {
-  const primarySurface = ref<PrimarySurface>('document')
-  const aiPanelMode = ref<AiPanelMode>('workspace')
+  const primarySurface = ref<PrimarySurface>('home')
+  const aiPanelMode = ref<AiPanelMode>('closed')
 
   const showAiChat = computed(() => aiPanelMode.value !== 'closed')
   const aiChatFullscreen = computed(() => aiPanelMode.value === 'workspace')
   const showSettings = computed(() => primarySurface.value === 'settings')
+  const showInformationHome = computed(() => primarySurface.value === 'home')
   const showInbox = computed(() => primarySurface.value === 'inbox')
   const showPluginSkills = computed(() => primarySurface.value === 'plugins')
   const showAutomations = computed(() => primarySurface.value === 'automations')
@@ -38,6 +39,10 @@ export function useWorkspaceSurface() {
 
   function openSettingsSurface(): void {
     openPrimarySurface('settings')
+  }
+
+  function openInformationHome(): void {
+    openPrimarySurface('home')
   }
 
   function openInboxSurface(): void {
@@ -84,6 +89,7 @@ export function useWorkspaceSurface() {
     aiChatFullscreen,
     aiPanelMode,
     showSettings,
+    showInformationHome,
     showInbox,
     showPluginSkills,
     showAutomations,
@@ -93,6 +99,7 @@ export function useWorkspaceSurface() {
     openAgentWorkspace,
     openDockedAiChat,
     openSettingsSurface,
+    openInformationHome,
     openInboxSurface,
     openPluginSkillsSurface,
     openAutomationsSurface,

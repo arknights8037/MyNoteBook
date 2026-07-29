@@ -73,12 +73,12 @@ Review 已完成真实 DeepSeek/Tauri smoke；Research 与 Learning 仍需要在
 
 ## R4：Dashboard Composer 后续
 
-[Dashboard Composer](dashboard-composer.md) 的 P0 已实现：信息面板使用 Grid Layout Plus、版本化 `workspace_views` 持久化，以及 `Automation Results` 与 `Agent Work Status` 两个只读组件。
+[Dashboard Composer](dashboard-composer.md) 的 P0 已实现：普通信息面板使用 Grid Layout Plus、版本化 `workspace_views` 持久化，以及 `Automation Results` 与 `Agent Work Status` 两个只读组件。独立首页已按[独立信息首页](information-home.md)拆分，并接入邮件事项、RSS 新闻和增量 Agent 摘要。
 
 剩余工作：
 
 - 在 Tauri WebView2 中完成人工高 DPI、拖拽和键盘替代操作验收；
-- 接入真实 Signal 数据后实现 RSS Briefing 与 Signal Inbox Widget；
+- 将钉钉消息、连接器健康与更多 Signal 模块按独立权限继续接入首页；
 - 为 Widget 增加来源时间、权限状态和 canonical 记录跳转；
 - 保持 Dashboard 只消费查询和受控 command，不成为第二写入口。
 

@@ -11,7 +11,7 @@
 3. 什么需要用户判断；
 4. 下一步可以交给哪个人或 Agent。
 
-它提供类似 Notion 看板的自由组合体验，但不复制 Notion 的通用数据库。Widget 是现有业务状态的视图和受控操作入口，Automation、Work、Knowledge、Agent、RSS、Audit 等领域仍拥有各自的 canonical 数据。
+它提供类似 Notion 看板的自由组合体验，但不复制 Notion 的通用数据库。Widget 是现有业务状态的视图和受控操作入口，Automation、Work、Knowledge、Agent、RSS、Audit 等领域仍拥有各自的 canonical 数据。独立首页已使用单例 `information_home` 落地，不再借用第一个普通 Dashboard；用户创建的 Dashboard 仍由 `workspace_views` 管理。
 
 ## 2. 核心体验
 

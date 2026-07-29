@@ -1,4 +1,5 @@
 export type WorkspaceSurface =
+  | 'home'
   | 'agent'
   | 'inbox'
   | 'document'

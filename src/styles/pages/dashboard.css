@@ -35,10 +35,22 @@
 }
 
 .dashboard-toolbar__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--color-agent-accent);
   font-size: 9px;
   font-weight: 750;
   letter-spacing: 0.13em;
+}
+
+.information-home-surface__error {
+  margin: 10px 28px 0;
+  border-left: 2px solid var(--color-status-error);
+  padding: 8px 10px;
+  color: var(--color-status-error);
+  background: color-mix(in srgb, var(--color-status-error) 6%, transparent);
+  font-size: 10px;
 }
 
 .dashboard-toolbar strong {
@@ -241,6 +253,81 @@
   font-style: normal;
 }
 
+.home-signal-widget__open {
+  justify-self: start;
+  border-color: transparent !important;
+  padding: 5px 0 !important;
+  color: var(--color-agent-accent) !important;
+  background: transparent !important;
+}
+
+.home-agent-summary > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  padding-bottom: 9px;
+}
+
+.home-agent-summary > header > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.home-agent-summary > header > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.home-agent-summary > header strong {
+  font-size: 11px;
+}
+
+.home-agent-summary > header small,
+.home-agent-summary__meta {
+  color: var(--color-text-tertiary);
+  font-size: 9px;
+}
+
+.home-agent-summary__content {
+  min-height: 0;
+  overflow: auto;
+}
+
+.home-agent-summary__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.home-agent-summary .markdown-preview {
+  color: var(--color-text-primary);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.home-agent-summary .markdown-preview > :first-child {
+  margin-top: 0;
+}
+
+.home-agent-summary .markdown-preview h1,
+.home-agent-summary .markdown-preview h2,
+.home-agent-summary .markdown-preview h3,
+.home-agent-summary .markdown-preview h4 {
+  margin: 12px 0 5px;
+  font-size: 12px;
+}
+
+.home-agent-summary .markdown-preview p,
+.home-agent-summary .markdown-preview ul,
+.home-agent-summary .markdown-preview ol {
+  margin: 5px 0;
+}
+
 .dashboard-status-dot {
   width: 6px;
   height: 6px;
@@ -371,5 +458,11 @@
   .dashboard-toolbar__actions {
     width: 100%;
     flex-wrap: wrap;
+  }
+  .home-agent-summary > header {
+    flex-direction: column;
+  }
+  .home-agent-summary > header > div:last-child {
+    justify-content: flex-start;
   }
 }

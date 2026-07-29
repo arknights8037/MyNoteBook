@@ -3,10 +3,11 @@ import { describe, expect, it } from 'vitest'
 import { useWorkspaceSurface } from '@/composables/useWorkspaceSurface'
 
 describe('useWorkspaceSurface', () => {
-  it('starts on Agent Work and switches between primary surfaces', () => {
+  it('starts on the independent home and switches between primary surfaces', () => {
     const surface = useWorkspaceSurface()
 
-    expect(surface.activeSurface.value).toBe('agent')
+    expect(surface.activeSurface.value).toBe('home')
+    expect(surface.showInformationHome.value).toBe(true)
     surface.openInboxSurface()
     expect(surface.activeSurface.value).toBe('inbox')
     surface.openPluginSkillsSurface()
@@ -21,6 +22,8 @@ describe('useWorkspaceSurface', () => {
     expect(surface.activeSurface.value).toBe('settings')
     surface.openDocumentSurface()
     expect(surface.activeSurface.value).toBe('document')
+    surface.openInformationHome()
+    expect(surface.activeSurface.value).toBe('home')
   })
 
   it('keeps workspace AI mutually exclusive with secondary surfaces', () => {

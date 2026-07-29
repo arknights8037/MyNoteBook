@@ -93,6 +93,9 @@ const KnowledgeControlSurface = defineLazySurface(
   () => import('@/features/knowledge-control/components/KnowledgeControlSurface.vue'),
 )
 const InboxSurface = defineLazySurface(() => import('@/features/inbox/components/InboxSurface.vue'))
+const InformationHomeSurface = defineLazySurface(
+  () => import('@/features/information-home/components/InformationHomeSurface.vue'),
+)
 const AgentPatchReviewModal = defineLazyComponent(() => import('./home/AgentPatchReviewModal.vue'))
 const CreateViewModal = defineLazyComponent(() => import('./home/CreateViewModal.vue'))
 const DeveloperInspectorDrawer = defineLazyComponent(
@@ -153,7 +156,6 @@ const automationSection = ref('tasks')
 const auditCategory = ref('all')
 const settingsSection = ref('general')
 const agentProjectCreateRequest = ref(0)
-const openingInformationHome = ref(false)
 
 function requestNewAgentProject(): void {
   agentProjectCreateRequest.value += 1
@@ -167,6 +169,7 @@ const {
   aiChatFullscreen,
   aiPanelMode,
   showSettings,
+  showInformationHome,
   showInbox,
   showPluginSkills,
   showAutomations,
@@ -176,6 +179,7 @@ const {
   openAgentWorkspace,
   openDockedAiChat,
   openSettingsSurface,
+  openInformationHome,
   openInboxSurface,
   openPluginSkillsSurface,
   openAutomationsSurface,
@@ -363,35 +367,10 @@ const {
   dropOnGroup: handleGroupDrop,
 })
 
-const activeNavigationSurface = computed<WorkspaceSurfaceName | 'home' | 'work'>(() => {
+const activeNavigationSurface = computed<WorkspaceSurfaceName | 'work'>(() => {
   if (activeSurface.value === 'agent' || activeSurface.value === 'automations') return 'work'
-  if (activeSurface.value !== 'document' || !activeWorkspaceViewId.value) {
-    return activeSurface.value
-  }
-  return workspaceViews.value.find((view) => view.id === activeWorkspaceViewId.value)?.viewType ===
-    'dashboard'
-    ? 'home'
-    : activeSurface.value
+  return activeSurface.value
 })
-
-async function openInformationHome(): Promise<void> {
-  if (openingInformationHome.value) return
-  openingInformationHome.value = true
-  try {
-    await refreshWorkspaceViews()
-    const dashboard = workspaceViews.value.find((view) => view.viewType === 'dashboard')
-    if (dashboard) {
-      openWorkspaceView(dashboard.id)
-      return
-    }
-    openCreateView(null)
-    await createAndOpenView('dashboard')
-  } catch (error) {
-    message.error(error instanceof Error ? error.message : String(error))
-  } finally {
-    openingInformationHome.value = false
-  }
-}
 
 const openTabs = ref<WorkspaceTab[]>([])
 const persistentSurfaceIds = new Set<WorkspaceSurfaceName>(['agent', 'inbox', 'knowledge'])
@@ -1472,7 +1451,7 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
         @group-drop="handleWorkspaceGroupDrop"
       />
       <WorkspaceContextSidebar
-        v-else
+        v-else-if="activeSurface !== 'home'"
         v-model:inbox-section="inboxSection"
         v-model:knowledge-section="knowledgeSection"
         v-model:plugin-section="pluginSection"
@@ -1497,6 +1476,7 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
       />
       <div class="workspace-main">
         <WorkspaceTabs
+          v-if="activeSurface !== 'home'"
           :tabs="openTabs"
           :active-key="activeTabKey"
           @activate="activateWorkspaceTab"
@@ -1504,7 +1484,19 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
           @create="openCreateView()"
         />
         <div class="workspace-main__surface">
-          <Transition name="settings-surface" mode="out-in">
+          <InformationHomeSurface
+            v-show="showInformationHome"
+            :key="`information-home:${appSettings.dataDirectory ?? 'default'}`"
+            :ai-settings="aiSettings"
+            :ensure-ai-secret-loaded="ensureAiSecretLoaded"
+            @open-inbox="
+              (section) => {
+                inboxSection = section
+                openInboxSurface()
+              }
+            "
+          />
+          <Transition v-if="!showInformationHome" name="settings-surface" mode="out-in">
             <InboxSurface
               v-if="showInbox"
               key="inbox"
