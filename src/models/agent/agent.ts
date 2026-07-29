@@ -7,6 +7,7 @@ export type AgentTaskStatus =
   | 'waiting_confirmation'
   | 'completed'
   | 'failed'
+  | 'interrupted'
   | 'cancelled'
 
 export type AgentPatchOperation =

@@ -19,6 +19,7 @@
     "e2e": "playwright test"
   },
   "dependencies": {
+    "@mynotebook/agent-runtime-contracts": "workspace:*",
     "@ai-sdk/anthropic": "^4.0.12",
     "@ai-sdk/openai-compatible": "^3.0.7",
     "@lucide/vue": "^1.21.0",
