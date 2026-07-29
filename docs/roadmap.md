@@ -160,6 +160,10 @@ ExecutionPolicy 后续版本必须在每次模型 turn 和 tool batch 后累计�
 
 验证 PI 能否作为可替换 Worker 实现，而不是预先宣布全面迁移。
 
+### 决策结果（2026-07-29）
+
+纵向原型和定向对比已完成，决策门选择 **保留 AI SDK**。PI 已证明可以适配共享 Runtime contracts、Tool Manifest、NDJSON 工具 RPC 和 Patch 提案边界，但真实 Provider/Tauri 代理、授权等待与 structured-output repair 尚未达到现有 AI SDK 的生产证据强度。Phase 3 首次迁出 WebView 时只改变运行位置，不同时更换模型循环。完整证据、缺口与重新开启条件见 [Phase 2 PI Runtime 原型与决策记录](pi-runtime-phase2-decision.md)。
+
 ### 原型链路
 
 ```text
@@ -194,6 +198,8 @@ AgentRunRequest
 3. 同时采用 `pi-agent-core + pi-ai`。
 
 无论选择哪项，Rust Core、Domain Tool、MCP、Skill、审批和数据库边界保持不变。
+
+本次已选择第 1 项；第 2、3 项不进入 Phase 3 的首次生产迁移。
 
 ### 本阶段不做
 

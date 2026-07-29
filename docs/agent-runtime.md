@@ -1,6 +1,6 @@
 # Agent Runtime 与工具协议
 
-MyNoteBook 的 Agent 是受控的本地知识协作者。它可以读取许可范围内的文档、知识和外部工具结果，生成回答或结构化修改提案；它不能绕过本地权限、确认与可信写入边界。本文先记录当前生产事实；Runtime Port 与 AI SDK Adapter 已落地，Worker、后台执行与 PI 决策门仍见 [后续开发路线图](roadmap.md)，不能当作已实现能力。
+MyNoteBook 的 Agent 是受控的本地知识协作者。它可以读取许可范围内的文档、知识和外部工具结果，生成回答或结构化修改提案；它不能绕过本地权限、确认与可信写入边界。本文先记录当前生产事实；Runtime Port 与 AI SDK Adapter 已落地，Phase 2 决策保留 AI SDK，Worker 和后台执行仍见 [后续开发路线图](roadmap.md)，不能当作已实现能力。
 
 ## 1. 入口与执行流程
 
