@@ -30,7 +30,6 @@ const capabilities = computed(() =>
       <span><Bot :size="18" /></span>
       <div>
         <h2>AI 配置</h2>
-        <p>悬浮聊天窗会使用这里的模型和提示词。</p>
       </div>
     </header>
     <div class="settings-card">
@@ -127,9 +126,12 @@ const capabilities = computed(() =>
         />
       </div>
       <div class="settings-row settings-row--stacked">
-        <span><strong>模型能力</strong><small>由 Provider/Model Capability Matrix 驱动。</small></span>
+        <span><strong>模型能力</strong></span>
         <small class="settings-ai-model-status">
-          Tools {{ capabilities.toolChoice ? '✓' : '—' }} · Structured Output {{ capabilities.structuredOutput ? '✓' : '—' }} · Reasoning {{ capabilities.reasoningEffort ? '✓' : '—' }} · Streaming {{ capabilities.streaming ? '✓' : '—' }}
+          Tools {{ capabilities.toolChoice ? '✓' : '—' }} · Structured Output
+          {{ capabilities.structuredOutput ? '✓' : '—' }} · Reasoning
+          {{ capabilities.reasoningEffort ? '✓' : '—' }} · Streaming
+          {{ capabilities.streaming ? '✓' : '—' }}
         </small>
       </div>
       <div class="settings-row settings-row--stacked">

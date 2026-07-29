@@ -41,7 +41,7 @@ export interface SettingsSectionContext {
   blockCopyOptions: SettingsSelectOption[]
   startupOptions: SettingsSelectOption[]
   newDocumentOptions: SettingsSelectOption[]
-  shortcutRows: Array<{ action: ShortcutAction; label: string; description: string }>
+  shortcutRows: Array<{ action: ShortcutAction; label: string }>
   update: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
   updateTheme: (theme: ThemePreference) => void
   updateFontFamily: (key: 'chineseFontFamily' | 'westernFontFamily', value: string) => void

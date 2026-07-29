@@ -411,9 +411,7 @@ onBeforeUnmount(() => {
         @mouseenter="activeSubmenu = null"
         @click="beginEdit"
       >
-        <Pencil :size="15" /><span
-          ><strong>编辑布局</strong><small>移动、缩放或移除卡片</small></span
-        >
+        <Pencil :size="15" /><span><strong>编辑布局</strong></span>
       </button>
       <div class="information-home-menu__submenu-host" @mouseenter="activeSubmenu = 'add'">
         <button
@@ -425,8 +423,7 @@ onBeforeUnmount(() => {
           :disabled="settingsSaving"
           @click="activeSubmenu = activeSubmenu === 'add' ? null : 'add'"
         >
-          <Plus :size="15" /><span
-            ><strong>添加卡片</strong><small>选择要加入的功能模块</small></span
+          <Plus :size="15" /><span><strong>添加卡片</strong></span
           ><ChevronRight :size="14" />
         </button>
         <div
@@ -463,7 +460,7 @@ onBeforeUnmount(() => {
           :aria-expanded="activeSubmenu === 'layout'"
           @click="activeSubmenu = activeSubmenu === 'layout' ? null : 'layout'"
         >
-          <Undo2 :size="15" /><span><strong>布局操作</strong><small>撤销或恢复默认布局</small></span
+          <Undo2 :size="15" /><span><strong>布局操作</strong></span
           ><ChevronRight :size="14" />
         </button>
         <div
@@ -479,9 +476,7 @@ onBeforeUnmount(() => {
             :disabled="!undoStack.length"
             @click="undoFromMenu"
           >
-            <Undo2 :size="15" /><span
-              ><strong>撤销</strong><small>撤回最近一次布局修改</small></span
-            >
+            <Undo2 :size="15" /><span><strong>撤销</strong></span>
           </button>
           <button
             type="button"
@@ -489,9 +484,7 @@ onBeforeUnmount(() => {
             class="information-home-menu__entry"
             @click="resetFromMenu"
           >
-            <RotateCcw :size="15" /><span
-              ><strong>恢复默认</strong><small>重置内置卡片布局</small></span
-            >
+            <RotateCcw :size="15" /><span><strong>恢复默认</strong></span>
           </button>
         </div>
       </div>

@@ -481,23 +481,6 @@ h1 {
   background: var(--color-border-subtle);
 }
 
-.mind-map-editor-hint {
-  position: absolute;
-  z-index: 29;
-  bottom: 12px;
-  left: 50%;
-  margin: 0;
-  border-radius: 999px;
-  padding: 5px 10px;
-  color: var(--color-text-tertiary);
-  background: color-mix(in srgb, var(--color-bg-elevated) 90%, transparent);
-  box-shadow: var(--shadow-subtle);
-  font-size: 10px;
-  pointer-events: none;
-  transform: translateX(-50%);
-  white-space: nowrap;
-}
-
 .mind-map-workspace-view__empty {
   display: grid;
   place-items: center;

@@ -16,12 +16,11 @@ const { settings, startupOptions, newDocumentOptions, maxTabsOptions, update } =
       <span><MousePointer2 :size="18" /></span>
       <div>
         <h2>通用偏好</h2>
-        <p>决定应用启动和日常操作的方式。</p>
       </div>
     </header>
     <div class="settings-card">
       <div class="settings-row">
-        <span><strong>启动时打开</strong><small>选择进入知识库后的默认页面。</small></span>
+        <span><strong>启动时打开</strong></span>
         <NSelect
           :value="settings.startupBehavior"
           :options="startupOptions"
@@ -39,7 +38,7 @@ const { settings, startupOptions, newDocumentOptions, maxTabsOptions, update } =
         />
       </div>
       <div class="settings-row">
-        <span><strong>最大 Tab 数</strong><small>控制工作区同时保留的页面 Tab 数。</small></span>
+        <span><strong>最大 Tab 数</strong></span>
         <NSelect
           :value="String(settings.maxTabs)"
           :options="maxTabsOptions"

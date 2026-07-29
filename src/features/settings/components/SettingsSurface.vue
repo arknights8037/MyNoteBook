@@ -7,7 +7,6 @@ import {
   Palette,
   RotateCcw,
   ShieldCheck,
-  Settings,
   SlidersHorizontal,
   Type,
 } from '@lucide/vue'
@@ -86,13 +85,13 @@ const aiModelFetchStatus = ref('')
 let sensitivePasswordRequestId = 0
 
 const navigation = [
-  { id: 'general', label: '通用', description: '启动、新建与开发选项', icon: SlidersHorizontal },
-  { id: 'security', label: '安全', description: '敏感操作保护', icon: ShieldCheck },
-  { id: 'appearance', label: '外观', description: '主题、字体与动效', icon: Palette },
-  { id: 'editor', label: '编辑器', description: '排版、保存与块操作', icon: Type },
-  { id: 'ai', label: 'AI', description: '模型、参数与提示词', icon: Bot },
-  { id: 'data', label: '数据', description: '本地存储位置', icon: Database },
-  { id: 'shortcuts', label: '快捷键', description: '常用操作按键', icon: Keyboard },
+  { id: 'general', label: '通用', icon: SlidersHorizontal },
+  { id: 'security', label: '安全', icon: ShieldCheck },
+  { id: 'appearance', label: '外观', icon: Palette },
+  { id: 'editor', label: '编辑器', icon: Type },
+  { id: 'ai', label: 'AI', icon: Bot },
+  { id: 'data', label: '数据', icon: Database },
+  { id: 'shortcuts', label: '快捷键', icon: Keyboard },
 ]
 const widthOptions = [
   { label: '紧凑（720px）', value: 'compact' },
@@ -148,12 +147,12 @@ const maxTabsOptions = [
   { label: '12 个', value: '12' },
   { label: '20 个', value: '20' },
 ]
-const shortcutRows: Array<{ action: ShortcutAction; label: string; description: string }> = [
-  { action: 'search', label: '搜索笔记', description: '打开全局搜索' },
-  { action: 'newDocument', label: '新建页面', description: '按通用偏好选择创建位置' },
-  { action: 'save', label: '立即保存', description: '立即写入当前更改' },
-  { action: 'openSettings', label: '打开设置', description: '进入设置中心' },
-  { action: 'importDocument', label: '导入文档', description: '打开格式选择窗口' },
+const shortcutRows: Array<{ action: ShortcutAction; label: string }> = [
+  { action: 'search', label: '搜索笔记' },
+  { action: 'newDocument', label: '新建页面' },
+  { action: 'save', label: '立即保存' },
+  { action: 'openSettings', label: '打开设置' },
+  { action: 'importDocument', label: '导入文档' },
 ]
 const currentDataDirectory = computed(
   () => props.settings.dataDirectory || props.defaultDataDirectory || '系统应用数据目录',
@@ -511,19 +510,25 @@ onMounted(async () => {
   <section class="settings-page" aria-label="设置页面">
     <header v-if="!contextNavigation" class="settings-page__header">
       <NButton quaternary circle aria-label="返回文章" @click="emit('close')">
-        <template #icon><NIcon :size="19"><ArrowLeft /></NIcon></template>
+        <template #icon
+          ><NIcon :size="19"><ArrowLeft /></NIcon
+        ></template>
       </NButton>
       <div>
-        <p>My Notebook</p>
         <h1>设置</h1>
       </div>
       <NButton secondary @click="emit('reset')">
-        <template #icon><NIcon :size="15"><RotateCcw /></NIcon></template>
+        <template #icon
+          ><NIcon :size="15"><RotateCcw /></NIcon
+        ></template>
         恢复默认
       </NButton>
     </header>
 
-    <div class="settings-layout" :class="{ 'settings-layout--context-navigation': contextNavigation }">
+    <div
+      class="settings-layout"
+      :class="{ 'settings-layout--context-navigation': contextNavigation }"
+    >
       <nav v-if="!contextNavigation" class="settings-nav" aria-label="设置分类">
         <button
           v-for="item in navigation"
@@ -536,7 +541,6 @@ onMounted(async () => {
           <component :is="item.icon" :size="16" />
           <span>{{ item.label }}</span>
         </button>
-        <p class="settings-nav__hint">所有更改自动保存</p>
       </nav>
 
       <div ref="settingsBody" class="settings-page__body" @scroll="handleSettingsScroll">
@@ -553,10 +557,6 @@ onMounted(async () => {
         <DataSettingsSection />
 
         <ShortcutSettingsSection />
-
-        <aside class="settings-note">
-          <Settings :size="17" /><span>设置保存在本机，并立即应用到整个应用。</span>
-        </aside>
       </div>
     </div>
   </section>

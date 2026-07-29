@@ -21,7 +21,6 @@ import {
   Save,
   Search,
   ServerCog,
-  Sparkles,
   Trash2,
 } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
@@ -97,66 +96,34 @@ const extensionTabs = computed(() => [
   {
     id: 'connections' as const,
     label: '连接器',
-    description: '管理 RSS、消息与邮件来源',
     count: null,
     icon: Cable,
   },
   {
     id: 'skills' as const,
     label: 'Skills',
-    description: '教会 Agent 如何完成特定工作',
     count: skills.value.length,
     icon: Code2,
   },
   {
     id: 'mcp' as const,
     label: 'MCP Client',
-    description: '连接外部工具与数据源',
     count: null,
     icon: Cable,
   },
   {
     id: 'mcp-server' as const,
     label: 'MCP Server',
-    description: '控制对外工具暴露面',
     count: null,
     icon: ServerCog,
   },
   {
     id: 'builtin' as const,
     label: '内置插件',
-    description: '查看应用自带能力',
     count: plugins.length,
     icon: Puzzle,
   },
 ])
-const activeTabGuide = computed(
-  () =>
-    ({
-      connections: {
-        title: '管理信息如何进入工作空间',
-        description:
-          '账户授权、同步范围和连接状态在这里配置；采集到的内容会进入收件箱，而不是留在扩展页面。',
-      },
-      skills: {
-        title: '想让 Agent 学会一套固定做法？从 Skill 开始',
-        description:
-          '新建一个简单 Skill，或导入已有的 SKILL.md 目录；启用后 Agent 会在合适的任务中按需读取。',
-      },
-      mcp: {
-        title: '需要连接其他应用或数据？配置 MCP Client',
-        description: 'MCP 服务可以提供工具和只读资源。首次使用建议只添加你信任的本地服务。',
-      },
-      'mcp-server': {
-        title: '只向外部 Agent 开放它确实需要的工具',
-        description: '每个开关同时控制工具发现和直接调用；修改后重启 Server 或让客户端重连。',
-      },
-      builtin: {
-        title: '这些能力已经随应用安装',
-        description: '内置插件无需配置。这里用于了解它们能做什么，以及可以使用哪些命令。',
-      },
-    })[activeTab.value],
-)
 const selectedSkill = computed(
   () => skills.value.find((skill) => skill.id === selectedSkillId.value) ?? null,
 )
@@ -360,11 +327,7 @@ onMounted(() => void loadSkills())
   <section class="plugin-skills-page" aria-label="连接与扩展">
     <header class="plugin-skills-page__header">
       <div>
-        <span class="plugin-skills-page__eyebrow"
-          ><Sparkles :size="14" /> CONNECTIONS & EXTENSIONS</span
-        >
         <h1>连接与扩展</h1>
-        <p>统一管理外部信息来源、Agent Skills、MCP 能力和内置插件。</p>
       </div>
       <div v-if="activeTab === 'skills'" class="plugin-skills-page__header-actions">
         <div class="plugin-skills-page__summary">
@@ -438,26 +401,13 @@ onMounted(() => void loadSkills())
         >
           <component :is="tab.icon" :size="17" />
           <span
-            ><strong>{{ tab.label }}</strong
-            ><small>{{ tab.description }}</small></span
+            ><strong>{{ tab.label }}</strong></span
           >
           <em v-if="tab.count !== null">{{ tab.count }}</em>
         </button>
       </nav>
 
-      <aside class="surface-guide">
-        <Sparkles :size="18" />
-        <div>
-          <strong>{{ activeTabGuide.title }}</strong>
-          <p>{{ activeTabGuide.description }}</p>
-        </div>
-      </aside>
-
       <section v-if="activeTab === 'connections'" class="connector-catalog" aria-label="连接器目录">
-        <header>
-          <div><strong>信息连接器</strong><small>配置来源，不在这里阅读内容</small></div>
-          <span>钉钉、RSS 与邮箱已开放连接</span>
-        </header>
         <div>
           <article>
             <span><MessageCircle :size="20" /></span>
@@ -632,14 +582,13 @@ onMounted(() => void loadSkills())
           <main v-else class="skill-detail skill-detail--empty">
             <Blocks :size="34" />
             <h2>选择一个 Skill</h2>
-            <p>查看标准目录结构、编辑 SKILL.md 或管理启用状态。</p>
           </main>
         </div>
       </section>
 
       <section v-else class="builtin-plugins" aria-label="内置插件">
         <div class="plugin-skills-page__section-heading">
-          <span>内置插件</span><small>随应用提供，不使用 SKILL.md 目录</small>
+          <span>内置插件</span>
         </div>
         <article v-for="plugin in plugins" :key="plugin.id" class="plugin-skill-row">
           <div class="plugin-skill-row__icon"><Puzzle :size="20" /></div>

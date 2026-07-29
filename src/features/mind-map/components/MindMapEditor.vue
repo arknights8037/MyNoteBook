@@ -1,13 +1,5 @@
 <script setup lang="ts">
-import {
-  CornerDownRight,
-  Focus,
-  Pencil,
-  Plus,
-  Trash2,
-  ZoomIn,
-  ZoomOut,
-} from '@lucide/vue'
+import { CornerDownRight, Focus, Pencil, Plus, Trash2, ZoomIn, ZoomOut } from '@lucide/vue'
 import MindElixir, { type MindElixirInstance, type Topic } from 'mind-elixir'
 import 'mind-elixir/style.css'
 import {
@@ -66,7 +58,8 @@ async function focusEditorInput(): Promise<InstanceType<typeof globalThis.HTMLEl
   // insertion so the shell's canvas gesture handling never gets a chance to steal focus.
   await nextTick()
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const input = mind?.nodes.querySelector<InstanceType<typeof globalThis.HTMLElement>>('#input-box')
+    const input =
+      mind?.nodes.querySelector<InstanceType<typeof globalThis.HTMLElement>>('#input-box')
     if (input) {
       input.tabIndex = 0
       input.focus({ preventScroll: true })
@@ -235,11 +228,7 @@ function resolveBranchDirection(
   return undefined
 }
 
-async function commitDirect(
-  content: MindMapContent,
-  nodeId: string,
-  edit: boolean,
-): Promise<void> {
+async function commitDirect(content: MindMapContent, nodeId: string, edit: boolean): Promise<void> {
   if (!mind) return
   lastEmittedContent = content
   emit('change', content)
@@ -260,9 +249,7 @@ function fitView(): void {
   mind?.scaleFit()
 }
 
-function topicFromTarget(
-  target: InstanceType<typeof globalThis.EventTarget> | null,
-): Topic | null {
+function topicFromTarget(target: InstanceType<typeof globalThis.EventTarget> | null): Topic | null {
   return target instanceof globalThis.Element ? (target.closest('me-tpc') as Topic | null) : null
 }
 
@@ -290,10 +277,7 @@ function handlePointerDown(event: InstanceType<typeof globalThis.PointerEvent>):
   panX = event.clientX
   panY = event.clientY
   const shell = event.currentTarget
-  if (
-    shell instanceof globalThis.HTMLElement &&
-    typeof shell.setPointerCapture === 'function'
-  ) {
+  if (shell instanceof globalThis.HTMLElement && typeof shell.setPointerCapture === 'function') {
     shell.setPointerCapture(event.pointerId)
   }
 }
@@ -464,87 +448,129 @@ onBeforeUnmount(() => {
         @dblclick.capture="handleDoubleClick"
         @contextmenu.capture="handleContextMenu"
       >
-    <div class="mind-map-node-toolbar" aria-label="思维导图节点工具栏">
-      <button
-        v-if="!rootSelected"
-        type="button"
-        :disabled="readonly || !selectedNodeId"
-        title="沿当前分支添加子节点（Tab）"
-        @click="addChild"
-      >
-        <Plus :size="15" />子节点
-      </button>
-      <button
-        v-if="rootSelected"
-        type="button"
-        :disabled="readonly"
-        title="在中心主题左侧添加分支"
-        @click="addRootBranch('left')"
-      >
-        <Plus :size="15" />左分支
-      </button>
-      <button
-        v-if="rootSelected"
-        type="button"
-        :disabled="readonly"
-        title="在中心主题右侧添加分支"
-        @click="addRootBranch('right')"
-      >
-        <Plus :size="15" />右分支
-      </button>
-      <button
-        type="button"
-        :disabled="readonly || rootSelected || !selectedNodeId"
-        title="在当前节点后添加同级节点（Enter）"
-        @click="addSibling"
-      >
-        <CornerDownRight :size="15" />同级节点
-      </button>
-      <button type="button" :disabled="readonly || !selectedNodeId" title="编辑当前节点（双击节点）" @click="editNode">
-        <Pencil :size="14" />编辑
-      </button>
-      <button
-        type="button"
-        class="mind-map-node-toolbar__danger"
-        :disabled="readonly || rootSelected || !selectedNodeId"
-        title="删除当前节点及其子节点（Delete）"
-        @click="removeNode"
-      >
-        <Trash2 :size="14" />删除
-      </button>
-      <span class="mind-map-node-toolbar__divider" aria-hidden="true"></span>
-      <button type="button" title="缩小" aria-label="缩小思维导图" @click="zoom(-0.1)"><ZoomOut :size="15" /></button>
-      <button type="button" title="放大" aria-label="放大思维导图" @click="zoom(0.1)"><ZoomIn :size="15" /></button>
-      <button type="button" title="适应画布" @click="fitView"><Focus :size="15" />适应</button>
-    </div>
-    <p class="mind-map-editor-hint">
-      {{ selectedNodeId ? '已选中节点' : '先点击一个节点' }} · 拖动空白处移动画布 · Tab 子节点 · Enter 同级节点
-    </p>
+        <div class="mind-map-node-toolbar" aria-label="思维导图节点工具栏">
+          <button
+            v-if="!rootSelected"
+            type="button"
+            :disabled="readonly || !selectedNodeId"
+            title="沿当前分支添加子节点（Tab）"
+            @click="addChild"
+          >
+            <Plus :size="15" />子节点
+          </button>
+          <button
+            v-if="rootSelected"
+            type="button"
+            :disabled="readonly"
+            title="在中心主题左侧添加分支"
+            @click="addRootBranch('left')"
+          >
+            <Plus :size="15" />左分支
+          </button>
+          <button
+            v-if="rootSelected"
+            type="button"
+            :disabled="readonly"
+            title="在中心主题右侧添加分支"
+            @click="addRootBranch('right')"
+          >
+            <Plus :size="15" />右分支
+          </button>
+          <button
+            type="button"
+            :disabled="readonly || rootSelected || !selectedNodeId"
+            title="在当前节点后添加同级节点（Enter）"
+            @click="addSibling"
+          >
+            <CornerDownRight :size="15" />同级节点
+          </button>
+          <button
+            type="button"
+            :disabled="readonly || !selectedNodeId"
+            title="编辑当前节点（双击节点）"
+            @click="editNode"
+          >
+            <Pencil :size="14" />编辑
+          </button>
+          <button
+            type="button"
+            class="mind-map-node-toolbar__danger"
+            :disabled="readonly || rootSelected || !selectedNodeId"
+            title="删除当前节点及其子节点（Delete）"
+            @click="removeNode"
+          >
+            <Trash2 :size="14" />删除
+          </button>
+          <span class="mind-map-node-toolbar__divider" aria-hidden="true"></span>
+          <button type="button" title="缩小" aria-label="缩小思维导图" @click="zoom(-0.1)">
+            <ZoomOut :size="15" />
+          </button>
+          <button type="button" title="放大" aria-label="放大思维导图" @click="zoom(0.1)">
+            <ZoomIn :size="15" />
+          </button>
+          <button type="button" title="适应画布" @click="fitView"><Focus :size="15" />适应</button>
+        </div>
         <div ref="container" class="mind-map-editor" aria-label="思维导图编辑器" />
       </div>
     </ContextMenuTrigger>
     <ContextMenuPortal>
       <ContextMenuContent class="document-card-menu" :collision-padding="8">
         <template v-if="contextNodeId">
-          <ContextMenuItem class="document-card-menu__item" @select="runContextAction(editNode)">编辑节点</ContextMenuItem>
+          <ContextMenuItem class="document-card-menu__item" @select="runContextAction(editNode)"
+            >编辑节点</ContextMenuItem
+          >
           <template v-if="contextNodeId === content.rootNodeId">
-            <ContextMenuItem class="document-card-menu__item" @select="runContextAction(() => addRootBranch('left'))">向左添加分支</ContextMenuItem>
-            <ContextMenuItem class="document-card-menu__item" @select="runContextAction(() => addRootBranch('right'))">向右添加分支</ContextMenuItem>
+            <ContextMenuItem
+              class="document-card-menu__item"
+              @select="runContextAction(() => addRootBranch('left'))"
+              >向左添加分支</ContextMenuItem
+            >
+            <ContextMenuItem
+              class="document-card-menu__item"
+              @select="runContextAction(() => addRootBranch('right'))"
+              >向右添加分支</ContextMenuItem
+            >
           </template>
           <template v-else>
-            <ContextMenuItem class="document-card-menu__item" @select="runContextAction(addChild)">添加子节点</ContextMenuItem>
-            <ContextMenuItem class="document-card-menu__item" @select="runContextAction(addSibling)">添加同级节点</ContextMenuItem>
+            <ContextMenuItem class="document-card-menu__item" @select="runContextAction(addChild)"
+              >添加子节点</ContextMenuItem
+            >
+            <ContextMenuItem class="document-card-menu__item" @select="runContextAction(addSibling)"
+              >添加同级节点</ContextMenuItem
+            >
             <ContextMenuSeparator class="document-card-menu__separator" />
-            <ContextMenuItem class="document-card-menu__item document-card-menu__item--danger" @select="runContextAction(removeNode)">删除节点</ContextMenuItem>
+            <ContextMenuItem
+              class="document-card-menu__item document-card-menu__item--danger"
+              @select="runContextAction(removeNode)"
+              >删除节点</ContextMenuItem
+            >
           </template>
         </template>
         <template v-else>
-          <ContextMenuItem class="document-card-menu__item" @select="runContextAction(() => addRootBranch('left'))">向左添加主分支</ContextMenuItem>
-          <ContextMenuItem class="document-card-menu__item" @select="runContextAction(() => addRootBranch('right'))">向右添加主分支</ContextMenuItem>
+          <ContextMenuItem
+            class="document-card-menu__item"
+            @select="runContextAction(() => addRootBranch('left'))"
+            >向左添加主分支</ContextMenuItem
+          >
+          <ContextMenuItem
+            class="document-card-menu__item"
+            @select="runContextAction(() => addRootBranch('right'))"
+            >向右添加主分支</ContextMenuItem
+          >
           <ContextMenuSeparator class="document-card-menu__separator" />
-          <ContextMenuItem class="document-card-menu__item" @select="runContextAction(fitView)">适应画布</ContextMenuItem>
-          <ContextMenuItem class="document-card-menu__item" @select="runContextAction(() => emit('export'))">导出思维导图</ContextMenuItem>
-          <ContextMenuItem class="document-card-menu__item" @select="runContextAction(() => emit('inspect'))">打开开发面板</ContextMenuItem>
+          <ContextMenuItem class="document-card-menu__item" @select="runContextAction(fitView)"
+            >适应画布</ContextMenuItem
+          >
+          <ContextMenuItem
+            class="document-card-menu__item"
+            @select="runContextAction(() => emit('export'))"
+            >导出思维导图</ContextMenuItem
+          >
+          <ContextMenuItem
+            class="document-card-menu__item"
+            @select="runContextAction(() => emit('inspect'))"
+            >打开开发面板</ContextMenuItem
+          >
         </template>
       </ContextMenuContent>
     </ContextMenuPortal>

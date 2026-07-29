@@ -136,7 +136,6 @@
 
 :root[data-theme='legacy-dark'] .settings-row small,
 :root[data-theme='legacy-dark'] .settings-section__header p,
-:root[data-theme='legacy-dark'] .settings-note,
 :root[data-theme='legacy-dark'] .ai-chat-popover__empty,
 :root[data-theme='legacy-dark'] .document-list__meta {
   color: #999995;

@@ -74,7 +74,6 @@ watch(show, (isOpen) => {
 <template>
   <NModal v-model:show="show" title="新建项目" class="ai-chat-project-dialog">
     <form class="ai-chat-project-dialog__form" @submit.prevent="submit">
-      <p class="ai-chat-project-dialog__intro">项目会集中管理一组对话和默认文档工作区。</p>
       <label class="ai-chat-project-dialog__name">
         <span>项目名称</span>
         <input
@@ -83,7 +82,6 @@ watch(show, (isOpen) => {
           maxlength="80"
           placeholder="例如：StudioSite"
         />
-        <small>不填写时会使用所选工作区名称或自动生成名称。</small>
       </label>
       <fieldset>
         <legend>默认工作区 <small>可多选，也可以稍后配置</small></legend>
@@ -107,10 +105,7 @@ watch(show, (isOpen) => {
         <p v-if="workspaceOptions.length === 0" class="ai-chat-project-dialog__empty">
           暂无文档分组，将创建一个空项目。
         </p>
-        <p
-          v-else-if="filteredWorkspaceOptions.length === 0"
-          class="ai-chat-project-dialog__empty"
-        >
+        <p v-else-if="filteredWorkspaceOptions.length === 0" class="ai-chat-project-dialog__empty">
           没有匹配的文档分组。
         </p>
         <label

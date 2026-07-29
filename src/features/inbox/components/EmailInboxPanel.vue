@@ -218,13 +218,11 @@ watch(categoryFilter, () => {
     <div v-else-if="!accounts.length" class="inbox-empty-state">
       <span class="inbox-empty-state__icon"><Mail :size="25" /></span>
       <h2>先连接一个邮箱账户</h2>
-      <p>邮箱连接在“连接与扩展”中配置，邮件内容会回到这里处理。</p>
       <button type="button" @click="emit('openConnections')">连接邮箱</button>
     </div>
     <div v-else-if="!visibleMessages.length" class="inbox-empty-state">
       <span class="inbox-empty-state__icon"><Inbox :size="25" /></span>
       <h2>{{ mode === 'pending' ? '没有待处理邮件' : '还没有同步邮件' }}</h2>
-      <p>点击同步邮箱读取最近邮件；服务器内容和已读状态不会被修改。</p>
     </div>
     <div v-else class="email-inbox-layout">
       <div class="email-message-list" role="listbox" aria-label="邮件列表">
@@ -319,7 +317,6 @@ watch(categoryFilter, () => {
           <dd>{{ selected.serverIsRead ? '已读' : '未读（本地阅读不会改变）' }}</dd>
         </dl>
         <section class="email-message-detail__body">
-          <header><span>MESSAGE BODY</span><small>安全纯文本</small></header>
           <pre>{{ selected.bodyText || selected.preview || '邮件正文为空。' }}</pre>
         </section>
       </article>

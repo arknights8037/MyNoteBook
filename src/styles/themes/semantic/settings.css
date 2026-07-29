@@ -18,8 +18,7 @@
 }
 
 .settings-page__header,
-.settings-card,
-.settings-note {
+.settings-card {
   border-color: var(--color-border-subtle);
   background: var(--color-bg-elevated);
 }

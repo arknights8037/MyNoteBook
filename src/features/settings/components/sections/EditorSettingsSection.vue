@@ -30,7 +30,6 @@ const {
       <span><Type :size="18" /></span>
       <div>
         <h2>编辑器</h2>
-        <p>调整阅读密度、保存和块操作。</p>
       </div>
     </header>
     <div class="settings-card">
@@ -51,7 +50,7 @@ const {
         />
       </div>
       <div class="settings-row">
-        <span><strong>正文行距</strong><small>调整长文档的阅读节奏。</small></span
+        <span><strong>正文行距</strong></span
         ><NSelect
           :value="settings.lineHeight"
           :options="lineHeightOptions"

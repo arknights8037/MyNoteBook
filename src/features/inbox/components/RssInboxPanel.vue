@@ -250,13 +250,11 @@ watch(categoryFilter, () => {
     <div v-else-if="!sources.length" class="inbox-empty-state">
       <span class="inbox-empty-state__icon"><Rss :size="25" /></span>
       <h2>先添加一个 RSS 订阅</h2>
-      <p>订阅源在“连接与扩展”中配置，条目会回到这里阅读和处理。</p>
       <button type="button" @click="emit('openConnections')">添加订阅</button>
     </div>
     <div v-else-if="!visibleEntries.length" class="inbox-empty-state">
       <span class="inbox-empty-state__icon"><Inbox :size="25" /></span>
       <h2>{{ mode === 'pending' ? '没有待处理 RSS' : '订阅源暂时没有条目' }}</h2>
-      <p>点击同步检查更新；条件请求会避免重复下载未变化的订阅。</p>
     </div>
     <div v-else class="email-inbox-layout rss-inbox-layout">
       <div class="email-message-list rss-entry-list" role="listbox" aria-label="RSS 条目列表">
@@ -363,9 +361,6 @@ watch(categoryFilter, () => {
           自动提取未完成：{{ selected.articleFetchError }}
         </p>
         <section class="email-message-detail__body">
-          <header>
-            <span>RSS CONTENT</span><small>{{ contentSourceLabel(selected) }} · 安全纯文本</small>
-          </header>
           <pre>{{ selected.bodyText || selected.preview || '该条目没有正文。' }}</pre>
         </section>
       </article>

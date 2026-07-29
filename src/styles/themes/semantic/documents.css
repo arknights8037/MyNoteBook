@@ -26,8 +26,7 @@
 
 .document-list__meta,
 .document-list__empty,
-.document-list__subheading,
-.settings-nav__hint {
+.document-list__subheading {
   color: var(--workspace-glass-text-muted, var(--color-text-tertiary));
 }
 

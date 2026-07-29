@@ -131,15 +131,6 @@
   transform: translateX(16px);
 }
 
-.settings-note {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin-top: 18px;
-  color: #858581;
-  font-size: 12px;
-}
-
 .settings-layout {
   display: grid;
   min-height: 0;
@@ -191,13 +182,6 @@
   color: var(--accent);
   background: var(--accent-soft);
   font-weight: 650;
-}
-
-.settings-nav__hint {
-  margin: auto 9px 0;
-  color: #aaa9a5;
-  font-size: 11px;
-  line-height: 1.5;
 }
 
 .settings-row--stacked {

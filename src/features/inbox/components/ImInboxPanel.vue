@@ -190,13 +190,11 @@ watch(categoryFilter, () => {
     <div v-else-if="!connectors.length" class="inbox-empty-state">
       <span class="inbox-empty-state__icon"><MessageCircle :size="25" /></span>
       <h2>先连接一个钉钉机器人</h2>
-      <p>连接在“连接与扩展”中配置；应用在线时消息会自动进入这里。</p>
       <button type="button" @click="emit('openConnections')">连接钉钉</button>
     </div>
     <div v-else-if="!visibleMessages.length" class="inbox-empty-state">
       <span class="inbox-empty-state__icon"><Inbox :size="25" /></span>
       <h2>{{ mode === 'pending' ? '没有待处理消息' : '正在等待钉钉消息' }}</h2>
-      <p>给机器人发送单聊消息，或在群聊中 @机器人，保持桌面应用在线即可接收。</p>
     </div>
     <div v-else class="email-inbox-layout">
       <div class="email-message-list" role="listbox" aria-label="钉钉消息列表">
@@ -292,7 +290,6 @@ watch(categoryFilter, () => {
           <dd>{{ selected.messageType }}</dd>
         </dl>
         <section class="email-message-detail__body">
-          <header><span>MESSAGE BODY</span><small>只读纯文本</small></header>
           <pre>{{ selected.bodyText || '消息正文为空。' }}</pre>
         </section>
       </article>

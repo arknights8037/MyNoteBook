@@ -2,16 +2,23 @@
 import { CalendarClock, CirclePlay, Plus, RefreshCw, Trash2 } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 
-import type { AutomationRun, AutomationTask, AutomationTriggerType } from '@/models/automation/automation'
+import type {
+  AutomationRun,
+  AutomationTask,
+  AutomationTriggerType,
+} from '@/models/automation/automation'
 import type { AutomationService } from '@/services/automation/AutomationService'
 import { NButton, NIcon, NSelect } from '@/ui'
 
-const props = withDefaults(defineProps<{
-  currentDocumentId: string
-  currentDocumentTitle: string
-  getService: () => Promise<AutomationService>
-  contextNavigation?: boolean
-}>(), { contextNavigation: false })
+const props = withDefaults(
+  defineProps<{
+    currentDocumentId: string
+    currentDocumentTitle: string
+    getService: () => Promise<AutomationService>
+    contextNavigation?: boolean
+  }>(),
+  { contextNavigation: false },
+)
 
 const tasks = ref<AutomationTask[]>([])
 const runs = ref<AutomationRun[]>([])
@@ -137,13 +144,14 @@ onMounted(load)
   <section class="operations-page" aria-label="自动化任务">
     <header class="operations-page__header">
       <div>
-        <span class="operations-page__eyebrow"><CalendarClock :size="15" />AUTOMATIONS</span>
         <h1>自动化任务</h1>
         <p>{{ enabledCount }} 个已启用 · {{ queuedCount }} 个等待执行</p>
       </div>
       <div class="operations-page__header-actions">
         <NButton secondary :loading="loading" @click="load">
-          <template #icon><NIcon :size="15"><RefreshCw /></NIcon></template>
+          <template #icon
+            ><NIcon :size="15"><RefreshCw /></NIcon
+          ></template>
           刷新
         </NButton>
         <NButton
@@ -151,14 +159,21 @@ onMounted(load)
           type="primary"
           @click="showComposer = true"
         >
-          <template #icon><NIcon :size="15"><Plus /></NIcon></template>
+          <template #icon
+            ><NIcon :size="15"><Plus /></NIcon
+          ></template>
           新建自动化
         </NButton>
       </div>
     </header>
 
     <div class="operations-page__content">
-      <nav v-if="!contextNavigation" class="surface-tabs surface-tabs--compact" role="tablist" aria-label="自动化页面">
+      <nav
+        v-if="!contextNavigation"
+        class="surface-tabs surface-tabs--compact"
+        role="tablist"
+        aria-label="自动化页面"
+      >
         <button
           type="button"
           role="tab"
@@ -166,7 +181,8 @@ onMounted(load)
           :class="{ 'is-active': activeTab === 'tasks' }"
           @click="activeTab = 'tasks'"
         >
-          <CalendarClock :size="17" /><span><strong>任务</strong><small>创建并管理自动化</small></span><em>{{ tasks.length }}</em>
+          <CalendarClock :size="17" /><span><strong>任务</strong></span
+          ><em>{{ tasks.length }}</em>
         </button>
         <button
           type="button"
@@ -175,22 +191,10 @@ onMounted(load)
           :class="{ 'is-active': activeTab === 'runs' }"
           @click="activeTab = 'runs'"
         >
-          <CirclePlay :size="17" /><span><strong>运行记录</strong><small>查看执行状态与结果</small></span><em>{{ runs.length }}</em>
+          <CirclePlay :size="17" /><span><strong>运行记录</strong></span
+          ><em>{{ runs.length }}</em>
         </button>
       </nav>
-
-      <aside class="surface-guide">
-        <CalendarClock v-if="activeTab === 'tasks'" :size="18" />
-        <CirclePlay v-else :size="18" />
-        <div v-if="activeTab === 'tasks'">
-          <strong>自动化会按时间或手动触发任务</strong>
-          <p>第一次使用建议先创建“手动触发”任务，确认指令效果后再改成定时运行。</p>
-        </div>
-        <div v-else>
-          <strong>这里记录每一次执行</strong>
-          <p>“等待执行器”表示任务已入队；运行完成或失败后会在这里保留结果状态。</p>
-        </div>
-      </aside>
 
       <section
         v-if="activeTab === 'tasks' && shouldShowComposer"
@@ -198,7 +202,7 @@ onMounted(load)
         aria-label="新建自动化"
       >
         <div class="operations-section-heading">
-          <strong>新建任务</strong><span>定义会写入本地队列</span>
+          <strong>新建任务</strong>
         </div>
         <div class="automation-compose__grid">
           <label>

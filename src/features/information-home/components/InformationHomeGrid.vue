@@ -91,8 +91,7 @@ function updateLayout(next: Layout): void {
 
 <template>
   <div v-if="!widgets.length" class="dashboard-grid-empty">
-    <strong>首页还没有模块</strong
-    ><span>{{ editing ? '从模块库添加需要的信息。' : '进入编辑模式后添加模块。' }}</span>
+    <strong>首页还没有卡片</strong>
   </div>
   <GridLayout
     v-else

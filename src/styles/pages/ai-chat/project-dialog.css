@@ -11,13 +11,6 @@
   gap: 16px;
 }
 
-.ai-chat-project-dialog__intro {
-  margin: 0;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
 .ai-chat-project-dialog__name {
   display: grid;
   gap: 6px;

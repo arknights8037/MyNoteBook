@@ -80,7 +80,6 @@ function updateLayout(next: Layout): void {
 <template>
   <div v-if="!widgets.length" class="dashboard-grid-empty">
     <strong>这个信息面板还是空的</strong>
-    <span>{{ editing ? '从组件库添加一个组件开始。' : '进入编辑模式后添加组件。' }}</span>
   </div>
   <GridLayout
     v-else

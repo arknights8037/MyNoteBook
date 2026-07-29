@@ -63,7 +63,7 @@ watch(() => props.items, publishMetrics, { deep: true })
         type="text"
         maxlength="160"
         :disabled="editing"
-        :placeholder="editing ? '保存布局后可维护待办' : '添加待办事项…'"
+        placeholder="添加待办事项…"
         aria-label="待办内容"
       />
       <button type="submit" :disabled="editing || !title.trim()" aria-label="添加待办">

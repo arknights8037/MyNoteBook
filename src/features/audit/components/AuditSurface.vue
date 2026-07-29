@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { ClipboardList, RefreshCw, Search } from '@lucide/vue'
+import { RefreshCw, Search } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 
 import type { AuditCategory, AuditEntry } from '@/models/shared/audit'
 import type { AuditRepository } from '@/repositories/audit/AuditRepository'
 import { NButton, NIcon, NSelect } from '@/ui'
 
-const props = withDefaults(defineProps<{
-  getRepository: () => Promise<AuditRepository>
-  contextNavigation?: boolean
-}>(), { contextNavigation: false })
+const props = withDefaults(
+  defineProps<{
+    getRepository: () => Promise<AuditRepository>
+    contextNavigation?: boolean
+  }>(),
+  { contextNavigation: false },
+)
 
 const entries = ref<AuditEntry[]>([])
 const category = defineModel<AuditCategory | 'all'>('category', { default: 'all' })
@@ -39,7 +42,9 @@ const errorCount = computed(
 const activeCount = computed(
   () =>
     entries.value.filter((entry) =>
-      ['running', 'queued', 'waiting_confirmation', 'waiting_approval', 'blocked'].includes(entry.status),
+      ['running', 'queued', 'waiting_confirmation', 'waiting_approval', 'blocked'].includes(
+        entry.status,
+      ),
     ).length,
 )
 
@@ -96,7 +101,6 @@ watch(category, () => void load())
   <section class="operations-page" aria-label="活动与审计">
     <header class="operations-page__header">
       <div>
-        <span class="operations-page__eyebrow"><ClipboardList :size="15" />ACTIVITY & AUDIT</span>
         <h1>活动与审计</h1>
         <p>{{ entries.length }} 条记录 · {{ activeCount }} 条进行中 · {{ errorCount }} 条异常</p>
       </div>
@@ -109,13 +113,6 @@ watch(category, () => void load())
     </header>
 
     <div class="operations-page__content">
-      <aside class="surface-guide">
-        <ClipboardList :size="18" />
-        <div>
-          <strong>这里是只读的操作记录</strong>
-          <p>遇到任务失败或行为不符合预期时，先按类型筛选，再点击一条记录查看详细信息。</p>
-        </div>
-      </aside>
       <div class="audit-toolbar">
         <label class="audit-search">
           <Search :size="15" />
@@ -126,7 +123,12 @@ watch(category, () => void load())
             @keyup.enter="load"
           />
         </label>
-        <NSelect v-if="!contextNavigation" v-model:value="category" :options="categoryOptions" @update:value="load" />
+        <NSelect
+          v-if="!contextNavigation"
+          v-model:value="category"
+          :options="categoryOptions"
+          @update:value="load"
+        />
       </div>
       <p v-if="error" class="operations-error" role="alert">{{ error }}</p>
       <div class="audit-table" role="table" aria-label="审计事件列表">

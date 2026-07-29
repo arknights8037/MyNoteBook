@@ -68,41 +68,6 @@
   margin: 0 auto;
   padding: 24px 0 64px;
 }
-.inbox-overview-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(90px, 0.18fr)) minmax(280px, 1fr);
-  overflow: hidden;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 10px;
-  background: var(--color-border-subtle);
-  gap: 1px;
-}
-.inbox-overview-strip > div {
-  display: grid;
-  gap: 2px;
-  padding: 13px 15px;
-  background: var(--color-bg-subtle);
-}
-.inbox-overview-strip strong {
-  font-size: 22px;
-  line-height: 1;
-}
-.inbox-overview-strip span {
-  color: var(--color-text-tertiary);
-  font-size: 9px;
-}
-.inbox-overview-strip p {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin: 0;
-  padding: 13px 16px;
-  color: var(--color-text-secondary);
-  background: var(--color-bg-elevated);
-  font-size: 10px;
-  line-height: 1.5;
-}
-
 .inbox-empty-state {
   display: grid;
   min-height: 250px;
@@ -135,47 +100,6 @@
   line-height: 1.6;
 }
 
-.inbox-source-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-.inbox-source-grid article {
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 9px;
-  padding: 12px;
-  background: var(--color-bg-elevated);
-}
-.inbox-source-grid article > span {
-  display: grid;
-  width: 36px;
-  height: 36px;
-  place-items: center;
-  border-radius: 8px;
-  color: var(--color-agent-accent);
-  background: var(--color-bg-subtle);
-}
-.inbox-source-grid article > div {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-.inbox-source-grid small {
-  color: var(--color-text-tertiary);
-  font-size: 9px;
-}
-.inbox-source-grid em {
-  border-radius: 999px;
-  padding: 3px 6px;
-  color: var(--color-text-tertiary);
-  background: var(--color-bg-subtle);
-  font-size: 8px;
-  font-style: normal;
-}
 .inbox-boundary-note {
   display: flex;
   align-items: flex-start;
@@ -724,15 +648,6 @@
   .inbox-surface__header {
     align-items: flex-start;
     flex-direction: column;
-  }
-  .inbox-overview-strip {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .inbox-overview-strip p {
-    grid-column: 1 / -1;
-  }
-  .inbox-source-grid {
-    grid-template-columns: 1fr;
   }
   .email-inbox-layout {
     height: auto;

@@ -141,7 +141,7 @@ watch(() => props.events, publishMetrics, { deep: true })
         type="text"
         maxlength="160"
         :disabled="editing"
-        :placeholder="editing ? '保存布局后可维护日程' : '添加日程…'"
+        placeholder="添加日程…"
         aria-label="日程内容"
       />
       <button type="submit" :disabled="editing || !eventTitle.trim()" aria-label="添加日程">

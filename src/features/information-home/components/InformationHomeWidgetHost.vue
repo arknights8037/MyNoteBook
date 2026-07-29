@@ -178,7 +178,6 @@ function removeWidget(): void {
         @click.stop
         @contextmenu.prevent.stop
       >
-        <p><strong>卡片操作</strong><small>拖动右下角可自由缩放和放置</small></p>
         <div class="home-widget-size-menu__submenu-host" @mouseenter="activeSubmenu = 'size'">
           <button
             type="button"
@@ -198,7 +197,7 @@ function removeWidget(): void {
             aria-label="卡片尺寸"
           >
             <section>
-              <header><strong>宽度</strong><small>网格列数</small></header>
+              <header><strong>宽度</strong></header>
               <div>
                 <button
                   v-for="width in widthOptions"
@@ -212,7 +211,7 @@ function removeWidget(): void {
               </div>
             </section>
             <section>
-              <header><strong>高度</strong><small>网格行数</small></header>
+              <header><strong>高度</strong></header>
               <div>
                 <button
                   v-for="height in heightOptions"
@@ -226,7 +225,7 @@ function removeWidget(): void {
               </div>
             </section>
             <section>
-              <header><strong>常用尺寸</strong><small>宽 × 高</small></header>
+              <header><strong>常用尺寸</strong></header>
               <div class="is-presets">
                 <button
                   v-for="size in sizePresets"

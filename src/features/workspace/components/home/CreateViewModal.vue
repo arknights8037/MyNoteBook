@@ -37,9 +37,6 @@ const viewIcons = {
     class="create-view-modal"
     :bordered="false"
   >
-    <p class="create-view-modal__intro">
-      选择一种工作形式。各视图独立编辑、独立保存，后续可由 Agent 在视图之间转换内容。
-    </p>
     <div class="create-view-grid">
       <button
         v-for="option in CREATE_VIEW_OPTIONS"

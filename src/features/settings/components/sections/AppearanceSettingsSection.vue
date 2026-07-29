@@ -13,12 +13,11 @@ const { settings, themeCards, updateTheme, update } = useSettingsSectionContext(
       <span><Palette :size="18" /></span>
       <div>
         <h2>外观</h2>
-        <p>主题会跟随选择即时切换。</p>
       </div>
     </header>
     <div class="settings-card">
       <div class="settings-row settings-row--stacked">
-        <span><strong>颜色主题</strong><small>选择后立即应用，并保存在本机设置中。</small></span>
+        <span><strong>颜色主题</strong></span>
         <div class="theme-options" role="radiogroup" aria-label="颜色主题">
           <button
             v-for="option in themeCards"

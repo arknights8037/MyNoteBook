@@ -22,7 +22,6 @@ const {
       <span><Keyboard :size="18" /></span>
       <div>
         <h2>快捷键</h2>
-        <p>点击组合键后，直接按下新的按键组合。</p>
       </div>
     </header>
     <div class="settings-card settings-shortcuts">
@@ -33,7 +32,6 @@ const {
       >
         <span
           ><strong>{{ row.label }}</strong
-          ><small>{{ row.description }}</small
           ><em
             v-if="shortcutConflicts[settings.shortcuts[row.action].toLocaleLowerCase()] > 1"
             class="shortcut-conflict"

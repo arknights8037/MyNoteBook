@@ -159,7 +159,6 @@ function cloneJson<T>(value: T): T {
   <section class="dashboard-surface" :class="{ 'dashboard-surface--editing': editing }">
     <header class="dashboard-toolbar">
       <div>
-        <span class="dashboard-toolbar__eyebrow">WORKSPACE OVERVIEW</span>
         <strong>{{ editing ? '正在编排信息面板' : '实时工作概览' }}</strong>
         <small>{{ draft.widgets.length }} 个组件 · 只读数据源</small>
       </div>

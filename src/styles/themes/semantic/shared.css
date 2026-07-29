@@ -254,7 +254,6 @@ body,
 .settings-page__header p,
 .settings-section__header p,
 .settings-row small,
-.settings-note,
 .search-results__snippet,
 .search-results__empty,
 .search-results__hint,
@@ -309,10 +308,6 @@ body,
 
 :root[data-theme-mode='dark'] .settings-nav__item--active {
   background: var(--workspace-glass-selected);
-}
-
-:root[data-theme-mode='dark'] .settings-nav__hint {
-  color: var(--workspace-glass-text-muted);
 }
 
 :root[data-theme-mode='dark'] .settings-row strong,

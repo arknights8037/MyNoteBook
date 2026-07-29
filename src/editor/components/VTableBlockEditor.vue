@@ -882,7 +882,6 @@ function createColumns(count: number, fields = tableFields.value): ColumnDefine[
 
     <footer class="vtable-block__footer">
       <span><i></i> 已同步到当前文档</span>
-      <span>双击编辑 · Tab 切换 · 支持粘贴 Excel 数据</span>
     </footer>
   </div>
 </template>
