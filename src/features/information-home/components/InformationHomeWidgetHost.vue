@@ -25,13 +25,21 @@ const emit = defineEmits<{
   generateSummary: []
   toggleAutoSummary: []
   changeSummaryInterval: []
-  resize: []
+  resize: [size: { w: number; h: number }]
 }>()
 
 const emailWidget = ref<InstanceType<typeof EmailActionsHomeWidget> | null>(null)
 const rssWidget = ref<InstanceType<typeof RssNewsHomeWidget> | null>(null)
 const refreshing = ref(false)
 const renderError = ref('')
+const metrics = ref<Array<{ value: number; label: string }>>([])
+const showSizeMenu = ref(false)
+const sizePresets = [
+  { w: 4, h: 3 },
+  { w: 6, h: 4 },
+  { w: 8, h: 5 },
+  { w: 12, h: 5 },
+]
 const definition = computed(() => getInformationHomeWidgetDefinition(props.widget.widgetType))
 const title = computed(() => props.widget.settings.title || definition.value.title)
 
@@ -45,6 +53,11 @@ function refresh(): void {
   if (props.widget.widgetType === 'email-actions') void emailWidget.value?.refresh()
   if (props.widget.widgetType === 'rss-news') void rssWidget.value?.refresh()
 }
+
+function selectSize(size: { w: number; h: number }): void {
+  emit('resize', size)
+  showSizeMenu.value = false
+}
 </script>
 
 <template>
@@ -57,11 +70,39 @@ function refresh(): void {
     @copy="emit('copy')"
     @remove="emit('remove')"
     @refresh="refresh"
+    @click="showSizeMenu = false"
+    @contextmenu.prevent.stop="editing && (showSizeMenu = true)"
   >
+    <template v-if="metrics.length" #summary>
+      <span v-for="item in metrics" :key="item.label">
+        <strong>{{ item.value }}</strong
+        ><small>{{ item.label }}</small>
+      </span>
+    </template>
     <template v-if="editing" #actions>
-      <button type="button" aria-label="切换卡片尺寸" title="切换尺寸预设" @click="emit('resize')">
+      <button
+        type="button"
+        aria-label="选择卡片尺寸"
+        title="选择卡片尺寸"
+        @click.stop="showSizeMenu = !showSizeMenu"
+      >
         <Scaling :size="15" />
       </button>
+      <div v-if="showSizeMenu" class="home-widget-size-menu" role="menu" @click.stop>
+        <button
+          v-for="size in sizePresets"
+          :key="`${size.w}x${size.h}`"
+          type="button"
+          role="menuitem"
+          :class="{
+            'is-active': widget.layout.desktop.w === size.w && widget.layout.desktop.h === size.h,
+          }"
+          @click="selectSize(size)"
+        >
+          <span>{{ size.w }} × {{ size.h }}</span
+          ><small>{{ size.w === 12 ? '全宽' : '网格' }}</small>
+        </button>
+      </div>
     </template>
     <div v-if="renderError" class="dashboard-widget-state dashboard-widget-state--error">
       <strong>模块渲染失败</strong><span>{{ renderError }}</span
@@ -73,6 +114,7 @@ function refresh(): void {
       :limit="widget.query.limit"
       @open="emit('openEmail')"
       @refreshing="refreshing = $event"
+      @metrics="metrics = $event"
     />
     <RssNewsHomeWidget
       v-else-if="widget.widgetType === 'rss-news'"
@@ -80,6 +122,7 @@ function refresh(): void {
       :limit="widget.query.limit"
       @open="emit('openRss')"
       @refreshing="refreshing = $event"
+      @metrics="metrics = $event"
     />
     <AgentSummaryHomeWidget
       v-else

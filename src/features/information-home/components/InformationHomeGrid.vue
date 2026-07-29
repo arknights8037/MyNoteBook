@@ -26,7 +26,7 @@ const emit = defineEmits<{
   generateSummary: []
   toggleAutoSummary: []
   changeSummaryInterval: []
-  resize: [id: string]
+  resize: [id: string, size: { w: number; h: number }]
 }>()
 
 const breakpoint = ref('lg')
@@ -94,8 +94,8 @@ function updateLayout(next: Layout): void {
     :responsive="true"
     :breakpoints="{ lg: 1200, md: 900, sm: 640, xs: 400, xxs: 0 }"
     :cols="{ lg: 12, md: 12, sm: 6, xs: 6, xxs: 6 }"
-    :row-height="78"
-    :margin="[16, 16]"
+    :row-height="72"
+    :margin="[10, 10]"
     :is-draggable="editing"
     :is-resizable="editing"
     :vertical-compact="true"
@@ -132,7 +132,7 @@ function updateLayout(next: Layout): void {
         @generate-summary="emit('generateSummary')"
         @toggle-auto-summary="emit('toggleAutoSummary')"
         @change-summary-interval="emit('changeSummaryInterval')"
-        @resize="emit('resize', widget.id)"
+        @resize="emit('resize', widget.id, $event)"
       />
     </GridItem>
   </GridLayout>

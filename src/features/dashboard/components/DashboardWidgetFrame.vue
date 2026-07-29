@@ -26,6 +26,9 @@ const emit = defineEmits<{
           <small>{{ source }}</small>
         </div>
       </div>
+      <div v-if="$slots.summary" class="dashboard-widget-frame__summary">
+        <slot name="summary" />
+      </div>
       <div class="dashboard-widget-frame__actions">
         <slot name="actions" />
         <button

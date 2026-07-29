@@ -5,7 +5,11 @@ import { createRssService } from '@/app/composition/rssServiceFactory'
 import type { RssEntry, RssSource } from '@/models/inbox/rss'
 
 const props = defineProps<{ limit: number }>()
-const emit = defineEmits<{ open: []; refreshing: [value: boolean] }>()
+const emit = defineEmits<{
+  open: []
+  refreshing: [value: boolean]
+  metrics: [items: Array<{ value: number; label: string }>]
+}>()
 const sources = ref<RssSource[]>([])
 const entries = ref<RssEntry[]>([])
 const error = ref('')
@@ -25,6 +29,14 @@ async function refresh(): Promise<void> {
     if (!entryResult.ok) throw new Error(entryResult.error.message)
     sources.value = sourceResult.value
     entries.value = entryResult.value
+    emit('metrics', [
+      { value: entries.value.length, label: '文章' },
+      { value: sources.value.length, label: '来源' },
+      {
+        value: entries.value.filter((item) => item.processingStatus === 'pending').length,
+        label: '待处理',
+      },
+    ])
   } catch (value) {
     error.value = value instanceof Error ? value.message : String(value)
   } finally {
@@ -43,20 +55,6 @@ onMounted(() => void refresh())
 
 <template>
   <div class="dashboard-widget-content home-signal-widget">
-    <div class="dashboard-widget-metrics" aria-label="RSS 新闻统计">
-      <div>
-        <strong>{{ entries.length }}</strong
-        ><span>最新文章</span>
-      </div>
-      <div>
-        <strong>{{ sources.length }}</strong
-        ><span>订阅来源</span>
-      </div>
-      <div>
-        <strong>{{ entries.filter((item) => item.processingStatus === 'pending').length }}</strong
-        ><span>待处理</span>
-      </div>
-    </div>
     <p v-if="loading" class="dashboard-widget-state">正在读取 RSS 新闻…</p>
     <div v-else-if="error" class="dashboard-widget-state dashboard-widget-state--error">
       <strong>读取失败</strong><span>{{ error }}</span>

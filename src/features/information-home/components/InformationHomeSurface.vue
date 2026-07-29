@@ -131,25 +131,17 @@ function removeWidget(id: string): void {
   })
 }
 
-function cycleWidgetSize(id: string): void {
-  const presets = [
-    { w: 4, h: 3 },
-    { w: 6, h: 4 },
-    { w: 8, h: 5 },
-    { w: 12, h: 5 },
-  ]
+function resizeWidget(id: string, size: { w: number; h: number }): void {
   mutate((payload) => {
     const widget = payload.widgets.find((candidate) => candidate.id === id)
     if (!widget) return
-    const currentIndex = presets.findIndex((preset) => widget.layout.desktop.w <= preset.w)
-    const next = presets[(currentIndex + 1 + presets.length) % presets.length]!
     widget.layout.desktop = {
       ...widget.layout.desktop,
-      x: Math.min(widget.layout.desktop.x, 12 - next.w),
-      w: next.w,
-      h: next.h,
-      minW: Math.min(widget.layout.desktop.minW ?? 1, next.w),
-      minH: Math.min(widget.layout.desktop.minH ?? 1, next.h),
+      x: Math.min(widget.layout.desktop.x, 12 - size.w),
+      w: size.w,
+      h: size.h,
+      minW: Math.min(widget.layout.desktop.minW ?? 1, size.w),
+      minH: Math.min(widget.layout.desktop.minH ?? 1, size.h),
     }
   })
 }
@@ -340,7 +332,7 @@ onBeforeUnmount(() => {
         @generate-summary="generateSummary('manual')"
         @toggle-auto-summary="toggleAutoSummary"
         @change-summary-interval="changeSummaryInterval"
-        @resize="cycleWidgetSize"
+        @resize="resizeWidget"
       />
       <Transition name="dashboard-library"
         ><InformationHomeWidgetLibrary

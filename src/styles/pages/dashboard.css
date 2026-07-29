@@ -59,7 +59,12 @@
 
 .information-home-surface > .dashboard-surface__workspace {
   min-height: 100%;
-  padding-top: 12px;
+  padding: 10px;
+}
+
+.information-home-grid {
+  width: min(100%, 1440px);
+  margin-inline: auto;
 }
 
 .information-home-controls {
@@ -131,7 +136,7 @@
     );
   background-size:
     calc(100% / 12) 100%,
-    100% 94px;
+    100% 82px;
 }
 
 .dashboard-toolbar strong {
@@ -147,6 +152,10 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.dashboard-widget-frame__actions {
+  position: relative;
 }
 
 .dashboard-toolbar button,
@@ -212,6 +221,7 @@
 }
 
 .dashboard-surface--editing .dashboard-widget-frame {
+  overflow: visible;
   border-color: color-mix(in srgb, var(--color-agent-accent) 28%, var(--color-border-subtle));
 }
 
@@ -236,6 +246,28 @@
   min-width: 0;
   gap: 1px;
 }
+.dashboard-widget-frame__summary {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.dashboard-widget-frame__summary > span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  white-space: nowrap;
+}
+.dashboard-widget-frame__summary strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  line-height: 1;
+}
+.dashboard-widget-frame__summary small {
+  font-size: 8px;
+}
 .dashboard-widget-frame h3 {
   overflow: hidden;
   margin: 0;
@@ -258,6 +290,47 @@
   padding: 0;
   border-color: transparent;
   background: transparent;
+}
+.home-widget-size-menu {
+  position: absolute;
+  z-index: 40;
+  top: 32px;
+  right: 0;
+  display: grid;
+  width: 138px;
+  gap: 2px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  padding: 5px;
+  background: var(--color-bg-elevated);
+  box-shadow: 0 12px 32px rgba(20, 18, 15, 0.18);
+}
+.dashboard-widget-frame__actions .home-widget-size-menu > button {
+  display: flex;
+  width: 100%;
+  height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: 5px;
+  padding: 0 8px;
+  color: var(--color-text-secondary);
+  background: transparent;
+}
+.dashboard-widget-frame__actions .home-widget-size-menu > button:hover,
+.dashboard-widget-frame__actions .home-widget-size-menu > button.is-active {
+  color: var(--color-text-primary);
+  border-color: transparent;
+  background: var(--color-bg-hover);
+}
+.dashboard-widget-frame__actions .home-widget-size-menu > button.is-active {
+  box-shadow: inset 2px 0 0 var(--color-agent-accent);
+}
+.home-widget-size-menu span {
+  font-size: 10px;
+  font-weight: 680;
+}
+.home-widget-size-menu small {
+  font-size: 8px;
 }
 .dashboard-widget-frame__body {
   min-height: 0;

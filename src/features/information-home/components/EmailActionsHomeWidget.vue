@@ -5,7 +5,11 @@ import { createEmailService } from '@/app/composition/emailServiceFactory'
 import type { EmailAccount, EmailMessage } from '@/models/inbox/email'
 
 const props = defineProps<{ limit: number }>()
-const emit = defineEmits<{ open: []; refreshing: [value: boolean] }>()
+const emit = defineEmits<{
+  open: []
+  refreshing: [value: boolean]
+  metrics: [items: Array<{ value: number; label: string }>]
+}>()
 const accounts = ref<EmailAccount[]>([])
 const messages = ref<EmailMessage[]>([])
 const error = ref('')
@@ -26,6 +30,11 @@ async function refresh(): Promise<void> {
     if (!messageResult.ok) throw new Error(messageResult.error.message)
     accounts.value = accountResult.value
     messages.value = messageResult.value
+    emit('metrics', [
+      { value: messages.value.length, label: '待处理' },
+      { value: accounts.value.length, label: '账户' },
+      { value: messages.value.filter((item) => !item.serverIsRead).length, label: '未读' },
+    ])
   } catch (value) {
     error.value = value instanceof Error ? value.message : String(value)
   } finally {
@@ -44,20 +53,6 @@ onMounted(() => void refresh())
 
 <template>
   <div class="dashboard-widget-content home-signal-widget">
-    <div class="dashboard-widget-metrics" aria-label="邮件事项统计">
-      <div>
-        <strong>{{ messages.length }}</strong
-        ><span>待处理</span>
-      </div>
-      <div>
-        <strong>{{ accounts.length }}</strong
-        ><span>邮箱账户</span>
-      </div>
-      <div>
-        <strong>{{ messages.filter((item) => !item.serverIsRead).length }}</strong
-        ><span>远端未读</span>
-      </div>
-    </div>
     <p v-if="loading" class="dashboard-widget-state">正在读取邮件事项…</p>
     <div v-else-if="error" class="dashboard-widget-state dashboard-widget-state--error">
       <strong>读取失败</strong><span>{{ error }}</span>
