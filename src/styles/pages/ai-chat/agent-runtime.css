@@ -25,7 +25,7 @@
   align-items: center;
   gap: 6px;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: 680;
   letter-spacing: 0;
 }
@@ -33,7 +33,7 @@
 .ai-agent-loop__header small {
   overflow: hidden;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -100,14 +100,14 @@
 
 .ai-agent-loop__trace > summary strong {
   color: var(--color-text-primary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: 680;
 }
 
 .ai-agent-loop__trace > summary small {
   overflow: hidden;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -149,11 +149,11 @@
 
 .ai-agent-loop--detail-workspace .ai-agent-loop__identity {
   color: var(--color-agent-accent);
-  font-size: 12px;
+  font-size: var(--font-size-small);
 }
 
 .ai-agent-loop--detail-workspace .ai-agent-loop__header small {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ai-agent-loop--detail-workspace .ai-agent-loop__trace[open] {
@@ -168,11 +168,11 @@
 }
 
 .ai-agent-loop--detail-workspace .ai-agent-loop__trace > summary strong {
-  font-size: 13px;
+  font-size: var(--font-size-body);
 }
 
 .ai-agent-loop--detail-workspace .ai-agent-loop__trace > summary small {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ai-agent-loop--detail-workspace .ai-agent-timeline {
@@ -191,14 +191,14 @@
 
 .ai-agent-loop--detail-workspace .ai-agent-tool-step__copy strong,
 .ai-agent-loop--detail-workspace .ai-agent-timeline__step strong {
-  font-size: 12px;
+  font-size: var(--font-size-small);
 }
 
 .ai-agent-loop--detail-workspace .ai-agent-tool-step__copy small,
 .ai-agent-loop--detail-workspace .ai-agent-tool-step__status,
 .ai-agent-loop--detail-workspace .ai-agent-tool-step time,
 .ai-agent-loop--detail-workspace .ai-agent-timeline__narrative p {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ai-agent-loop--detail-workspace .ai-agent-tool-step__details {
@@ -260,7 +260,7 @@
 
 .ai-agent-loop__phase strong {
   overflow: hidden;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: 620;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -325,19 +325,19 @@
 }
 
 .ai-authorizer-card > header strong {
-  font-size: 13px;
+  font-size: var(--font-size-body);
 }
 
 .ai-authorizer-card > header small,
 .ai-authorizer-card__context {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ai-authorizer-card > p {
   margin: 0;
   color: var(--color-text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-body);
   font-weight: 620;
   line-height: 1.55;
 }
@@ -363,7 +363,7 @@
   color: var(--color-text-secondary);
   background: var(--color-bg-elevated);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   cursor: pointer;
 }
 
@@ -389,7 +389,7 @@
   color: var(--color-text-primary);
   background: var(--color-bg-elevated);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   line-height: 1.5;
 }
 
@@ -482,7 +482,7 @@
   align-items: center;
   gap: 6px;
   color: var(--color-text-primary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ai-agent-timeline__kind {
@@ -492,7 +492,7 @@
   padding: 1px 4px;
   color: var(--color-text-tertiary);
   background: color-mix(in srgb, var(--color-bg-subtle) 72%, transparent);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   font-weight: 650;
   line-height: 1.35;
 }
@@ -501,7 +501,7 @@
 .ai-agent-tool-step__status,
 .ai-agent-tool-step time {
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .ai-agent-tool-step time {
@@ -530,7 +530,7 @@
 .ai-agent-tool-step__details > span {
   padding-top: 3px;
   color: var(--color-text-tertiary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   font-weight: 650;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -545,7 +545,7 @@
   color: var(--color-text-secondary);
   background: var(--color-bg-subtle);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   line-height: 1.5;
   white-space: pre-wrap;
 }
@@ -558,14 +558,14 @@
 
 .ai-agent-tool-step__section > strong {
   color: var(--color-text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 680;
 }
 
 .ai-agent-tool-step__section > p {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   line-height: 1.6;
 }
 
@@ -583,7 +583,7 @@
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   line-height: 1.5;
 }
 
@@ -623,7 +623,7 @@
   align-items: center;
   gap: 6px;
   color: var(--color-text-primary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: 680;
   text-decoration: none;
 }
@@ -669,7 +669,7 @@
 .ai-agent-tool-results small {
   margin: 0;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   line-height: 1.5;
 }
 
@@ -697,7 +697,7 @@
 .ai-agent-tool-step__raw > summary {
   grid-column: 1 / -1;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   cursor: pointer;
 }
 
@@ -707,7 +707,7 @@
 
 .ai-agent-tool-step__raw > span {
   color: var(--color-text-tertiary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   font-weight: 650;
 }
 
@@ -721,7 +721,7 @@
   padding: 5px 8px;
   color: var(--color-text-tertiary);
   background: color-mix(in srgb, var(--color-status-success) 5%, transparent);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   line-height: 1.45;
 }
 
@@ -789,7 +789,7 @@
 .ai-agent-timeline__narrative p {
   margin: 0;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   line-height: 1.62;
 }
 
@@ -810,12 +810,12 @@
 
 .ai-agent-timeline__step strong {
   color: var(--color-text-primary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ai-agent-timeline__step small {
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .ai-agent-tool-step__details pre {

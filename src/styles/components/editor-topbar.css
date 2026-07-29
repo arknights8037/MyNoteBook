@@ -17,9 +17,9 @@
   min-width: 160px;
   border: 0;
   padding: 0 8px;
-  color: #1f1f1f;
+  color: var(--color-text-primary);
   background: transparent;
-  font-size: 16px;
+  font-size: var(--font-size-title);
   font-weight: 600;
   line-height: 1.15;
   outline: none;
@@ -34,7 +34,7 @@
   padding: 6px 8px;
   color: var(--color-text-primary, #1f1f1f);
   background: transparent;
-  font-size: 16px;
+  font-size: var(--font-size-title);
   font-weight: 600;
   line-height: 1.15;
   text-align: left;
@@ -52,21 +52,21 @@
 }
 
 .topbar-title-input .n-input__input-el {
-  color: #1f1f1f;
-  font-size: 16px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-title);
   font-weight: 600;
   line-height: 1.15;
 }
 
 .topbar-title-input:focus {
-  color: #111111;
+  color: var(--color-text-primary);
 }
 
 .topbar__actions {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: #4a4a48;
+  color: var(--color-text-secondary);
 }
 
 .topbar__text-button,
@@ -78,7 +78,7 @@
   place-items: center;
   border: 0;
   border-radius: 6px;
-  color: #3f3f3d;
+  color: var(--color-text-primary);
   background: transparent;
   cursor: pointer;
 }
@@ -86,7 +86,7 @@
 .topbar__text-button {
   --n-width: auto;
   padding: 0 7px;
-  font-size: 15px;
+  font-size: var(--font-size-body-large);
 }
 
 .topbar__icon-button {

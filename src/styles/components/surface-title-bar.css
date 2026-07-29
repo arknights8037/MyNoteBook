@@ -1,0 +1,91 @@
+.surface-title-bar {
+  display: flex;
+  min-height: 72px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 12px max(28px, calc((100% - 1080px) / 2));
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-text-primary);
+  background: var(--color-bg-editor);
+}
+
+.surface-title-bar__identity,
+.surface-title-bar__actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.surface-title-bar__actions > button:not(.ui-button) {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 7px;
+  padding: 8px 11px;
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.surface-title-bar__identity > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.surface-title-bar__icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--color-accent-primary);
+  background: var(--color-accent-soft);
+}
+
+.surface-title-bar h1,
+.surface-title-bar p {
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.surface-title-bar h1 {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-title-large);
+  font-weight: 680;
+  line-height: 1.25;
+}
+
+.surface-title-bar p {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+  line-height: 1.3;
+}
+
+.surface-title-bar__actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+@media (max-width: 760px) {
+  .surface-title-bar {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-inline: 14px;
+  }
+
+  .surface-title-bar__actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}

@@ -44,6 +44,8 @@ import GeneralSettingsSection from './sections/GeneralSettingsSection.vue'
 import SecuritySettingsSection from './sections/SecuritySettingsSection.vue'
 import ShortcutSettingsSection from './sections/ShortcutSettingsSection.vue'
 import { provideSettingsSectionContext } from './sections/settingsSectionContext'
+import SurfaceTitleBar from '@/features/workspace/components/SurfaceTitleBar.vue'
+import { getWorkspaceSectionMeta } from '@/features/workspace/workspaceSections'
 
 type BrowserMouseEvent = InstanceType<typeof globalThis.MouseEvent>
 type BrowserKeyboardEvent = InstanceType<typeof globalThis.KeyboardEvent>
@@ -93,6 +95,7 @@ const navigation = [
   { id: 'data', label: '数据', icon: Database },
   { id: 'shortcuts', label: '快捷键', icon: Keyboard },
 ]
+const activeMeta = computed(() => getWorkspaceSectionMeta('settings', activeSection.value))
 const widthOptions = [
   { label: '紧凑（720px）', value: 'compact' },
   { label: '标准（850px）', value: 'standard' },
@@ -508,22 +511,23 @@ onMounted(async () => {
 
 <template>
   <section class="settings-page" aria-label="设置页面">
-    <header v-if="!contextNavigation" class="settings-page__header">
-      <NButton quaternary circle aria-label="返回文章" @click="emit('close')">
-        <template #icon
-          ><NIcon :size="19"><ArrowLeft /></NIcon
-        ></template>
-      </NButton>
-      <div>
-        <h1>设置</h1>
-      </div>
-      <NButton secondary @click="emit('reset')">
-        <template #icon
-          ><NIcon :size="15"><RotateCcw /></NIcon
-        ></template>
-        恢复默认
-      </NButton>
-    </header>
+    <SurfaceTitleBar :title="activeMeta.label" :icon="activeMeta.icon">
+      <template v-if="!contextNavigation" #leading>
+        <NButton quaternary circle aria-label="返回文章" @click="emit('close')">
+          <template #icon
+            ><NIcon :size="19"><ArrowLeft /></NIcon
+          ></template>
+        </NButton>
+      </template>
+      <template #actions>
+        <NButton secondary @click="emit('reset')">
+          <template #icon
+            ><NIcon :size="15"><RotateCcw /></NIcon
+          ></template>
+          恢复默认
+        </NButton>
+      </template>
+    </SurfaceTitleBar>
 
     <div
       class="settings-layout"

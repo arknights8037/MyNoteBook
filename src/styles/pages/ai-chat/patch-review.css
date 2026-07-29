@@ -52,7 +52,7 @@
 }
 
 .agent-patch-panel__header strong {
-  font-size: 16px;
+  font-size: var(--font-size-title);
   letter-spacing: -0.01em;
 }
 
@@ -60,7 +60,7 @@
 .agent-patch-review__summary small,
 .agent-patch-card small {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .agent-patch-panel__eyebrow {
@@ -68,7 +68,7 @@
   align-items: center;
   gap: 5px;
   color: var(--color-agent-accent);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -103,7 +103,7 @@
   border-radius: 8px;
   color: var(--color-text-secondary);
   background: color-mix(in srgb, var(--color-agent-suggestion-bg) 64%, transparent);
-  font-size: 12px;
+  font-size: var(--font-size-small);
   line-height: 1.5;
 }
 
@@ -138,7 +138,7 @@
 }
 
 .agent-patch-review__summary strong {
-  font-size: 13px;
+  font-size: var(--font-size-body);
   font-weight: 650;
 }
 
@@ -203,7 +203,7 @@
 
 .agent-patch-card > summary > label input:checked + .agent-patch-card__check {
   border-color: var(--color-agent-accent);
-  color: #fff;
+  color: var(--color-text-on-accent);
   background: var(--color-agent-accent);
 }
 
@@ -220,7 +220,7 @@
 
 .agent-patch-card__title strong {
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -245,7 +245,7 @@
 .agent-patch-card__reason {
   margin: 10px 0 0;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--font-size-small);
   line-height: 1.5;
 }
 
@@ -280,7 +280,7 @@
 .agent-creation-preview__target small,
 .agent-creation-preview > label small {
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 650;
   letter-spacing: 0.04em;
 }
@@ -289,7 +289,7 @@
 .agent-creation-preview > label strong {
   overflow: hidden;
   color: var(--color-text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-body);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -334,7 +334,7 @@
   grid-row: 1 / span 2;
   grid-column: 2;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-style: normal;
 }
 
@@ -368,7 +368,7 @@
   border: 1px dashed var(--color-border-default);
   border-radius: 8px;
   color: var(--color-text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-small);
 }
 
 .agent-patch-panel--workspace .agent-diff {
@@ -388,7 +388,7 @@
   padding: 7px 9px;
   border-bottom: 1px solid var(--color-border-subtle);
   color: var(--color-text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   letter-spacing: 0.03em;
 }
 
@@ -453,13 +453,13 @@
 }
 
 .agent-patch-panel__footer > div strong {
-  font-size: 12px;
+  font-size: var(--font-size-small);
 }
 
 .agent-patch-panel__footer > div span {
   overflow: hidden;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -469,7 +469,7 @@
   padding: 6px;
   color: var(--color-text-tertiary);
   background: transparent;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   cursor: pointer;
 }
 
@@ -525,12 +525,12 @@
 }
 
 .agent-review-trigger strong {
-  font-size: 12px;
+  font-size: var(--font-size-small);
 }
 
 .agent-review-trigger small {
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .agent-review-trigger__open {

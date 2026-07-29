@@ -38,7 +38,7 @@
   border: 1px solid #d9d9d5;
   border-radius: 6px;
   padding: 0 12px;
-  color: #3f3f3d;
+  color: var(--color-text-primary);
   background: #ffffff;
   line-height: 1;
   white-space: nowrap;
@@ -68,23 +68,23 @@
 .ui-button--tiny {
   height: 26px;
   padding: 0 7px;
-  font-size: 12px;
+  font-size: var(--font-size-small);
 }
 
 .ui-button--small {
   height: 30px;
   padding: 0 9px;
-  font-size: 13px;
+  font-size: var(--font-size-body);
 }
 
 .ui-button--medium {
   height: 34px;
-  font-size: 14px;
+  font-size: var(--font-size-body-large);
 }
 
 .ui-button--primary {
   border-color: #2f6f9f;
-  color: #ffffff;
+  color: var(--color-text-on-accent);
   background: #2f6f9f;
 }
 
@@ -145,7 +145,7 @@
   border: 1px solid #d9d9d5;
   border-radius: 6px;
   padding: 0 10px;
-  color: #333333;
+  color: var(--color-text-primary);
   background: #ffffff;
   transition:
     border-color 120ms ease,
@@ -204,7 +204,7 @@
 .ui-input__prefix {
   display: inline-flex;
   flex: 0 0 auto;
-  color: #858581;
+  color: var(--color-text-tertiary);
 }
 
 .ui-input__clear {
@@ -213,15 +213,15 @@
   border: 0;
   border-radius: 999px;
   padding: 0;
-  color: #858581;
+  color: var(--color-text-tertiary);
   background: #e7e7e4;
   line-height: 1;
   cursor: pointer;
 }
 
 .ui-input__count {
-  color: #aaa8a5;
-  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
   white-space: nowrap;
 }
 
@@ -230,10 +230,10 @@
   max-width: 260px;
   border-radius: 5px;
   padding: 6px 9px;
-  color: #ffffff;
+  color: var(--color-text-on-accent);
   background: #353534;
   box-shadow: 0 6px 18px rgb(20 20 18 / 18%);
-  font-size: 12px;
+  font-size: var(--font-size-small);
   line-height: 1.35;
   user-select: none;
 }
@@ -283,8 +283,8 @@
 .ui-dialog-card__title,
 .ui-drawer-content__title {
   margin: 0;
-  color: #292927;
-  font-size: 17px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-title);
   font-weight: 650;
 }
 
@@ -297,13 +297,13 @@
   border: 0;
   border-radius: 6px;
   padding: 0;
-  color: #777773;
+  color: var(--color-text-tertiary);
   background: transparent;
   cursor: pointer;
 }
 
 .ui-dialog-card__close:hover {
-  color: #333331;
+  color: var(--color-text-primary);
   background: #efefed;
 }
 
@@ -360,7 +360,7 @@
   border: 1px solid #d8d8d4;
   border-radius: 6px;
   padding: 0 9px;
-  color: #4b4b48;
+  color: var(--color-text-secondary);
   background: #ffffff;
   cursor: pointer;
   transition:
@@ -397,12 +397,12 @@
 
 .ui-select--small {
   height: 30px;
-  font-size: 12px;
+  font-size: var(--font-size-small);
 }
 
 .ui-select--medium {
   height: 34px;
-  font-size: 14px;
+  font-size: var(--font-size-body-large);
 }
 
 .ui-select:focus-visible {
@@ -432,8 +432,8 @@
   align-items: center;
   border-radius: 5px;
   padding: 0 28px 0 9px;
-  color: #4a4a47;
-  font-size: 13px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-body);
   outline: none;
   cursor: pointer;
 }
@@ -443,7 +443,7 @@
 }
 
 .ui-select-item[data-state='checked'] {
-  color: #245b82;
+  color: var(--color-text-link);
   background: #f3f7fb;
   font-weight: 650;
 }
@@ -459,8 +459,8 @@
   width: 100%;
   align-items: center;
   gap: 10px;
-  color: #555552;
-  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
 }
 
 .ui-color-picker input {
@@ -493,10 +493,10 @@
   border-left: 4px solid #2f7c5b;
   border-radius: 8px;
   padding: 12px 14px;
-  color: #333331;
+  color: var(--color-text-primary);
   background: #ffffff;
   box-shadow: 0 14px 38px rgb(20 20 18 / 18%);
-  font-size: 13px;
+  font-size: var(--font-size-body);
 }
 
 .ui-toast--error {
@@ -519,15 +519,15 @@
 }
 
 .ui-alert-dialog__title {
-  color: #292927;
-  font-size: 17px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-title);
   font-weight: 650;
 }
 
 .ui-alert-dialog__description {
   margin: 10px 0 18px;
-  color: #666662;
-  font-size: 14px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-body-large);
   line-height: 1.6;
 }
 

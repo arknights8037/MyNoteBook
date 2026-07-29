@@ -40,7 +40,7 @@
   padding: 8px 10px;
   color: var(--color-status-error);
   background: color-mix(in srgb, var(--color-status-error) 6%, transparent);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .information-home-surface {
@@ -85,7 +85,7 @@
   color: var(--color-text-secondary);
   background: transparent;
   font: inherit;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   cursor: pointer;
 }
 
@@ -173,12 +173,12 @@
 }
 
 .information-home-menu__popover strong {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .information-home-menu__popover small {
   color: var(--color-text-tertiary);
-  font-size: 8px;
+  font-size: var(--font-size-micro);
 }
 
 .information-home-surface .dashboard-widget-library {
@@ -247,11 +247,11 @@
 }
 
 .dashboard-toolbar strong {
-  font-size: 16px;
+  font-size: var(--font-size-title);
 }
 .dashboard-toolbar small {
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .dashboard-toolbar__actions,
@@ -279,7 +279,7 @@
   color: var(--color-text-secondary);
   background: var(--color-bg-elevated);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   cursor: pointer;
 }
 
@@ -369,22 +369,22 @@
 }
 .dashboard-widget-frame__summary strong {
   color: var(--color-text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-body);
   line-height: 1;
 }
 .dashboard-widget-frame__summary small {
-  font-size: 8px;
+  font-size: var(--font-size-micro);
 }
 .dashboard-widget-frame h3 {
   overflow: hidden;
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .dashboard-widget-frame small {
   color: var(--color-text-tertiary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
 }
 .dashboard-widget-frame__drag-handle {
   flex: 0 0 auto;
@@ -482,12 +482,12 @@
 }
 
 .home-widget-size-menu__submenu section > header strong {
-  font-size: 9px;
+  font-size: var(--font-size-micro);
 }
 
 .home-widget-size-menu__submenu section > header small {
   color: var(--color-text-tertiary);
-  font-size: 8px;
+  font-size: var(--font-size-micro);
 }
 
 .home-widget-size-menu__submenu section > div {
@@ -509,7 +509,7 @@
   color: var(--color-text-secondary);
   background: transparent;
   font: inherit;
-  font-size: 8px;
+  font-size: var(--font-size-micro);
   cursor: pointer;
 }
 
@@ -520,11 +520,11 @@
   background: color-mix(in srgb, var(--color-agent-accent) 10%, transparent);
 }
 .home-widget-size-menu span {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 680;
 }
 .home-widget-size-menu small {
-  font-size: 8px;
+  font-size: var(--font-size-micro);
 }
 .dashboard-widget-frame__body {
   min-height: 0;
@@ -553,12 +553,12 @@
   background: var(--color-bg-subtle);
 }
 .dashboard-widget-metrics strong {
-  font-size: 17px;
+  font-size: var(--font-size-title);
   line-height: 1;
 }
 .dashboard-widget-metrics span {
   color: var(--color-text-tertiary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
 }
 
 .dashboard-widget-list {
@@ -584,20 +584,20 @@
 }
 .dashboard-widget-list__main strong {
   overflow: hidden;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .dashboard-widget-list__main small {
   overflow: hidden;
   color: var(--color-text-tertiary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .dashboard-widget-list em {
   color: var(--color-text-secondary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   font-style: normal;
 }
 
@@ -668,7 +668,7 @@
   color: var(--color-text-primary);
   background: var(--color-bg-subtle);
   font: inherit;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   outline: none;
 }
 
@@ -700,7 +700,7 @@
   gap: 6px;
   min-height: 34px;
   border-bottom: 1px solid var(--color-border-subtle);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .home-list-widget__items li.is-completed > span {
@@ -750,7 +750,7 @@
 }
 
 .home-calendar-widget__toolbar strong {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .home-calendar-widget__weekdays,
@@ -761,7 +761,7 @@
 
 .home-calendar-widget__weekdays span {
   color: var(--color-text-tertiary);
-  font-size: 8px;
+  font-size: var(--font-size-micro);
   text-align: center;
 }
 
@@ -793,7 +793,7 @@
   place-items: center;
   border-radius: 50%;
   color: var(--color-text-secondary);
-  font-size: 8px;
+  font-size: var(--font-size-micro);
 }
 
 .home-calendar-widget__grid > div.is-today time {
@@ -812,7 +812,7 @@
   border-left: 2px solid var(--color-agent-accent);
   padding-left: 3px;
   color: var(--color-text-secondary);
-  font-size: 7px;
+  font-size: var(--font-size-micro);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -858,13 +858,13 @@
 }
 
 .home-agent-summary > header strong {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .home-agent-summary > header small,
 .home-agent-summary__meta {
   color: var(--color-text-tertiary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
 }
 
 .home-agent-summary__content {
@@ -881,7 +881,7 @@
 
 .home-agent-summary .markdown-preview {
   color: var(--color-text-primary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   line-height: 1.65;
 }
 
@@ -894,7 +894,7 @@
 .home-agent-summary .markdown-preview h3,
 .home-agent-summary .markdown-preview h4 {
   margin: 12px 0 5px;
-  font-size: 12px;
+  font-size: var(--font-size-small);
 }
 
 .home-agent-summary .markdown-preview p,
@@ -932,7 +932,7 @@
   min-height: 90px;
   margin: 0;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   text-align: center;
 }
 .dashboard-widget-state--error {
@@ -948,7 +948,7 @@
 }
 .dashboard-grid-empty strong {
   color: var(--color-text-primary);
-  font-size: 14px;
+  font-size: var(--font-size-body-large);
 }
 
 .dashboard-widget-library {
@@ -977,7 +977,7 @@
 }
 .dashboard-widget-library > header small {
   color: var(--color-text-tertiary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
 }
 .dashboard-widget-library > header button {
   width: 29px;
@@ -996,12 +996,12 @@
 }
 .dashboard-widget-library__item small {
   color: var(--color-text-tertiary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
 }
 .dashboard-widget-library > p {
   margin: 2px 3px 0;
   color: var(--color-text-tertiary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   line-height: 1.55;
 }
 

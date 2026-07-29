@@ -60,8 +60,7 @@ function trigger(
     </button>
 
     <div class="activity-rail__panel">
-      <nav class="activity-rail__nav" aria-label="工作区">
-        <span class="activity-rail__section-label">工作区</span>
+      <nav class="activity-rail__nav" aria-label="主菜单">
         <button
           v-for="item in primaryItems"
           :key="item.id"

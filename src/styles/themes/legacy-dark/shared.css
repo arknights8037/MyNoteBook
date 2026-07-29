@@ -38,7 +38,6 @@
 }
 
 :root[data-theme='legacy-dark'] .topbar,
-:root[data-theme='legacy-dark'] .settings-page__header,
 :root[data-theme='legacy-dark'] .settings-card,
 :root[data-theme='legacy-dark'] .ui-dialog-card,
 :root[data-theme='legacy-dark'] .ui-popover,
@@ -56,7 +55,6 @@
 }
 
 :root[data-theme='legacy-dark'] .settings-row + .settings-row,
-:root[data-theme='legacy-dark'] .settings-page__header,
 :root[data-theme='legacy-dark'] .settings-card,
 :root[data-theme='legacy-dark'] .topbar,
 :root[data-theme='legacy-dark'] .ai-chat-popover__header,
@@ -122,7 +120,6 @@
 
 :root[data-theme='legacy-dark'] .settings-row strong,
 :root[data-theme='legacy-dark'] .settings-section__header h2,
-:root[data-theme='legacy-dark'] .settings-page__header h1,
 :root[data-theme='legacy-dark'] .markdown-preview h1,
 :root[data-theme='legacy-dark'] .markdown-preview h2,
 :root[data-theme='legacy-dark'] .markdown-preview h3,

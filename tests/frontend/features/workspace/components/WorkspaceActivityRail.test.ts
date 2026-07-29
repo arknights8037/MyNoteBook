@@ -23,7 +23,7 @@ describe('WorkspaceActivityRail', () => {
     expect(wrapper.findAll('.activity-rail__nav')[0]!.text()).toContain('首页')
     expect(wrapper.findAll('.activity-rail__nav')[0]!.text()).toContain('连接与扩展')
     expect(wrapper.findAll('.activity-rail__nav')[1]!.text()).not.toContain('连接与扩展')
-    expect(wrapper.text()).toContain('工作区')
+    expect(wrapper.text()).not.toContain('工作区')
     expect(wrapper.text()).toContain('管理')
   })
 

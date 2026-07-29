@@ -9,14 +9,14 @@
 
 .editor-inspector-content h2 {
   margin: 0 0 10px;
-  color: #344054;
-  font-size: 13px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-body);
   text-transform: uppercase;
 }
 
 .editor-inspector-content p {
   margin: 0;
-  color: #475467;
+  color: var(--color-text-secondary);
   line-height: 1.6;
   white-space: pre-wrap;
 }
@@ -25,7 +25,7 @@
   overflow: auto;
   max-height: 52vh;
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   line-height: 1.55;
   white-space: pre-wrap;
 }
@@ -51,7 +51,7 @@
   border: 1px solid #e0e0dc;
   border-radius: 10px;
   padding: 13px 14px;
-  color: #3f3f3c;
+  color: var(--color-text-primary);
   background: #ffffff;
   text-align: left;
   cursor: pointer;
@@ -75,7 +75,7 @@
   height: 42px;
   place-items: center;
   border-radius: 9px;
-  color: #315f8f;
+  color: var(--color-text-link);
   background: #e8f1fb;
 }
 
@@ -86,13 +86,13 @@
 }
 
 .import-option-card__title {
-  font-size: 14px;
+  font-size: var(--font-size-body-large);
   font-weight: 650;
 }
 
 .import-option-card__description {
-  color: #858581;
-  font-size: 12px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-small);
 }
 
 .import-batch-confirm {
@@ -103,27 +103,27 @@
 .import-batch-confirm__summary,
 .import-batch-confirm__hint {
   margin: 0;
-  color: #666662;
-  font-size: 13px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-body);
   line-height: 1.6;
 }
 
 .import-batch-confirm__summary strong {
-  color: #315f8f;
-  font-size: 18px;
+  color: var(--color-text-link);
+  font-size: var(--font-size-title-large);
 }
 
 .import-batch-confirm__field {
   display: grid;
   gap: 7px;
-  color: #3f3f3c;
-  font-size: 13px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-body);
   font-weight: 600;
 }
 
 .import-batch-confirm__hint {
-  color: #858581;
-  font-size: 12px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-small);
 }
 
 .document-properties {
@@ -150,15 +150,15 @@
 }
 
 .document-properties__row dt {
-  color: #8b8b87;
-  font-size: 12px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-small);
 }
 
 .document-properties__row dd {
   min-width: 0;
   overflow: hidden;
-  color: #3f3f3c;
-  font-size: 13px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-body);
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -191,7 +191,7 @@
   border: 1px solid transparent;
   border-radius: 7px;
   padding: 9px 10px;
-  color: #555552;
+  color: var(--color-text-secondary);
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -212,8 +212,8 @@
 
 .search-results__title {
   overflow: hidden;
-  color: #333331;
-  font-size: 14px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-body-large);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -221,8 +221,8 @@
 
 .search-results__snippet {
   overflow: hidden;
-  color: #949491;
-  font-size: 12px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-small);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -230,8 +230,8 @@
 .search-results__empty,
 .search-results__hint {
   margin: 16px 2px 2px;
-  color: #9a9a96;
-  font-size: 13px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-body);
 }
 
 .search-highlight {
@@ -275,14 +275,14 @@
 
 .editor-inspector h2 {
   margin: 0 0 10px;
-  color: #344054;
-  font-size: 13px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-body);
   text-transform: uppercase;
 }
 
 .editor-inspector p {
   margin: 0;
-  color: #475467;
+  color: var(--color-text-secondary);
   line-height: 1.6;
   white-space: pre-wrap;
 }
@@ -291,7 +291,7 @@
   overflow: auto;
   max-height: 52vh;
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   line-height: 1.55;
   white-space: pre-wrap;
 }
@@ -305,8 +305,7 @@
     --workspace-sidebar-width: 232px;
     height: 100%;
     min-height: 0;
-    grid-template-columns:
-      var(--workspace-rail-width) 232px minmax(0, 1fr);
+    grid-template-columns: var(--workspace-rail-width) 232px minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
   }
 
@@ -336,7 +335,7 @@
   }
 
   .editor-shell__content h1 {
-    font-size: 32px;
+    font-size: var(--font-size-display-large);
   }
 }
 
@@ -354,12 +353,6 @@
 
   .document-sidebar {
     display: none;
-  }
-
-  .plugin-skills-page__header {
-    min-height: 150px;
-    align-items: flex-end;
-    padding: 26px 22px 22px;
   }
 
   .plugin-skills-page__content {

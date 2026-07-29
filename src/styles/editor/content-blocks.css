@@ -34,7 +34,7 @@
   border: 0;
   border-radius: 8px;
   padding: 10px 48px;
-  color: #22221f;
+  color: var(--color-text-primary);
   background: #fbfbfa;
   cursor: text;
 }
@@ -54,7 +54,7 @@
   align-items: center;
   justify-content: center;
   border-radius: 7px;
-  color: #5a5a55;
+  color: var(--color-text-secondary);
   background: #efeee9;
 }
 
@@ -63,14 +63,14 @@
   min-width: 0;
   max-width: 100%;
   overflow-x: auto;
-  font-size: 18px;
+  font-size: var(--font-size-title-large);
   text-align: center;
 }
 
 .math-block__placeholder {
   justify-self: center;
-  color: #9a9a96;
-  font-size: 14px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-body-large);
 }
 
 .math-block__latex-row {
@@ -87,10 +87,10 @@
   align-items: center;
   justify-content: center;
   border-right: 1px solid #eeeae3;
-  color: #858580;
+  color: var(--color-text-tertiary);
   background: #faf9f6;
   font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: 650;
 }
 
@@ -102,10 +102,10 @@
   resize: vertical;
   border: 0;
   padding: 9px 12px;
-  color: #2f3640;
+  color: var(--color-text-primary);
   background: #ffffff;
   font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
-  font-size: 13px;
+  font-size: var(--font-size-body);
   line-height: 1.45;
   outline: none;
 }
@@ -140,21 +140,21 @@
   height: 34px;
   border: 0;
   border-radius: 7px;
-  color: #6d6d68;
+  color: var(--color-text-secondary);
   background: transparent;
-  font-size: 13px;
+  font-size: var(--font-size-body);
   font-weight: 650;
   text-align: left;
   cursor: pointer;
 }
 
 .math-block__type-list button:hover {
-  color: #30302d;
+  color: var(--color-text-primary);
   background: #f0efeb;
 }
 
 .math-block__type-list .math-block__type-button--active {
-  color: #173c56;
+  color: var(--color-text-link);
   background: #e7f3fa;
 }
 
@@ -180,7 +180,7 @@
   justify-content: center;
   border: 1px solid #ddd9cf;
   border-radius: 7px;
-  color: #242421;
+  color: var(--color-text-primary);
   background: #ffffff;
   cursor: pointer;
 }
@@ -195,14 +195,14 @@
   height: 36px;
   padding: 0 10px;
   font-family: Georgia, 'Times New Roman', serif;
-  font-size: 18px;
+  font-size: var(--font-size-title-large);
   line-height: 1;
 }
 
 .math-block__template-button:hover,
 .math-block__symbol-grid button:hover {
   border-color: #9fbdcc;
-  color: #173c56;
+  color: var(--color-text-link);
   background: #edf6fb;
 }
 
@@ -219,13 +219,13 @@
   align-items: center;
   justify-content: center;
   font-family: Georgia, 'Times New Roman', serif;
-  font-size: 19px;
+  font-size: var(--font-size-title-large);
   line-height: 1;
 }
 
 .math-template sup,
 .math-template sub {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   line-height: 1;
 }
 
@@ -239,7 +239,7 @@
   grid-template-rows: 1fr 1fr;
   align-items: center;
   justify-items: center;
-  font-size: 15px;
+  font-size: var(--font-size-body-large);
   line-height: 1;
 }
 
@@ -262,14 +262,14 @@
   justify-content: center;
   border-top: 1px solid currentColor;
   padding-left: 10px;
-  font-size: 16px;
+  font-size: var(--font-size-title);
 }
 
 .math-template__sqrt::before {
   position: absolute;
   left: 0;
   top: 2px;
-  font-size: 24px;
+  font-size: var(--font-size-display-small);
   line-height: 1;
   content: '√';
 }
@@ -283,16 +283,16 @@
   border-left: 1px solid currentColor;
   border-right: 1px solid currentColor;
   padding: 0 4px;
-  font-size: 12px;
+  font-size: var(--font-size-small);
 }
 
 .math-block__error {
   margin: 0;
   border-top: 1px solid #f0d3cf;
   padding: 8px 12px;
-  color: #8f342b;
+  color: var(--color-status-error);
   background: #fff6f4;
-  font-size: 12px;
+  font-size: var(--font-size-small);
 }
 
 .collapsible-block {
@@ -329,7 +329,7 @@
   justify-self: center;
   border: 0;
   border-radius: 6px;
-  color: #4f5d64;
+  color: var(--color-text-secondary);
   background: transparent;
   cursor: pointer;
   transition:
@@ -339,7 +339,7 @@
 }
 
 .collapsible-block__toggle:hover {
-  color: #173c56;
+  color: var(--color-text-link);
   background: #e5f1f7;
   transform: scale(1.04);
 }
@@ -356,7 +356,7 @@
   min-width: 0;
   border: 0;
   padding: 4px 12px 4px 0;
-  color: #333331;
+  color: var(--color-text-primary);
   background: transparent;
   cursor: text;
   font: inherit;
@@ -365,23 +365,23 @@
 }
 
 .collapsible-block--heading-1 .collapsible-block__title {
-  font-size: 28px;
+  font-size: var(--font-size-display);
 }
 
 .collapsible-block--heading-2 .collapsible-block__title {
-  font-size: 24px;
+  font-size: var(--font-size-display-small);
 }
 
 .collapsible-block--heading-3 .collapsible-block__title {
-  font-size: 20px;
+  font-size: var(--font-size-page-title);
 }
 
 .collapsible-block--heading-4 .collapsible-block__title {
-  font-size: 17px;
+  font-size: var(--font-size-title);
 }
 
 .collapsible-block--list .collapsible-block__title {
-  font-size: 15px;
+  font-size: var(--font-size-body-large);
 }
 
 .collapsible-block__content {
@@ -391,33 +391,33 @@
 .editor-shell__content .hljs-keyword,
 .editor-shell__content .hljs-selector-tag,
 .editor-shell__content .hljs-built_in {
-  color: #7c3aed;
+  color: var(--color-agent-accent);
 }
 
 .editor-shell__content .hljs-string,
 .editor-shell__content .hljs-attr,
 .editor-shell__content .hljs-symbol {
-  color: #0f766e;
+  color: var(--color-status-success);
 }
 
 .editor-shell__content .hljs-number,
 .editor-shell__content .hljs-literal {
-  color: #b45309;
+  color: var(--color-status-warning);
 }
 
 .editor-shell__content .hljs-comment,
 .editor-shell__content .hljs-quote {
-  color: #7a8796;
+  color: var(--color-text-tertiary);
 }
 
 .editor-shell__content .hljs-title,
 .editor-shell__content .hljs-name,
 .editor-shell__content .hljs-section {
-  color: #1b64b0;
+  color: var(--color-status-info);
 }
 
 .editor-shell__content .hljs-meta,
 .editor-shell__content .hljs-template-variable,
 .editor-shell__content .hljs-variable {
-  color: #a33b2f;
+  color: var(--color-status-error);
 }

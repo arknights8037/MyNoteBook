@@ -23,7 +23,7 @@
 .vtable-block {
   position: relative;
   min-width: 0;
-  color: #26292e;
+  color: var(--color-text-primary);
   background: #ffffff;
 }
 
@@ -65,15 +65,15 @@
 }
 
 .vtable-block__identity strong {
-  color: #202328;
-  font-size: 13px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-body);
   font-weight: 650;
   letter-spacing: -0.01em;
 }
 
 .vtable-block__identity div span {
-  color: #858b94;
-  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
   font-weight: 450;
 }
 
@@ -87,7 +87,7 @@
   border: 1px solid #e1e4e8;
   border-radius: 8px;
   padding: 0 7px 0 9px;
-  color: #858b94;
+  color: var(--color-text-tertiary);
   background: #fafbfc;
   transition:
     border-color 120ms ease,
@@ -106,10 +106,10 @@
   min-width: 40px;
   border: 0;
   padding: 0;
-  color: #292d33;
+  color: var(--color-text-primary);
   background: transparent;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   outline: none;
   appearance: none;
 }
@@ -122,17 +122,17 @@
   flex: 0 0 auto;
   border: 0;
   padding: 0;
-  color: #a0a5ad;
+  color: var(--color-text-tertiary);
   background: transparent;
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 500;
 }
 
 .vtable-block__match-count {
   flex: 0 0 auto;
-  color: #777d86;
-  font-size: 10px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
   font-variant-numeric: tabular-nums;
 }
 
@@ -146,13 +146,13 @@
   border: 0;
   border-radius: 5px;
   padding: 0;
-  color: #747b84;
+  color: var(--color-text-tertiary);
   background: transparent;
   cursor: pointer;
 }
 
 .vtable-block__icon-button:hover:not(:disabled) {
-  color: #292d33;
+  color: var(--color-text-primary);
   background: #eef0f3;
 }
 
@@ -166,9 +166,9 @@
   gap: 8px;
   padding: 6px 10px;
   border-bottom: 1px solid #e7e9ed;
-  color: #5f6670;
+  color: var(--color-text-secondary);
   background: #fafbfc;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   font-weight: 500;
 }
 
@@ -190,9 +190,9 @@
   border: 1px solid transparent;
   border-radius: 7px;
   padding: 0 8px;
-  color: #4f5660;
+  color: var(--color-text-secondary);
   background: #ffffff;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   font-weight: 500;
   line-height: 1;
   list-style: none;
@@ -204,7 +204,7 @@
 .vue-mute-table__toolbar button:hover:not(:disabled),
 .vtable-block__more summary:hover {
   border-color: #e1e4e8;
-  color: #292d33;
+  color: var(--color-text-primary);
   background: #f4f6f8;
 }
 
@@ -223,13 +223,13 @@
 
 .vtable-block__toolbar .vtable-block__primary-action {
   border-color: var(--accent);
-  color: #ffffff;
+  color: var(--color-text-on-accent);
   background: var(--accent);
 }
 
 .vtable-block__toolbar .vtable-block__primary-action:hover:not(:disabled) {
   border-color: var(--accent-hover);
-  color: #ffffff;
+  color: var(--color-text-on-accent);
   background: var(--accent-hover);
 }
 
@@ -238,8 +238,8 @@
   min-width: 0;
   align-items: center;
   gap: 7px;
-  color: #8a9099;
-  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
   white-space: nowrap;
 }
 
@@ -250,9 +250,9 @@
   border: 1px solid #e0e4e8;
   border-radius: 5px;
   padding: 0 6px;
-  color: #59616b;
+  color: var(--color-text-secondary);
   background: #ffffff;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
@@ -274,7 +274,7 @@
 
 .vtable-block__more[open] summary {
   border-color: #dce0e5;
-  color: #292d33;
+  color: var(--color-text-primary);
   background: #ffffff;
 }
 
@@ -295,8 +295,8 @@
 
 .vtable-block__menu .vtable-block__menu-label {
   padding: 5px 7px 3px;
-  color: #9a9fa7;
-  font-size: 10px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
   font-weight: 650;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -323,11 +323,11 @@
 }
 
 .vtable-block__menu .vtable-block__menu-danger {
-  color: #b4473f;
+  color: var(--color-status-error);
 }
 
 .vtable-block__menu .vtable-block__menu-danger:hover:not(:disabled) {
-  color: #a33831;
+  color: var(--color-status-error);
   background: #fff4f3;
 }
 
@@ -340,7 +340,7 @@
   border: 1px solid #e0e3e8;
   border-radius: 12px;
   padding: 10px;
-  color: #292d33;
+  color: var(--color-text-primary);
   background: #ffffff;
   box-shadow: 0 18px 46px rgb(34 39 46 / 18%);
 }
@@ -365,8 +365,8 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #252930;
-  font-size: 12px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-small);
   font-weight: 650;
 }
 
@@ -386,14 +386,14 @@
   border: 1px solid #e1e4e8;
   border-radius: 7px;
   padding: 0 8px;
-  color: #4f5660;
+  color: var(--color-text-secondary);
   background: #ffffff;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   cursor: pointer;
 }
 
 .vtable-field-menu button:hover:not(:disabled) {
-  color: #292d33;
+  color: var(--color-text-primary);
   background: #f4f6f8;
 }
 
@@ -411,8 +411,8 @@
 
 .vtable-field-menu__field > span,
 .vtable-field-menu__checkbox span {
-  color: #747b84;
-  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
   font-weight: 600;
 }
 
@@ -424,9 +424,9 @@
   border: 1px solid #e0e3e8;
   border-radius: 8px;
   padding: 7px 9px;
-  color: #292d33;
+  color: var(--color-text-primary);
   background: #fafbfc;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   outline: none;
 }
 
@@ -462,7 +462,7 @@
   padding: 0 5px;
   color: var(--accent);
   background: transparent;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .vtable-field-menu__presets {
@@ -475,7 +475,7 @@
   min-height: 25px;
   border-radius: 999px;
   padding: 0 9px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .vtable-field-menu__presets .vtable-field-menu__preset--active {
@@ -500,9 +500,9 @@
   border: 1px solid #dfe4ea;
   border-radius: 999px;
   padding: 0 4px 0 9px;
-  color: #3d454f;
+  color: var(--color-text-primary);
   background: #ffffff;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .vtable-field-menu__chips button {
@@ -514,8 +514,8 @@
 }
 
 .vtable-field-menu__chips em {
-  color: #999fa8;
-  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
   font-style: normal;
 }
 
@@ -542,13 +542,13 @@
 
 .vtable-field-menu__footer .vtable-field-menu__apply {
   border-color: var(--accent);
-  color: #ffffff;
+  color: var(--color-text-on-accent);
   background: var(--accent);
 }
 
 .vtable-field-menu__footer .vtable-field-menu__apply:hover:not(:disabled) {
   border-color: var(--accent-hover);
-  color: #ffffff;
+  color: var(--color-text-on-accent);
   background: var(--accent-hover);
 }
 
@@ -568,7 +568,7 @@
 .vtable-block__snapshot {
   overflow: auto;
   max-width: 100%;
-  color: #26292e;
+  color: var(--color-text-primary);
   background: #ffffff;
 }
 
@@ -584,8 +584,8 @@
   border: 1px solid #e6e8eb;
   padding: 10px 12px;
   overflow: hidden;
-  color: #26292e;
-  font-size: 13px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-body);
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -610,9 +610,9 @@
 .vtable-block__fallback-note {
   margin: 0;
   padding: 8px 12px;
-  color: #8f342b;
+  color: var(--color-status-error);
   background: #fff6f4;
-  font-size: 12px;
+  font-size: var(--font-size-small);
 }
 
 .vtable-block__footer {
@@ -623,9 +623,9 @@
   gap: 14px;
   padding: 0 12px;
   border-top: 1px solid #eceef1;
-  color: #9298a1;
+  color: var(--color-text-tertiary);
   background: #ffffff;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .vtable-block__footer span {
@@ -674,7 +674,7 @@
   resize: none;
   border: 0;
   padding: 7px 9px;
-  color: #333331;
+  color: var(--color-text-primary);
   background: transparent;
   line-height: 1.45;
   outline: none;

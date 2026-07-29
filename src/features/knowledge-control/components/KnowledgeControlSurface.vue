@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { BookOpenCheck, Database, ListChecks, ShieldCheck } from '@lucide/vue'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import { loadAiSettings } from '@/models/ai/ai'
 import type { DelegationGrant } from '@/models/knowledge/governance'
@@ -23,6 +23,8 @@ import AiConversationImportPreviewModal from '@/features/knowledge-control/compo
 import TaskRunsPanel from '@/features/knowledge-control/components/TaskRunsPanel.vue'
 import ViewsPanel from '@/features/knowledge-control/components/ViewsPanel.vue'
 import { useDialog, useMessage } from '@/ui'
+import SurfaceTitleBar from '@/features/workspace/components/SurfaceTitleBar.vue'
+import { getWorkspaceSectionMeta } from '@/features/workspace/workspaceSections'
 
 type BrowserFile = InstanceType<typeof globalThis.File>
 
@@ -67,6 +69,7 @@ const activeDelegationRun = ref<TaskRun | null>(null)
 const activeTab = defineModel<'knowledge' | 'assets' | 'views' | 'tasks'>('tab', {
   default: 'assets',
 })
+const activeMeta = computed(() => getWorkspaceSectionMeta('knowledge', activeTab.value))
 const cliExportPath = ref('')
 const cliSubmissionPath = ref('')
 const cliCapabilityToken = ref('')
@@ -308,6 +311,7 @@ onMounted(load)
 
 <template>
   <section class="operations-page knowledge-control-page" aria-label="知识控制">
+    <SurfaceTitleBar :title="activeMeta.label" :icon="activeMeta.icon" />
     <div class="operations-page__content p1-domain-grid">
       <p v-if="error" class="operations-error" role="alert">{{ error }}</p>
       <nav v-if="!contextNavigation" class="surface-tabs" role="tablist" aria-label="知识中心功能">

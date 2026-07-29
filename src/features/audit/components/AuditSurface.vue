@@ -5,6 +5,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import type { AuditCategory, AuditEntry } from '@/models/shared/audit'
 import type { AuditRepository } from '@/repositories/audit/AuditRepository'
 import { NButton, NIcon, NSelect } from '@/ui'
+import SurfaceTitleBar from '@/features/workspace/components/SurfaceTitleBar.vue'
+import { getWorkspaceSectionMeta } from '@/features/workspace/workspaceSections'
 
 const props = withDefaults(
   defineProps<{
@@ -47,6 +49,7 @@ const activeCount = computed(
       ),
     ).length,
 )
+const activeMeta = computed(() => getWorkspaceSectionMeta('audit', category.value))
 
 async function load(): Promise<void> {
   loading.value = true
@@ -99,18 +102,20 @@ watch(category, () => void load())
 
 <template>
   <section class="operations-page" aria-label="活动与审计">
-    <header class="operations-page__header">
-      <div>
-        <h1>活动与审计</h1>
-        <p>{{ entries.length }} 条记录 · {{ activeCount }} 条进行中 · {{ errorCount }} 条异常</p>
-      </div>
-      <NButton secondary :loading="loading" @click="load">
-        <template #icon
-          ><NIcon :size="15"><RefreshCw /></NIcon
-        ></template>
-        刷新
-      </NButton>
-    </header>
+    <SurfaceTitleBar
+      :title="activeMeta.label"
+      :icon="activeMeta.icon"
+      :meta="`${entries.length} 条记录 · ${activeCount} 条进行中 · ${errorCount} 条异常`"
+    >
+      <template #actions>
+        <NButton secondary :loading="loading" @click="load">
+          <template #icon
+            ><NIcon :size="15"><RefreshCw /></NIcon
+          ></template>
+          刷新
+        </NButton>
+      </template>
+    </SurfaceTitleBar>
 
     <div class="operations-page__content">
       <div class="audit-toolbar">

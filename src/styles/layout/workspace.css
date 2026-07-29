@@ -45,7 +45,7 @@ textarea {
   gap: 14px;
   color: var(--color-text-secondary, #6b6b67);
   background: var(--color-bg-editor, #fff);
-  font-size: 13px;
+  font-size: var(--font-size-body);
 }
 
 .lazy-surface-loader__orbit {
@@ -199,7 +199,7 @@ textarea {
 
 .sidebar-brand__home strong {
   overflow: hidden;
-  font-size: 14px;
+  font-size: var(--font-size-body-large);
   font-weight: 680;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -236,7 +236,7 @@ textarea {
   padding: 0 10px;
   color: var(--color-text-secondary, #62625f);
   background: transparent;
-  font-size: 14px;
+  font-size: var(--font-size-body-large);
   text-align: left;
   cursor: pointer;
 }
@@ -275,13 +275,13 @@ textarea {
   justify-self: start;
   border: 0;
   border-radius: 6px;
-  color: #7a7a78;
+  color: var(--color-text-tertiary);
   background: transparent;
   cursor: pointer;
 }
 
 .sidebar-quickbar__button:hover {
-  color: #3f3f3d;
+  color: var(--color-text-primary);
   background: #ececea;
 }
 
@@ -302,14 +302,14 @@ textarea {
 
 .editor-workspace__eyebrow {
   margin: 0;
-  color: #aaa8a5;
-  font-size: 13px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-body);
   font-weight: 500;
 }
 
 h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: var(--font-size-display-small);
   line-height: 1.15;
 }
 
@@ -381,7 +381,7 @@ h1 {
   border: 0;
   color: var(--color-text-primary);
   background: transparent;
-  font-size: 15px;
+  font-size: var(--font-size-body-large);
   font-weight: 650;
   outline: none;
 }
@@ -391,7 +391,7 @@ h1 {
   align-items: center;
   gap: 5px;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .mind-map-workspace-view__header span.is-saving {
@@ -457,7 +457,7 @@ h1 {
   color: var(--color-text-secondary);
   background: transparent;
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .mind-map-node-toolbar button:hover:not(:disabled) {
@@ -485,7 +485,7 @@ h1 {
   display: grid;
   place-items: center;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--font-size-small);
 }
 
 .mind-map-workspace-view__error {
@@ -499,7 +499,7 @@ h1 {
   color: var(--color-status-error);
   background: var(--color-bg-elevated);
   box-shadow: var(--shadow-elevated);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .structured-view-workspace {
@@ -530,7 +530,7 @@ h1 {
   outline: 0;
   color: var(--color-text-primary);
   background: transparent;
-  font-size: 15px;
+  font-size: var(--font-size-body-large);
   font-weight: 650;
 }
 
@@ -540,7 +540,7 @@ h1 {
   align-items: center;
   gap: 5px;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   white-space: nowrap;
 }
 
@@ -561,7 +561,7 @@ h1 {
   min-height: 0;
   place-items: center;
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: var(--font-size-small);
 }
 
 .uml-view-editor {
@@ -607,7 +607,7 @@ h1 {
   margin-bottom: 9px;
   padding: 2px 2px 4px;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .slidev-editor__sidebar-heading button,
@@ -649,7 +649,7 @@ h1 {
 .slidev-editor__page > span:first-child {
   padding-top: 6px;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   text-align: center;
 }
 
@@ -663,7 +663,7 @@ h1 {
   border: 1px solid var(--color-border-subtle);
   border-radius: 6px;
   padding: 10px;
-  color: #1f2937;
+  color: var(--color-text-primary);
   background: #ffffff;
   box-shadow: 0 2px 7px rgb(15 23 42 / 7%);
 }
@@ -681,13 +681,13 @@ h1 {
 }
 
 .slidev-editor__thumbnail strong {
-  font-size: 9px;
+  font-size: var(--font-size-micro);
 }
 
 .slidev-editor__thumbnail small {
   margin-top: 4px;
-  color: #6b7280;
-  font-size: 7px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
 }
 
 .slidev-editor__workspace {
@@ -721,7 +721,7 @@ h1 {
   gap: 5px;
   border-radius: 6px;
   padding: 0 8px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .slidev-editor__toolbar button:hover:not(:disabled),
@@ -764,7 +764,7 @@ h1 {
   width: min(100%, 980px);
   aspect-ratio: 16 / 9;
   overflow: hidden;
-  color: #1f2937;
+  color: var(--color-text-primary);
   background: #ffffff;
 }
 
@@ -784,7 +784,7 @@ h1 {
 .slidev-canvas__flow h1 {
   max-width: 86%;
   margin: 0 0 5%;
-  color: #111827;
+  color: var(--color-text-primary);
   font-size: clamp(25px, 4.2vw, 54px);
   font-weight: 720;
   line-height: 1.08;
@@ -794,7 +794,7 @@ h1 {
 
 .slidev-canvas__body {
   max-width: 82%;
-  color: #374151;
+  color: var(--color-text-secondary);
   font-size: clamp(14px, 1.75vw, 25px);
   line-height: 1.55;
   cursor: text;
@@ -819,7 +819,7 @@ h1 {
   border-radius: 5px;
   outline: 2px solid rgb(79 124 255 / 15%);
   padding: 6px 8px;
-  color: #111827;
+  color: var(--color-text-primary);
   background: rgb(255 255 255 / 96%);
 }
 
@@ -845,7 +845,7 @@ h1 {
   border: 1px dashed #7c8dab;
   border-radius: 5px;
   padding: 10px 12px;
-  color: #1f2937;
+  color: var(--color-text-primary);
   background: rgb(255 255 255 / 88%);
   box-shadow: 0 4px 16px rgb(15 23 42 / 8%);
   font-size: clamp(10px, 1.4vw, 19px);
@@ -873,7 +873,7 @@ h1 {
   place-items: center;
   border: 1px solid #d5d9e1;
   border-radius: 999px;
-  color: #4b5563;
+  color: var(--color-text-secondary);
   background: white;
   cursor: pointer;
 }
@@ -897,7 +897,7 @@ h1 {
 .slidev-editor__advanced-notice {
   margin: -20px auto 12px;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .slidev-editor__notes {
@@ -906,7 +906,7 @@ h1 {
   gap: 6px;
   margin: 0 auto 24px;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .slidev-editor__notes textarea {
@@ -941,7 +941,7 @@ h1 {
   color: var(--color-text-primary);
   background: var(--color-bg-default);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-small);
   line-height: 1.6;
 }
 
@@ -952,7 +952,7 @@ h1 {
   justify-content: flex-end;
   gap: 12px;
   color: var(--color-status-error);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .slidev-editor__source-panel footer button {
@@ -1023,7 +1023,7 @@ h1 {
 
 .slidev-presentation__controls span {
   min-width: 54px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   text-align: center;
 }
 
@@ -1198,8 +1198,8 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: #475467;
-  font-size: 14px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-body-large);
   white-space: nowrap;
 }
 
@@ -1233,13 +1233,13 @@ h1 {
   place-items: center;
   border: 0;
   border-radius: 7px;
-  color: #8a8a87;
+  color: var(--color-text-tertiary);
   background: transparent;
   cursor: pointer;
 }
 
 .icon-button:hover:not(:disabled) {
-  color: #3f3f3d;
+  color: var(--color-text-primary);
   background: #ececea;
 }
 

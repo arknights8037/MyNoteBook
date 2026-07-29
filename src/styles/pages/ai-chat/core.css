@@ -31,7 +31,7 @@
   place-items: center;
   border: 1px solid #eeeeec;
   border-radius: 999px;
-  color: #3f3f3d;
+  color: var(--color-text-primary);
   background: #ffffff;
   box-shadow: 0 10px 32px rgb(20 20 18 / 12%);
   cursor: pointer;
@@ -57,7 +57,7 @@
   overflow: hidden;
   border: 1px solid #e3e3df;
   border-radius: 12px;
-  color: #333331;
+  color: var(--color-text-primary);
   background: #ffffff;
   box-shadow: 0 18px 58px rgb(20 20 18 / 18%);
 }
@@ -179,7 +179,7 @@
   gap: 6px;
   overflow: hidden;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   font-weight: 700;
   letter-spacing: 0.04em;
   text-overflow: ellipsis;
@@ -204,7 +204,7 @@
   border: 0;
   padding: 0;
   color: var(--color-text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .ai-chat-workspace-settings input[type='text'],
@@ -228,13 +228,13 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ai-chat-workspace-settings p {
   margin: 0;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   line-height: 1.45;
 }
 
@@ -271,7 +271,7 @@
   color: var(--color-agent-accent);
   background: var(--color-agent-suggestion-bg);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   font-weight: 650;
   cursor: pointer;
 }
@@ -281,7 +281,7 @@
   margin-left: auto;
   overflow: hidden;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -298,7 +298,7 @@
   color: var(--color-text-secondary);
   background: transparent;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   cursor: pointer;
 }
 
@@ -387,7 +387,7 @@
   padding: 0 4px;
   color: var(--color-text-primary);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   text-align: left;
 }
 
@@ -437,7 +437,7 @@
   color: var(--color-text-tertiary);
   background: transparent;
   font: inherit;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   cursor: pointer;
 }
 
@@ -449,7 +449,7 @@
 .ai-chat-history__empty {
   margin: 18px 6px;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
   text-align: center;
 }
 
@@ -505,14 +505,14 @@
 
 .ai-chat-history__select strong {
   color: var(--color-text-primary);
-  font-size: 12px;
+  font-size: var(--font-size-small);
   font-weight: 520;
 }
 
 .ai-chat-history__select small,
 .ai-chat-history__select span {
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .ai-chat-history__delete:hover {
@@ -566,13 +566,13 @@
 
 .ai-chat-history-move-menu__header strong {
   color: var(--color-text-primary);
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ai-chat-history-move-menu__header small,
 .ai-chat-history-move-menu__item small {
   color: var(--color-text-tertiary);
-  font-size: 9px;
+  font-size: var(--font-size-micro);
 }
 
 .ai-chat-history-move-menu__item {
@@ -594,7 +594,7 @@
 }
 
 .ai-chat-history-move-menu__item strong {
-  font-size: 11px;
+  font-size: var(--font-size-caption);
 }
 
 .ai-chat-history--collapsed {
@@ -712,13 +712,13 @@
 }
 
 .ai-chat-popover__header strong {
-  font-size: 14px;
+  font-size: var(--font-size-body-large);
 }
 
 .ai-chat-popover__header span {
   overflow: hidden;
-  color: #8c8c87;
-  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -732,9 +732,9 @@
   border: 0;
   border-radius: 999px;
   padding: 0 9px 0 10px;
-  color: #5f5f5a;
+  color: var(--color-text-secondary);
   background: transparent;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   font-weight: 560;
   cursor: pointer;
   transition:
@@ -748,12 +748,12 @@
 
 .ai-chat-selector:hover,
 .ai-chat-selector[data-state='open'] {
-  color: #2f2f2d;
+  color: var(--color-text-primary);
   background: #f0f0ed;
 }
 
 .ai-chat-selector--primary {
-  color: #2f2f2d;
+  color: var(--color-text-primary);
   background: #f3f3f1;
 }
 
@@ -787,7 +787,7 @@
   gap: 12px;
   border-radius: 7px;
   padding: 5px 8px;
-  color: #3c3c39;
+  color: var(--color-text-primary);
   outline: none;
   cursor: pointer;
 }
@@ -810,7 +810,7 @@
 .ai-chat-menu__item-copy strong {
   overflow: hidden;
   color: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-body);
   font-weight: 620;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -818,8 +818,8 @@
 
 .ai-chat-menu__item-copy small {
   overflow: hidden;
-  color: #8c8c87;
-  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -837,7 +837,7 @@
   place-items: center;
   border: 1px solid transparent;
   border-radius: 7px;
-  color: #777772;
+  color: var(--color-text-tertiary);
   background: transparent;
   cursor: pointer;
 }
@@ -855,7 +855,7 @@
 .ai-chat-history-menu__empty {
   padding: 18px 12px;
   color: var(--color-text-tertiary, #8d8d88);
-  font-size: 12px;
+  font-size: var(--font-size-small);
   text-align: center;
 }
 
@@ -879,8 +879,8 @@
 }
 
 .ai-chat-history-menu__copy small {
-  color: #92928e;
-  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
 }
 
 .ai-chat-history-menu__delete {
@@ -890,13 +890,13 @@
   place-items: center;
   border: 0;
   border-radius: 999px;
-  color: #9a9790;
+  color: var(--color-text-tertiary);
   background: transparent;
   cursor: pointer;
 }
 
 .ai-chat-history-menu__delete:hover {
-  color: #b42318;
+  color: var(--color-status-error);
   background: #fff0ed;
 }
 
@@ -938,7 +938,7 @@
   color: var(--color-text-primary);
   background: transparent;
   font: inherit;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .ai-chat-workspace-settings__search button {
@@ -962,7 +962,7 @@
 .ai-chat-workspace-settings fieldset > small {
   padding: 5px 2px;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .ai-chat-popover__messages--welcome {

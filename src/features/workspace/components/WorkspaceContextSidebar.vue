@@ -1,43 +1,27 @@
 <script setup lang="ts">
 import {
-  AlertTriangle,
   Bot,
-  BookOpenCheck,
-  Boxes,
   CalendarClock,
   ChevronRight,
-  CirclePlay,
-  Code2,
-  Database,
   FileClock,
   FilePlus2,
   FileText,
   Folder,
   FolderOpen,
-  History,
-  Inbox,
-  Keyboard,
-  ListChecks,
-  Mail,
-  MessageCircle,
-  Palette,
   Plus,
   Pin,
-  PlugZap,
-  Puzzle,
-  Rss,
   Search,
-  ServerCog,
-  ShieldCheck,
-  SlidersHorizontal,
   Trash2,
-  Type,
 } from '@lucide/vue'
 import { computed, ref } from 'vue'
 
 import type { InboxSection, WorkspaceSurface } from '@/models/workspace/workspaceSurface'
 import type { AgentProject, AiChatHistoryItem } from '@/models/ai/aiChatHistory'
 import { UNGROUPED_AGENT_PROJECT_ID } from '@/models/ai/aiChatHistory'
+import {
+  WORKSPACE_SECTIONS,
+  type WorkspaceSectionSurface,
+} from '@/features/workspace/workspaceSections'
 
 const props = defineProps<{
   activeSurface: WorkspaceSurface
@@ -83,67 +67,23 @@ const titles: Partial<Record<WorkspaceSurface, string>> = {
 }
 
 const sections = computed(() => {
-  if (props.activeSurface === 'inbox') return [
-    { id: 'pending', label: '待处理', description: '需要阅读、判断或跟进', icon: Inbox },
-    { id: 'all', label: '全部动态', description: '所有来源的统一时间线', icon: History },
-    { id: 'rss', label: 'RSS', description: '订阅更新与增量内容', icon: Rss },
-    { id: 'messages', label: '消息', description: 'IM 与协作工具消息', icon: MessageCircle },
-    { id: 'email', label: '邮件', description: '邮件账户与会话', icon: Mail },
-    { id: 'failures', label: '采集异常', description: '授权、同步与解析问题', icon: AlertTriangle },
-  ]
-  if (props.activeSurface === 'knowledge') return [
-    { id: 'assets', label: '知识资产', description: '文件与 AI 对话', icon: Database },
-    { id: 'knowledge', label: '知识规则', description: '规则、决策和证据', icon: ShieldCheck },
-    { id: 'views', label: '智能视图', description: '汇总与重组知识', icon: BookOpenCheck },
-    { id: 'tasks', label: '任务验收', description: '结果与外部协作', icon: ListChecks },
-  ]
-  if (props.activeSurface === 'plugins') return [
-    { id: 'connections', label: '连接器', description: 'RSS、消息与邮件来源', icon: PlugZap },
-    { id: 'skills', label: 'Skills', description: 'Agent 工作技能', icon: Code2 },
-    { id: 'mcp', label: 'MCP Client', description: '连接工具与数据源', icon: Boxes },
-    { id: 'mcp-server', label: 'MCP Server', description: '对外工具策略', icon: ServerCog },
-    { id: 'builtin', label: '内置插件', description: '应用自带能力', icon: Puzzle },
-  ]
-  if (props.activeSurface === 'automations') return [
-    { id: 'tasks', label: '任务', description: '创建和管理自动化', icon: CalendarClock },
-    { id: 'runs', label: '运行记录', description: '执行状态与结果', icon: CirclePlay },
-  ]
-  if (props.activeSurface === 'audit') return [
-    { id: 'all', label: '全部记录', description: '所有审计事件', icon: History },
-    { id: 'agent_task', label: 'Agent 任务', description: '任务生命周期', icon: Bot },
-    { id: 'tool_call', label: '工具调用', description: '工具执行记录', icon: Boxes },
-    { id: 'confirmation', label: '确认事件', description: '用户确认操作', icon: ShieldCheck },
-    { id: 'automation_run', label: '自动化运行', description: '定时与手动执行', icon: CalendarClock },
-    { id: 'task_run', label: '统一任务', description: '任务运行状态', icon: ListChecks },
-    { id: 'knowledge', label: '知识对象', description: '知识写入与变更', icon: Database },
-    { id: 'verification', label: '结果验证', description: '输出验收记录', icon: BookOpenCheck },
-    { id: 'change_set', label: 'ChangeSet', description: '批量变更记录', icon: FileClock },
-    { id: 'approval', label: '审批', description: '审批决定记录', icon: ShieldCheck },
-    { id: 'view_refresh', label: 'View 刷新', description: '视图刷新记录', icon: BookOpenCheck },
-    { id: 'delegation', label: '外部委派', description: '跨 Agent 协作', icon: Bot },
-    { id: 'domain_event', label: '领域事件', description: '领域状态变化', icon: FileClock },
-    { id: 'outbox', label: 'Outbox', description: '待分发事件', icon: Boxes },
-  ]
-  if (props.activeSurface === 'settings') return [
-    { id: 'general', label: '通用', description: '启动与新建行为', icon: SlidersHorizontal },
-    { id: 'security', label: '安全', description: '敏感操作保护', icon: ShieldCheck },
-    { id: 'appearance', label: '外观', description: '主题、字体与动效', icon: Palette },
-    { id: 'editor', label: '编辑器', description: '排版、保存与块操作', icon: Type },
-    { id: 'ai', label: 'AI', description: '模型、参数与提示词', icon: Bot },
-    { id: 'data', label: '数据', description: '本地存储位置', icon: Database },
-    { id: 'shortcuts', label: '快捷键', description: '常用操作按键', icon: Keyboard },
-  ]
+  if (props.activeSurface in WORKSPACE_SECTIONS) {
+    return WORKSPACE_SECTIONS[props.activeSurface as WorkspaceSectionSurface]
+  }
   return []
 })
 
-const selectedSection = computed(() => ({
-  inbox: props.inboxSection,
-  knowledge: props.knowledgeSection,
-  plugins: props.pluginSection,
-  automations: props.automationSection,
-  audit: props.auditCategory,
-  settings: props.settingsSection,
-})[props.activeSurface] ?? '')
+const selectedSection = computed(
+  () =>
+    ({
+      inbox: props.inboxSection,
+      knowledge: props.knowledgeSection,
+      plugins: props.pluginSection,
+      automations: props.automationSection,
+      audit: props.auditCategory,
+      settings: props.settingsSection,
+    })[props.activeSurface] ?? '',
+)
 
 function selectSection(id: string): void {
   if (props.activeSurface === 'inbox') emit('update:inbox-section', id as InboxSection)
@@ -190,8 +130,12 @@ function startTaskFromCurrentSelection(): void {
 
 function readCollapsedProjectIds(): Set<string> {
   try {
-    const value = JSON.parse(globalThis.localStorage?.getItem('my-notebook:agent-project-folders') ?? '[]')
-    return new Set(Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [])
+    const value = JSON.parse(
+      globalThis.localStorage?.getItem('my-notebook:agent-project-folders') ?? '[]',
+    )
+    return new Set(
+      Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [],
+    )
   } catch {
     return new Set()
   }
@@ -254,14 +198,20 @@ function deleteProject(project: AgentProject): void {
 
     <div v-if="activeSurface === 'agent'" class="context-sidebar__body">
       <div v-for="project in projects" :key="project.id" class="context-sidebar__project">
-        <div class="context-sidebar__folder-row" :class="{ 'is-active': currentProjectId === project.id }">
+        <div
+          class="context-sidebar__folder-row"
+          :class="{ 'is-active': currentProjectId === project.id }"
+        >
           <button
             type="button"
             class="context-sidebar__folder-toggle"
             :aria-label="`${collapsedProjectIds.has(project.id) ? '展开' : '折叠'}项目：${project.name}`"
             @click="toggleProject(project.id)"
           >
-            <ChevronRight :size="13" :class="{ 'is-expanded': !collapsedProjectIds.has(project.id) }" />
+            <ChevronRight
+              :size="13"
+              :class="{ 'is-expanded': !collapsedProjectIds.has(project.id) }"
+            />
           </button>
           <button type="button" class="context-sidebar__folder" @click="selectProject(project.id)">
             <Folder v-if="collapsedProjectIds.has(project.id)" :size="16" />
@@ -311,7 +261,12 @@ function deleteProject(project: AgentProject): void {
             >
               <FilePlus2 v-if="history.transient" :size="15" />
               <FileClock v-else :size="15" />
-              <span><strong>{{ history.title }}</strong><small>{{ history.transient ? '草稿 · 尚未保存' : `${history.messageCount} 条消息` }}</small></span>
+              <span
+                ><strong>{{ history.title }}</strong
+                ><small>{{
+                  history.transient ? '草稿 · 尚未保存' : `${history.messageCount} 条消息`
+                }}</small></span
+              >
             </button>
             <button
               v-if="!history.transient"
@@ -362,7 +317,12 @@ function deleteProject(project: AgentProject): void {
           >
             <FilePlus2 v-if="history.transient" :size="15" />
             <FileClock v-else :size="15" />
-            <span><strong>{{ history.title }}</strong><small>{{ history.transient ? '草稿 · 尚未保存' : `${history.messageCount} 条消息` }}</small></span>
+            <span
+              ><strong>{{ history.title }}</strong
+              ><small>{{
+                history.transient ? '草稿 · 尚未保存' : `${history.messageCount} 条消息`
+              }}</small></span
+            >
           </button>
           <button
             v-if="!history.transient"
@@ -375,7 +335,9 @@ function deleteProject(project: AgentProject): void {
           </button>
         </div>
       </div>
-      <p v-if="projects.length === 0 && histories.length === 0" class="context-sidebar__empty">暂无任务</p>
+      <p v-if="projects.length === 0 && histories.length === 0" class="context-sidebar__empty">
+        暂无任务
+      </p>
     </div>
 
     <nav v-else class="context-sidebar__body" :aria-label="titles[activeSurface]">
@@ -388,7 +350,10 @@ function deleteProject(project: AgentProject): void {
         @click="selectSection(section.id)"
       >
         <component :is="section.icon" :size="16" />
-        <span><strong>{{ section.label }}</strong><small>{{ section.description }}</small></span>
+        <span
+          ><strong>{{ section.label }}</strong
+          ><small>{{ section.description }}</small></span
+        >
       </button>
     </nav>
   </aside>

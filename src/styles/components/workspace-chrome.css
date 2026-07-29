@@ -141,7 +141,7 @@
   overflow: hidden;
   padding-right: 14px;
   opacity: 0;
-  font-size: 13px;
+  font-size: var(--font-size-body);
   font-weight: 680;
   letter-spacing: 0;
   text-align: left;
@@ -152,7 +152,7 @@
 
 .activity-rail__brand-name {
   color: var(--workspace-glass-accent, #6d5dfc);
-  font-size: 13px;
+  font-size: var(--font-size-body);
   font-weight: 720;
   letter-spacing: 0.01em;
   text-transform: lowercase;
@@ -191,7 +191,7 @@
   position: relative;
   z-index: 1;
   padding-left: 2px;
-  font-size: 13px;
+  font-size: var(--font-size-body);
   font-weight: 540;
 }
 
@@ -250,7 +250,7 @@
   padding-left: 40px;
   color: var(--workspace-glass-text-muted, var(--color-text-tertiary, #8b93a7));
   opacity: 0;
-  font-size: 9px;
+  font-size: var(--font-size-micro);
   font-weight: 700;
   letter-spacing: 0.08em;
   line-height: 16px;
@@ -337,7 +337,7 @@
 
 .workspace-tab > span {
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   letter-spacing: 0;
   text-align: left;
   text-overflow: ellipsis;
@@ -386,7 +386,7 @@
   border-bottom: 1px solid var(--workspace-nav-divider);
   padding: 0 13px 0 16px;
   color: var(--workspace-glass-text-primary, var(--color-text-primary, #292927));
-  font-size: 12px;
+  font-size: var(--font-size-small);
   font-weight: 680;
 }
 
@@ -414,7 +414,7 @@
   color: var(--color-text-tertiary);
   background: transparent;
   font: inherit;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   cursor: pointer;
 }
 
@@ -456,7 +456,7 @@
 
 .sidebar-search-trigger span {
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -509,7 +509,7 @@
   color: var(--workspace-glass-text-primary, var(--color-text-primary, #292927));
   background: transparent;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   letter-spacing: 0;
   outline: none;
 }
@@ -588,7 +588,7 @@
   color: var(--workspace-glass-text-secondary, var(--color-text-secondary, #666662));
   background: transparent;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-body);
   font-weight: 500;
   line-height: 1.2;
   text-align: left;
@@ -733,7 +733,7 @@
   padding: 0 4px;
   color: var(--workspace-glass-text-primary, var(--color-text-primary, #333330));
   background: transparent;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   font-weight: 620;
   text-align: left;
 }
@@ -756,7 +756,7 @@ button.context-sidebar__folder {
 .context-sidebar__label {
   margin: 10px 8px 5px;
   color: var(--workspace-glass-text-muted, var(--color-text-tertiary, #969691));
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 650;
   letter-spacing: 0;
 }
@@ -844,19 +844,19 @@ button.context-sidebar__folder {
 
 .context-sidebar__item strong {
   color: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-small);
   font-weight: 600;
 }
 
 .context-sidebar__item small {
   color: var(--workspace-glass-text-muted, var(--color-text-tertiary, #999994));
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .context-sidebar__empty {
   margin: 18px 8px;
   color: var(--workspace-glass-text-muted, var(--color-text-tertiary, #999994));
-  font-size: 12px;
+  font-size: var(--font-size-small);
 }
 
 .workspace-tab__close {
@@ -895,7 +895,7 @@ button.context-sidebar__folder {
   place-items: center;
   align-self: center;
   color: var(--color-border-default, #d7d7d2);
-  font-size: 13px;
+  font-size: var(--font-size-body);
   line-height: 1;
   user-select: none;
 }
@@ -926,7 +926,7 @@ button.context-sidebar__folder {
 }
 
 .workspace-tabs__window-controls > .workspace-tabs__window-close:hover {
-  color: #fff;
+  color: var(--color-text-on-accent);
   background: #c42b1c;
 }
 

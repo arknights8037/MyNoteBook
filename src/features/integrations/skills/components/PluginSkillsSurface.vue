@@ -45,6 +45,8 @@ import type { McpClientPort } from '@/services/ports/McpClientPort'
 import EmailAccountPanel from '@/features/integrations/email/components/EmailAccountPanel.vue'
 import RssSourcePanel from '@/features/integrations/rss/components/RssSourcePanel.vue'
 import DingTalkConnectorPanel from '@/features/integrations/dingtalk/components/DingTalkConnectorPanel.vue'
+import SurfaceTitleBar from '@/features/workspace/components/SurfaceTitleBar.vue'
+import { getWorkspaceSectionMeta } from '@/features/workspace/workspaceSections'
 
 withDefaults(defineProps<{ mcpClient: McpClientPort; contextNavigation?: boolean }>(), {
   contextNavigation: false,
@@ -92,6 +94,7 @@ type BrowserInputElement = InstanceType<typeof globalThis.HTMLInputElement>
 
 const isNative = Reflect.has(globalThis, '__TAURI_INTERNALS__')
 const enabledCount = computed(() => skills.value.filter((skill) => skill.enabled).length)
+const activeMeta = computed(() => getWorkspaceSectionMeta('plugins', activeTab.value))
 const extensionTabs = computed(() => [
   {
     id: 'connections' as const,
@@ -325,68 +328,67 @@ onMounted(() => void loadSkills())
 
 <template>
   <section class="plugin-skills-page" aria-label="连接与扩展">
-    <header class="plugin-skills-page__header">
-      <div>
-        <h1>连接与扩展</h1>
-      </div>
-      <div v-if="activeTab === 'skills'" class="plugin-skills-page__header-actions">
-        <div class="plugin-skills-page__summary">
-          <strong>{{ enabledCount }}</strong>
-          <span>已启用 / {{ skills.length }} 个 Skill</span>
+    <SurfaceTitleBar :title="activeMeta.label" :icon="activeMeta.icon">
+      <template #actions>
+        <div v-if="activeTab === 'skills'" class="plugin-skills-page__header-actions">
+          <div class="plugin-skills-page__summary">
+            <strong>{{ enabledCount }}</strong>
+            <span>已启用 / {{ skills.length }} 个 Skill</span>
+          </div>
+          <NButton secondary :disabled="!isNative" @click="openSkillsFolder">
+            <template #icon
+              ><NIcon :size="15"><FolderOpen /></NIcon
+            ></template>
+            打开目录
+          </NButton>
+          <NButton
+            type="primary"
+            :disabled="!isNative"
+            :loading="loading"
+            @click="chooseImportDirectory"
+          >
+            <template #icon
+              ><NIcon :size="15"><PackagePlus /></NIcon
+            ></template>
+            导入 Skill
+          </NButton>
         </div>
-        <NButton secondary :disabled="!isNative" @click="openSkillsFolder">
-          <template #icon
-            ><NIcon :size="15"><FolderOpen /></NIcon
-          ></template>
-          打开目录
-        </NButton>
-        <NButton
-          type="primary"
-          :disabled="!isNative"
-          :loading="loading"
-          @click="chooseImportDirectory"
-        >
-          <template #icon
-            ><NIcon :size="15"><PackagePlus /></NIcon
-          ></template>
-          导入 Skill
-        </NButton>
-      </div>
-      <div v-else-if="activeTab === 'mcp'" class="plugin-skills-page__header-actions">
-        <div class="plugin-skills-page__summary">
-          <strong>{{ mcpPanel?.enabledCount ?? 0 }}</strong>
-          <span>已启用 / {{ mcpPanel?.serverCount ?? 0 }} 个 MCP</span>
+        <div v-else-if="activeTab === 'mcp'" class="plugin-skills-page__header-actions">
+          <div class="plugin-skills-page__summary">
+            <strong>{{ mcpPanel?.enabledCount ?? 0 }}</strong>
+            <span>已启用 / {{ mcpPanel?.serverCount ?? 0 }} 个 MCP</span>
+          </div>
+          <NButton
+            secondary
+            :disabled="!isNative || !mcpPanel"
+            :loading="mcpPanel?.loading"
+            @click="mcpPanel?.chooseConfig()"
+          >
+            <template #icon
+              ><NIcon :size="15"><FileJson /></NIcon
+            ></template>
+            导入配置
+          </NButton>
         </div>
-        <NButton
-          secondary
-          :disabled="!isNative || !mcpPanel"
-          :loading="mcpPanel?.loading"
-          @click="mcpPanel?.chooseConfig()"
-        >
-          <template #icon
-            ><NIcon :size="15"><FileJson /></NIcon
-          ></template>
-          导入配置
-        </NButton>
-      </div>
-      <div v-else-if="activeTab === 'mcp-server'" class="plugin-skills-page__header-actions">
-        <div class="plugin-skills-page__summary">
-          <strong>{{ mcpServerPanel?.enabledCount ?? 0 }}</strong>
-          <span>已暴露 / {{ mcpServerPanel?.toolCount ?? 8 }} 个工具</span>
+        <div v-else-if="activeTab === 'mcp-server'" class="plugin-skills-page__header-actions">
+          <div class="plugin-skills-page__summary">
+            <strong>{{ mcpServerPanel?.enabledCount ?? 0 }}</strong>
+            <span>已暴露 / {{ mcpServerPanel?.toolCount ?? 8 }} 个工具</span>
+          </div>
+          <NButton
+            secondary
+            :disabled="!isNative || !mcpServerPanel"
+            :loading="mcpServerPanel?.loading"
+            @click="mcpServerPanel?.loadSettings()"
+          >
+            <template #icon
+              ><NIcon :size="15"><RefreshCw /></NIcon
+            ></template>
+            刷新策略
+          </NButton>
         </div>
-        <NButton
-          secondary
-          :disabled="!isNative || !mcpServerPanel"
-          :loading="mcpServerPanel?.loading"
-          @click="mcpServerPanel?.loadSettings()"
-        >
-          <template #icon
-            ><NIcon :size="15"><RefreshCw /></NIcon
-          ></template>
-          刷新策略
-        </NButton>
-      </div>
-    </header>
+      </template>
+    </SurfaceTitleBar>
 
     <div class="plugin-skills-page__content">
       <nav v-if="!contextNavigation" class="surface-tabs" role="tablist" aria-label="扩展类型">

@@ -9,9 +9,7 @@
   /* Hybrid glass tuning: native Acrylic blurs; these tokens own its visible tint. */
   --workspace-glass-tint-rgb: 30 34 40;
   --workspace-glass-tint-depth: 54%;
-  --workspace-menu-glass: rgb(
-    var(--workspace-glass-tint-rgb) / var(--workspace-glass-tint-depth)
-  );
+  --workspace-menu-glass: rgb(var(--workspace-glass-tint-rgb) / var(--workspace-glass-tint-depth));
   --workspace-glass-control: rgb(255 255 255 / 12%);
   --workspace-glass-border: rgb(255 255 255 / 18%);
   --workspace-nav-divider: #9e9e9a;
@@ -22,6 +20,7 @@
   --workspace-glass-selected: rgb(157 130 255 / 28%);
   --color-bg-editor: #ffffff;
   --color-bg-surface: #f8f8f7;
+  --color-bg-subtle: var(--color-bg-surface);
   --color-bg-elevated: #ffffff;
   --color-bg-hover: #efefed;
   --color-bg-active: #e8e8e5;
@@ -68,6 +67,18 @@
   --color-status-warning: #b7791f;
   --color-status-error: #c24135;
   --color-status-info: #1b64b0;
+  --font-size-micro: 10px;
+  --font-size-caption: 11px;
+  --font-size-small: 12px;
+  --font-size-body: 13px;
+  --font-size-body-large: 14px;
+  --font-size-title: 16px;
+  --font-size-title-large: 18px;
+  --font-size-page-title: 20px;
+  --font-size-display-small: 24px;
+  --font-size-display: 28px;
+  --font-size-display-large: 32px;
+  --font-size-hero: 52px;
   --color-content-gray-bg: #efefed;
   --color-content-gray-text: #5f5d57;
   --color-content-gray-border: #e2e2de;

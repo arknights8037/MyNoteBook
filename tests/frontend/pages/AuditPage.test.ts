@@ -45,7 +45,8 @@ describe('AuditPage', () => {
     const wrapper = mount(AuditPage, { global: { stubs: { Teleport: true } } })
     await flushPromises()
 
-    expect(wrapper.get('.operations-page__header').text()).toContain('2 条记录')
+    expect(wrapper.get('.surface-title-bar').text()).toContain('2 条记录')
+    expect(wrapper.get('.surface-title-bar h1').text()).toBe('全部记录')
     expect(wrapper.findAll('.audit-row')).toHaveLength(2)
     expect(wrapper.get('.audit-table').text()).toContain('search_documents')
   })

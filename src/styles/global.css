@@ -4,6 +4,7 @@
 @import './components/document-sidebar.css';
 @import './components/editor-topbar.css';
 @import './components/workspace-chrome.css';
+@import './components/surface-title-bar.css';
 @import './editor/editor-core.css';
 @import './editor/table-blocks.css';
 @import './editor/content-blocks.css';

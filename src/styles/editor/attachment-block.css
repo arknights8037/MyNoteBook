@@ -37,8 +37,8 @@
 
 .attachment-block__body span,
 .attachment-block__body p {
-  color: #7b7366;
-  font-size: 13px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-body);
 }
 
 .attachment-block__action {

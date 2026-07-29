@@ -17,7 +17,6 @@
   background: var(--color-bg-elevated);
 }
 
-.settings-page__header,
 .settings-card {
   border-color: var(--color-border-subtle);
   background: var(--color-bg-elevated);
@@ -32,7 +31,6 @@
 
 .settings-row strong,
 .settings-section__header h2,
-.settings-page__header h1,
 .document-list__title,
 .topbar-title-input,
 .topbar-title-input .n-input__input-el,
@@ -143,7 +141,7 @@
   align-items: center;
   gap: 5px;
   color: var(--color-text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-body);
   line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;

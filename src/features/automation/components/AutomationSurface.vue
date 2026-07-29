@@ -9,6 +9,8 @@ import type {
 } from '@/models/automation/automation'
 import type { AutomationService } from '@/services/automation/AutomationService'
 import { NButton, NIcon, NSelect } from '@/ui'
+import SurfaceTitleBar from '@/features/workspace/components/SurfaceTitleBar.vue'
+import { getWorkspaceSectionMeta } from '@/features/workspace/workspaceSections'
 
 const props = withDefaults(
   defineProps<{
@@ -38,6 +40,7 @@ type BrowserInputElement = InstanceType<typeof globalThis.HTMLInputElement>
 const enabledCount = computed(() => tasks.value.filter((task) => task.enabled).length)
 const queuedCount = computed(() => runs.value.filter((run) => run.status === 'queued').length)
 const shouldShowComposer = computed(() => showComposer.value || tasks.value.length === 0)
+const activeMeta = computed(() => getWorkspaceSectionMeta('automations', activeTab.value))
 const triggerOptions = [
   { label: '手动触发', value: 'manual' },
   { label: '按间隔', value: 'interval' },
@@ -142,12 +145,12 @@ onMounted(load)
 
 <template>
   <section class="operations-page" aria-label="自动化任务">
-    <header class="operations-page__header">
-      <div>
-        <h1>自动化任务</h1>
-        <p>{{ enabledCount }} 个已启用 · {{ queuedCount }} 个等待执行</p>
-      </div>
-      <div class="operations-page__header-actions">
+    <SurfaceTitleBar
+      :title="activeMeta.label"
+      :icon="activeMeta.icon"
+      :meta="`${enabledCount} 个已启用 · ${queuedCount} 个等待执行`"
+    >
+      <template #actions>
         <NButton secondary :loading="loading" @click="load">
           <template #icon
             ><NIcon :size="15"><RefreshCw /></NIcon
@@ -164,8 +167,8 @@ onMounted(load)
           ></template>
           新建自动化
         </NButton>
-      </div>
-    </header>
+      </template>
+    </SurfaceTitleBar>
 
     <div class="operations-page__content">
       <nav
