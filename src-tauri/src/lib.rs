@@ -88,6 +88,7 @@ mod email;
 mod governance;
 mod mcp;
 pub mod mcp_server_exposure;
+mod pi_worker_supervisor;
 mod rss;
 mod secret_store;
 mod sensitive_data;
@@ -308,6 +309,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0035_add_information_home.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 36,
+            description: "add_runtime_port_contracts",
+            sql: include_str!("../migrations/0036_add_runtime_port_contracts.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -394,6 +401,8 @@ pub fn run() {
             agent_tools::execute_rig_tool,
             work::commit_result_verification,
             work::decide_change_set,
+            work::record_authorization,
+            work::resolve_authorization,
             views::commit_view_refresh,
             views::set_view_manual_override,
             governance::create_delegation,

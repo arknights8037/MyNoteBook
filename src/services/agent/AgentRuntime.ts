@@ -11,6 +11,7 @@ import type { AgentDocumentEditProposal } from '@/services/agent/AgentEditPropos
 
 export interface AgentRuntimeResult {
   output: string
+  structuredOutput?: unknown
   rounds: number
   toolCalls: AgentToolCall[]
   finishReason?: string
@@ -31,6 +32,7 @@ export interface AgentProgressUpdate {
 
 export interface AgentRuntimeInput {
   taskId: string
+  runId?: string
   prompt: string
   context: string
   settings: AiSettings

@@ -712,8 +712,8 @@ describe('useAgentRun', () => {
     expect(run.workflow.runtimeState.value.authorizationRequest).toBeNull()
   })
 
-  it('auto-approves every tool from a trusted MCP server', async () => {
-    listMcpTools.mockResolvedValue([mcpTool(true, false)])
+  it('auto-approves read-only tools from a trusted MCP server', async () => {
+    listMcpTools.mockResolvedValue([mcpTool(true, true)])
     agentLoop.mockImplementation(async (input) => {
       await input.executeTool({
         name: input.externalTools[0].runtimeName,
@@ -730,6 +730,31 @@ describe('useAgentRun', () => {
     expect(callMcpTool).toHaveBeenCalledOnce()
     expect(run.workflow.runtimeState.value.status).toBe('completed')
     expect(run.workflow.runtimeState.value.authorizationRequest).toBeNull()
+  })
+
+  it('still requires execution authorization for a trusted write-capable MCP tool', async () => {
+    listMcpTools.mockResolvedValue([mcpTool(true, false)])
+    agentLoop.mockImplementation(async (input) => {
+      await input.executeTool({
+        name: input.externalTools[0].runtimeName,
+        arguments: { action: 'trusted-write' },
+      })
+      return noChangeAgentResult(2)
+    })
+    const settings = ref(createAiSettings('openai'))
+    settings.value.model = 'test-model'
+    const run = createRun(settings, snapshot(), async () => true, 'agent', '调用可信写工具')
+
+    const completion = run.workflow.run()
+    await vi.waitFor(() =>
+      expect(run.workflow.runtimeState.value.status).toBe('waiting_authorizer'),
+    )
+    const request = run.workflow.runtimeState.value.authorizationRequest
+    expect(run.workflow.answerAuthorization(request?.id ?? '', '仅允许本次调用')).toBe(true)
+    await completion
+
+    expect(callMcpTool).toHaveBeenCalledOnce()
+    expect(run.workflow.runtimeState.value.status).toBe('completed')
   })
 })
 

@@ -8,7 +8,11 @@ import type { AgentPatchProposal, AgentWriteCommand } from '@/services/agent/Age
 import type { AgentExternalTool } from '@/models/integrations/mcp'
 import { getAgentToolDefinition } from '@/services/agent/AgentToolRegistry'
 import { throwIfAgentToolAborted } from '@/services/agent/AgentToolCancellation'
-import { redactSensitiveText, redactSensitiveValue, safeAuditJson } from '@/services/security/SensitiveDataRedaction'
+import {
+  redactSensitiveText,
+  redactSensitiveValue,
+  safeAuditJson,
+} from '@/services/security/SensitiveDataRedaction'
 import { agentOutputSchema } from '@/services/agent/AgentOutputNormalizer'
 import {
   createToolCallSignature,
@@ -35,6 +39,7 @@ export interface ToolLifecycleContext {
   stepStartedAt: Map<number, number>
   resolvedStepDecisions: Set<number>
   activeStepNumber: number
+  activeTurnId: string | null
   failures: number
 }
 
@@ -88,7 +93,8 @@ function createToolDecisionSummary(toolName: string, args: Record<string, unknow
   if (toolName === 'get_current_document') return '下一步读取当前文档，建立本轮判断上下文。'
   if (toolName === 'get_selected_blocks') return '下一步读取当前选区，确认用户指定范围。'
   if (toolName === 'get_document_outline') return '下一步读取文档大纲，确认结构和目标位置。'
-  if (toolName === 'request_authorizer_input') return '下一步请求授权人决策，获得继续执行所需的信息。'
+  if (toolName === 'request_authorizer_input')
+    return '下一步请求授权人决策，获得继续执行所需的信息。'
   const label = getToolProgressLabel(toolName, false).replace(/^正在/, '')
   return `下一步${label}，获取继续判断所需的 Observation。`
 }
@@ -97,7 +103,10 @@ export async function executeTracked(
   ctx: ToolLifecycleContext,
   name: string,
   args: Record<string, unknown>,
-  options?: { internalExecute?: () => Promise<AgentToolExecutionResult> },
+  options?: {
+    internalExecute?: () => Promise<AgentToolExecutionResult>
+    providerToolCallId?: string
+  },
 ): Promise<unknown> {
   const { input, policy } = ctx
   throwIfAgentToolAborted(input.signal)
@@ -114,6 +123,9 @@ export async function executeTracked(
   const runningCall: AgentToolCall = {
     id: callId,
     taskId: input.taskId,
+    runId: input.runId ?? input.taskId,
+    turnId: ctx.activeTurnId,
+    providerToolCallId: options?.providerToolCallId ?? null,
     toolName: name,
     argumentsJson: safeAuditJson(args),
     resultJson: null,
@@ -157,9 +169,7 @@ export async function executeTracked(
     execution = { ok: false, error: 'ExecutionPolicy 不允许请求用户输入。' }
   } else if ((!definition && !externalDefinition) || definition?.risk === 'write') {
     execution = { ok: false, error: `工具 ${name} 不允许在 Agent loop 中执行。` }
-  } else if (
-    nextCount > (definition?.maxCallsPerTask ?? externalDefinition?.maxCallsPerTask ?? 0)
-  ) {
+  } else if (nextCount > (definition?.maxCallsPerRun ?? externalDefinition?.maxCallsPerRun ?? 0)) {
     execution = { ok: false, error: `工具 ${name} 超过单任务调用上限。` }
   } else {
     try {
@@ -230,6 +240,9 @@ export async function executeTracked(
   const call: AgentToolCall = {
     id: callId,
     taskId: input.taskId,
+    runId: input.runId ?? input.taskId,
+    turnId: ctx.activeTurnId,
+    providerToolCallId: options?.providerToolCallId ?? null,
     toolName: name,
     argumentsJson: safeAuditJson(args),
     resultJson: execution.ok ? safeAuditJson(safeValue) : null,
@@ -280,7 +293,10 @@ export function execute(
   ctx: ToolLifecycleContext,
   name: string,
   args: Record<string, unknown>,
-  options?: { internalExecute?: () => Promise<AgentToolExecutionResult> },
+  options?: {
+    internalExecute?: () => Promise<AgentToolExecutionResult>
+    providerToolCallId?: string
+  },
 ): Promise<unknown> {
   const lifecycle = executeTracked(ctx, name, args, options)
   ctx.inFlightTools.add(lifecycle)
@@ -293,6 +309,7 @@ export async function captureProposal(
   name: string,
   args: Record<string, unknown>,
   capture: () => void,
+  providerToolCallId?: string,
 ): Promise<unknown> {
   const { input, policy } = ctx
   const startedAt = Date.now()
@@ -308,6 +325,9 @@ export async function captureProposal(
   const runningCall: AgentToolCall = {
     id: callId,
     taskId: input.taskId,
+    runId: input.runId ?? input.taskId,
+    turnId: ctx.activeTurnId,
+    providerToolCallId: providerToolCallId ?? null,
     toolName: name,
     argumentsJson: safeAuditJson(args),
     resultJson: null,
@@ -338,7 +358,7 @@ export async function captureProposal(
     error = `ExecutionPolicy 不允许工具 ${name}。`
   } else if (!definition || definition.risk !== 'write') {
     error = `工具 ${name} 不是已注册的写入提案工具。`
-  } else if (nextCount > definition.maxCallsPerTask) {
+  } else if (nextCount > definition.maxCallsPerRun) {
     error = `工具 ${name} 超过单任务调用上限。`
   } else {
     try {
@@ -349,10 +369,13 @@ export async function captureProposal(
   }
   const value = error
     ? null
-    : { proposalCaptured: true, requiresConfirmation: true, message: '提案已进入确认队列。' }
+    : { proposalCaptured: true, mutationApproval: 'required', message: '提案已进入确认队列。' }
   const call: AgentToolCall = {
     id: callId,
     taskId: input.taskId,
+    runId: input.runId ?? input.taskId,
+    turnId: ctx.activeTurnId,
+    providerToolCallId: providerToolCallId ?? null,
     toolName: name,
     argumentsJson: safeAuditJson(args),
     resultJson: value ? safeAuditJson(value) : null,
@@ -385,42 +408,56 @@ export async function captureProposal(
 export function captureCommand(
   ctx: ToolLifecycleContext,
   command: AgentWriteCommand,
+  providerToolCallId?: string,
 ): Promise<unknown> {
-  return captureProposal(ctx, command.tool, command, () => {
-    if (ctx.proposedPatches.length > 0) throw new Error('commands 和 patches 不能混合提交。')
-    const candidate = [...ctx.proposedCommands, command]
-    assertDisjointCommandTargets(candidate)
-    const validated = agentOutputSchema.safeParse({
-      outcome: 'proposal',
-      commands: candidate,
-      patches: [],
-      finalAnswer: '',
-    })
-    if (!validated.success) throw new Error(validated.error.issues[0]?.message ?? '提案无效。')
-    ctx.proposedCommands.push(command)
-  })
+  return captureProposal(
+    ctx,
+    command.tool,
+    command,
+    () => {
+      if (ctx.proposedPatches.length > 0) throw new Error('commands 和 patches 不能混合提交。')
+      const candidate = [...ctx.proposedCommands, command]
+      assertDisjointCommandTargets(candidate)
+      const validated = agentOutputSchema.safeParse({
+        outcome: 'proposal',
+        commands: candidate,
+        patches: [],
+        finalAnswer: '',
+      })
+      if (!validated.success) throw new Error(validated.error.issues[0]?.message ?? '提案无效。')
+      ctx.proposedCommands.push(command)
+    },
+    providerToolCallId,
+  )
 }
 
 export function captureDocumentEdits(
   ctx: ToolLifecycleContext,
   args: z.infer<typeof documentEditProposalSchema>,
+  providerToolCallId?: string,
 ): Promise<unknown> {
-  return captureProposal(ctx, 'submit_document_edits', args, () => {
-    if (ctx.proposedCommands.length > 0 || ctx.proposedPatches.length > 0) {
-      throw new Error('一个任务只能提交一批最终写入提案。')
-    }
-    const proposal = documentEditProposalSchema.parse(args)
-    ctx.input.validateDocumentEditProposal?.(proposal)
-    const patches = proposal.documents.flatMap((document) =>
-      document.edits.map((edit) => ({
-        documentId: document.documentId,
-        operation: edit.kind,
-        blockId: edit.kind === 'replace' ? (edit.targetBlockIds[0] ?? '') : edit.anchorBlockId,
-        targetBlockIds: edit.kind === 'replace' ? edit.targetBlockIds : [edit.anchorBlockId],
-        after: edit.content,
-        reason: edit.reason,
-      })),
-    )
-    ctx.proposedPatches.push(...patches)
-  })
+  return captureProposal(
+    ctx,
+    'submit_document_edits',
+    args,
+    () => {
+      if (ctx.proposedCommands.length > 0 || ctx.proposedPatches.length > 0) {
+        throw new Error('一个任务只能提交一批最终写入提案。')
+      }
+      const proposal = documentEditProposalSchema.parse(args)
+      ctx.input.validateDocumentEditProposal?.(proposal)
+      const patches = proposal.documents.flatMap((document) =>
+        document.edits.map((edit) => ({
+          documentId: document.documentId,
+          operation: edit.kind,
+          blockId: edit.kind === 'replace' ? (edit.targetBlockIds[0] ?? '') : edit.anchorBlockId,
+          targetBlockIds: edit.kind === 'replace' ? edit.targetBlockIds : [edit.anchorBlockId],
+          after: edit.content,
+          reason: edit.reason,
+        })),
+      )
+      ctx.proposedPatches.push(...patches)
+    },
+    providerToolCallId,
+  )
 }

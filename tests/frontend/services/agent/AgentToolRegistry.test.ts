@@ -17,64 +17,67 @@ describe('AgentToolRegistry', () => {
     expect(AGENT_TOOL_REGISTRY).toHaveLength(25)
     expect(getAgentToolDefinition('read_mind_map')).toMatchObject({
       risk: 'read',
-      requiresConfirmation: false,
+      executionAuthorization: 'not_required',
+      mutationApproval: 'not_required',
       tags: ['knowledge.read'],
     })
     expect(getAgentToolDefinition('read_skill_file')).toMatchObject({
       risk: 'read',
-      requiresConfirmation: false,
-      maxCallsPerTask: 24,
+      executionAuthorization: 'not_required',
+      maxCallsPerRun: 24,
     })
     expect(getAgentToolDefinition('request_authorizer_input')).toMatchObject({
       risk: 'read',
-      requiresConfirmation: false,
-      maxCallsPerTask: 8,
+      executionAuthorization: 'not_required',
+      maxCallsPerRun: 8,
     })
     expect(getAgentToolDefinition('report_progress')).toMatchObject({
       risk: 'read',
-      requiresConfirmation: false,
-      maxCallsPerTask: 36,
+      executionAuthorization: 'not_required',
+      maxCallsPerRun: 36,
       tags: ['cognition.interact'],
     })
     expect(isAllowedAgentTool('execute_shell')).toBe(true)
     expect(getAgentToolDefinition('execute_shell')).toMatchObject({
       risk: 'read',
-      requiresConfirmation: false,
-      maxCallsPerTask: 12,
+      executionAuthorization: 'not_required',
+      maxCallsPerRun: 12,
     })
     expect(getAgentToolDefinition('replace_block')).toMatchObject({
       risk: 'write',
-      requiresConfirmation: true,
+      executionAuthorization: 'not_required',
+      mutationApproval: 'required',
       tags: ['document.propose_write'],
     })
     expect(getAgentToolDefinition('replace_text_by_regex')).toMatchObject({
       risk: 'write',
-      requiresConfirmation: true,
+      mutationApproval: 'required',
     })
     expect(getAgentToolDefinition('create_group')).toMatchObject({
       risk: 'write',
-      requiresConfirmation: true,
+      mutationApproval: 'required',
     })
     expect(getAgentToolDefinition('submit_document_edits')).toMatchObject({
       risk: 'write',
-      requiresConfirmation: true,
-      maxCallsPerTask: 4,
+      mutationApproval: 'required',
+      maxCallsPerRun: 4,
     })
     expect(getAgentToolDefinition('create_automation_draft')).toMatchObject({
       risk: 'draft',
-      requiresConfirmation: true,
-      maxCallsPerTask: 2,
+      executionAuthorization: 'required',
+      mutationApproval: 'not_required',
+      maxCallsPerRun: 2,
       tags: ['external.may_write'],
     })
     expect(getAgentToolDefinition('create_skill_draft')).toMatchObject({
       risk: 'draft',
-      requiresConfirmation: true,
-      maxCallsPerTask: 2,
+      executionAuthorization: 'required',
+      maxCallsPerRun: 2,
     })
     expect(getAgentToolDefinition('create_mcp_server_draft')).toMatchObject({
       risk: 'draft',
-      requiresConfirmation: true,
-      maxCallsPerTask: 2,
+      executionAuthorization: 'required',
+      maxCallsPerRun: 2,
       tags: ['external.may_write'],
     })
   })

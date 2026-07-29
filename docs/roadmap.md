@@ -1,6 +1,6 @@
 # 后续开发路线图
 
-本文是 MyNoteBook 未完成工程工作的权威排序，已按 2026-07-29 主干代码与 migration `0001`–`0035` 复核。当前架构事实见 [系统架构](architecture.md)，生产 Agent 行为见 [Agent Runtime](agent-runtime.md)，PI 评审输入见 [PI 接入资料](pi-integration-high-value.md)。
+本文是 MyNoteBook 未完成工程工作的权威排序，已按 2026-07-29 主干代码与 migration `0001`–`0036` 复核。当前架构事实见 [系统架构](architecture.md)，生产 Agent 行为见 [Agent Runtime](agent-runtime.md)，PI 评审输入见 [PI 接入资料](pi-integration-high-value.md)。
 
 路线图按依赖、交付物和退出条件推进，不承诺未经验证的日历日期。以下标签必须严格区分：
 
@@ -24,7 +24,7 @@
 
 > Agent Runtime、业务编排、授权等待和 A2A 轮询仍运行在 Vue/WebView 生命周期中。
 
-`useAgentRun.ts` 目前同时连接 UI 状态、模式分发、Context、MCP、Skill、模型循环、授权和持久化；A2A worker 使用 Vue `setInterval`。窗口/应用退出后普通 Agent Run 不能继续，也不能从 tool step checkpoint 恢复。后续不得继续围绕这条前端热路径叠加邮件、IM、定时器或长期 Workflow。
+`useAgentRun.ts` 目前已通过 Runtime Client/Port 驱动 AI SDK Adapter，但仍连接 UI 状态、模式分发、Context、MCP、Skill、授权和终态持久化；A2A worker 使用 Vue `setInterval`。窗口/应用退出后普通 Agent Run 不能继续，也不能从 tool step checkpoint 恢复。后续不得继续围绕这条前端热路径叠加邮件、IM、定时器或长期 Workflow。
 
 ## 2. 当前边界与目标边界
 
@@ -33,7 +33,8 @@
 ```text
 Vue / WebView
 ├── Ask / Edit / Agent / Auto 分发
-├── AI SDK ToolLoopAgent
+├── AgentRuntimeClient / Runtime Port
+├── AiSdkAgentRuntimeAdapter -> AI SDK ToolLoopAgent
 ├── Context / Tool / Skill / MCP 编译
 ├── Agent 生命周期、授权等待与 A2A polling
 └── TypeScript repositories ─────┐
@@ -100,11 +101,11 @@ Rust Core
 - `mutationApproval`：Patch、Knowledge Candidate 或其他规范数据修改的提交后审批。
 - `externalActionApproval`：发送邮件、外部提交、发布等不可逆副作用的执行前审批。
 
-这些语义必须分别持久化和展示。现有 `requiresConfirmation` 只能作为迁移字段，不能继续同时表达三类授权。
+这些语义分别持久化和展示；`requiresConfirmation` 已退出生产工具契约。
 
 ### 3.3 Runtime v1
 
-首版可替换 Runtime Port 必须提供：
+当前可替换 Runtime Port 已提供：
 
 ```text
 startRun(request)
@@ -115,7 +116,7 @@ subscribeEvents(runId)
 
 `resumeRun` 不属于 v1 承诺。没有 durable checkpoint 时，Workflow 通过新的 `run_id` 和 `causation_id` 继续，不恢复已经结束的模型循环。
 
-`AgentRunRequest` 至少冻结：
+当前 `AgentRunRequest v1` 冻结：
 
 ```text
 runId / workItemId / workflowId?
@@ -128,7 +129,7 @@ outputContract
 correlationId / causationId
 ```
 
-运行事件至少覆盖：
+Runtime 事件契约覆盖：
 
 ```text
 run.started / run.progress / run.completed / run.failed / run.cancelled
@@ -151,70 +152,19 @@ ExecutionPolicy 后续版本必须在每次模型 turn 和 tool batch 后累计�
 - `maxModelTurns`
 - `maxParallelTools`
 
-当前 `tokenBudget` 主要限制输出上限，不得在文档或 UI 中描述成已经实现的累计成本预算。
+当前已冻结累计预算协议，但除输出和模型轮次外尚未实现跨 turn 的累计硬限制，不得在文档或 UI 中描述成已经实现的累计成本预算。
 
-## 4. Phase 0：安全与基础契约
-
-### 目标
-
-先修正已经出现的权限和语义漂移，为 Runtime 抽离建立稳定边界。
-
-### 交付物
-
-- MCP 免确认规则改为 `serverTrusted && readOnly`，并覆盖 trusted/write、trusted/read、untrusted/read、untrusted/write 契约测试。
-- 将调用授权、Mutation 审批和外部动作审批拆成独立类型与状态。
-- 落地 ID 词汇表和新旧 ID 映射，不再创建新的 `sessionId=documentId` 依赖。
-- 定义累计 Token/成本/turn/并行工具预算协议。
-- 建立“Node 禁止 SQLite”“不新增 WebView 写库”的代码审查和测试约束。
-- 盘点 CSP、主窗口 SQL execute、fs/opener 权限；只形成迁移清单，不提前撤销仍被现有 UI 使用的能力。
-
-### 依赖
-
-无；这是所有后续阶段的前置条件。
-
-### 退出条件
-
-- 权限测试可重复证明非只读 MCP 不会因 Server trusted 自动执行。
-- 新协议能区分 work item、workflow、run、turn、tool call 和 session。
-- 文档、代码、测试对当前行为和目标不变量没有矛盾。
-
-### 本阶段不做
-
-- 不接入 PI，不启动 Node Worker，不迁移数据库表所有权。
-
-## 5. Phase 1：可替换 Runtime Port
-
-### 目标
-
-先定义应用自己的 Runtime 边界，再把当前 AI SDK 实现放到边界之后。
-
-### 交付物
-
-- 新增 runtime/tool/context contracts 和 Runtime Client；当前根 Vue package 暂不整体迁入 `apps/desktop`。
-- 将现有 AI SDK `ToolLoopAgent` 包装为 `AiSdkAgentRuntimeAdapter`。
-- Domain Tool Manifest 成为 name/schema/risk/authorization/call cap/tag/presentation 的单一来源或可验证快照源。
-- 统一 Runtime 事件映射、Provider Tool Call ID 映射、错误、usage、取消和 structured output。
-- `useAgentRun` 暂时仍可托管 adapter，但只能通过 Runtime Port 与其交互。
-
-### 依赖
-
-Phase 0 完成。
-
-### 退出条件
-
-- 现有 Agent、Research、Review、Learning 和 Patch 流程通过新 Port 运行，用户可见行为不变。
-- 同一个 `run_id` 只能由一个 Runtime adapter 驱动。
-- 不产生第二套 Tool Registry、MCP Client、Context Bundle 或 Patch 协议。
-
-### 本阶段不做
-
-- 不改变生产 Runtime 技术栈，不迁移 Ask/Edit，不引入后台执行。
-
-## 6. Phase 2：Node + PI 纵向原型
+## 6. Phase 2：Node + PI 纵向原型（已完成）
 
 ### 目标
 
 验证 PI 能否作为可替换 Worker 实现，而不是预先宣布全面迁移。
+
+### 决策结果（2026-07-29）
+
+纵向原型和定向对比已完成，决策门选择 **保留 AI SDK**。PI 已证明可以适配共享 Runtime contracts、Tool Manifest、NDJSON 工具 RPC 和 Patch 提案边界，但真实 Provider/Tauri 代理、授权等待与 structured-output repair 尚未达到现有 AI SDK 的生产证据强度。Phase 3 首次迁出 WebView 时只改变运行位置，不同时更换模型循环。完整证据、缺口与重新开启条件见 [Phase 2 PI Runtime 原型与决策记录](pi-runtime-phase2-decision.md)。
+
+合并后维护已补齐新审批字段的前端审计测试基线，并消除 Mind Map 右键菜单在主点击关闭时的事件竞态；Phase 2 相关定向回归保持通过。
 
 ### 原型链路
 
@@ -239,7 +189,7 @@ AgentRunRequest
 
 ### 依赖
 
-Phase 1 的 Runtime Port 和 Tool Manifest。
+当前主干已经落地的 Runtime Port 和统一 Tool Manifest。
 
 ### 退出条件与决策门
 
@@ -250,6 +200,8 @@ Phase 1 的 Runtime Port 和 Tool Manifest。
 3. 同时采用 `pi-agent-core + pi-ai`。
 
 无论选择哪项，Rust Core、Domain Tool、MCP、Skill、审批和数据库边界保持不变。
+
+本次已选择第 1 项；第 2、3 项不进入 Phase 3 的首次生产迁移。
 
 ### 本阶段不做
 

@@ -1,6 +1,10 @@
 import { computed, ref, shallowReactive } from 'vue'
 
 import type { AgentRuntimeResult } from '@/services/agent/AgentRuntime'
+import type { ContextBundle } from '@/models/agent/contextBundle'
+import type { AgentRuntimeEvent } from '@/models/agent/agentRuntimeContract'
+import type { AgentToolCall } from '@/models/agent/agentTool'
+import type { AgentRuntimeClient } from '@/services/agent/AgentRuntimeClient'
 import type { KnowledgeSource } from '@/models/knowledge/knowledgeRetrieval'
 import { createIdleAgentRuntimeState } from '@/models/agent/agentRuntime'
 import { buildAiPrompt } from '@/services/ai/AiPromptPolicy'
@@ -29,7 +33,10 @@ import {
 import { createAgentRunRuntimeController } from './agentRun/agentRunRuntimeController'
 import { describeAgentRunCompletion } from './agentRun/agentRunIntentStrategy'
 import { prepareAgentRun } from './agentRun/agentRunPreparation'
-import { createExecuteToolCallback, type ReadableDocument } from './agentRun/agentRunToolExecutorFactory'
+import {
+  createExecuteToolCallback,
+  type ReadableDocument,
+} from './agentRun/agentRunToolExecutorFactory'
 import { resolveAgentRunOutput } from './agentRun/agentRunOutputResolution'
 
 export {
@@ -57,7 +64,9 @@ async function loadAgentRunModulesUncached() {
   const [
     { runAiMarkdownCompletion },
     { buildAiSystemPrompt },
-    { runAgentToolLoop },
+    { AiSdkAgentRuntimeAdapter },
+    { AgentRuntimeClient },
+    { buildDomainToolManifest },
     { executeAgentTool, prepareReadDocumentObservation },
     { executeRustAgentTool },
     { loadEnabledSkillPrompt },
@@ -65,7 +74,9 @@ async function loadAgentRunModulesUncached() {
   ] = await Promise.all([
     import('@/services/ai/AiMarkdownService'),
     import('@/services/ai/AiSystemPrompt'),
-    import('@/services/agent/AgentRuntime'),
+    import('@/services/ai/AiSdkAgentRuntime'),
+    import('@/services/agent/AgentRuntimeClient'),
+    import('@/services/agent/DomainToolManifest'),
     import('@/services/agent/AgentToolExecutor'),
     import('@/services/agent/RustAgentToolService'),
     import('@/services/integrations/SkillService'),
@@ -74,7 +85,9 @@ async function loadAgentRunModulesUncached() {
   return {
     runAiMarkdownCompletion,
     buildAiSystemPrompt,
-    runAgentToolLoop,
+    AiSdkAgentRuntimeAdapter,
+    AgentRuntimeClient,
+    buildDomainToolManifest,
     executeAgentTool,
     prepareReadDocumentObservation,
     executeRustAgentTool,
@@ -89,14 +102,23 @@ export function useAgentRun(options: UseAgentRunOptions) {
   const fallbackRuntime = createAgentRunRuntimeController(options.createId)
   const runtimes = shallowReactive(new Map<string, RuntimeController>())
   const activeRuns = shallowReactive(
-    new Map<string, { abortController: AbortController; runtime: RuntimeController }>(),
+    new Map<
+      string,
+      {
+        abortController: AbortController
+        runtime: RuntimeController
+        runtimeClient?: AgentRuntimeClient
+        runtimeRunId?: string
+        unsubscribeRuntime?: () => void
+      }
+    >(),
   )
   const lastTaskId = ref<string | null>(null)
   const lastRunIssue = ref('')
   const lastRunReport = ref<AgentCommunicationResult | null>(null)
   const activeConversationId = ref<string | null>(null)
-  const selectedConversationId = computed(
-    () => (options.workspace ? options.workspace.conversationId.value : activeConversationId.value),
+  const selectedConversationId = computed(() =>
+    options.workspace ? options.workspace.conversationId.value : activeConversationId.value,
   )
   const selectedRuntime = computed(
     () => runtimes.get(selectedConversationId.value ?? '') ?? fallbackRuntime,
@@ -165,6 +187,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
         session,
         runContext,
         options,
+        runId,
         hasCognitivePersistence: hasCognitivePersistence(),
         getCognitiveSessionService,
       })
@@ -197,7 +220,9 @@ export function useAgentRun(options: UseAgentRunOptions) {
     const {
       runAiMarkdownCompletion,
       buildAiSystemPrompt,
-      runAgentToolLoop,
+      AiSdkAgentRuntimeAdapter,
+      AgentRuntimeClient,
+      buildDomainToolManifest,
       executeAgentTool,
       prepareReadDocumentObservation,
       executeRustAgentTool,
@@ -217,6 +242,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
     const discoveredDocumentIds = new Set(workspaceDocumentIds)
     const readableDocuments = new Map<string, ReadableDocument>()
     const taskApprovedMcpServerIds = new Set<string>()
+    let runtimeContextBundle: ContextBundle | null = null
 
     if (editPlan) lastTaskId.value = editPlan.task.id
 
@@ -243,9 +269,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
     options.isRunning.value = true
     runContext.workspace?.requestConversationTitle?.(conversationId, snapshot.prompt)
     runContext.error.value = ''
-    runtime.beginExecution(
-      mode === 'agent' ? '正在准备 Agent 任务' : '正在准备文档上下文',
-    )
+    runtime.beginExecution(mode === 'agent' ? '正在准备 Agent 任务' : '正在准备文档上下文')
     const syncRuntimeMessage = (): void => {
       const message = runContext.messages.value[assistantIndex]
       if (!message || message.role !== 'assistant') return
@@ -419,6 +443,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
         })
         if (!savedBundle.ok) throw new Error(savedBundle.error.message)
         editPlan.task.contextBundleId = contextBundle.id
+        runtimeContextBundle = contextBundle
       }
       const mcpRuntimeTools =
         mode === 'agent' && options.services?.mcpClient
@@ -525,13 +550,69 @@ export function useAgentRun(options: UseAgentRunOptions) {
           currentMessage.content += delta
         }
       }
+      const projectRuntimeEvent = (event: AgentRuntimeEvent): void => {
+        if (event.type === 'message.progress') {
+          const delta = typeof event.payload.delta === 'string' ? event.payload.delta : ''
+          const channel = event.payload.channel === 'reasoning' ? 'reasoning' : 'content'
+          if (delta) handleDelta(delta, channel)
+          return
+        }
+        if (event.type === 'run.progress') {
+          const detail = typeof event.payload.detail === 'string' ? event.payload.detail : ''
+          const phase = event.payload.phase
+          if (
+            phase !== 'planning' &&
+            phase !== 'tool_running' &&
+            phase !== 'tool_completed' &&
+            phase !== 'finalizing'
+          ) {
+            return
+          }
+          if (editPlan && editPlan.task.status === 'running') editPlan.task.currentStep = detail
+          applyProgressUpdate({
+            phase,
+            detail,
+            ...(typeof event.payload.toolName === 'string'
+              ? { toolName: event.payload.toolName }
+              : {}),
+            ...(event.payload.timelineEvent && typeof event.payload.timelineEvent === 'object'
+              ? {
+                  timelineEvent: event.payload.timelineEvent as Parameters<
+                    typeof applyProgressUpdate
+                  >[0]['timelineEvent'],
+                }
+              : {}),
+          })
+          syncRuntimeMessage()
+          return
+        }
+        if (event.type.startsWith('tool.')) {
+          const call = event.payload.toolCall as AgentToolCall | undefined
+          if (!call) return
+          applyProgressUpdate({
+            phase: call.status === 'completed' ? 'tool_completed' : 'tool_running',
+            toolName: call.toolName,
+            detail: call.error || call.toolName,
+            toolCall: call,
+          })
+          syncRuntimeMessage()
+        }
+      }
       runtime.beginExecution(
-        mode === 'agent'
-          ? '正在规划任务'
-          : mode === 'edit'
-            ? '正在生成修改提案'
-            : '正在生成回答',
+        mode === 'agent' ? '正在规划任务' : mode === 'edit' ? '正在生成修改提案' : '正在生成回答',
       )
+      let runtimeAuthorizationBridge: {
+        requestAuthorization: (
+          runId: string,
+          request: {
+            id?: string
+            question: string
+            context: string
+            options: string[]
+            allowFreeText: boolean
+          },
+        ) => Promise<string>
+      } | null = null
       const executeToolCallback = editPlan
         ? createExecuteToolCallback({
             snapshot,
@@ -542,7 +623,10 @@ export function useAgentRun(options: UseAgentRunOptions) {
             workspaceDocumentIds,
             discoveredDocumentIds,
             readableDocuments,
-            waitForAuthorizerInput,
+            waitForAuthorizerInput: (request, task) =>
+              runtimeAuthorizationBridge
+                ? runtimeAuthorizationBridge.requestAuthorization(task.runId, request)
+                : waitForAuthorizerInput(request, task),
             executeAgentTool,
             executeRustAgentTool,
             parseReadDocumentProvenance,
@@ -554,27 +638,87 @@ export function useAgentRun(options: UseAgentRunOptions) {
         learningState?.attempts.length === 0
           ? JSON.stringify(createInitialLearningTurn(learningState.topic))
           : mode === 'agent' && editPlan
-            ? await runAgentToolLoop({
-                taskId: editPlan.task.id,
-                ...runtimeExecution!,
-                settings: snapshot.settings,
-                signal: abortController?.signal,
-                createId: options.createId,
-                validateDocumentEditProposal: (proposal) =>
-                  validateDocumentEditProvenance(proposal, [...readableDocuments.values()]),
-                onDelta: handleDelta,
-                onProgress: (update) => {
-                  if (!editPlan || editPlan.task.status !== 'running') return
-                  editPlan.task.currentStep = update.detail
-                  applyProgressUpdate(update)
-                  syncRuntimeMessage()
-                },
-                executeTool: executeToolCallback!,
-                recordToolCall: async (call) => {
-                  const result = await (await options.patches.getRepository()).recordToolCall(call)
-                  if (!result.ok) throw new Error(result.error.message)
-                },
-              }).then((result) => {
+            ? await (async () => {
+                if (!runtimeContextBundle) throw new Error('Agent Runtime 缺少 Context Bundle。')
+                const adapter = new AiSdkAgentRuntimeAdapter({
+                  createId: options.createId,
+                  resolveCredential: async () => snapshot.settings.apiKey,
+                  executeTool: executeToolCallback!,
+                  recordToolCall: async (call) => {
+                    const result = await (
+                      await options.patches.getRepository()
+                    ).recordToolCall(call)
+                    if (!result.ok) throw new Error(result.error.message)
+                  },
+                  requestAuthorizerInput: (request) =>
+                    waitForAuthorizerInput(request, editPlan.task),
+                  answerAuthorization: runtime.answerAuthorization,
+                  resolveOutputContract: (descriptor) => {
+                    const contract = cognitiveRun?.outputContract
+                    return contract &&
+                      contract.id === descriptor.id &&
+                      contract.version === descriptor.version
+                      ? contract
+                      : null
+                  },
+                  validateDocumentEditProposal: (proposal) =>
+                    validateDocumentEditProvenance(proposal, [...readableDocuments.values()]),
+                })
+                runtimeAuthorizationBridge = adapter
+                const client = new AgentRuntimeClient(adapter)
+                const active = activeRuns.get(runKey)
+                if (active) {
+                  active.runtimeClient = client
+                  active.runtimeRunId = editPlan.task.runId
+                }
+                const unsubscribe = client.subscribeEvents(editPlan.task.runId, (event) => {
+                  projectRuntimeEvent(event)
+                })
+                if (active) active.unsubscribeRuntime = unsubscribe
+                const result = await client.startRun({
+                  version: 1,
+                  runId: editPlan.task.runId,
+                  workItemId: editPlan.task.id,
+                  workflowId: editPlan.task.workflowId ?? undefined,
+                  sessionId: editPlan.task.sessionId,
+                  objective: runtimeExecution!.prompt,
+                  intent: runtimeExecution!.intent,
+                  systemInstructions: runtimeExecution!.systemPrompt,
+                  compiledContext: runtimeExecution!.context,
+                  contextBundle: runtimeContextBundle,
+                  executionPolicy: runtimeExecution!.executionPolicy,
+                  toolManifest: buildDomainToolManifest(runtimeExecution!.externalTools),
+                  modelPolicy: {
+                    provider: snapshot.settings.provider,
+                    model: snapshot.settings.model,
+                    endpoint: snapshot.settings.endpoint,
+                    temperature: snapshot.settings.temperature,
+                    topP: snapshot.settings.topP,
+                    reasoningEffort: snapshot.settings.reasoningEffort,
+                    maxOutputTokens: resolveAgentOutputTokenLimit(
+                      snapshot.settings.maxTokens,
+                      runtimeExecution!.executionPolicy,
+                    ),
+                    credentialRef: {
+                      kind: 'provider_secret',
+                      provider: snapshot.settings.provider,
+                    },
+                  },
+                  ...(runtimeExecution!.outputContract
+                    ? {
+                        outputContract: {
+                          id: runtimeExecution!.outputContract.id,
+                          version: runtimeExecution!.outputContract.version,
+                          jsonSchema: runtimeExecution!.outputContract.jsonSchema,
+                          systemInstruction: runtimeExecution!.outputContract.systemInstruction,
+                        },
+                      }
+                    : {}),
+                  correlationId: editPlan.task.correlationId,
+                  causationId: editPlan.task.causationId,
+                })
+                return result
+              })().then((result) => {
                 agentRounds = result.rounds
                 agentToolCallCount = result.toolCalls.length
                 agentDiagnostics = {
@@ -687,7 +831,11 @@ export function useAgentRun(options: UseAgentRunOptions) {
   }
 
   function finishRun(runKey: string, runtime: RuntimeController): void {
-    if (activeRuns.get(runKey)?.runtime === runtime) activeRuns.delete(runKey)
+    const active = activeRuns.get(runKey)
+    if (active?.runtime === runtime) {
+      active.unsubscribeRuntime?.()
+      activeRuns.delete(runKey)
+    }
     options.isRunning.value = activeRuns.size > 0
   }
 
@@ -695,13 +843,28 @@ export function useAgentRun(options: UseAgentRunOptions) {
     const requestedId = conversationId ?? selectedConversationId.value
     const active = requestedId ? activeRuns.get(requestedId) : null
     const target = active ?? (activeRuns.size === 1 ? [...activeRuns.values()][0] : null)
+    if (target?.runtimeClient && target.runtimeRunId) {
+      void target.runtimeClient.cancelRun(target.runtimeRunId).catch(() => undefined)
+    } else {
+      target?.abortController.abort()
+    }
     target?.runtime.cancelPendingAuthorization('用户停止了 Agent。')
-    target?.abortController.abort()
   }
 
   function answerAuthorization(requestId: string, answer: string): boolean {
-    for (const { runtime } of activeRuns.values()) {
-      if (runtime.answerAuthorization(requestId, answer)) return true
+    for (const active of activeRuns.values()) {
+      if (active.runtime.runtimeState.value.authorizationRequest?.id !== requestId) continue
+      if (active.runtimeClient && active.runtimeRunId) {
+        void active.runtimeClient
+          .steerRun(active.runtimeRunId, {
+            kind: 'authorization_response',
+            authorizationId: requestId,
+            answer,
+          })
+          .catch((error) => options.notify.error(formatAiErrorMessage(error)))
+        return true
+      }
+      if (active.runtime.answerAuthorization(requestId, answer)) return true
     }
     return false
   }

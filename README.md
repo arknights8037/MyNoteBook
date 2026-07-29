@@ -125,7 +125,7 @@ Agent Work 是用户看见和控制任务的工作台，Work 是任务结果进�
 
 ## 运行时演进方向
 
-当前生产 Agent Runtime 仍运行在 Vue/WebView 中，使用 AI SDK `ToolLoopAgent`；应用没有后台 Worker、Node sidecar、托盘常驻或 daemon。Rust SQLx 与 TypeScript `plugin-sql` 目前也都会访问 SQLite，因此 Rust 尚不是严格的单一数据库进程所有者。
+当前生产 Agent Runtime 仍运行在 Vue/WebView 中，由 `AgentRuntimeClient` 通过 Runtime Port 驱动 `AiSdkAgentRuntimeAdapter`，Adapter 内部使用 AI SDK `ToolLoopAgent`；应用没有后台 Worker、Node sidecar、托盘常驻或 daemon。Rust SQLx 与 TypeScript `plugin-sql` 目前也都会访问 SQLite，因此 Rust 尚不是严格的单一数据库进程所有者。
 
 既定方向是逐步让 Rust Core 成为 SQLite、连接器、凭据、Workflow 状态和副作用的唯一所有者，并把 Agent Runtime 放到可替换的 Worker 边界。Node Worker 不直接访问 SQLite。现有 Patch → Diff → 人工确认 → Rust transaction → rollback 链路保持不变。PI 只是需要通过纵向原型决策门的候选 Runtime 实现，目前并未采用。
 

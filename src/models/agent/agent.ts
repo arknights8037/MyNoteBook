@@ -7,6 +7,7 @@ export type AgentTaskStatus =
   | 'waiting_confirmation'
   | 'completed'
   | 'failed'
+  | 'interrupted'
   | 'cancelled'
 
 export type AgentPatchOperation =
@@ -27,7 +28,10 @@ export interface SelectedBlock {
 
 export interface AgentTask {
   id: string
+  runId: string
+  workflowId: string | null
   sessionId: string
+  documentId: string
   projectId: string
   conversationId: string
   status: AgentTaskStatus
@@ -177,7 +181,10 @@ export function validateBlockPatch(
 
 export function createAgentTask(input: {
   id: string
+  runId: string
+  workflowId?: string | null
   sessionId: string
+  documentId: string
   projectId?: string
   conversationId?: string
   userInstruction: string
@@ -190,7 +197,10 @@ export function createAgentTask(input: {
 }): AgentTask {
   return {
     id: input.id,
+    runId: input.runId,
+    workflowId: input.workflowId ?? null,
     sessionId: input.sessionId,
+    documentId: input.documentId,
     projectId: input.projectId ?? '',
     conversationId: input.conversationId ?? '',
     status: 'pending',

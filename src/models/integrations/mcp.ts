@@ -1,4 +1,8 @@
 import type { AgentToolTag } from '@/models/cognitive/cognitive'
+import type {
+  AgentAuthorizationRequirement,
+  AgentToolPresentationMetadata,
+} from '@/models/agent/agentTool'
 
 export type McpTransport = 'stdio' | 'http'
 
@@ -45,9 +49,12 @@ export interface McpServerExposureSettings {
 
 export interface AgentExternalTool extends McpToolDescriptor {
   runtimeName: string
-  requiresConfirmation: boolean
-  maxCallsPerTask: number
+  executionAuthorization: AgentAuthorizationRequirement
+  mutationApproval: AgentAuthorizationRequirement
+  externalActionApproval: AgentAuthorizationRequirement
+  maxCallsPerRun: number
   tags: AgentToolTag[]
+  presentation: AgentToolPresentationMetadata
 }
 
 export function createMcpRuntimeTools(tools: McpToolDescriptor[]): AgentExternalTool[] {
@@ -61,9 +68,15 @@ export function createMcpRuntimeTools(tools: McpToolDescriptor[]): AgentExternal
     return {
       ...tool,
       runtimeName,
-      requiresConfirmation: !tool.serverTrusted,
-      maxCallsPerTask: 32,
+      executionAuthorization: tool.serverTrusted && tool.readOnly ? 'not_required' : 'required',
+      mutationApproval: 'not_required',
+      externalActionApproval: 'not_required',
+      maxCallsPerRun: 32,
       tags: [tool.readOnly ? 'external.read' : 'external.may_write'],
+      presentation: {
+        label: tool.title?.trim() || tool.name,
+        category: 'external',
+      },
     }
   })
 }

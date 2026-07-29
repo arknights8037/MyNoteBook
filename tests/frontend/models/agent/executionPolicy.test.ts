@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { createDefaultExecutionPolicy, normalizeExecutionPolicy } from '@/models/agent/executionPolicy'
+import {
+  createDefaultExecutionPolicy,
+  normalizeExecutionPolicy,
+} from '@/models/agent/executionPolicy'
 
 describe('executionPolicy', () => {
   it('allows production agent runs well beyond six tool rounds', () => {
@@ -10,6 +13,14 @@ describe('executionPolicy', () => {
     expect(policy.maxToolFailures).toBe(10)
     expect(policy.maxDurationMs).toBe(15 * 60 * 1000)
     expect(policy.maxRetries).toBe(4)
+    expect(policy.budget).toEqual({
+      maxInputTokens: null,
+      maxOutputTokens: 8_000,
+      maxTotalTokens: null,
+      maxCostUsdMicros: null,
+      maxModelTurns: 48,
+      maxParallelTools: null,
+    })
   })
 
   it('keeps a hard upper bound for persisted or imported policies', () => {

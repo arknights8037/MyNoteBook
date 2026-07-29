@@ -107,7 +107,7 @@ pub fn list_installed_skills(
         .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
         .filter_map(|entry| inspect_skill(&entry.path(), &disabled).ok())
         .collect::<Vec<_>>();
-    skills.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    skills.sort_by_key(|skill| skill.name.to_lowercase());
     Ok(skills)
 }
 

@@ -404,7 +404,7 @@ AgentToolRegistry                 # name/risk/confirmation/call cap/tags
 | ----------------------- | -------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | `search_documents`      | 只读           | `{query, limit<=10, scope}`；Rust `SearchDocumentsTool` 查询 SQLite FTS5             | policy + registry call cap 24；workspace/global scope；返回 id/title/snippet/revision                           |
 | `read_document`         | 只读           | `{documentId,cursor,maxChars,blockIds}`；Rust 分页读 canonical block，TS 转 Markdown | 只能读工作区或本次 global search 发现的文档；记录 provenance；相同读取复用 Observation                          |
-| `submit_document_edits` | 修改提案       | Zod `documentEditProposalSchema`；Runtime 内捕获，不调用 DB executor                 | `risk=write`、`requiresConfirmation=true`；校验本次读取的 document/revision/block，最终进入 Diff 确认           |
+| `submit_document_edits` | 修改提案       | Zod `documentEditProposalSchema`；Runtime 内捕获，不调用 DB executor                 | `risk=write`、`mutationApproval=required`；校验本次读取的 document/revision/block，最终进入 Diff 确认           |
 | `create_skill_draft`    | 有副作用       | `{name,description,instructions}`；TS service + Rust Skill commands                  | 先 `request_authorizer_input`；只写本地停用 Skill 草稿，不启用                                                  |
 | `mcp__<server>__<tool>` | 外部           | MCP 原始 JSON Schema -> AI SDK `jsonSchema()` -> Rust `rmcp`                         | **当前代码只按 server trusted 决定是否免确认**；`readOnlyHint` 只影响 tag/重试。支持 call-id 取消和 30s timeout |
 | `execute_shell`         | 本机只读副作用 | command enum + args/timeout/output cap；Rust 固定白名单                              | 只允许受限 PowerShell 查询、只读 git/rg 与版本查询；禁止脚本字符串和写命令                                      |
@@ -456,7 +456,7 @@ interface AgentToolCall {
 - Zod/JSON Schema/Rust schema 重复；
 - AI SDK `ToolSet` 的 `execute` 闭包与 lifecycle context 绑在一起；
 - 部分工具由 TS 直接执行，部分由 Rust，MCP 又返回原生 MCP payload；
-- `requiresConfirmation` 对文档写工具表示“最终 Patch 审批”，对草稿/MCP 表示“调用前授权”，语义需要拆分；MCP 的 `readOnlyHint` 尚未进入免确认判定。
+- 工具契约已拆分 `executionAuthorization`、`mutationApproval` 和 `externalActionApproval`；MCP 只有 trusted + readOnly 才免执行授权。
 
 ## 5. Tauri 和 Rust 当前负责什么
 

@@ -117,7 +117,7 @@ Prompt 编译顺序固定为：
 2. Mode/Template/Skill 都不能开放基础策略禁止的写入或工具。
 3. `deniedToolTags` 优先于 `allowedToolTags`。
 4. Tool Tags 在运行前解析成稳定工具名并写入 ExecutionPolicy。
-5. Cognitive Tool Tag 编译可以禁止 `external.may_write`，但普通 Agent 的 MCP 调用前确认当前只按 `serverTrusted` 判断，尚未把 `readOnlyHint` 纳入免确认条件。目标规则是仅 `serverTrusted && readOnlyHint` 可免 `executionAuthorization`，修复见 [路线图 Phase 0](roadmap.md#4-phase-0安全与基础契约)。
+5. Cognitive Tool Tag 编译可以禁止 `external.may_write`；普通 Agent 只有 `serverTrusted && readOnlyHint` 的 MCP 工具可免 `executionAuthorization`。
 6. Output Contract 只控制返回结构，不能执行写入。
 
 第一版 tags 至少覆盖：

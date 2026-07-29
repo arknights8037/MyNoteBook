@@ -7,7 +7,7 @@ MyNoteBook 可以作为 MCP Client 连接用户显式导入并启用的外部服
 - 工具发现：管理页可测试连接并显示服务提供的工具。
 - Resource 发现与读取：Integration Gateway 提供 `resources/list` 和 `resources/read`，保留 30 秒超时与有界会话。
 - Agent 动态工具：每次 Agent 运行开始时读取所有已启用服务的工具 schema，并注册为原生 function calling 工具。
-- 调用保护（当前实现）：服务默认不可信，`requiresConfirmation` 实际只由 `!serverTrusted` 决定；`readOnlyHint` 只影响工具标签和只读重试。因此受信任 Server 上的非只读工具当前也会免逐次确认。这是已知 P0 差距，不是目标策略。
+- 调用保护（当前实现）：服务默认不可信，只有 `serverTrusted && readOnly` 的工具可免 `executionAuthorization`；trusted/write、untrusted/read 和 untrusted/write 均需授权。
 
 ## 导入格式
 

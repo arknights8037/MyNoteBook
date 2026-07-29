@@ -1,4 +1,8 @@
-import type { AgentToolExecutionResult, AgentToolRequest, AgentToolExecutionContext } from '@/services/agent/AgentToolExecutor'
+import type {
+  AgentToolExecutionResult,
+  AgentToolRequest,
+  AgentToolExecutionContext,
+} from '@/services/agent/AgentToolExecutor'
 import type { AgentExternalTool } from '@/models/integrations/mcp'
 import { normalizeDocumentTitle } from '@/models/documents/documentPresentation'
 import type { AgentRunDocumentSnapshot, UseAgentRunOptions } from './types'
@@ -21,7 +25,13 @@ export interface ToolExecutorFactoryInput {
   discoveredDocumentIds: Set<string>
   readableDocuments: Map<string, ReadableDocument>
   waitForAuthorizerInput: (
-    request: { question: string; context: string; options: string[]; allowFreeText: boolean },
+    request: {
+      id?: string
+      question: string
+      context: string
+      options: string[]
+      allowFreeText: boolean
+    },
     task: AgentEditPlan['task'],
   ) => Promise<string>
   executeAgentTool: (
@@ -34,10 +44,7 @@ export interface ToolExecutorFactoryInput {
     callId?: string,
     signal?: AbortSignal,
   ) => Promise<unknown>
-  parseReadDocumentProvenance: (
-    toolResult: unknown,
-    documentId: string,
-  ) => ReadableDocument | null
+  parseReadDocumentProvenance: (toolResult: unknown, documentId: string) => ReadableDocument | null
 }
 
 export function createExecuteToolCallback(input: ToolExecutorFactoryInput) {
@@ -57,23 +64,63 @@ export function createExecuteToolCallback(input: ToolExecutorFactoryInput) {
   } = input
 
   return async (request: AgentToolRequest): Promise<AgentToolExecutionResult> => {
-    const externalTool = mcpRuntimeTools.find(
-      (tool) => tool.runtimeName === request.name,
-    )
-    if (externalTool) {
-      if (
-        externalTool.requiresConfirmation &&
-        !taskApprovedMcpServerIds.has(externalTool.serverId)
-      ) {
+    const requestExecutionAuthorization = async (authorizationRequest: {
+      id?: string
+      question: string
+      context: string
+      options: string[]
+      allowFreeText: boolean
+    }): Promise<string> => {
+      const store = options.services?.authorizationStore
+      if (!store) return waitForAuthorizerInput(authorizationRequest, editPlan.task)
+      const authorizationId = options.createId()
+      await store.record({
+        id: authorizationId,
+        approvalKind: 'execution_authorization',
+        entityType: 'tool_call',
+        entityId: request.callId ?? authorizationId,
+        request: authorizationRequest,
+        runId: editPlan.task.runId,
+        correlationId: editPlan.task.correlationId,
+        causationId: editPlan.task.causationId,
+        createdAt: Date.now(),
+      })
+      try {
         const answer = await waitForAuthorizerInput(
-          {
-            question: `允许调用 MCP 工具"${externalTool.title || externalTool.name}"吗？`,
-            context: `外部服务：${externalTool.serverName}\n选择"允许本次任务"后，该服务在当前 Agent 任务中的后续调用将自动批准。\n参数：${JSON.stringify(request.arguments).slice(0, 1_000)}`,
-            options: ['允许本次任务', '仅允许本次调用', '拒绝'],
-            allowFreeText: false,
-          },
+          { ...authorizationRequest, id: authorizationId },
           editPlan.task,
         )
+        await store.resolve({
+          id: authorizationId,
+          status: answer === '拒绝' ? 'rejected' : 'approved',
+          details: { answer },
+          decidedAt: Date.now(),
+        })
+        return answer
+      } catch (error) {
+        await store
+          .resolve({
+            id: authorizationId,
+            status: 'cancelled',
+            details: { reason: error instanceof Error ? error.message : String(error) },
+            decidedAt: Date.now(),
+          })
+          .catch(() => undefined)
+        throw error
+      }
+    }
+    const externalTool = mcpRuntimeTools.find((tool) => tool.runtimeName === request.name)
+    if (externalTool) {
+      if (
+        externalTool.executionAuthorization === 'required' &&
+        !taskApprovedMcpServerIds.has(externalTool.serverId)
+      ) {
+        const answer = await requestExecutionAuthorization({
+          question: `允许调用 MCP 工具"${externalTool.title || externalTool.name}"吗？`,
+          context: `外部服务：${externalTool.serverName}\n选择"允许本次任务"后，该服务在当前 Agent 任务中的后续调用将自动批准。\n参数：${JSON.stringify(request.arguments).slice(0, 1_000)}`,
+          options: ['允许本次任务', '仅允许本次调用', '拒绝'],
+          allowFreeText: false,
+        })
         if (answer === '允许本次任务') {
           taskApprovedMcpServerIds.add(externalTool.serverId)
         } else if (answer !== '仅允许本次调用') {
@@ -143,9 +190,7 @@ export function createExecuteToolCallback(input: ToolExecutorFactoryInput) {
             for (const block of provenance.blocks) blocks.set(block.id, block)
             readableDocuments.set(documentId, {
               ...existing,
-              blocks: [...blocks.values()].sort(
-                (left, right) => left.index - right.index,
-              ),
+              blocks: [...blocks.values()].sort((left, right) => left.index - right.index),
             })
           } else {
             readableDocuments.set(documentId, provenance)
@@ -170,8 +215,7 @@ export function createExecuteToolCallback(input: ToolExecutorFactoryInput) {
         })
       },
       executeNativeTool: executeRustAgentTool,
-      requestAuthorizerInput: (request) =>
-        waitForAuthorizerInput(request, editPlan.task),
+      requestAuthorizerInput: requestExecutionAuthorization,
       createAutomationDraft: async (draftInput) => {
         const provider = options.services?.getAgentResourceDraftService
         if (!provider) throw new Error('当前运行环境未提供 Agent 资源草稿服务。')

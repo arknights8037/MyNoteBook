@@ -26,6 +26,7 @@ import {
 } from '@/services/agent/AgentStreamSupport'
 import { isAbortError, normalizeAbortError } from '@/services/agent/AgentToolLifecycle'
 import type { ToolLifecycleContext } from './agentRuntimeToolLifecycle'
+import { resolveExecutionBudget } from '@/models/agent/executionPolicy'
 
 export interface AgentStreamConfig {
   input: AgentRuntimeInput
@@ -59,7 +60,7 @@ export async function runAgentStream(config: AgentStreamConfig): Promise<AgentRu
       .join('\n\n'),
     tools: activeToolSet,
     activeTools: activeToolNames,
-    stopWhen: stepCountIs(policy.maxToolRounds),
+    stopWhen: stepCountIs(resolveExecutionBudget(policy).maxModelTurns),
     maxRetries: policy.maxRetries,
     maxOutputTokens: resolveAgentOutputTokenLimit(input.settings.maxTokens, policy),
     ...(input.outputContract
@@ -69,6 +70,7 @@ export async function runAgentStream(config: AgentStreamConfig): Promise<AgentRu
       : {}),
     onStepStart: ({ stepNumber }) => {
       ctx.activeStepNumber = stepNumber
+      ctx.activeTurnId = input.createId()
       const displayStep = stepNumber + 1
       const occurredAt = Date.now()
       ctx.stepStartedAt.set(stepNumber, occurredAt)
@@ -188,7 +190,13 @@ export async function runAgentStream(config: AgentStreamConfig): Promise<AgentRu
     throw error
   }
 
-  return resolveStreamOutput(config, result, liveReasoning, structuredCharacterCount, structuredStartedAt)
+  return resolveStreamOutput(
+    config,
+    result,
+    liveReasoning,
+    structuredCharacterCount,
+    structuredStartedAt,
+  )
 }
 
 async function resolveStreamOutput(
@@ -237,6 +245,7 @@ async function resolveStreamOutput(
     emitSummaryProgress(input, 'completed')
     return {
       output: JSON.stringify(validated),
+      structuredOutput: validated,
       rounds: result.steps.length,
       toolCalls: ctx.calls,
       finishReason: result.finishReason,
@@ -310,7 +319,10 @@ export function emitStructuredOutputProgress(
   })
 }
 
-export function emitSummaryProgress(input: AgentRuntimeInput, status: 'running' | 'completed'): void {
+export function emitSummaryProgress(
+  input: AgentRuntimeInput,
+  status: 'running' | 'completed',
+): void {
   const occurredAt = Date.now()
   input.onProgress?.({
     phase: 'finalizing',

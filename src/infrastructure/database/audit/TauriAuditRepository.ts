@@ -73,8 +73,16 @@ export class TauriAuditRepository implements AuditRepository {
                  created_at, updated_at
           FROM change_sets
           UNION ALL
-          SELECT id, 'approval', entity_id, '审批', entity_type, decision,
-                 details_json, created_at, created_at
+          SELECT id, 'approval', entity_id,
+                 CASE approval_kind
+                   WHEN 'execution_authorization' THEN '执行授权'
+                   WHEN 'external_action_approval' THEN '外部动作审批'
+                   ELSE '变更审批'
+                 END,
+                 entity_type, status,
+                 json_object('kind', approval_kind, 'request', json(request_json),
+                   'details', json(details_json), 'runId', run_id),
+                 created_at, decided_at
           FROM approvals
           UNION ALL
           SELECT id, 'view_refresh', view_id, 'View 刷新', source_snapshot_hash, status,
@@ -165,6 +173,7 @@ function severityForStatus(status: string): AuditSeverity {
       'needs_approval',
       'stale',
       'blocked',
+      'pending',
     ].includes(status)
   )
     return 'warning'

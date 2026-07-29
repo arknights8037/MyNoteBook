@@ -51,6 +51,97 @@ pub struct DecideChangeSetInput {
     pub(crate) created_at: i64,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordAuthorizationInput {
+    data_directory: Option<String>,
+    id: String,
+    approval_kind: String,
+    entity_type: String,
+    entity_id: String,
+    request_json: String,
+    run_id: Option<String>,
+    correlation_id: String,
+    causation_id: Option<String>,
+    created_at: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveAuthorizationInput {
+    data_directory: Option<String>,
+    id: String,
+    status: String,
+    details_json: String,
+    decided_at: i64,
+}
+
+#[tauri::command]
+pub async fn record_authorization(
+    app: AppHandle,
+    input: RecordAuthorizationInput,
+) -> Result<(), String> {
+    if !matches!(
+        input.approval_kind.as_str(),
+        "execution_authorization" | "external_action_approval"
+    ) {
+        return Err("授权类型无效。".to_string());
+    }
+    if !matches!(input.entity_type.as_str(), "tool_call" | "external_action") {
+        return Err("授权目标类型无效。".to_string());
+    }
+    serde_json::from_str::<serde_json::Value>(&input.request_json)
+        .map_err(|error| format!("授权请求 JSON 无效：{error}"))?;
+    let pool = open_database(&app, input.data_directory).await?;
+    sqlx::query(
+        "INSERT INTO approvals (id, approval_kind, entity_type, entity_id, decision, status, \
+         actor_id, request_json, details_json, run_id, correlation_id, causation_id, created_at) \
+         VALUES (?, ?, ?, ?, 'pending', 'pending', 'local_user', ?, '{}', ?, ?, ?, ?)",
+    )
+    .bind(&input.id)
+    .bind(&input.approval_kind)
+    .bind(&input.entity_type)
+    .bind(&input.entity_id)
+    .bind(&input.request_json)
+    .bind(&input.run_id)
+    .bind(&input.correlation_id)
+    .bind(&input.causation_id)
+    .bind(input.created_at)
+    .execute(pool.as_ref())
+    .await
+    .map_err(database_error)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn resolve_authorization(
+    app: AppHandle,
+    input: ResolveAuthorizationInput,
+) -> Result<(), String> {
+    if !matches!(input.status.as_str(), "approved" | "rejected" | "cancelled") {
+        return Err("授权终态无效。".to_string());
+    }
+    serde_json::from_str::<serde_json::Value>(&input.details_json)
+        .map_err(|error| format!("授权结果 JSON 无效：{error}"))?;
+    let pool = open_database(&app, input.data_directory).await?;
+    let updated = sqlx::query(
+        "UPDATE approvals SET decision = ?, status = ?, details_json = ?, decided_at = ? \
+         WHERE id = ? AND status = 'pending'",
+    )
+    .bind(&input.status)
+    .bind(&input.status)
+    .bind(&input.details_json)
+    .bind(input.decided_at)
+    .bind(&input.id)
+    .execute(pool.as_ref())
+    .await
+    .map_err(database_error)?;
+    if updated.rows_affected() != 1 {
+        return Err("授权记录不存在或已经结束。".to_string());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn commit_result_verification(
     app: AppHandle,
@@ -197,13 +288,16 @@ pub(crate) async fn decide_change_set_in_pool(
         return Err("ChangeSet 已被处理。".to_string());
     }
     sqlx::query(
-        "INSERT INTO approvals (id, entity_type, entity_id, decision, actor_id, details_json, \
-         correlation_id, created_at) VALUES (?, 'change_set', ?, ?, 'local_user', '{}', ?, ?)",
+        "INSERT INTO approvals (id, approval_kind, entity_type, entity_id, decision, status, \
+         actor_id, request_json, details_json, correlation_id, created_at, decided_at) \
+         VALUES (?, 'mutation_approval', 'change_set', ?, ?, ?, 'local_user', '{}', '{}', ?, ?, ?)",
     )
     .bind(&input.approval_id)
     .bind(&input.change_set_id)
     .bind(&input.decision)
+    .bind(&input.decision)
     .bind(&input.correlation_id)
+    .bind(input.created_at)
     .bind(input.created_at)
     .execute(&mut *transaction)
     .await

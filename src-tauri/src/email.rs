@@ -299,7 +299,7 @@ fn sync_messages(
             parse_message(result.message, result.uid, result.body()?, &unseen, now)
         })
         .collect::<Vec<_>>();
-    messages.sort_by(|left, right| right.received_at.cmp(&left.received_at));
+    messages.sort_by_key(|message| std::cmp::Reverse(message.received_at));
     session.logout().map_err(email_error)?;
     Ok(messages)
 }
