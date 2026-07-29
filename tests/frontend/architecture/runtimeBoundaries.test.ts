@@ -1,5 +1,4 @@
-import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -34,14 +33,8 @@ describe('Runtime architecture boundaries', () => {
   })
 
   it('does not add a new WebView SQL writer outside the reviewed baseline', () => {
-    const output = execFileSync('rg', ['-l', '\\.execute\\(', 'src/infrastructure/database'], {
-      cwd: root,
-      encoding: 'utf8',
-    })
-    const actual = output
-      .trim()
-      .split(/\r?\n/)
-      .filter(Boolean)
+    const actual = listSourceFiles(resolve(root, 'src/infrastructure/database'))
+      .filter((file) => readFileSync(file, 'utf8').includes('.execute('))
       .map((file) => relative(root, resolve(root, file)).replaceAll('\\', '/'))
       .sort()
     expect(actual).toEqual(
@@ -66,3 +59,11 @@ describe('Runtime architecture boundaries', () => {
     )
   })
 })
+
+function listSourceFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(directory, entry.name)
+    if (entry.isDirectory()) return listSourceFiles(path)
+    return entry.isFile() && /\.(?:ts|vue)$/.test(entry.name) ? [path] : []
+  })
+}

@@ -3,6 +3,13 @@ use sqlx::SqlitePool;
 /// Phase 2 crash boundary: the future Rust-owned worker supervisor calls this
 /// after an unexpected Node/PI exit. Only runs that were still executing are
 /// transitioned; completed and review-waiting runs remain untouched.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "Phase 2 prototype is exercised before Phase 3 supervision"
+    )
+)]
 pub(crate) async fn handle_pi_worker_exit(
     connection: &SqlitePool,
     active_run_ids: &[String],

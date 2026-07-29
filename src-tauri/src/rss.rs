@@ -121,7 +121,7 @@ pub async fn fetch_rss_feed(input: RssFetchInput) -> Result<RssFetchResult, Stri
         result.entries.truncate(limit);
         result
             .entries
-            .sort_by(|left, right| entry_cursor_time(right).cmp(&entry_cursor_time(left)));
+            .sort_by_key(|entry| std::cmp::Reverse(entry_cursor_time(entry)));
     } else {
         result.entries.truncate(limit);
     }
@@ -382,7 +382,7 @@ async fn enrich_entries(entries: &mut [RemoteRssEntry]) {
             let is_summary = entry.content_source == "summary";
             let is_short = entry.body_text.chars().count() < MIN_FULL_CONTENT_CHARS;
             (is_summary || is_short)
-                .then(|| entry.article_url.as_deref())
+                .then_some(entry.article_url.as_deref())
                 .flatten()
                 .and_then(|url| normalize_public_url(url, "文章地址").ok())
                 .map(|url| (index, url))
@@ -482,7 +482,7 @@ fn map_feed(
         .take(limit)
         .map(|entry| map_entry(entry, now))
         .collect::<Vec<_>>();
-    entries.sort_by(|left, right| entry_cursor_time(right).cmp(&entry_cursor_time(left)));
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry_cursor_time(entry)));
     RssFetchResult {
         not_modified: false,
         effective_url: effective_url.to_string(),
