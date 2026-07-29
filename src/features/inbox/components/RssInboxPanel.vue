@@ -17,7 +17,7 @@ import type { RssEntry, RssProcessingStatus, RssSource } from '@/models/inbox/rs
 import type { RssService } from '@/services/inbox/RssService'
 import { useMessage } from '@/ui/services'
 
-const props = defineProps<{ mode: 'pending' | 'all' | 'rss' }>()
+const props = defineProps<{ mode: 'pending' | 'all' | 'rss'; targetId?: string }>()
 const emit = defineEmits<{ openConnections: [] }>()
 const native = Reflect.has(globalThis, '__TAURI_INTERNALS__')
 const notify = useMessage()
@@ -89,7 +89,10 @@ async function load(): Promise<void> {
   if (!entryResult.ok) return void (error.value = entryResult.error.message)
   sources.value = sourceResult.value
   entries.value = entryResult.value
-  if (!visibleEntries.value.some((entry) => entry.id === selectedId.value))
+  const requested = props.targetId
+  if (requested && visibleEntries.value.some((entry) => entry.id === requested))
+    selectedId.value = requested
+  else if (!visibleEntries.value.some((entry) => entry.id === selectedId.value))
     selectedId.value = visibleEntries.value[0]?.id ?? ''
 }
 
@@ -187,6 +190,13 @@ onMounted(() => void load())
 watch(
   () => props.mode,
   () => void load(),
+)
+watch(
+  () => props.targetId,
+  (targetId) => {
+    if (targetId && visibleEntries.value.some((entry) => entry.id === targetId))
+      selectedId.value = targetId
+  },
 )
 watch(categoryFilter, () => {
   selectedId.value = visibleEntries.value[0]?.id ?? ''

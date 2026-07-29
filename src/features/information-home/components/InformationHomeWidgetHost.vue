@@ -6,8 +6,10 @@ import type { InformationHomeSummary, InformationHomeWidget } from '@/models/hom
 import DashboardWidgetFrame from '@/features/dashboard/components/DashboardWidgetFrame.vue'
 import { getInformationHomeWidgetDefinition } from '../informationHomeWidgetRegistry'
 import AgentSummaryHomeWidget from './AgentSummaryHomeWidget.vue'
+import CalendarHomeWidget from './CalendarHomeWidget.vue'
 import EmailActionsHomeWidget from './EmailActionsHomeWidget.vue'
 import RssNewsHomeWidget from './RssNewsHomeWidget.vue'
+import TodoListHomeWidget from './TodoListHomeWidget.vue'
 
 const props = defineProps<{
   widget: InformationHomeWidget
@@ -20,12 +22,13 @@ const props = defineProps<{
 const emit = defineEmits<{
   copy: []
   remove: []
-  openEmail: []
-  openRss: []
+  openEmail: [id?: string]
+  openRss: [id?: string]
   generateSummary: []
   toggleAutoSummary: []
   changeSummaryInterval: []
   resize: [size: { w: number; h: number }]
+  updateSettings: [settings: InformationHomeWidget['settings']]
 }>()
 
 const emailWidget = ref<InstanceType<typeof EmailActionsHomeWidget> | null>(null)
@@ -112,7 +115,7 @@ function selectSize(size: { w: number; h: number }): void {
       v-else-if="widget.widgetType === 'email-actions'"
       ref="emailWidget"
       :limit="widget.query.limit"
-      @open="emit('openEmail')"
+      @open="emit('openEmail', $event)"
       @refreshing="refreshing = $event"
       @metrics="metrics = $event"
     />
@@ -120,12 +123,12 @@ function selectSize(size: { w: number; h: number }): void {
       v-else-if="widget.widgetType === 'rss-news'"
       ref="rssWidget"
       :limit="widget.query.limit"
-      @open="emit('openRss')"
+      @open="emit('openRss', $event)"
       @refreshing="refreshing = $event"
       @metrics="metrics = $event"
     />
     <AgentSummaryHomeWidget
-      v-else
+      v-else-if="widget.widgetType === 'agent-summary'"
       :summary="summary"
       :generating="generatingSummary"
       :auto-enabled="autoSummaryEnabled"
@@ -133,6 +136,20 @@ function selectSize(size: { w: number; h: number }): void {
       @generate="emit('generateSummary')"
       @toggle-auto="emit('toggleAutoSummary')"
       @change-interval="emit('changeSummaryInterval')"
+    />
+    <TodoListHomeWidget
+      v-else-if="widget.widgetType === 'todo-list'"
+      :items="widget.settings.todos ?? []"
+      :editing="editing"
+      @metrics="metrics = $event"
+      @update="emit('updateSettings', { ...widget.settings, todos: $event })"
+    />
+    <CalendarHomeWidget
+      v-else
+      :events="widget.settings.events ?? []"
+      :editing="editing"
+      @metrics="metrics = $event"
+      @update="emit('updateSettings', { ...widget.settings, events: $event })"
     />
   </DashboardWidgetFrame>
 </template>

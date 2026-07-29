@@ -9,7 +9,7 @@ import UnifiedInboxPanel from './UnifiedInboxPanel.vue'
 import ConnectorFailuresPanel from './ConnectorFailuresPanel.vue'
 import ImInboxPanel from './ImInboxPanel.vue'
 
-const props = defineProps<{ section: InboxSection }>()
+const props = defineProps<{ section: InboxSection; targetId?: string }>()
 const emit = defineEmits<{ openConnections: [] }>()
 
 const sectionMeta: Record<InboxSection, { eyebrow: string; title: string; description: string }> = {
@@ -91,12 +91,14 @@ const visibleSources = computed(() => {
       <EmailInboxPanel
         v-else-if="section === 'email'"
         mode="email"
+        :target-id="targetId"
         @open-connections="emit('openConnections')"
       />
 
       <RssInboxPanel
         v-else-if="section === 'rss'"
         mode="rss"
+        :target-id="targetId"
         @open-connections="emit('openConnections')"
       />
 

@@ -1,0 +1,76 @@
+import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { createInformationHome } from '@/models/home/informationHome'
+import { ok } from '@/models/shared/result'
+
+const home = createInformationHome((prefix) => `${prefix}-test`, 10)
+const homeService = vi.hoisted(() => ({
+  getOrCreate: vi.fn(),
+  listSummaries: vi.fn(),
+  savePayload: vi.fn(),
+  shouldGenerateAutomatically: vi.fn(() => false),
+}))
+const emailService = vi.hoisted(() => ({
+  listAccounts: vi.fn(async () => ({ ok: true, value: [] })),
+  listMessages: vi.fn(async () => ({ ok: true, value: [] })),
+}))
+const rssService = vi.hoisted(() => ({
+  listSources: vi.fn(async () => ({ ok: true, value: [] })),
+  listEntries: vi.fn(async () => ({ ok: true, value: [] })),
+}))
+
+vi.mock('@/app/composition/informationHomeServiceFactory', () => ({
+  createInformationHomeService: vi.fn(async () => homeService),
+}))
+vi.mock('@/app/composition/emailServiceFactory', () => ({
+  createEmailService: vi.fn(async () => emailService),
+}))
+vi.mock('@/app/composition/rssServiceFactory', () => ({
+  createRssService: vi.fn(async () => rssService),
+}))
+
+describe('InformationHomeSurface', () => {
+  afterEach(() => Reflect.deleteProperty(globalThis, '__TAURI_INTERNALS__'))
+
+  it('keeps management actions in the menu and only save/cancel at the bottom', async () => {
+    Reflect.set(globalThis, '__TAURI_INTERNALS__', {})
+    homeService.getOrCreate.mockResolvedValue(ok(home))
+    homeService.listSummaries.mockResolvedValue(ok([]))
+    const { default: InformationHomeSurface } =
+      await import('@/features/information-home/components/InformationHomeSurface.vue')
+    const wrapper = mount(InformationHomeSurface, {
+      props: {
+        aiSettings: {} as never,
+        ensureAiSecretLoaded: vi.fn(async () => false),
+      },
+      global: {
+        stubs: {
+          InformationHomeGrid: { template: '<div data-test="home-grid" />' },
+          InformationHomeWidgetLibrary: { template: '<aside data-test="widget-library" />' },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.information-home-controls').exists()).toBe(false)
+    await wrapper.get('button[aria-label="信息面板菜单"]').trigger('click')
+    expect(wrapper.get('[role="menu"]').text()).toContain('编辑布局')
+    expect(wrapper.get('[role="menu"]').text()).toContain('添加卡片')
+
+    const addButton = wrapper
+      .findAll('[role="menuitem"]')
+      .find((button) => button.text().includes('添加卡片'))
+    await addButton?.trigger('click')
+
+    expect(wrapper.find('[data-test="widget-library"]').exists()).toBe(true)
+    expect(
+      wrapper.findAll('.information-home-controls button').map((button) => button.text()),
+    ).toEqual(['取消', '保存布局'])
+
+    await wrapper.get('button[aria-label="信息面板菜单"]').trigger('click')
+    expect(wrapper.get('[role="menu"]').text()).toContain('撤销')
+    expect(wrapper.get('[role="menu"]').text()).toContain('恢复默认')
+    wrapper.unmount()
+  })
+})

@@ -1,12 +1,13 @@
 <script setup lang="ts">
+import { ArrowUpRight, Check, EyeOff } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 
 import { createEmailService } from '@/app/composition/emailServiceFactory'
-import type { EmailAccount, EmailMessage } from '@/models/inbox/email'
+import type { EmailAccount, EmailMessage, EmailProcessingStatus } from '@/models/inbox/email'
 
 const props = defineProps<{ limit: number }>()
 const emit = defineEmits<{
-  open: []
+  open: [id?: string]
   refreshing: [value: boolean]
   metrics: [items: Array<{ value: number; label: string }>]
 }>()
@@ -14,7 +15,16 @@ const accounts = ref<EmailAccount[]>([])
 const messages = ref<EmailMessage[]>([])
 const error = ref('')
 const loading = ref(true)
+const processingId = ref('')
 const visible = computed(() => messages.value.slice(0, props.limit))
+
+function publishMetrics(): void {
+  emit('metrics', [
+    { value: messages.value.length, label: '待处理' },
+    { value: accounts.value.length, label: '账户' },
+    { value: messages.value.filter((item) => !item.serverIsRead).length, label: '未读' },
+  ])
+}
 
 async function refresh(): Promise<void> {
   loading.value = true
@@ -30,11 +40,7 @@ async function refresh(): Promise<void> {
     if (!messageResult.ok) throw new Error(messageResult.error.message)
     accounts.value = accountResult.value
     messages.value = messageResult.value
-    emit('metrics', [
-      { value: messages.value.length, label: '待处理' },
-      { value: accounts.value.length, label: '账户' },
-      { value: messages.value.filter((item) => !item.serverIsRead).length, label: '未读' },
-    ])
+    publishMetrics()
   } catch (value) {
     error.value = value instanceof Error ? value.message : String(value)
   } finally {
@@ -45,6 +51,19 @@ async function refresh(): Promise<void> {
 
 function accountName(id: string): string {
   return accounts.value.find((account) => account.id === id)?.displayName ?? '邮箱'
+}
+
+async function setStatus(message: EmailMessage, status: EmailProcessingStatus): Promise<void> {
+  processingId.value = message.id
+  error.value = ''
+  try {
+    const result = await (await createEmailService()).setMessageStatus(message.id, status)
+    if (!result.ok) return void (error.value = result.error.message)
+    messages.value = messages.value.filter((candidate) => candidate.id !== message.id)
+    publishMetrics()
+  } finally {
+    processingId.value = ''
+  }
 }
 
 defineExpose({ refresh })
@@ -68,10 +87,40 @@ onMounted(() => void refresh())
             >{{ item.fromName || item.fromAddress }} · {{ accountName(item.accountId) }}</small
           ></span
         >
-        <em>{{ new Date(item.receivedAt).toLocaleDateString() }}</em>
+        <span class="home-signal-widget__item-tools">
+          <em>{{ new Date(item.receivedAt).toLocaleDateString() }}</em>
+          <span>
+            <button
+              type="button"
+              title="前往处理"
+              aria-label="前往处理"
+              @click="emit('open', item.id)"
+            >
+              <ArrowUpRight :size="13" />
+            </button>
+            <button
+              type="button"
+              title="标记为已处理"
+              aria-label="标记为已处理"
+              :disabled="processingId === item.id"
+              @click="setStatus(item, 'done')"
+            >
+              <Check :size="13" />
+            </button>
+            <button
+              type="button"
+              title="忽略"
+              aria-label="忽略"
+              :disabled="processingId === item.id"
+              @click="setStatus(item, 'archived')"
+            >
+              <EyeOff :size="13" />
+            </button>
+          </span>
+        </span>
       </li>
     </ul>
-    <button type="button" class="home-signal-widget__open" @click="emit('open')">
+    <button type="button" class="home-signal-widget__open" @click="emit('open', undefined)">
       打开邮件收件箱
     </button>
   </div>

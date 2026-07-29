@@ -21,12 +21,13 @@ const emit = defineEmits<{
   layout: [positions: Record<string, InformationHomeGridPosition>, target: 'desktop' | 'compact']
   copy: [id: string]
   remove: [id: string]
-  openEmail: []
-  openRss: []
+  openEmail: [id?: string]
+  openRss: [id?: string]
   generateSummary: []
   toggleAutoSummary: []
   changeSummaryInterval: []
   resize: [id: string, size: { w: number; h: number }]
+  updateSettings: [id: string, settings: InformationHomeWidget['settings']]
 }>()
 
 const breakpoint = ref('lg')
@@ -127,12 +128,13 @@ function updateLayout(next: Layout): void {
         :summary-interval-minutes="summaryIntervalMinutes"
         @copy="emit('copy', widget.id)"
         @remove="emit('remove', widget.id)"
-        @open-email="emit('openEmail')"
-        @open-rss="emit('openRss')"
+        @open-email="emit('openEmail', $event)"
+        @open-rss="emit('openRss', $event)"
         @generate-summary="emit('generateSummary')"
         @toggle-auto-summary="emit('toggleAutoSummary')"
         @change-summary-interval="emit('changeSummaryInterval')"
         @resize="emit('resize', widget.id, $event)"
+        @update-settings="emit('updateSettings', widget.id, $event)"
       />
     </GridItem>
   </GridLayout>

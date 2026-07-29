@@ -30,6 +30,20 @@ export const INFORMATION_HOME_WIDGET_REGISTRY: readonly InformationHomeWidgetDef
     source: '本地信号 + 当前 AI Provider',
     defaultSize: { w: 12, h: 4, minW: 6, minH: 3 },
   },
+  {
+    type: 'todo-list',
+    title: '待办列表',
+    description: '记录并勾选信息首页中的个人待办。',
+    source: '信息首页本地清单',
+    defaultSize: { w: 5, h: 5, minW: 4, minH: 3 },
+  },
+  {
+    type: 'calendar',
+    title: '日程表',
+    description: '按月查看并维护信息首页中的本地日程。',
+    source: '信息首页本地日程',
+    defaultSize: { w: 7, h: 6, minW: 5, minH: 5 },
+  },
 ] as const
 
 export function getInformationHomeWidgetDefinition(type: InformationHomeWidgetType) {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Boxes, Check, Pencil, RotateCcw, Undo2, X } from '@lucide/vue'
+import { Check, Ellipsis, Pencil, Plus, RotateCcw, Undo2, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { createEmailService } from '@/app/composition/emailServiceFactory'
@@ -27,7 +27,7 @@ const props = defineProps<{
   aiSettings: AiSettings
   ensureAiSecretLoaded: () => Promise<boolean>
 }>()
-const emit = defineEmits<{ openInbox: [section: 'email' | 'rss'] }>()
+const emit = defineEmits<{ openInbox: [section: 'email' | 'rss', id?: string] }>()
 
 const native = Reflect.has(globalThis, '__TAURI_INTERNALS__')
 const home = ref<InformationHome | null>(null)
@@ -35,14 +35,18 @@ const draft = ref<InformationHomePayload>(createDefaultInformationHomePayload(cr
 const summaries = ref<InformationHomeSummary[]>([])
 const editing = ref(false)
 const showLibrary = ref(false)
+const showMenu = ref(false)
 const undoStack = ref<InformationHomePayload[]>([])
 const loading = ref(false)
 const saving = ref(false)
+const settingsSaving = ref(false)
 const generatingSummary = ref(false)
 const error = ref('')
 let servicePromise: Promise<InformationHomeService> | null = null
 let autoTimer: ReturnType<typeof globalThis.setInterval> | null = null
 let lastAutoAttemptAt = 0
+let settingsSaveQueue = Promise.resolve()
+let pendingSettingsSaves = 0
 
 const service = () => (servicePromise ??= createInformationHomeService())
 const latestSummary = computed(() => summaries.value[0] ?? null)
@@ -65,10 +69,17 @@ async function load(): Promise<void> {
 }
 
 function beginEdit(): void {
-  if (!home.value) return
+  if (!home.value || settingsSaving.value) return
   draft.value = clone(home.value.payload)
   undoStack.value = []
   editing.value = true
+  showMenu.value = false
+}
+
+function openWidgetLibrary(): void {
+  if (!editing.value) beginEdit()
+  showLibrary.value = true
+  showMenu.value = false
 }
 
 function cancelEdit(): void {
@@ -110,6 +121,16 @@ function reset(): void {
   })
 }
 
+function resetFromMenu(): void {
+  reset()
+  showMenu.value = false
+}
+
+function undoFromMenu(): void {
+  undo()
+  showMenu.value = false
+}
+
 function addWidget(type: InformationHomeWidgetType): void {
   mutate((payload) => payload.widgets.push(createWidget(type, payload.widgets)))
 }
@@ -144,6 +165,39 @@ function resizeWidget(id: string, size: { w: number; h: number }): void {
       minH: Math.min(widget.layout.desktop.minH ?? 1, size.h),
     }
   })
+}
+
+function updateWidgetSettings(id: string, settings: InformationHomeWidget['settings']): void {
+  if (!home.value || editing.value) return
+  error.value = ''
+  const next = clone(draft.value)
+  const widget = next.widgets.find((candidate) => candidate.id === id)
+  if (!widget) return
+  widget.settings = clone(settings)
+  draft.value = next
+  const queuedPayload = clone(next)
+  pendingSettingsSaves += 1
+  settingsSaving.value = true
+  settingsSaveQueue = settingsSaveQueue
+    .then(() => persistWidgetSettings(queuedPayload))
+    .finally(() => {
+      pendingSettingsSaves -= 1
+      settingsSaving.value = pendingSettingsSaves > 0
+    })
+}
+
+async function persistWidgetSettings(payload: InformationHomePayload): Promise<void> {
+  if (!home.value) return
+  const result = await (await service()).savePayload(home.value, payload)
+  if (!result.ok) {
+    error.value = result.error.message
+    draft.value = clone(home.value.payload)
+    return
+  }
+  home.value = result.value
+  if (JSON.stringify(draft.value) === JSON.stringify(payload)) {
+    draft.value = clone(result.value.payload)
+  }
 }
 
 function updateLayout(
@@ -312,10 +366,50 @@ onBeforeUnmount(() => {
     class="dashboard-surface information-home-surface"
     :class="{ 'dashboard-surface--editing': editing }"
     aria-label="首页信息面板"
+    @click="showMenu = false"
   >
     <p v-if="!native" class="dashboard-widget-state">独立首页数据需要在 Tauri 桌面应用中读取。</p>
     <p v-else-if="loading" class="dashboard-widget-state">正在加载信息首页…</p>
     <p v-if="error" class="information-home-surface__error" role="alert">{{ error }}</p>
+    <div v-if="native && !loading" class="information-home-menu" @click.stop>
+      <button
+        type="button"
+        class="information-home-menu__trigger"
+        aria-label="信息面板菜单"
+        :aria-expanded="showMenu"
+        @click="showMenu = !showMenu"
+      >
+        <Ellipsis :size="18" />
+      </button>
+      <div v-if="showMenu" class="information-home-menu__popover" role="menu">
+        <button
+          v-if="!editing"
+          type="button"
+          role="menuitem"
+          :disabled="settingsSaving"
+          @click="beginEdit"
+        >
+          <Pencil :size="15" /><span
+            ><strong>编辑布局</strong><small>移动、缩放或移除卡片</small></span
+          >
+        </button>
+        <button type="button" role="menuitem" :disabled="settingsSaving" @click="openWidgetLibrary">
+          <Plus :size="15" /><span><strong>添加卡片</strong><small>从信息模块库选择</small></span>
+        </button>
+        <template v-if="editing">
+          <button type="button" role="menuitem" :disabled="!undoStack.length" @click="undoFromMenu">
+            <Undo2 :size="15" /><span
+              ><strong>撤销</strong><small>撤回最近一次布局修改</small></span
+            >
+          </button>
+          <button type="button" role="menuitem" @click="resetFromMenu">
+            <RotateCcw :size="15" /><span
+              ><strong>恢复默认</strong><small>重置内置卡片布局</small></span
+            >
+          </button>
+        </template>
+      </div>
+    </div>
     <div v-if="native && !loading" class="dashboard-surface__workspace">
       <InformationHomeGrid
         :widgets="draft.widgets"
@@ -327,12 +421,13 @@ onBeforeUnmount(() => {
         @layout="updateLayout"
         @copy="copyWidget"
         @remove="removeWidget"
-        @open-email="emit('openInbox', 'email')"
-        @open-rss="emit('openInbox', 'rss')"
+        @open-email="emit('openInbox', 'email', $event)"
+        @open-rss="emit('openInbox', 'rss', $event)"
         @generate-summary="generateSummary('manual')"
         @toggle-auto-summary="toggleAutoSummary"
         @change-summary-interval="changeSummaryInterval"
         @resize="resizeWidget"
+        @update-settings="updateWidgetSettings"
       />
       <Transition name="dashboard-library"
         ><InformationHomeWidgetLibrary
@@ -341,26 +436,10 @@ onBeforeUnmount(() => {
           @close="showLibrary = false"
       /></Transition>
     </div>
-    <div
-      v-if="native && !loading"
-      class="information-home-controls"
-      :class="{ 'is-editing': editing }"
-    >
-      <template v-if="editing">
-        <button type="button" @click="showLibrary = !showLibrary">
-          <Boxes :size="16" />模块库
-        </button>
-        <button type="button" :disabled="!undoStack.length" @click="undo">
-          <Undo2 :size="16" />撤销
-        </button>
-        <button type="button" @click="reset"><RotateCcw :size="16" />恢复默认</button>
-        <button type="button" @click="cancelEdit"><X :size="16" />取消</button>
-        <button type="button" class="is-primary" :disabled="!dirty || saving" @click="save">
-          <Check :size="16" />{{ saving ? '保存中' : '保存布局' }}
-        </button>
-      </template>
-      <button v-else type="button" class="is-primary" :disabled="!home" @click="beginEdit">
-        <Pencil :size="16" />编辑布局
+    <div v-if="native && !loading && editing" class="information-home-controls is-editing">
+      <button type="button" @click="cancelEdit"><X :size="16" />取消</button>
+      <button type="button" class="is-primary" :disabled="!dirty || saving" @click="save">
+        <Check :size="16" />{{ saving ? '保存中' : '保存布局' }}
       </button>
     </div>
   </section>

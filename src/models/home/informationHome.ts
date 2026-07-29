@@ -1,4 +1,22 @@
-export type InformationHomeWidgetType = 'email-actions' | 'rss-news' | 'agent-summary'
+export type InformationHomeWidgetType =
+  | 'email-actions'
+  | 'rss-news'
+  | 'agent-summary'
+  | 'todo-list'
+  | 'calendar'
+
+export interface InformationHomeTodoItem {
+  id: string
+  title: string
+  completed: boolean
+  createdAt: number
+}
+
+export interface InformationHomeCalendarEvent {
+  id: string
+  title: string
+  date: string
+}
 
 export interface InformationHomeGridPosition {
   x: number
@@ -14,7 +32,11 @@ export interface InformationHomeWidget {
   widgetType: InformationHomeWidgetType
   widgetVersion: 1
   query: { limit: number }
-  settings: { title?: string }
+  settings: {
+    title?: string
+    todos?: InformationHomeTodoItem[]
+    events?: InformationHomeCalendarEvent[]
+  }
   layout: {
     desktop: InformationHomeGridPosition
     compact?: InformationHomeGridPosition
@@ -54,6 +76,8 @@ export const INFORMATION_HOME_WIDGET_TYPES = new Set<InformationHomeWidgetType>(
   'email-actions',
   'rss-news',
   'agent-summary',
+  'todo-list',
+  'calendar',
 ])
 
 export function createDefaultInformationHomePayload(
@@ -116,6 +140,8 @@ export function validateInformationHomePayload(payload: InformationHomePayload):
     if (!Number.isInteger(widget.query.limit) || widget.query.limit < 1 || widget.query.limit > 50)
       return '首页模块查询数量必须在 1 到 50 之间。'
     if ((widget.settings.title?.length ?? 0) > 80) return '首页模块标题不能超过 80 个字符。'
+    if ((widget.settings.todos?.length ?? 0) > 100) return '待办列表最多包含 100 项。'
+    if ((widget.settings.events?.length ?? 0) > 100) return '日历最多包含 100 项日程。'
     for (const [position, columns] of [
       [widget.layout.desktop, 12],
       ...(widget.layout.compact ? [[widget.layout.compact, 6]] : []),
@@ -138,7 +164,9 @@ export function validateInformationHomePayload(payload: InformationHomePayload):
 export function defaultWidgetSize(type: InformationHomeWidgetType) {
   if (type === 'email-actions') return { w: 5, h: 5, minW: 4, minH: 3 }
   if (type === 'rss-news') return { w: 7, h: 5, minW: 4, minH: 3 }
-  return { w: 12, h: 4, minW: 6, minH: 3 }
+  if (type === 'agent-summary') return { w: 12, h: 4, minW: 6, minH: 3 }
+  if (type === 'todo-list') return { w: 5, h: 5, minW: 4, minH: 3 }
+  return { w: 7, h: 6, minW: 5, minH: 5 }
 }
 
 function createWidget(
@@ -177,10 +205,7 @@ function normalizeWidget(
     widgetType,
     widgetVersion: 1,
     query: { limit: clampInteger(query.limit, 1, 50, widgetType === 'agent-summary' ? 1 : 8) },
-    settings:
-      typeof settings.title === 'string' && settings.title.trim()
-        ? { title: settings.title.trim().slice(0, 80) }
-        : {},
+    settings: normalizeWidgetSettings(settings),
     layout: {
       desktop: normalizePosition(layout.desktop, defaultPosition, 12),
       ...(layout.compact
@@ -194,6 +219,57 @@ function normalizeWidget(
         : {}),
     },
   }
+}
+
+function normalizeWidgetSettings(
+  settings: Record<string, unknown>,
+): InformationHomeWidget['settings'] {
+  const title =
+    typeof settings.title === 'string' && settings.title.trim()
+      ? settings.title.trim().slice(0, 80)
+      : undefined
+  const todos = Array.isArray(settings.todos)
+    ? settings.todos
+        .map((item) => normalizeTodoItem(item))
+        .filter((item): item is InformationHomeTodoItem => Boolean(item))
+        .slice(0, 100)
+    : undefined
+  const events = Array.isArray(settings.events)
+    ? settings.events
+        .map((item) => normalizeCalendarEvent(item))
+        .filter((item): item is InformationHomeCalendarEvent => Boolean(item))
+        .slice(0, 100)
+    : undefined
+  return {
+    ...(title ? { title } : {}),
+    ...(todos ? { todos } : {}),
+    ...(events ? { events } : {}),
+  }
+}
+
+function normalizeTodoItem(value: unknown): InformationHomeTodoItem | null {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.title !== 'string')
+    return null
+  const title = value.title.trim().slice(0, 160)
+  if (!value.id.trim() || !title) return null
+  return {
+    id: value.id.trim().slice(0, 120),
+    title,
+    completed: value.completed === true,
+    createdAt:
+      typeof value.createdAt === 'number' && Number.isFinite(value.createdAt)
+        ? Math.max(0, Math.round(value.createdAt))
+        : 0,
+  }
+}
+
+function normalizeCalendarEvent(value: unknown): InformationHomeCalendarEvent | null {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.title !== 'string')
+    return null
+  const title = value.title.trim().slice(0, 160)
+  const date = typeof value.date === 'string' ? value.date : ''
+  if (!value.id.trim() || !title || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null
+  return { id: value.id.trim().slice(0, 120), title, date }
 }
 
 function normalizePosition(

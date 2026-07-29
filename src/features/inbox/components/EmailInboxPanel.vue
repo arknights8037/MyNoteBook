@@ -7,7 +7,7 @@ import type { EmailAccount, EmailMessage, EmailProcessingStatus } from '@/models
 import type { EmailService } from '@/services/inbox/EmailService'
 import { useMessage } from '@/ui/services'
 
-const props = defineProps<{ mode: 'pending' | 'all' | 'email' }>()
+const props = defineProps<{ mode: 'pending' | 'all' | 'email'; targetId?: string }>()
 const emit = defineEmits<{ openConnections: [] }>()
 const native = Reflect.has(globalThis, '__TAURI_INTERNALS__')
 const notify = useMessage()
@@ -81,9 +81,11 @@ async function load(): Promise<void> {
   if (!messageResult.ok) return void (error.value = messageResult.error.message)
   accounts.value = accountResult.value
   messages.value = messageResult.value
-  if (!visibleMessages.value.some((message) => message.id === selectedId.value)) {
+  const requested = props.targetId
+  if (requested && visibleMessages.value.some((message) => message.id === requested))
+    selectedId.value = requested
+  else if (!visibleMessages.value.some((message) => message.id === selectedId.value))
     selectedId.value = visibleMessages.value[0]?.id ?? ''
-  }
 }
 
 async function syncAll(): Promise<void> {
@@ -155,6 +157,13 @@ onMounted(() => void load())
 watch(
   () => props.mode,
   () => void load(),
+)
+watch(
+  () => props.targetId,
+  (targetId) => {
+    if (targetId && visibleMessages.value.some((message) => message.id === targetId))
+      selectedId.value = targetId
+  },
 )
 watch(categoryFilter, () => {
   selectedId.value = visibleMessages.value[0]?.id ?? ''

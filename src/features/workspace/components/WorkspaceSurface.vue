@@ -151,6 +151,7 @@ const documentSidebar = ref<DocumentSidebarExpose | null>(null)
 const sidebarView = ref<DocumentSidebarView>('documents')
 const knowledgeSection = ref('assets')
 const inboxSection = ref<InboxSection>('pending')
+const inboxTargetId = ref('')
 const pluginSection = ref('connections')
 const automationSection = ref('tasks')
 const auditCategory = ref('all')
@@ -180,13 +181,24 @@ const {
   openDockedAiChat,
   openSettingsSurface,
   openInformationHome,
-  openInboxSurface,
+  openInboxSurface: activateInboxSurface,
   openPluginSkillsSurface,
   openAutomationsSurface,
   openAuditSurface,
   openKnowledgeControlSurface,
   openDocumentSurface,
 } = workspaceSurface
+
+function openInboxSurface(): void {
+  inboxTargetId.value = ''
+  activateInboxSurface()
+}
+
+function openInboxItem(section: 'email' | 'rss', id?: string): void {
+  inboxSection.value = section
+  inboxTargetId.value = id ?? ''
+  activateInboxSurface()
+}
 const appSettings = ref<AppSettings>(loadAppSettings())
 const editorSettings = computed<AppSettings>(() =>
   showAiChat.value && !aiChatFullscreen.value && appSettings.value.jumpAid === 'outline'
@@ -1491,18 +1503,14 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
             :key="`information-home:${appSettings.dataDirectory ?? 'default'}`"
             :ai-settings="aiSettings"
             :ensure-ai-secret-loaded="ensureAiSecretLoaded"
-            @open-inbox="
-              (section) => {
-                inboxSection = section
-                openInboxSurface()
-              }
-            "
+            @open-inbox="openInboxItem"
           />
           <Transition v-if="!showInformationHome" name="settings-surface" mode="out-in">
             <InboxSurface
               v-if="showInbox"
               key="inbox"
               :section="inboxSection"
+              :target-id="inboxTargetId"
               @open-connections="openPluginSkillsSurface"
             />
 
