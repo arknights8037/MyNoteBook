@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, Ellipsis, Pencil, Plus, RotateCcw, Undo2, X } from '@lucide/vue'
+import { Check, Pencil, Plus, RotateCcw, Undo2, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { createEmailService } from '@/app/composition/emailServiceFactory'
@@ -23,6 +23,8 @@ import { getInformationHomeWidgetDefinition } from '../informationHomeWidgetRegi
 import InformationHomeGrid from './InformationHomeGrid.vue'
 import InformationHomeWidgetLibrary from './InformationHomeWidgetLibrary.vue'
 
+type BrowserMouseEvent = InstanceType<typeof globalThis.MouseEvent>
+
 const props = defineProps<{
   aiSettings: AiSettings
   ensureAiSecretLoaded: () => Promise<boolean>
@@ -36,6 +38,7 @@ const summaries = ref<InformationHomeSummary[]>([])
 const editing = ref(false)
 const showLibrary = ref(false)
 const showMenu = ref(false)
+const menuPosition = ref({ x: 0, y: 0 })
 const undoStack = ref<InformationHomePayload[]>([])
 const loading = ref(false)
 const saving = ref(false)
@@ -74,6 +77,16 @@ function beginEdit(): void {
   undoStack.value = []
   editing.value = true
   showMenu.value = false
+}
+
+function openContextMenu(event: BrowserMouseEvent): void {
+  const width = 240
+  const height = editing.value ? 212 : 112
+  menuPosition.value = {
+    x: Math.max(8, Math.min(event.clientX, globalThis.innerWidth - width - 8)),
+    y: Math.max(8, Math.min(event.clientY, globalThis.innerHeight - height - 8)),
+  }
+  showMenu.value = true
 }
 
 function openWidgetLibrary(): void {
@@ -367,48 +380,44 @@ onBeforeUnmount(() => {
     :class="{ 'dashboard-surface--editing': editing }"
     aria-label="首页信息面板"
     @click="showMenu = false"
+    @contextmenu.prevent="openContextMenu"
   >
     <p v-if="!native" class="dashboard-widget-state">独立首页数据需要在 Tauri 桌面应用中读取。</p>
     <p v-else-if="loading" class="dashboard-widget-state">正在加载信息首页…</p>
     <p v-if="error" class="information-home-surface__error" role="alert">{{ error }}</p>
-    <div v-if="native && !loading" class="information-home-menu" @click.stop>
+    <div
+      v-if="native && !loading && showMenu"
+      class="information-home-menu__popover"
+      role="menu"
+      aria-label="信息面板右键菜单"
+      :style="{ left: `${menuPosition.x}px`, top: `${menuPosition.y}px` }"
+      @click.stop
+      @contextmenu.prevent.stop
+    >
       <button
+        v-if="!editing"
         type="button"
-        class="information-home-menu__trigger"
-        aria-label="信息面板菜单"
-        :aria-expanded="showMenu"
-        @click="showMenu = !showMenu"
+        role="menuitem"
+        :disabled="settingsSaving"
+        @click="beginEdit"
       >
-        <Ellipsis :size="18" />
-      </button>
-      <div v-if="showMenu" class="information-home-menu__popover" role="menu">
-        <button
-          v-if="!editing"
-          type="button"
-          role="menuitem"
-          :disabled="settingsSaving"
-          @click="beginEdit"
+        <Pencil :size="15" /><span
+          ><strong>编辑布局</strong><small>移动、缩放或移除卡片</small></span
         >
-          <Pencil :size="15" /><span
-            ><strong>编辑布局</strong><small>移动、缩放或移除卡片</small></span
+      </button>
+      <button type="button" role="menuitem" :disabled="settingsSaving" @click="openWidgetLibrary">
+        <Plus :size="15" /><span><strong>添加卡片</strong><small>从信息模块库选择</small></span>
+      </button>
+      <template v-if="editing">
+        <button type="button" role="menuitem" :disabled="!undoStack.length" @click="undoFromMenu">
+          <Undo2 :size="15" /><span><strong>撤销</strong><small>撤回最近一次布局修改</small></span>
+        </button>
+        <button type="button" role="menuitem" @click="resetFromMenu">
+          <RotateCcw :size="15" /><span
+            ><strong>恢复默认</strong><small>重置内置卡片布局</small></span
           >
         </button>
-        <button type="button" role="menuitem" :disabled="settingsSaving" @click="openWidgetLibrary">
-          <Plus :size="15" /><span><strong>添加卡片</strong><small>从信息模块库选择</small></span>
-        </button>
-        <template v-if="editing">
-          <button type="button" role="menuitem" :disabled="!undoStack.length" @click="undoFromMenu">
-            <Undo2 :size="15" /><span
-              ><strong>撤销</strong><small>撤回最近一次布局修改</small></span
-            >
-          </button>
-          <button type="button" role="menuitem" @click="resetFromMenu">
-            <RotateCcw :size="15" /><span
-              ><strong>恢复默认</strong><small>重置内置卡片布局</small></span
-            >
-          </button>
-        </template>
-      </div>
+      </template>
     </div>
     <div v-if="native && !loading" class="dashboard-surface__workspace">
       <InformationHomeGrid

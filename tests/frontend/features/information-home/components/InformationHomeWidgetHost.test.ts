@@ -46,21 +46,35 @@ describe('InformationHomeWidgetHost', () => {
     expect(wrapper.get('.dashboard-widget-frame__summary').text()).toContain('5待处理')
     expect(wrapper.get('.dashboard-widget-frame__summary').text()).toContain('3未读')
 
-    await wrapper.get('button[aria-label="选择卡片尺寸"]').trigger('click')
-    const sizeButtons = wrapper.findAll('[role="menuitem"]')
-    expect(sizeButtons.map((button) => button.text())).toEqual([
+    await wrapper.get('.dashboard-widget-frame').trigger('contextmenu', {
+      clientX: 120,
+      clientY: 160,
+    })
+    const menu = document.body.querySelector<HTMLElement>('[aria-label="卡片右键菜单"]')
+    expect(menu).not.toBeNull()
+    expect(menu?.style.left).toBe('120px')
+    expect(menu?.style.top).toBe('160px')
+    const sizeButtons = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('.home-widget-size-menu__preset'),
+    )
+    expect(sizeButtons.map((button) => button.textContent)).toEqual([
       '4 × 3网格',
       '6 × 4网格',
       '8 × 5网格',
       '12 × 5全宽',
     ])
-    expect(sizeButtons[1]?.classes()).toContain('is-active')
+    expect(sizeButtons[1]?.classList.contains('is-active')).toBe(true)
 
-    await sizeButtons[2]?.trigger('click')
+    sizeButtons[2]?.click()
+    await nextTick()
     expect(wrapper.emitted('resize')).toEqual([[{ w: 8, h: 5 }]])
-    expect(wrapper.find('[role="menu"]').exists()).toBe(false)
+    expect(document.body.querySelector('[aria-label="卡片右键菜单"]')).toBeNull()
 
-    await wrapper.get('.dashboard-widget-frame').trigger('contextmenu')
-    expect(wrapper.find('[role="menu"]').exists()).toBe(true)
+    await wrapper.get('.dashboard-widget-frame').trigger('contextmenu', {
+      clientX: 180,
+      clientY: 220,
+    })
+    expect(document.body.querySelector('[aria-label="卡片右键菜单"]')).not.toBeNull()
+    wrapper.unmount()
   })
 })

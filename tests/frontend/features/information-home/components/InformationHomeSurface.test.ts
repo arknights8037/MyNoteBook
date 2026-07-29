@@ -54,9 +54,14 @@ describe('InformationHomeSurface', () => {
     await flushPromises()
 
     expect(wrapper.find('.information-home-controls').exists()).toBe(false)
-    await wrapper.get('button[aria-label="信息面板菜单"]').trigger('click')
+    expect(wrapper.find('[aria-label="信息面板菜单"]').exists()).toBe(false)
+    await wrapper.get('.information-home-surface').trigger('contextmenu', {
+      clientX: 140,
+      clientY: 180,
+    })
     expect(wrapper.get('[role="menu"]').text()).toContain('编辑布局')
     expect(wrapper.get('[role="menu"]').text()).toContain('添加卡片')
+    expect(wrapper.get('[role="menu"]').attributes('style')).toContain('left: 140px')
 
     const addButton = wrapper
       .findAll('[role="menuitem"]')
@@ -68,7 +73,10 @@ describe('InformationHomeSurface', () => {
       wrapper.findAll('.information-home-controls button').map((button) => button.text()),
     ).toEqual(['取消', '保存布局'])
 
-    await wrapper.get('button[aria-label="信息面板菜单"]').trigger('click')
+    await wrapper.get('.information-home-surface').trigger('contextmenu', {
+      clientX: 160,
+      clientY: 200,
+    })
     expect(wrapper.get('[role="menu"]').text()).toContain('撤销')
     expect(wrapper.get('[role="menu"]').text()).toContain('恢复默认')
     wrapper.unmount()
