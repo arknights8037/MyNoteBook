@@ -44,6 +44,12 @@ jobs:
       - name: Unit tests
         run: pnpm test:run
 
+      - name: Agent Worker contract tests
+        run: |
+          pnpm --filter @mynotebook/agent-runtime-worker typecheck
+          pnpm --filter @mynotebook/agent-runtime-worker test
+          pnpm --filter @mynotebook/agent-runtime-worker build
+
       - name: Build web assets
         run: pnpm build
 
