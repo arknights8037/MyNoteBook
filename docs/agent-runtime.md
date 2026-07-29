@@ -6,7 +6,7 @@ MyNoteBook 的 Agent 是受控的本地知识协作者。它可以读取许可�
 
 当前生产 Runtime 仍位于 Vue/WebView。`useAgentRun` 冻结输入并构造可序列化 `AgentRunRequest v1`，通过 `AgentRuntimeClient` 的 `startRun/cancelRun/steerRun/subscribeEvents` 驱动 `AiSdkAgentRuntimeAdapter`；`prepareAgentRun()` 恢复 Cognitive Session 并创建任务；`AgentRunEngine` 继续提供 UI lifecycle projection。
 
-Phase 3 的可选链路为：`AgentRuntimeClient -> TauriAgentRuntimeAdapter -> Rust AgentWorkerSupervisor -> NDJSON Worker Host -> AiSdkWorkerRuntime`。Supervisor 维护 Worker 实例、heartbeat、重启计数、活动 Run 与崩溃终态；Worker 维护 AI SDK 模型循环、Tool Manifest、提案捕获和 Runtime events；Rust 解析凭据、写工具审计并执行已迁移的 Domain Tool/MCP。Composition 仅在 `VITE_AGENT_RUNTIME_OWNER=rust_worker` 时选择该链路，默认仍保留 WebView Adapter。
+Phase 3 的可选链路为：`AgentRuntimeClient -> TauriAgentRuntimeAdapter -> Rust AgentWorkerSupervisor -> NDJSON Worker Host -> AiSdkWorkerRuntime`。Supervisor 维护 Worker 实例、heartbeat、重启计数、活动 Run 与崩溃终态；Worker 维护 AI SDK 模型循环、Tool Manifest、提案捕获和 Runtime events；Rust 解析凭据、写工具审计并执行全部内置 Domain Tool/MCP。Mind Map 读取使用 canonical SQLite，自动化、Skill 与 MCP 写入只生成停用草稿，文档修改仍只形成待 Diff 审阅的 Patch 提案。Composition 仅在 `VITE_AGENT_RUNTIME_OWNER=rust_worker` 时选择该链路，默认仍保留 WebView Adapter。
 
 ```text
 用户输入 / Slash Command

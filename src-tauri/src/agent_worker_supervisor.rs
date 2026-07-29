@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use sqlx::SqlitePool;
+use serde_json::{json, Map, Value};
+use sqlx::{Row, SqlitePool};
 use std::{
     collections::{HashMap, HashSet},
     env,
@@ -1028,15 +1028,394 @@ async fn dispatch_worker_tool(
         | "get_system_info" => {
             execute_native_tool(app, data_directory, call_id, tool_name, arguments).await
         }
-        "list_mind_maps"
-        | "read_mind_map"
-        | "create_automation_draft"
-        | "create_skill_draft"
-        | "create_mcp_server_draft" => Err(format!(
-            "工具 {tool_name} 尚未迁移到 Rust Worker dispatcher。"
-        )),
+        "list_mind_maps" => {
+            let connection = database::open_database(app, data_directory).await?;
+            list_mind_maps_in_pool(connection.as_ref()).await
+        }
+        "read_mind_map" => {
+            let connection = database::open_database(app, data_directory).await?;
+            read_mind_map_in_pool(connection.as_ref(), &arguments).await
+        }
+        "create_automation_draft" => {
+            let connection = database::open_database(app, data_directory).await?;
+            create_automation_draft_in_pool(connection.as_ref(), &arguments, run_request).await
+        }
+        "create_skill_draft" => crate::skills::create_skill_draft(
+            app.clone(),
+            data_directory,
+            required_argument_string(&arguments, "name")?,
+            required_argument_string(&arguments, "description")?,
+            required_argument_string(&arguments, "instructions")?,
+        ),
+        "create_mcp_server_draft" => crate::mcp::create_mcp_server_draft(
+            &effective_data_directory(app, data_directory)?,
+            &required_argument_string(&arguments, "name")?,
+            &required_argument_string(&arguments, "transport")?,
+            optional_argument_string(&arguments, "command")?,
+            optional_argument_string_array(&arguments, "args", 64)?,
+            optional_argument_string(&arguments, "cwd")?,
+            optional_argument_string(&arguments, "url")?,
+        ),
         other => Err(format!("Worker 不允许未注册的领域工具 {other}。")),
     }
+}
+
+async fn list_mind_maps_in_pool(connection: &SqlitePool) -> Result<Value, String> {
+    let rows = sqlx::query(
+        "SELECT id, parent_id, sort_order, title, content_json, version, created_at, updated_at \
+         FROM mind_maps ORDER BY updated_at DESC, id ASC",
+    )
+    .fetch_all(connection)
+    .await
+    .map_err(database_error)?;
+    rows.into_iter()
+        .map(|row| {
+            let content: Value = serde_json::from_str(
+                &row.try_get::<String, _>("content_json")
+                    .map_err(database_error)?,
+            )
+            .map_err(|error| format!("思维导图数据损坏：{error}"))?;
+            let root_node_id = content
+                .get("rootNodeId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "思维导图缺少 rootNodeId。".to_string())?;
+            let node_count = content
+                .get("nodes")
+                .and_then(Value::as_object)
+                .ok_or_else(|| "思维导图缺少 nodes。".to_string())?
+                .len();
+            Ok(json!({
+                "id": row.try_get::<String, _>("id").map_err(database_error)?,
+                "parentId": row.try_get::<Option<String>, _>("parent_id").map_err(database_error)?,
+                "sortOrder": row.try_get::<i64, _>("sort_order").map_err(database_error)?,
+                "title": row.try_get::<String, _>("title").map_err(database_error)?,
+                "rootNodeId": root_node_id,
+                "nodeCount": node_count,
+                "version": row.try_get::<i64, _>("version").map_err(database_error)?,
+                "createdAt": row.try_get::<i64, _>("created_at").map_err(database_error)?,
+                "updatedAt": row.try_get::<i64, _>("updated_at").map_err(database_error)?
+            }))
+        })
+        .collect::<Result<Vec<_>, String>>()
+        .map(Value::Array)
+}
+
+async fn read_mind_map_in_pool(
+    connection: &SqlitePool,
+    arguments: &Value,
+) -> Result<Value, String> {
+    let mind_map_id = required_argument_string(arguments, "mindMapId")?;
+    let row =
+        sqlx::query("SELECT id, title, content_json, version FROM mind_maps WHERE id = ? LIMIT 1")
+            .bind(&mind_map_id)
+            .fetch_optional(connection)
+            .await
+            .map_err(database_error)?
+            .ok_or_else(|| format!("思维导图 {mind_map_id} 不存在或不可读取。"))?;
+    let content: Value = serde_json::from_str(
+        &row.try_get::<String, _>("content_json")
+            .map_err(database_error)?,
+    )
+    .map_err(|error| format!("思维导图数据损坏：{error}"))?;
+    project_mind_map_subtree(
+        &mind_map_id,
+        &row.try_get::<String, _>("title").map_err(database_error)?,
+        row.try_get::<i64, _>("version").map_err(database_error)?,
+        &content,
+        arguments,
+    )
+}
+
+fn project_mind_map_subtree(
+    mind_map_id: &str,
+    title: &str,
+    version: i64,
+    content: &Value,
+    arguments: &Value,
+) -> Result<Value, String> {
+    let nodes = content
+        .get("nodes")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "思维导图缺少 nodes。".to_string())?;
+    let root_node_id = optional_argument_string(arguments, "nodeId")?.unwrap_or(
+        content
+            .get("rootNodeId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "思维导图缺少 rootNodeId。".to_string())?
+            .to_string(),
+    );
+    if !nodes.contains_key(&root_node_id) {
+        return Err(format!("节点 {root_node_id} 不存在。"));
+    }
+    let max_depth = optional_bounded_u64(arguments, "depth", 0, 32)?.unwrap_or(3);
+    let max_nodes = optional_bounded_u64(arguments, "maxNodes", 1, 1_000)?.unwrap_or(100);
+    let include_notes = argument_object(arguments)?
+        .get("includeNotes")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let include_sources = argument_object(arguments)?
+        .get("includeSources")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let mut children = HashMap::<String, Vec<String>>::new();
+    for (node_id, node) in nodes {
+        if let Some(parent_id) = node.get("parentId").and_then(Value::as_str) {
+            children
+                .entry(parent_id.to_string())
+                .or_default()
+                .push(node_id.clone());
+        }
+    }
+    for child_ids in children.values_mut() {
+        child_ids.sort_by(|left, right| {
+            let left_order = nodes
+                .get(left)
+                .and_then(|node| node.get("order"))
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            let right_order = nodes
+                .get(right)
+                .and_then(|node| node.get("order"))
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            left_order.cmp(&right_order).then_with(|| left.cmp(right))
+        });
+    }
+    let mut returned_nodes = 0_u64;
+    let mut truncated = false;
+    let root = project_mind_map_node(
+        &root_node_id,
+        0,
+        max_depth,
+        max_nodes,
+        nodes,
+        &children,
+        include_notes,
+        include_sources,
+        &mut returned_nodes,
+        &mut truncated,
+    )?;
+    Ok(json!({
+        "mindMapId": mind_map_id,
+        "title": title,
+        "version": version,
+        "root": root,
+        "returnedNodes": returned_nodes,
+        "truncated": truncated
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn project_mind_map_node(
+    node_id: &str,
+    depth: u64,
+    max_depth: u64,
+    max_nodes: u64,
+    nodes: &Map<String, Value>,
+    children: &HashMap<String, Vec<String>>,
+    include_notes: bool,
+    include_sources: bool,
+    returned_nodes: &mut u64,
+    truncated: &mut bool,
+) -> Result<Value, String> {
+    let node = nodes
+        .get(node_id)
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("思维导图节点 {node_id} 无效。"))?;
+    *returned_nodes += 1;
+    let mut result = Map::from_iter([
+        ("id".to_string(), Value::String(node_id.to_string())),
+        (
+            "text".to_string(),
+            Value::String(
+                node.get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            ),
+        ),
+        ("children".to_string(), Value::Array(Vec::new())),
+    ]);
+    if include_notes {
+        if let Some(note) = node
+            .get("note")
+            .and_then(Value::as_str)
+            .filter(|note| !note.is_empty())
+        {
+            result.insert("note".to_string(), Value::String(note.to_string()));
+        }
+    }
+    if include_sources {
+        if let Some(source_refs) = node
+            .get("sourceRefs")
+            .and_then(Value::as_array)
+            .filter(|sources| !sources.is_empty())
+        {
+            result.insert("sourceRefs".to_string(), Value::Array(source_refs.clone()));
+        }
+    }
+    let child_ids = children.get(node_id).map(Vec::as_slice).unwrap_or_default();
+    if depth >= max_depth {
+        *truncated |= !child_ids.is_empty();
+        return Ok(Value::Object(result));
+    }
+    let projected_children = result
+        .get_mut("children")
+        .and_then(Value::as_array_mut)
+        .expect("children is initialized as an array");
+    for child_id in child_ids {
+        if *returned_nodes >= max_nodes {
+            *truncated = true;
+            break;
+        }
+        projected_children.push(project_mind_map_node(
+            child_id,
+            depth + 1,
+            max_depth,
+            max_nodes,
+            nodes,
+            children,
+            include_notes,
+            include_sources,
+            returned_nodes,
+            truncated,
+        )?);
+    }
+    Ok(Value::Object(result))
+}
+
+async fn create_automation_draft_in_pool(
+    connection: &SqlitePool,
+    arguments: &Value,
+    run_request: Option<&Value>,
+) -> Result<Value, String> {
+    let name = required_argument_string(arguments, "name")?;
+    let instruction = required_argument_string(arguments, "instruction")?;
+    let trigger_type = required_argument_string(arguments, "triggerType")?;
+    let trigger_config = match trigger_type.as_str() {
+        "manual" => json!({}),
+        "interval" => json!({
+            "intervalMinutes": required_bounded_u64(arguments, "intervalMinutes", 5, 10_080)?
+        }),
+        "daily" => {
+            let daily_time = required_argument_string(arguments, "dailyTime")?;
+            if !valid_daily_time(&daily_time) {
+                return Err("工具参数 dailyTime 必须是 HH:mm 格式。".to_string());
+            }
+            json!({ "dailyTime": daily_time })
+        }
+        _ => return Err("工具参数 triggerType 必须是 manual、interval 或 daily。".to_string()),
+    };
+    let bind_current_document = argument_object(arguments)?
+        .get("bindCurrentDocument")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let document_id = if bind_current_document {
+        Some(current_document_id(run_request)?)
+    } else {
+        None
+    };
+    let id = new_instance_id("automation");
+    let created_at = now_millis();
+    sqlx::query(
+        "INSERT INTO automation_tasks (id, name, instruction, trigger_type, trigger_config_json, \
+         document_id, enabled, next_run_at, last_run_at, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?, ?)",
+    )
+    .bind(&id)
+    .bind(name.trim())
+    .bind(instruction.trim())
+    .bind(&trigger_type)
+    .bind(serde_json::to_string(&trigger_config).map_err(worker_error)?)
+    .bind(document_id)
+    .bind(created_at)
+    .bind(created_at)
+    .execute(connection)
+    .await
+    .map_err(database_error)?;
+    Ok(json!({ "created": true, "id": id, "name": name.trim(), "enabled": false }))
+}
+
+fn argument_object(arguments: &Value) -> Result<&Map<String, Value>, String> {
+    arguments
+        .as_object()
+        .ok_or_else(|| "工具参数必须是对象。".to_string())
+}
+
+fn required_argument_string(arguments: &Value, name: &str) -> Result<String, String> {
+    optional_argument_string(arguments, name)?
+        .ok_or_else(|| format!("工具参数 {name} 必须是非空字符串。"))
+}
+
+fn optional_argument_string(arguments: &Value, name: &str) -> Result<Option<String>, String> {
+    match argument_object(arguments)?.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) if !value.trim().is_empty() => {
+            Ok(Some(value.trim().to_string()))
+        }
+        _ => Err(format!("工具参数 {name} 必须是非空字符串。")),
+    }
+}
+
+fn optional_argument_string_array(
+    arguments: &Value,
+    name: &str,
+    maximum_items: usize,
+) -> Result<Vec<String>, String> {
+    let Some(value) = argument_object(arguments)?.get(name) else {
+        return Ok(Vec::new());
+    };
+    let values = value
+        .as_array()
+        .ok_or_else(|| format!("工具参数 {name} 必须是字符串数组。"))?;
+    if values.len() > maximum_items {
+        return Err(format!("工具参数 {name} 最多包含 {maximum_items} 项。"));
+    }
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| format!("工具参数 {name} 必须是字符串数组。"))
+        })
+        .collect()
+}
+
+fn optional_bounded_u64(
+    arguments: &Value,
+    name: &str,
+    minimum: u64,
+    maximum: u64,
+) -> Result<Option<u64>, String> {
+    match argument_object(arguments)?.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .filter(|value| (*value >= minimum) && (*value <= maximum))
+            .map(Some)
+            .ok_or_else(|| format!("工具参数 {name} 必须是 {minimum}–{maximum} 的整数。")),
+    }
+}
+
+fn required_bounded_u64(
+    arguments: &Value,
+    name: &str,
+    minimum: u64,
+    maximum: u64,
+) -> Result<u64, String> {
+    optional_bounded_u64(arguments, name, minimum, maximum)?
+        .ok_or_else(|| format!("工具参数 {name} 不能为空。"))
+}
+
+fn valid_daily_time(value: &str) -> bool {
+    let Some((hour, minute)) = value.split_once(':') else {
+        return false;
+    };
+    hour.len() == 2
+        && minute.len() == 2
+        && hour.parse::<u8>().is_ok_and(|value| value < 24)
+        && minute.parse::<u8>().is_ok_and(|value| value < 60)
 }
 
 async fn execute_native_tool(
@@ -1336,6 +1715,129 @@ mod tests {
             context_block_ids(Some(&request), "doc-1"),
             vec!["block-1".to_string()]
         );
+    }
+
+    #[test]
+    fn projects_bounded_mind_map_subtrees_with_optional_fields() {
+        let content = json!({
+            "rootNodeId": "root",
+            "nodes": {
+                "root": { "id": "root", "parentId": null, "order": 0, "text": "Root", "note": "", "sourceRefs": [] },
+                "child": { "id": "child", "parentId": "root", "order": 0, "text": "Child", "note": "Details", "sourceRefs": [{ "type": "document_block", "revision": 1 }] },
+                "grandchild": { "id": "grandchild", "parentId": "child", "order": 0, "text": "Grandchild", "note": "", "sourceRefs": [] }
+            }
+        });
+        let projected = project_mind_map_subtree(
+            "map-1",
+            "Map",
+            3,
+            &content,
+            &json!({ "depth": 1, "includeNotes": true, "includeSources": true }),
+        )
+        .expect("project subtree");
+        assert_eq!(
+            projected.get("returnedNodes").and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            projected.get("truncated").and_then(Value::as_bool),
+            Some(true)
+        );
+        let child = &projected["root"]["children"][0];
+        assert_eq!(child.get("note").and_then(Value::as_str), Some("Details"));
+        assert!(child.get("sourceRefs").and_then(Value::as_array).is_some());
+    }
+
+    #[tokio::test]
+    async fn worker_dispatcher_reads_mind_maps_and_creates_disabled_automation_drafts() {
+        let path = std::env::temp_dir().join(format!(
+            "my-notebook-agent-worker-tools-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let pool = crate::database::get_pool_for_path(&path, true)
+            .await
+            .expect("open database");
+        crate::database::DATABASE_MIGRATOR
+            .run(pool.as_ref())
+            .await
+            .expect("migrate");
+        sqlx::query(
+            "INSERT INTO documents (id, title, content_json, created_at, updated_at) \
+             VALUES ('doc-1', 'Doc', '{\"type\":\"doc\",\"content\":[]}', 1, 1)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("document");
+        let content = json!({
+            "schemaVersion": 1,
+            "rootNodeId": "root",
+            "direction": "both",
+            "nodes": {
+                "root": { "id": "root", "parentId": null, "order": 0, "text": "Root", "note": "", "collapsed": false, "sourceRefs": [], "metadata": {}, "style": {} },
+                "child": { "id": "child", "parentId": "root", "order": 0, "text": "Child", "note": "", "collapsed": false, "sourceRefs": [], "metadata": {}, "style": {} }
+            },
+            "links": []
+        });
+        sqlx::query(
+            "INSERT INTO mind_maps (id, parent_id, sort_order, title, content_json, schema_version, \
+             version, last_actor_type, created_at, updated_at) \
+             VALUES ('map-1', NULL, 0, 'Map', ?, 1, 1, 'user', 2, 2)",
+        )
+        .bind(serde_json::to_string(&content).unwrap())
+        .execute(pool.as_ref())
+        .await
+        .expect("mind map");
+
+        let listed = list_mind_maps_in_pool(pool.as_ref())
+            .await
+            .expect("list maps");
+        assert_eq!(listed[0].get("id").and_then(Value::as_str), Some("map-1"));
+        assert_eq!(listed[0].get("nodeCount").and_then(Value::as_u64), Some(2));
+        let read = read_mind_map_in_pool(
+            pool.as_ref(),
+            &json!({ "mindMapId": "map-1", "depth": 0, "maxNodes": 10 }),
+        )
+        .await
+        .expect("read map");
+        assert_eq!(read.get("returnedNodes").and_then(Value::as_u64), Some(1));
+        assert_eq!(read.get("truncated").and_then(Value::as_bool), Some(true));
+
+        let request = json!({ "contextBundle": { "scope": { "documentId": "doc-1" } } });
+        let draft = create_automation_draft_in_pool(
+            pool.as_ref(),
+            &json!({
+                "name": "Daily review",
+                "instruction": "Review the document",
+                "triggerType": "daily",
+                "dailyTime": "09:30"
+            }),
+            Some(&request),
+        )
+        .await
+        .expect("automation draft");
+        assert_eq!(draft.get("enabled").and_then(Value::as_bool), Some(false));
+        let stored: (i64, String, String) = sqlx::query_as(
+            "SELECT enabled, document_id, trigger_config_json FROM automation_tasks WHERE id = ?",
+        )
+        .bind(draft.get("id").and_then(Value::as_str).unwrap())
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("stored draft");
+        assert_eq!(stored.0, 0);
+        assert_eq!(stored.1, "doc-1");
+        assert_eq!(stored.2, r#"{"dailyTime":"09:30"}"#);
+
+        drop(pool);
+        crate::database::close_pool(&path)
+            .await
+            .expect("close database");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
     }
 
     #[tokio::test]

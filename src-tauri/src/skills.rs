@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
     fs,
@@ -168,6 +169,50 @@ pub fn create_skill(app: AppHandle, input: CreateSkillInput) -> Result<Installed
         write_disabled_skills(&root, &disabled)?;
     }
     inspect_skill(&destination, &disabled)
+}
+
+pub(crate) fn create_skill_draft(
+    app: AppHandle,
+    data_directory: Option<String>,
+    name: String,
+    description: String,
+    instructions: String,
+) -> Result<Value, String> {
+    let instructions = normalize_draft_instructions(&instructions, &name)?;
+    let skill = create_skill(
+        app.clone(),
+        CreateSkillInput {
+            data_directory: data_directory.clone(),
+            name,
+            description,
+            enabled: Some(false),
+        },
+    )?;
+    let generated = read_skill_file(
+        app.clone(),
+        SkillFileInput {
+            data_directory: data_directory.clone(),
+            skill_id: skill.id.clone(),
+            relative_path: SKILL_FILE_NAME.to_string(),
+            require_enabled: Some(false),
+        },
+    )?;
+    let frontmatter = extract_draft_frontmatter(&generated)?;
+    write_skill_file(
+        app,
+        WriteSkillFileInput {
+            data_directory,
+            skill_id: skill.id.clone(),
+            relative_path: SKILL_FILE_NAME.to_string(),
+            content: format!("{frontmatter}\n\n{instructions}\n"),
+        },
+    )?;
+    Ok(json!({
+        "created": true,
+        "id": skill.id,
+        "name": skill.name,
+        "enabled": false
+    }))
 }
 
 #[tauri::command]
@@ -548,6 +593,35 @@ fn sanitize_skill_id(value: &str) -> String {
     }
 }
 
+fn extract_draft_frontmatter(content: &str) -> Result<&str, String> {
+    let (body_start, closing_marker) = if content.starts_with("---\r\n") {
+        (5, "\r\n---")
+    } else if content.starts_with("---\n") {
+        (4, "\n---")
+    } else {
+        return Err("新建 Skill 缺少有效 frontmatter。".to_string());
+    };
+    let end = content[body_start..]
+        .find(closing_marker)
+        .map(|index| body_start + index + closing_marker.len())
+        .ok_or_else(|| "新建 Skill 缺少有效 frontmatter。".to_string())?;
+    content
+        .get(..end)
+        .ok_or_else(|| "新建 Skill frontmatter 编码无效。".to_string())
+}
+
+fn normalize_draft_instructions(instructions: &str, name: &str) -> Result<String, String> {
+    let value = instructions.trim();
+    if value.is_empty() {
+        return Err("Skill 指令不能为空。".to_string());
+    }
+    if value.lines().any(|line| line.starts_with("# ")) {
+        Ok(value.to_string())
+    } else {
+        Ok(format!("# {}\n\n{value}", name.trim()))
+    }
+}
+
 fn is_text_file(path: &Path) -> bool {
     matches!(
         path.extension()
@@ -659,5 +733,28 @@ mod tests {
         assert!(resolve_skill_directory(root, "demo/other").is_err());
         assert!(resolve_skill_directory(root, ".").is_err());
         assert!(resolve_skill_directory(root, "..").is_err());
+    }
+
+    #[test]
+    fn preserves_generated_frontmatter_and_normalizes_draft_instructions() {
+        let generated = "---\nname: draft\ndescription: Draft skill\n---\n\n# Placeholder\n";
+        assert_eq!(
+            extract_draft_frontmatter(generated).unwrap(),
+            "---\nname: draft\ndescription: Draft skill\n---"
+        );
+        let generated_crlf = generated.replace('\n', "\r\n");
+        assert_eq!(
+            extract_draft_frontmatter(&generated_crlf).unwrap(),
+            "---\r\nname: draft\r\ndescription: Draft skill\r\n---"
+        );
+        assert_eq!(
+            normalize_draft_instructions("Follow the checklist.", "Draft skill").unwrap(),
+            "# Draft skill\n\nFollow the checklist."
+        );
+        assert_eq!(
+            normalize_draft_instructions("# Existing\n\nKeep it.", "Draft skill").unwrap(),
+            "# Existing\n\nKeep it."
+        );
+        assert!(normalize_draft_instructions("   ", "Draft skill").is_err());
     }
 }

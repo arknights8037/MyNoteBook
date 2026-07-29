@@ -216,11 +216,11 @@ AgentRunRequest
 - 共享 contracts 已冻结 Worker v1 envelope，覆盖实例身份、Run、Tool、工具审计、凭据解析、Authorization、heartbeat 和 shutdown。
 - `@mynotebook/agent-runtime-worker` 已提供 Node Worker Host 和真实 `AiSdkWorkerRuntime`；AI SDK 模型循环、流式事件、Tool Manifest 消费、独立 Tool Call ID、提案捕获、structured-output repair、取消与唯一终态均位于 sidecar。
 - Rust `AgentWorkerSupervisor` 已提供自包含 Worker 路径解析、stdin/stdout NDJSON、实例校验、heartbeat 超时、受控重启、活动 Run 跟踪、崩溃 `interrupted` 终态、Tauri commands 和窗口重建状态快照。
-- Rust dispatcher 已接管 Provider 凭据解析、工具审计、canonical 文档/检索/Skill/本机工具和 MCP 调用；Node 不访问 SQLite、MCP 配置或密钥文件。
+- Rust dispatcher 已接管 Provider 凭据解析、工具审计、全部 25 个内置工具和 MCP 调用：文档、检索、Mind Map、Skill 读取、本机检查走受控读取；自动化、Skill 和 MCP 资源只创建停用草稿；文档写工具仍由 Worker 捕获为 Patch 提案。Node 不访问 SQLite、MCP 配置或密钥文件。
 - Node SEA + esbuild 构建可生成按 Tauri target-triple 命名的自包含 sidecar，构建时会执行真实进程协议 smoke；`externalBin` 桌面构建已通过，不要求最终用户安装 Node。
 - `useAgentRun` 可由 composition 通过 `VITE_AGENT_RUNTIME_OWNER=rust_worker` 选择 Tauri Runtime Port；默认仍为 `webview`，Ask/Edit 路径不变。
 
-剩余工作是迁移 Mind Map 与资源草稿工具、补齐真实 Provider/Tauri 网络策略验收、让 UI 消费 Rust 活动/等待快照、移除 WebView Agent fallback，并迁出 A2A polling。在 sidecar 覆盖所有生产 Agent 模式且完成真实凭据 smoke 前，不得把可选链路描述成默认后台 Agent。
+剩余工作是补齐真实 Provider/Tauri 网络策略验收、让 UI 消费 Rust 活动/等待快照、移除 WebView Agent fallback，并迁出 A2A polling。在 sidecar 覆盖所有生产 Agent 模式且完成真实凭据 smoke 前，不得把可选链路描述成默认后台 Agent。
 
 ### 目标
 

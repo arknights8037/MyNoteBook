@@ -3,6 +3,8 @@ import { relative, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { AGENT_TOOL_REGISTRY } from '@/services/agent/AgentToolRegistry'
+
 const root = resolve(import.meta.dirname, '../../..')
 
 describe('Runtime architecture boundaries', () => {
@@ -75,6 +77,27 @@ describe('Runtime architecture boundaries', () => {
         'src/infrastructure/database/workspace/TauriWorkspaceViewRepository.ts',
       ].sort(),
     )
+  })
+
+  it('routes every non-proposal built-in tool through the worker or Rust dispatcher', () => {
+    const worker = readFileSync(
+      resolve(root, 'packages/agent-runtime-worker/src/AiSdkWorkerRuntime.ts'),
+      'utf8',
+    )
+    const dispatcher = readFileSync(
+      resolve(root, 'src-tauri/src/agent_worker_supervisor.rs'),
+      'utf8',
+    )
+    for (const tool of AGENT_TOOL_REGISTRY) {
+      if (tool.risk === 'write') continue
+      const owner = ['request_authorizer_input', 'report_progress'].includes(tool.name)
+        ? worker
+        : dispatcher
+      expect(owner, `${tool.name} is not owned by the Phase 3 runtime`).toMatch(
+        new RegExp(`['"]${tool.name}['"]`),
+      )
+    }
+    expect(dispatcher).not.toContain('尚未迁移到 Rust Worker dispatcher')
   })
 })
 

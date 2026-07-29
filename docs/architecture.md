@@ -59,7 +59,7 @@ Vue/Tiptap 编辑状态
 
 模型流式输出、工具结果和 MCP 返回值都不能直接成为文档写入。完整协议见 [Agent Runtime](agent-runtime.md)。
 
-这条链路当前由 `useAgentRun` 所在的 WebView 生命周期拥有。将 Runtime 移出 WebView 是目标方向，不是已经完成的架构事实。
+默认链路当前仍由 `useAgentRun` 所在的 WebView 生命周期拥有；显式配置的 Phase 3 链路已将模型循环和全部内置工具执行迁入 Rust 托管的 sidecar。完成真实 Provider 网络策略、窗口重建投影和生产模式验收前，侧车仍不是默认架构事实。
 
 ### Knowledge、Work 与 View
 
@@ -87,7 +87,7 @@ Knowledge Object 可锚定 document/block/revision。Context Compiler 已读取�
 - `agent_repository.rs`：Agent task、Context Bundle、Patch、事务与审计持久化。
 - `agent_tools.rs`：数据库工具、只读命令和 Rust 线性时间正则执行。
 - `agent_cancellation.rs`：按 tool call ID 取消正在运行的原生或 MCP future。
-- `agent_worker_supervisor.rs`：Phase 3 Worker 子进程身份、NDJSON 通道、heartbeat、重启、活动 Run 快照和崩溃终态；当前尚未接管生产 Agent。
+- `agent_worker_supervisor.rs`：Phase 3 Worker 子进程身份、NDJSON 通道、heartbeat、重启、活动 Run 快照、崩溃终态，以及全部内置 Domain Tool/MCP 的受控分发；当前为可选 Runtime，尚未成为默认生产 Agent。
 - `ai_models.rs` / `ai_proxy.rs`：Provider 模型列表、请求代理、流式响应和敏感信息边界。
 - `work.rs`：TaskRun、Verifier、ChangeSet 和 Approval 的原子状态变更。
 - `views.rs`：View snapshot/dependency 发布及 override 保护。
