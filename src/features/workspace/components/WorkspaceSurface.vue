@@ -73,9 +73,13 @@ import { useAgentCommunicationWorker } from './home/useAgentCommunicationWorker'
 import { useWorkspaceItems } from './home/useWorkspaceItems'
 import { useResearchReviewActions } from './home/useResearchReviewActions'
 import { useAiChatPanelBindings } from './home/useAiChatPanelBindings'
+import { buildAgentTargetOptions, buildAgentWorkspaceOptions } from './home/agentDocumentOptions'
+import { useWorkspaceTabs } from './home/useWorkspaceTabs'
+import { confirmDocumentRemoval } from './home/documentRemovalConfirmation'
+import { useWorkspaceGroupRemoval } from './home/useWorkspaceGroupRemoval'
 import WorkspaceEditorPane from './WorkspaceEditorPane.vue'
 import WorkspaceActivityRail from './WorkspaceActivityRail.vue'
-import WorkspaceTabs, { type WorkspaceTab } from './WorkspaceTabs.vue'
+import WorkspaceTabs from './WorkspaceTabs.vue'
 import WorkspaceContextSidebar from './WorkspaceContextSidebar.vue'
 
 const SettingsSurface = defineLazySurface(
@@ -232,7 +236,8 @@ const documentWorkspace = useDocumentWorkspace({
   notify: message,
   authorize: requestSensitiveAuthorization,
   openDocumentSurface,
-  confirmDelete: confirmDocumentRemoval,
+  confirmDelete: (document, descendantCount, permanent) =>
+    confirmDocumentRemoval(dialog, document, descendantCount, permanent),
 })
 const { state: documentState, lifecycle, metadata, tree, trash } = documentWorkspace
 const {
@@ -379,115 +384,42 @@ const {
   dropOnGroup: handleGroupDrop,
 })
 
+const { deleteEntireGroup } = useWorkspaceGroupRemoval({
+  documents,
+  mindMaps,
+  workspaceViews,
+  dialog,
+  notify: message,
+  authorize: requestSensitiveAuthorization,
+  deleteDocument,
+  deleteItemsInContainers,
+})
+
 const activeNavigationSurface = computed<WorkspaceSurfaceName | 'work'>(() => {
   if (activeSurface.value === 'agent' || activeSurface.value === 'automations') return 'work'
   return activeSurface.value
 })
 
-const openTabs = ref<WorkspaceTab[]>([])
-const persistentSurfaceIds = new Set<WorkspaceSurfaceName>(['home', 'agent', 'inbox', 'knowledge'])
-const surfaceTitles: Partial<Record<WorkspaceSurfaceName, string>> = {
-  home: '首页',
-  agent: 'Agent Work',
-  inbox: '收件箱',
-  knowledge: '知识控制',
-  plugins: '连接与扩展',
-  automations: '自动化任务',
-  audit: '活动与审计',
-  settings: '设置',
-}
-
-const activeTab = computed<WorkspaceTab | null>(() => {
-  if (activeSurface.value !== 'document') {
-    if (!persistentSurfaceIds.has(activeSurface.value)) return null
-    const title = surfaceTitles[activeSurface.value]
-    return title
-      ? { key: `surface:${activeSurface.value}`, kind: 'surface', id: activeSurface.value, title }
-      : null
-  }
-  if (activeMindMapId.value) {
-    const item = mindMaps.value.find((candidate) => candidate.id === activeMindMapId.value)
-    return item
-      ? {
-          key: `mindmap:${item.id}`,
-          kind: 'mindmap',
-          id: item.id,
-          title: item.title || '未命名思维导图',
-        }
-      : null
-  }
-  if (activeWorkspaceViewId.value) {
-    const item = workspaceViews.value.find(
-      (candidate) => candidate.id === activeWorkspaceViewId.value,
-    )
-    return item
-      ? { key: `view:${item.id}`, kind: 'view', id: item.id, title: item.title || '未命名视图' }
-      : null
-  }
-  const item = documents.value.find(
-    (candidate) => candidate.id === currentDocumentId.value && candidate.documentKind === 'article',
-  )
-  return item
-    ? { key: `document:${item.id}`, kind: 'document', id: item.id, title: displayTitle(item) }
-    : null
-})
-
-const activeTabKey = computed(() => activeTab.value?.key ?? '')
-
-function trimOpenTabs(): void {
-  const maxTabs = appSettings.value.maxTabs
-  while (openTabs.value.length > maxTabs) {
-    const activeKey = activeTabKey.value
-    const removableIndex = openTabs.value.findIndex((tab) => tab.key !== activeKey)
-    if (removableIndex < 0) break
-    openTabs.value.splice(removableIndex, 1)
-  }
-}
-
-watch(
-  activeTab,
-  (tab) => {
-    if (!tab) return
-    const existingIndex = openTabs.value.findIndex((item) => item.key === tab.key)
-    if (existingIndex < 0) openTabs.value.push(tab)
-    else openTabs.value.splice(existingIndex, 1, tab)
-    trimOpenTabs()
-  },
-  { immediate: true },
-)
-
-watch(
-  () => appSettings.value.maxTabs,
-  () => trimOpenTabs(),
-)
-
-async function activateWorkspaceTab(tab: WorkspaceTab): Promise<void> {
-  if (tab.kind === 'document') return selectDocument(tab.id)
-  if (tab.kind === 'mindmap') return openMindMap(tab.id)
-  if (tab.kind === 'view') return openWorkspaceView(tab.id)
-  const actions: Record<string, () => void> = {
+const { openTabs, activeTabKey, activateWorkspaceTab, closeWorkspaceTab } = useWorkspaceTabs({
+  activeSurface,
+  maxTabs: computed(() => appSettings.value.maxTabs),
+  currentDocumentId,
+  documents,
+  activeMindMapId,
+  mindMaps,
+  activeWorkspaceViewId,
+  workspaceViews,
+  activateDocument: selectDocument,
+  activateMindMap: openMindMap,
+  activateWorkspaceView: openWorkspaceView,
+  activateSurface: {
     home: openInformationHome,
     agent: openAgentWorkspace,
     inbox: openInboxSurface,
     knowledge: openKnowledgeControlSurface,
-    plugins: openPluginSkillsSurface,
-    automations: openAutomationsSurface,
-    audit: openAuditSurface,
-    settings: openSettingsSurface,
-  }
-  actions[tab.id]?.()
-}
-
-async function closeWorkspaceTab(key: string): Promise<void> {
-  const closingIndex = openTabs.value.findIndex((tab) => tab.key === key)
-  if (closingIndex < 0) return
-  const wasActive = activeTabKey.value === key
-  openTabs.value.splice(closingIndex, 1)
-  if (!wasActive) return
-  const replacement = openTabs.value[Math.min(closingIndex, openTabs.value.length - 1)]
-  if (replacement) await activateWorkspaceTab(replacement)
-  else openAgentWorkspace()
-}
+  },
+  activateFallback: openAgentWorkspace,
+})
 const {
   pendingAgentTask,
   pendingAgentPatchSet,
@@ -612,82 +544,6 @@ const currentAgentWorkspaceRootIds = computed(() => currentAiProject.value?.work
 const agentTargetOptions = computed<AgentTargetOption[]>(() =>
   buildAgentTargetOptions(documents.value, currentDocumentId.value),
 )
-
-function buildAgentWorkspaceOptions(availableDocuments: DocumentSummary[]) {
-  const documentById = new Map(availableDocuments.map((document) => [document.id, document]))
-  return availableDocuments
-    .filter((document) => document.documentKind === 'group' && !document.isDeleted)
-    .map((group) => ({
-      label: displayDocumentTitle(group),
-      value: group.id,
-      searchText: [
-        group.description,
-        group.tags.join(' '),
-        ...availableDocuments
-          .filter(
-            (document) =>
-              document.documentKind === 'article' &&
-              !document.isDeleted &&
-              belongsToDocumentGroup(document, group.id, documentById),
-          )
-          .map(displayDocumentTitle),
-      ]
-        .filter(Boolean)
-        .join(' '),
-    }))
-}
-
-function buildAgentTargetOptions(
-  availableDocuments: DocumentSummary[],
-  activeDocumentId: string,
-): AgentTargetOption[] {
-  const documentById = new Map(availableDocuments.map((document) => [document.id, document]))
-  return availableDocuments
-    .filter((document) => document.documentKind === 'article' && !document.isDeleted)
-    .map((document) => {
-      const groupPath = getDocumentGroupPath(document, documentById)
-      return {
-        kind: 'document',
-        id: document.id,
-        title: displayDocumentTitle(document),
-        subtitle: [groupPath, document.id === activeDocumentId ? '当前页面' : '知识库页面']
-          .filter(Boolean)
-          .join(' · '),
-      }
-    })
-}
-
-function belongsToDocumentGroup(
-  document: DocumentSummary,
-  groupId: string,
-  documentById: Map<string, DocumentSummary>,
-): boolean {
-  let parentId = document.parentId
-  const visited = new Set<string>()
-  while (parentId && !visited.has(parentId)) {
-    if (parentId === groupId) return true
-    visited.add(parentId)
-    parentId = documentById.get(parentId)?.parentId ?? null
-  }
-  return false
-}
-
-function getDocumentGroupPath(
-  document: DocumentSummary,
-  documentById: Map<string, DocumentSummary>,
-): string {
-  const titles: string[] = []
-  let parentId = document.parentId
-  const visited = new Set<string>()
-  while (parentId && !visited.has(parentId)) {
-    visited.add(parentId)
-    const parent = documentById.get(parentId)
-    if (!parent) break
-    if (parent.documentKind === 'group') titles.unshift(displayDocumentTitle(parent))
-    parentId = parent.parentId
-  }
-  return titles.join(' / ')
-}
 
 watch(
   documents,
@@ -1211,131 +1067,6 @@ async function openSearchResult(document: DocumentSummary): Promise<void> {
 async function restoreDocument(document: DocumentSummary): Promise<void> {
   sidebarView.value = 'documents'
   await restoreWorkspaceDocument(document)
-}
-
-async function deleteEntireGroup(group: DocumentSummary): Promise<void> {
-  const containerIds = collectEntireGroupItemIds(group.id)
-  const descendants = documents.value.filter(
-    (item) => item.documentKind === 'article' && containerIds.has(item.id),
-  )
-  const mindMapCount = mindMaps.value.filter((item) => containerIds.has(item.id)).length
-  const workspaceViewCount = workspaceViews.value.filter((item) => containerIds.has(item.id)).length
-  const permanentCount = mindMapCount + workspaceViewCount
-  const confirmed = await confirmEntireGroupRemoval(
-    group,
-    descendants.length,
-    mindMapCount,
-    workspaceViewCount,
-  )
-  if (!confirmed) return
-  const authorized = await requestSensitiveAuthorization(
-    '删除整个分组',
-    permanentCount
-      ? `分组和文档将移入回收站，另有 ${permanentCount} 个视图将被永久删除。`
-      : '分组及其文档将移入回收站。',
-  )
-  if (!authorized) return
-
-  const documentsDeleted = await deleteDocument(group, {
-    confirmed: true,
-    authorized: true,
-    notify: false,
-    additionalDescendants: descendants,
-  })
-  if (!documentsDeleted) return
-
-  const workspaceItemsDeleted = await deleteItemsInContainers(containerIds)
-  if (!workspaceItemsDeleted.ok) {
-    message.error(`分组文档已移入回收站，但部分视图删除失败：${workspaceItemsDeleted.message}`)
-    return
-  }
-  message.success(
-    workspaceItemsDeleted.count
-      ? `整个分组已移除，${workspaceItemsDeleted.count} 个视图已删除`
-      : '整个分组已移入回收站',
-  )
-}
-
-function collectEntireGroupItemIds(groupId: string): Set<string> {
-  const itemParents = [
-    ...documents.value
-      .filter((item) => item.documentKind === 'article')
-      .map((item) => ({ id: item.id, parentId: item.parentId })),
-    ...mindMaps.value.map((item) => ({ id: item.id, parentId: item.parentId })),
-    ...workspaceViews.value.map((item) => ({ id: item.id, parentId: item.parentId })),
-  ]
-  const collected = new Set<string>([groupId])
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const item of itemParents) {
-      if (item.parentId && collected.has(item.parentId) && !collected.has(item.id)) {
-        collected.add(item.id)
-        changed = true
-      }
-    }
-  }
-  return collected
-}
-
-function confirmEntireGroupRemoval(
-  group: DocumentSummary,
-  documentCount: number,
-  mindMapCount: number,
-  workspaceViewCount: number,
-): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false
-    const finish = (value: boolean): void => {
-      if (settled) return
-      settled = true
-      resolve(value)
-    }
-    const parts = [`${documentCount} 个文档`]
-    if (mindMapCount) parts.push(`${mindMapCount} 个思维导图`)
-    if (workspaceViewCount) parts.push(`${workspaceViewCount} 个结构化视图`)
-    const hasPermanentItems = mindMapCount + workspaceViewCount > 0
-    dialog.warning({
-      title: '删除整个分组',
-      content: `移除「${displayTitle(group)}」及其中的 ${parts.join('、')}？分组和文档可从回收站恢复${hasPermanentItems ? '，思维导图和结构化视图将永久删除' : ''}。`,
-      positiveText: '删除整个分组',
-      negativeText: '取消',
-      onPositiveClick: () => finish(true),
-      onNegativeClick: () => finish(false),
-      onClose: () => finish(false),
-    })
-  })
-}
-
-function confirmDocumentRemoval(
-  document: DocumentSummary,
-  descendantCount: number,
-  permanent: boolean,
-): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false
-    const finish = (value: boolean): void => {
-      if (settled) return
-      settled = true
-      resolve(value)
-    }
-
-    dialog.warning({
-      title: permanent ? '彻底删除页面' : '删除页面',
-      content: permanent
-        ? descendantCount > 0
-          ? `彻底删除「${displayTitle(document)}」及其 ${descendantCount} 个子页面？此操作无法恢复。`
-          : `彻底删除「${displayTitle(document)}」？此操作无法恢复。`
-        : descendantCount > 0
-          ? `删除「${displayTitle(document)}」及其 ${descendantCount} 个子页面？可在回收站恢复。`
-          : `删除「${displayTitle(document)}」？可在回收站恢复。`,
-      positiveText: permanent ? '彻底删除' : '删除',
-      negativeText: '取消',
-      onPositiveClick: () => finish(true),
-      onNegativeClick: () => finish(false),
-      onClose: () => finish(false),
-    })
-  })
 }
 
 const displayTitle = displayDocumentTitle

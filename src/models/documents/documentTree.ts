@@ -96,6 +96,35 @@ export function collectArticleDescendants(
   return descendants
 }
 
+export function collectDocumentAncestors(
+  document: DocumentSummary,
+  documentById: ReadonlyMap<DocumentId, DocumentSummary>,
+): DocumentSummary[] {
+  const ancestors: DocumentSummary[] = []
+  const visited = new Set<DocumentId>([document.id])
+  let parentId = document.parentId
+
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId)
+    const parent = documentById.get(parentId)
+    if (!parent) break
+    ancestors.push(parent)
+    parentId = parent.parentId
+  }
+
+  return ancestors
+}
+
+export function isDocumentDescendantOf(
+  document: DocumentSummary,
+  ancestorId: DocumentId,
+  documentById: ReadonlyMap<DocumentId, DocumentSummary>,
+): boolean {
+  return collectDocumentAncestors(document, documentById).some(
+    (ancestor) => ancestor.id === ancestorId,
+  )
+}
+
 function resolveParentArticleId(
   article: DocumentSummary,
   articleById: Map<DocumentId, DocumentSummary>,

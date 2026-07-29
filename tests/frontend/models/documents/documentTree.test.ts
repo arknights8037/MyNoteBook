@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest'
 import {
   buildSidebarDocumentForest,
   collectArticleDescendants,
+  collectDocumentAncestors,
   countSidebarDocumentNodes,
+  isDocumentDescendantOf,
 } from '@/models/documents/documentTree'
 import type { DocumentKind, DocumentSummary } from '@/models/documents/document'
 
@@ -55,6 +57,23 @@ describe('documentTree', () => {
       'child-b',
     ])
   })
+
+  it('resolves reusable ancestor relationships without looping through cycles', () => {
+    const group = createSummary('group', null, 'group')
+    const parent = createSummary('parent', 'group')
+    const child = createSummary('child', 'parent')
+    const cycleA = createSummary('cycle-a', 'cycle-b')
+    const cycleB = createSummary('cycle-b', 'cycle-a')
+    const byId = new Map([group, parent, child, cycleA, cycleB].map((item) => [item.id, item]))
+
+    expect(collectDocumentAncestors(child, byId).map((item) => item.id)).toEqual([
+      'parent',
+      'group',
+    ])
+    expect(isDocumentDescendantOf(child, 'group', byId)).toBe(true)
+    expect(isDocumentDescendantOf(parent, 'child', byId)).toBe(false)
+    expect(collectDocumentAncestors(cycleA, byId).map((item) => item.id)).toEqual(['cycle-b'])
+  })
 })
 
 function createSummary(
@@ -67,6 +86,10 @@ function createSummary(
     parentId,
     documentKind,
     title: id,
+    tags: [],
+    sourceUrl: '',
+    author: '',
+    description: '',
     plainText: '',
     revision: 1,
     sortOrder: 0,

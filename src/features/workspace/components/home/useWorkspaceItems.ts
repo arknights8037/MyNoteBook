@@ -10,20 +10,9 @@ import type { MindMapService } from '@/services/workspace/MindMapService'
 import type { WorkspaceViewService } from '@/services/workspace/WorkspaceViewService'
 import { displayDocumentTitle } from '@/models/documents/documentPresentation'
 import type { DocumentSidebarView } from '@/models/workspace/workspaceSurface'
+import { requestDialogConfirmation, type DialogService } from '@/ui/services'
 import { CREATE_VIEW_TEMPLATES, type CreateViewKind } from './viewTemplates'
 import type { WorkspaceItemMetadata } from './WorkspaceItemMetadataModal.vue'
-
-interface DialogPort {
-  warning(options: {
-    title: string
-    content: string
-    positiveText: string
-    negativeText: string
-    onPositiveClick: () => void
-    onNegativeClick: () => void
-    onClose: () => void
-  }): void
-}
 
 interface WorkspaceItemsOptions {
   getMindMapService: () => Promise<MindMapService>
@@ -32,7 +21,7 @@ interface WorkspaceItemsOptions {
   sidebarView: Ref<DocumentSidebarView>
   isBusy: Readonly<Ref<boolean>>
   dropTargetGroupId: Ref<DocumentId | null>
-  dialog: DialogPort
+  dialog: DialogService
   notify: { success(message: string): void; error(message: string): void }
   openDocumentSurface: () => void
   selectDocument: (documentId: DocumentId) => Promise<void>
@@ -389,22 +378,11 @@ export function useWorkspaceItems(options: WorkspaceItemsOptions) {
   }
 
   function confirmRemoval(title: string, itemTitle: string, fallback: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      let settled = false
-      const finish = (value: boolean) => {
-        if (settled) return
-        settled = true
-        resolve(value)
-      }
-      options.dialog.warning({
-        title,
-        content: `删除「${itemTitle.trim() || fallback}」？此操作无法恢复。`,
-        positiveText: '删除',
-        negativeText: '取消',
-        onPositiveClick: () => finish(true),
-        onNegativeClick: () => finish(false),
-        onClose: () => finish(false),
-      })
+    return requestDialogConfirmation(options.dialog, {
+      title,
+      content: `删除「${itemTitle.trim() || fallback}」？此操作无法恢复。`,
+      positiveText: '删除',
+      negativeText: '取消',
     })
   }
 

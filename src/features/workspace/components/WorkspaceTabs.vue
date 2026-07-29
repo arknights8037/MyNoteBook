@@ -17,13 +17,7 @@ import {
   X,
 } from '@lucide/vue'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-
-export interface WorkspaceTab {
-  key: string
-  kind: 'document' | 'mindmap' | 'view' | 'surface'
-  id: string
-  title: string
-}
+import type { WorkspaceTab } from './home/useWorkspaceTabs'
 
 defineProps<{
   tabs: WorkspaceTab[]

@@ -38,3 +38,24 @@ export function useMessage(): MessageService {
 export function useDialog(): DialogService {
   return inject(dialogServiceKey, noopDialogService)
 }
+
+export function requestDialogConfirmation(
+  dialog: DialogService,
+  options: Omit<DialogOptions, 'onPositiveClick' | 'onNegativeClick' | 'onClose'>,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (confirmed: boolean): void => {
+      if (settled) return
+      settled = true
+      resolve(confirmed)
+    }
+
+    dialog.warning({
+      ...options,
+      onPositiveClick: () => finish(true),
+      onNegativeClick: () => finish(false),
+      onClose: () => finish(false),
+    })
+  })
+}

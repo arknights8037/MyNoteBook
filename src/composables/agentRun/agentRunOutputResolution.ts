@@ -2,10 +2,19 @@ import type { AgentRuntimeResult } from '@/services/agent/AgentRuntime'
 import type { AgentCommunicationResult } from '@/services/agent/AgentCommunicationService'
 import { appendKnowledgeSources, type KnowledgeSource } from '@/models/knowledge/knowledgeRetrieval'
 import { persistAgentRunResult } from './agentRunPersistence'
-import type { AgentRunOutcome } from './agentRunResult'
-import { resolveAgentRunResult } from './agentRunResult'
+import {
+  formatAgentRunSummary,
+  resolveAgentRunResult,
+  type AgentRunOutcome,
+} from './agentRunResult'
 import { resolveCognitiveIntentResult } from './agentRunIntentStrategy'
-import type { LearningSessionState, LearningTurnResult, ResearchCandidateRef, ResearchResult, ReviewResult } from '@/models/cognitive/cognitive'
+import type {
+  LearningSessionState,
+  LearningTurnResult,
+  ResearchCandidateRef,
+  ResearchResult,
+  ReviewResult,
+} from '@/models/cognitive/cognitive'
 import type { CognitiveResultProvenance } from '@/models/cognitive/cognitive'
 import type { AiChatMode } from '@/models/ai/aiChatMode'
 import type { AiConversationMessage } from '@/composables/useAiConversation'
@@ -47,12 +56,32 @@ interface AgentRunOutputResolutionInput {
   assistantMessage: AiConversationMessage | undefined
   hasCognitivePersistence: () => boolean
   getCognitiveSessionService: () => Promise<{
-    waitForUser: (id: string, version: number, state: LearningSessionState) => Promise<{ ok: boolean; value: { id: string; version: number }; error?: { message: string } }>
-    complete: (id: string, version: number, state: unknown) => Promise<{ ok: boolean; value: { id: string; version: number }; error?: { message: string } }>
+    waitForUser: (
+      id: string,
+      version: number,
+      state: LearningSessionState,
+    ) => Promise<{
+      ok: boolean
+      value: { id: string; version: number }
+      error?: { message: string }
+    }>
+    complete: (
+      id: string,
+      version: number,
+      state: unknown,
+    ) => Promise<{
+      ok: boolean
+      value: { id: string; version: number }
+      error?: { message: string }
+    }>
     cancel: (id: string, version: number) => Promise<{ ok: boolean; error?: { message: string } }>
   }>
   setSummary: (summary: string) => void
-  runtime: { complete: (detail: string) => void; cancel: (detail: string) => void; fail: (detail: string) => void }
+  runtime: {
+    complete: (detail: string) => void
+    cancel: (detail: string) => void
+    fail: (detail: string) => void
+  }
 }
 
 export interface AgentRunOutputResolution {
@@ -139,7 +168,9 @@ export async function resolveAgentRunOutput(
         replaceBlocksByRegex: options.replaceBlocksByRegex,
         createId: options.createId,
       })
-      patchSet = result.patchSet as { patches: Array<{ documentId: string; operation: string }> } | null
+      patchSet = result.patchSet as {
+        patches: Array<{ documentId: string; operation: string }>
+      } | null
       outcome = result.outcome
       summary = result.summary
     }
@@ -210,12 +241,11 @@ export async function resolveAgentRunOutput(
 
   // Phase 4: Format assistant message
   if (assistantMessage) {
-    const formatAgentRunSummaryModule = await import('./agentRunResult')
     assistantMessage.content =
       mode === 'ask' && sources.length > 0
         ? appendKnowledgeSources(output, sources)
         : mode === 'edit' || mode === 'agent'
-          ? formatAgentRunSummaryModule.formatAgentRunSummary({
+          ? formatAgentRunSummary({
               summary,
               outcome,
               patchCount: patchSet?.patches.length ?? 0,

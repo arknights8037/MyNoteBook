@@ -2,10 +2,6 @@
 import 'katex/dist/katex.min.css'
 
 import {
-  AlignCenter,
-  AlignLeft,
-  AlignRight,
-  Bold,
   ClipboardPaste,
   Code,
   CopyPlus,
@@ -14,24 +10,16 @@ import {
   Heading2,
   Heading3,
   Heading4,
-  Highlighter,
   ImagePlus,
-  Italic,
   Link,
-  Palette,
   Quote,
   Redo2,
-  Strikethrough,
-  Subscript,
-  Superscript,
   Table2,
   Trash2,
-  Underline,
   Undo2,
   Sigma,
 } from '@lucide/vue'
 import { EditorContent, type Editor, type JSONContent, useEditor } from '@tiptap/vue-3'
-import { BubbleMenu } from '@tiptap/vue-3/menus'
 import {
   ContextMenuContent,
   ContextMenuItem,
@@ -63,16 +51,18 @@ import {
 } from '@/editor/blocks/blockTypeRegistry'
 import { isSameEditorContent, normalizeEditorContent } from '@/editor/core/editorContent'
 import { parseMarkdownDocument } from '@/editor/io/markdownImport'
-import { exportTiptapBlockToMarkdown, exportTiptapDocumentToMarkdown } from '@/editor/io/documentExport'
 import {
-  HIGHLIGHT_COLOR_SWATCHES,
-  TEXT_COLOR_SWATCHES,
-  useEditorColorFormatting,
-} from '@/editor/composables/useEditorColorFormatting'
+  exportTiptapBlockToMarkdown,
+  exportTiptapDocumentToMarkdown,
+} from '@/editor/io/documentExport'
 import { useEditorJumpAid } from '@/editor/composables/useEditorJumpAid'
-import EditorColorPickerPopover from '@/editor/components/EditorColorPickerPopover.vue'
+import {
+  getClipboardImageFile,
+  useEditorAssetInsertion,
+} from '@/editor/composables/useEditorAssetInsertion'
+import EditorBubbleToolbar from '@/editor/components/EditorBubbleToolbar.vue'
 import { ASSET_PORT_KEY } from '@/editor/core/assetPortContext'
-import { createAssetUrl } from '@/models/documents/asset'
+import { shouldShowEditorBubbleMenu } from '@/editor/core/editorBubbleMenu'
 import type { SelectedBlock } from '@/models/agent/agent'
 import {
   createInternalDocumentHref,
@@ -82,8 +72,7 @@ import {
 } from '@/models/documents/documentLink'
 import type { TiptapDocumentJson } from '@/models/documents/document'
 import { DEFAULT_APP_SETTINGS, type AppSettings } from '@/models/settings/settings'
-import { requireAssetPort, type AssetPort } from '@/services/ports/AssetPort'
-import { NButton, NButtonGroup, NIcon, NTooltip } from '@/ui'
+import type { AssetPort } from '@/services/ports/AssetPort'
 
 const props = withDefaults(
   defineProps<{
@@ -123,10 +112,6 @@ const emit = defineEmits<{
 const initialContent = computed(() =>
   ensureTopLevelBlockIds(normalizeEditorContent(props.modelValue)),
 )
-const imageFileInput = ref<InstanceType<typeof globalThis.HTMLInputElement> | null>(null)
-const attachmentFileInput = ref<InstanceType<typeof globalThis.HTMLInputElement> | null>(null)
-const pendingImagePosition = ref<number | null>(null)
-const pendingAttachmentPosition = ref<number | null>(null)
 const editorShellElement = ref<InstanceType<typeof globalThis.HTMLElement> | null>(null)
 const contextBlockPosition = ref<number | null>(null)
 const retainedBlockAvailable = ref(hasRetainedBlock())
@@ -142,16 +127,6 @@ const editorAppearanceStyle = computed(() => ({
   '--editor-western-font-family': toCssFontFamily(props.settings.westernFontFamily),
   '--editor-chinese-font-family': toCssFontFamily(props.settings.chineseFontFamily),
 }))
-const bubbleMenuOptions = {
-  strategy: 'fixed' as const,
-  placement: 'top' as const,
-  offset: 10,
-  flip: true,
-  shift: {
-    padding: 14,
-  },
-  inline: true,
-}
 const MENU_ICON_COMPONENTS = {
   code: Code,
   fileText: FileText,
@@ -190,43 +165,31 @@ const editor = useEditor({
       return true
     },
   },
-  onCreate: ({ editor: activeEditor }) => {
+  onCreate: () => {
     editorRevision.value += 1
-    syncTextColor(activeEditor)
-    syncHighlightColor(activeEditor)
     emit('ready')
-  },
-  onSelectionUpdate: ({ editor: activeEditor }) => {
-    syncTextColor(activeEditor)
-    syncHighlightColor(activeEditor)
   },
   onUpdate: ({ editor: activeEditor }) => {
     editorRevision.value += 1
-    syncTextColor(activeEditor)
-    syncHighlightColor(activeEditor)
     emit('update:modelValue', activeEditor.getJSON() as TiptapDocumentJson)
     emit('textUpdate', activeEditor.getText())
   },
 })
 
 const {
-  textColor,
-  highlightColor,
-  recentTextColors,
-  recentHighlightColors,
-  colorPopoverOpen,
-  highlightPopoverOpen,
-  setTextColor,
-  previewTextColor,
-  setHighlightColor,
-  previewHighlightColor,
-  unsetTextColor,
-  unsetHighlightColor,
-  syncTextColor,
-  syncHighlightColor,
-  hasActiveTextColor,
-  hasActiveHighlight,
-} = useEditorColorFormatting(editor)
+  imageFileInput,
+  attachmentFileInput,
+  insertImage,
+  insertAttachment,
+  handleImageFileChange,
+  handleAttachmentFileChange,
+  insertImageFile,
+} = useEditorAssetInsertion({
+  editor,
+  assetPort: editorAssetPort,
+  documentId: () => props.documentId,
+  reportError: (message) => emit('imageError', message),
+})
 
 const {
   activeItemId: activeJumpAidItemId,
@@ -253,126 +216,16 @@ function shouldShowBubbleMenu({
   from: number
   to: number
 }): boolean {
-  if (
-    props.readonly ||
-    !activeEditor.isEditable ||
-    activeEditor.isActive('codeBlock') ||
-    isRangeInsideCodeBlock(activeEditor, from, to)
-  ) {
-    return false
-  }
-
-  if (colorPopoverOpen.value || highlightPopoverOpen.value) {
-    return true
-  }
-
-  return from !== to
-}
-
-function isActive(name: string, attributes?: Record<string, unknown>): boolean {
-  return editor.value?.isActive(name, attributes) ?? false
-}
-
-function isRangeInsideCodeBlock(activeEditor: Editor, from: number, to: number): boolean {
-  return (
-    isPositionInsideNode(activeEditor, from, 'codeBlock') ||
-    isPositionInsideNode(activeEditor, Math.max(from, to - 1), 'codeBlock')
-  )
-}
-
-function isPositionInsideNode(activeEditor: Editor, position: number, nodeName: string): boolean {
-  const doc = activeEditor.state.doc
-  const resolvedPosition = doc.resolve(Math.max(0, Math.min(position, doc.content.size)))
-
-  for (let depth = resolvedPosition.depth; depth >= 0; depth -= 1) {
-    if (resolvedPosition.node(depth).type.name === nodeName) {
-      return true
-    }
-  }
-
-  return false
-}
-
-function toggleBold(): void {
-  editor.value?.chain().focus().toggleBold().run()
-}
-
-function toggleItalic(): void {
-  editor.value?.chain().focus().toggleItalic().run()
-}
-
-function toggleStrike(): void {
-  editor.value?.chain().focus().toggleStrike().run()
-}
-
-function toggleUnderline(): void {
-  editor.value?.chain().focus().toggleUnderline().run()
-}
-
-function toggleInlineCode(): void {
-  editor.value?.chain().focus().toggleCode().run()
-}
-
-function toggleSubscript(): void {
-  editor.value?.chain().focus().toggleMark('subscript').run()
-}
-
-function toggleSuperscript(): void {
-  editor.value?.chain().focus().toggleMark('superscript').run()
-}
-
-function setTextAlignment(alignment: 'left' | 'center' | 'right'): void {
-  editor.value?.chain().focus().setTextAlign(alignment).run()
-}
-
-function isTextAligned(alignment: 'left' | 'center' | 'right'): boolean {
-  return editor.value?.isActive({ textAlign: alignment }) ?? false
-}
-
-function setLink(): void {
-  const activeEditor = editor.value
-  if (!activeEditor) {
-    return
-  }
-
-  const currentHref = getCurrentLinkHref(activeEditor)
-  const href = globalThis.prompt('输入链接地址', currentHref)
-
-  if (href === null) {
-    activeEditor.commands.focus()
-    return
-  }
-
-  if (href.trim() === '') {
-    activeEditor.chain().focus().extendMarkRange('link').unsetLink().run()
-    return
-  }
-
-  activeEditor.chain().focus().extendMarkRange('link').setLink({ href: href.trim() }).run()
+  return shouldShowEditorBubbleMenu({
+    editor: activeEditor,
+    from,
+    to,
+    readonly: props.readonly,
+  })
 }
 
 function undo(): void {
   editor.value?.chain().focus().undo().run()
-}
-
-function redo(): void {
-  editor.value?.chain().focus().redo().run()
-}
-
-function insertImage(): void {
-  const activeEditor = editor.value
-  if (!activeEditor || !activeEditor.isEditable) return
-
-  pendingImagePosition.value = activeEditor.state.selection.from
-  imageFileInput.value?.click()
-}
-
-function insertAttachment(): void {
-  const activeEditor = editor.value
-  if (!activeEditor || !activeEditor.isEditable) return
-
-  pendingAttachmentPosition.value = activeEditor.state.selection.from
-  attachmentFileInput.value?.click()
 }
 
 function insertMarkdown(markdown: string): void {
@@ -609,140 +462,6 @@ function insertInternalDocumentLink(target: { id: string; title: string }): void
   activeEditor.chain().focus().setLink({ href }).run()
 }
 
-async function handleImageFileChange(event: InstanceType<typeof globalThis.Event>): Promise<void> {
-  const input = event.target as InstanceType<typeof globalThis.HTMLInputElement>
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
-
-  await insertImageFile(file, pendingImagePosition.value ?? undefined)
-  pendingImagePosition.value = null
-}
-
-async function handleAttachmentFileChange(
-  event: InstanceType<typeof globalThis.Event>,
-): Promise<void> {
-  const input = event.target as InstanceType<typeof globalThis.HTMLInputElement>
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
-
-  await insertAttachmentFile(file, pendingAttachmentPosition.value ?? undefined)
-  pendingAttachmentPosition.value = null
-}
-
-async function insertImageFile(
-  file: InstanceType<typeof globalThis.File>,
-  requestedPosition?: number,
-): Promise<void> {
-  const activeEditor = editor.value
-  if (!activeEditor || !activeEditor.isEditable) return
-
-  try {
-    const asset = await requireAssetPort(editorAssetPort).storeFile(file, props.documentId || null)
-    const src = createAssetUrl(asset.id)
-    const position = Math.max(
-      0,
-      Math.min(
-        requestedPosition ?? activeEditor.state.selection.from,
-        activeEditor.state.doc.content.size,
-      ),
-    )
-
-    activeEditor
-      .chain()
-      .focus()
-      .insertContentAt(position, [
-        {
-          type: 'imageFigure',
-          attrs: {
-            src,
-            alt: file.name,
-            originalName: file.name,
-          },
-        },
-        { type: 'paragraph' },
-      ])
-      .run()
-  } catch (error) {
-    emit('imageError', error instanceof Error ? error.message : '无法读取图片')
-  }
-}
-
-async function insertAttachmentFile(
-  file: InstanceType<typeof globalThis.File>,
-  requestedPosition?: number,
-): Promise<void> {
-  const activeEditor = editor.value
-  if (!activeEditor || !activeEditor.isEditable) return
-
-  try {
-    const asset = await requireAssetPort(editorAssetPort).storeFile(file, props.documentId || null)
-    const position = Math.max(
-      0,
-      Math.min(
-        requestedPosition ?? activeEditor.state.selection.from,
-        activeEditor.state.doc.content.size,
-      ),
-    )
-
-    activeEditor
-      .chain()
-      .focus()
-      .insertContentAt(position, [
-        {
-          type: 'attachmentBlock',
-          attrs: {
-            assetId: asset.id,
-            name: asset.originalName,
-            mimeType: asset.mimeType,
-            sizeBytes: asset.sizeBytes,
-          },
-        },
-        { type: 'paragraph' },
-      ])
-      .run()
-  } catch (error) {
-    emit('imageError', error instanceof Error ? error.message : '无法保存附件')
-  }
-}
-
-function getClipboardImageFile(
-  event: InstanceType<typeof globalThis.ClipboardEvent>,
-): InstanceType<typeof globalThis.File> | null {
-  const file = Array.from(event.clipboardData?.files ?? []).find((item) =>
-    item.type.startsWith('image/'),
-  )
-  if (file) return file
-
-  for (const item of Array.from(event.clipboardData?.items ?? [])) {
-    if (item.kind !== 'file' || !item.type.startsWith('image/')) continue
-
-    const clipboardFile = item.getAsFile()
-    if (clipboardFile) return clipboardFile
-  }
-
-  return null
-}
-
-function getBubbleMenuContainer() {
-  return globalThis.document.body
-}
-
-function getCurrentLinkHref(activeEditor: Editor): string {
-  const attributes = activeEditor.getAttributes('link')
-
-  if (isRecord(attributes) && typeof attributes.href === 'string') {
-    return attributes.href
-  }
-
-  return ''
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
 function toCssFontFamily(value: string): string {
   return value
     .split(',')
@@ -756,6 +475,10 @@ function toCssFontFamily(value: string): string {
         : `"${part.replace(/["\\]/g, '')}"`,
     )
     .join(', ')
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 watch(
@@ -854,292 +577,7 @@ defineExpose({
           aria-hidden="true"
           @change="handleAttachmentFileChange"
         />
-        <BubbleMenu
-          v-if="editor"
-          class="bubble-menu-layer"
-          :editor="editor"
-          :should-show="shouldShowBubbleMenu"
-          :append-to="getBubbleMenuContainer"
-          :options="bubbleMenuOptions"
-          plugin-key="format-bubble-menu"
-        >
-          <NButtonGroup class="bubble-toolbar" role="toolbar" aria-label="文本格式">
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  class="bubble-toolbar__button"
-                  :class="{ 'bubble-toolbar__button--active': isActive('bold') }"
-                  size="small"
-                  quaternary
-                  circle
-                  aria-label="粗体"
-                  @click="toggleBold"
-                >
-                  <template #icon>
-                    <NIcon :size="16"><Bold /></NIcon>
-                  </template>
-                </NButton>
-              </template>
-              粗体
-            </NTooltip>
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  class="bubble-toolbar__button"
-                  :class="{ 'bubble-toolbar__button--active': isActive('italic') }"
-                  size="small"
-                  quaternary
-                  circle
-                  aria-label="斜体"
-                  @click="toggleItalic"
-                >
-                  <template #icon>
-                    <NIcon :size="16"><Italic /></NIcon>
-                  </template>
-                </NButton>
-              </template>
-              斜体
-            </NTooltip>
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  class="bubble-toolbar__button"
-                  :class="{ 'bubble-toolbar__button--active': isActive('strike') }"
-                  size="small"
-                  quaternary
-                  circle
-                  aria-label="删除线"
-                  @click="toggleStrike"
-                >
-                  <template #icon>
-                    <NIcon :size="16"><Strikethrough /></NIcon>
-                  </template>
-                </NButton>
-              </template>
-              删除线
-            </NTooltip>
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  class="bubble-toolbar__button"
-                  :class="{ 'bubble-toolbar__button--active': isActive('underline') }"
-                  size="small"
-                  quaternary
-                  circle
-                  aria-label="下划线"
-                  @click="toggleUnderline"
-                >
-                  <template #icon>
-                    <NIcon :size="16"><Underline /></NIcon>
-                  </template>
-                </NButton>
-              </template>
-              下划线
-            </NTooltip>
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  class="bubble-toolbar__button"
-                  :class="{ 'bubble-toolbar__button--active': isActive('code') }"
-                  size="small"
-                  quaternary
-                  circle
-                  aria-label="行内代码"
-                  @click="toggleInlineCode"
-                >
-                  <template #icon>
-                    <NIcon :size="16"><Code /></NIcon>
-                  </template>
-                </NButton>
-              </template>
-              行内代码
-            </NTooltip>
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  class="bubble-toolbar__button"
-                  :class="{ 'bubble-toolbar__button--active': isActive('subscript') }"
-                  size="small"
-                  quaternary
-                  circle
-                  aria-label="下标"
-                  @click="toggleSubscript"
-                >
-                  <template #icon
-                    ><NIcon :size="16"><Subscript /></NIcon
-                  ></template>
-                </NButton>
-              </template>
-              下标（Ctrl+,）
-            </NTooltip>
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  class="bubble-toolbar__button"
-                  :class="{ 'bubble-toolbar__button--active': isActive('superscript') }"
-                  size="small"
-                  quaternary
-                  circle
-                  aria-label="上标"
-                  @click="toggleSuperscript"
-                >
-                  <template #icon
-                    ><NIcon :size="16"><Superscript /></NIcon
-                  ></template>
-                </NButton>
-              </template>
-              上标（Ctrl+.）
-            </NTooltip>
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  class="bubble-toolbar__button"
-                  :class="{ 'bubble-toolbar__button--active': isActive('link') }"
-                  size="small"
-                  quaternary
-                  circle
-                  aria-label="链接"
-                  @click="setLink"
-                >
-                  <template #icon>
-                    <NIcon :size="16"><Link /></NIcon>
-                  </template>
-                </NButton>
-              </template>
-              链接
-            </NTooltip>
-            <span class="bubble-toolbar__separator" aria-hidden="true"></span>
-            <EditorColorPickerPopover
-              v-model:show="colorPopoverOpen"
-              v-model:value="textColor"
-              :recent-colors="recentTextColors"
-              :swatches="TEXT_COLOR_SWATCHES"
-              :active="hasActiveTextColor()"
-              label="文字颜色"
-              recent-swatch-label="设置最近使用的文字颜色"
-              swatch-label="设置文字颜色"
-              recent-aria-label="最近使用的文字颜色"
-              swatches-aria-label="常用文字颜色"
-              clear-label="清除颜色"
-              @preview="previewTextColor"
-              @change="setTextColor"
-              @clear="unsetTextColor"
-            >
-              <template #icon><Palette /></template>
-            </EditorColorPickerPopover>
-            <EditorColorPickerPopover
-              v-model:show="highlightPopoverOpen"
-              v-model:value="highlightColor"
-              :recent-colors="recentHighlightColors"
-              :swatches="HIGHLIGHT_COLOR_SWATCHES"
-              :active="hasActiveHighlight()"
-              label="荧光笔"
-              recent-swatch-label="设置最近使用的高亮颜色"
-              swatch-label="设置高亮颜色"
-              recent-aria-label="最近使用的高亮颜色"
-              swatches-aria-label="常用高亮颜色"
-              clear-label="清除高亮"
-              @preview="previewHighlightColor"
-              @change="setHighlightColor"
-              @clear="unsetHighlightColor"
-            >
-              <template #icon><Highlighter /></template>
-            </EditorColorPickerPopover>
-            <span class="bubble-toolbar__separator" aria-hidden="true"></span>
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  class="bubble-toolbar__button"
-                  :class="{ 'bubble-toolbar__button--active': isTextAligned('left') }"
-                  size="small"
-                  quaternary
-                  circle
-                  aria-label="左对齐"
-                  @mousedown.prevent
-                  @click="setTextAlignment('left')"
-                >
-                  <template #icon>
-                    <NIcon :size="16"><AlignLeft /></NIcon>
-                  </template>
-                </NButton>
-              </template>
-              左对齐
-            </NTooltip>
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  class="bubble-toolbar__button"
-                  :class="{ 'bubble-toolbar__button--active': isTextAligned('center') }"
-                  size="small"
-                  quaternary
-                  circle
-                  aria-label="居中对齐"
-                  @mousedown.prevent
-                  @click="setTextAlignment('center')"
-                >
-                  <template #icon>
-                    <NIcon :size="16"><AlignCenter /></NIcon>
-                  </template>
-                </NButton>
-              </template>
-              居中对齐
-            </NTooltip>
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  class="bubble-toolbar__button"
-                  :class="{ 'bubble-toolbar__button--active': isTextAligned('right') }"
-                  size="small"
-                  quaternary
-                  circle
-                  aria-label="右对齐"
-                  @mousedown.prevent
-                  @click="setTextAlignment('right')"
-                >
-                  <template #icon>
-                    <NIcon :size="16"><AlignRight /></NIcon>
-                  </template>
-                </NButton>
-              </template>
-              右对齐
-            </NTooltip>
-            <span class="bubble-toolbar__separator" aria-hidden="true"></span>
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  class="bubble-toolbar__button"
-                  size="small"
-                  quaternary
-                  circle
-                  aria-label="撤销"
-                  @click="undo"
-                >
-                  <template #icon>
-                    <NIcon :size="16"><Undo2 /></NIcon>
-                  </template>
-                </NButton>
-              </template>
-              撤销
-            </NTooltip>
-            <NTooltip trigger="hover">
-              <template #trigger>
-                <NButton
-                  class="bubble-toolbar__button"
-                  size="small"
-                  quaternary
-                  circle
-                  aria-label="重做"
-                  @click="redo"
-                >
-                  <template #icon>
-                    <NIcon :size="16"><Redo2 /></NIcon>
-                  </template>
-                </NButton>
-              </template>
-              重做
-            </NTooltip>
-          </NButtonGroup>
-        </BubbleMenu>
+        <EditorBubbleToolbar v-if="editor" :editor="editor" :readonly="readonly" />
         <nav
           v-if="showJumpAid"
           class="editor-jump-aid"

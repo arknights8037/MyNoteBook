@@ -12,6 +12,7 @@ import type { AppError } from '@/models/shared/result'
 import type { DocumentTransferService } from '@/services/documents/DocumentTransferService'
 import { inferDocumentImportFormat } from '@/features/documents/documentFile'
 import { createEmptyDocumentContent } from '@/editor/io/documentTemplate'
+import { ensureTopLevelBlockIds } from '@/editor/blocks/blockId'
 import type {
   DocumentSidebarExpose,
   EditorShellExpose,
@@ -49,9 +50,7 @@ export function useDocumentTransferActions(options: DocumentTransferActionsOptio
   const isImporting = ref(false)
   const shareHtml = ref('')
   const isPreparingShare = ref(false)
-  const importFileAccept = computed(
-    () => '.json,.md,.markdown,application/json,text/markdown',
-  )
+  const importFileAccept = computed(() => '.json,.md,.markdown,application/json,text/markdown')
 
   function openImportDialog(): void {
     clearPendingImport()
@@ -121,7 +120,10 @@ export function useDocumentTransferActions(options: DocumentTransferActionsOptio
           try {
             parsedFiles.push({
               file,
-              parsed: documentTransfer.parseImport({ fileName: file.name, text: await file.text() }),
+              parsed: documentTransfer.parseImport({
+                fileName: file.name,
+                text: await file.text(),
+              }),
             })
           } catch {
             failedCount += 1
@@ -229,10 +231,7 @@ export function useDocumentTransferActions(options: DocumentTransferActionsOptio
       return null
     }
 
-    const [{ ensureTopLevelBlockIds }, documentTransfer] = await Promise.all([
-      import('@/editor/blocks/blockId'),
-      options.getDocumentTransfer(),
-    ])
+    const documentTransfer = await options.getDocumentTransfer()
     return documentTransfer.prepareExport({
       document,
       content: ensureTopLevelBlockIds(
