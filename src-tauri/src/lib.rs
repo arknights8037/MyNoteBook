@@ -83,9 +83,11 @@ mod ai_proxy;
 mod database;
 mod document_core;
 mod domain_events;
+mod email;
 mod governance;
 mod mcp;
 pub mod mcp_server_exposure;
+mod rss;
 mod secret_store;
 mod sensitive_data;
 mod skills;
@@ -263,6 +265,36 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0028_add_agent_a2a_routing.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 29,
+            description: "add_dashboard_workspace_view",
+            sql: include_str!("../migrations/0029_add_dashboard_workspace_view.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 30,
+            description: "add_email_inbox",
+            sql: include_str!("../migrations/0030_add_email_inbox.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 31,
+            description: "add_rss_inbox",
+            sql: include_str!("../migrations/0031_add_rss_inbox.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 32,
+            description: "add_rss_article_extraction",
+            sql: include_str!("../migrations/0032_add_rss_article_extraction.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 33,
+            description: "add_inbox_source_cursors",
+            sql: include_str!("../migrations/0033_add_inbox_source_cursors.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -330,6 +362,12 @@ pub fn run() {
             agent_repository::rollback_agent_transaction,
             secret_store::get_ai_api_key,
             secret_store::set_ai_api_key,
+            email::test_email_connection,
+            email::set_email_account_secret,
+            email::delete_email_account_secret,
+            email::sync_email_account,
+            rss::fetch_rss_feed,
+            rss::fetch_rss_article,
             ai_models::fetch_ai_models,
             ai_proxy::proxy_ai_request,
             agent_cancellation::cancel_agent_tool_call,

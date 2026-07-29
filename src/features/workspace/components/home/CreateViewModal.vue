@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FileText, GitBranch, Network, Presentation, Table2 } from '@lucide/vue'
+import { FileText, GitBranch, LayoutDashboard, Network, Presentation, Table2 } from '@lucide/vue'
 import { computed } from 'vue'
 
 import { NModal } from '@/ui'
@@ -25,6 +25,7 @@ const viewIcons = {
   mindmap: Network,
   slides: Presentation,
   table: Table2,
+  dashboard: LayoutDashboard,
 } as const
 </script>
 

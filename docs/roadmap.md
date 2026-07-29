@@ -71,25 +71,27 @@ Review 已完成真实 DeepSeek/Tauri smoke；Research 与 Learning 仍需要在
 - 把一次自动化运行映射到现有 Agent/Work 审计，而不是建立第二套执行循环。
 - 默认只产出可审阅结果；任何文档修改继续走 Patch 和确认边界。
 
-## R4：Dashboard Composer
+## R4：Dashboard Composer 后续
 
-[Dashboard Composer 设计](dashboard-composer.md) 仍是设计文档。当前代码中没有 `src/features/dashboard`、Dashboard repository/table，也未安装 GridStack 或 Grid Layout Plus。
+[Dashboard Composer](dashboard-composer.md) 的 P0 已实现：信息面板使用 Grid Layout Plus、版本化 `workspace_views` 持久化，以及 `Automation Results` 与 `Agent Work Status` 两个只读组件。
 
-首个可交付版本只做：
+剩余工作：
 
-- 一个可保存、恢复和重置的布局。
-- `Automation Results` 与 `Agent Work Status` 两个只读组件。
-- 明确采用布局依赖或自研 CSS Grid 的决定，并先验证 Tauri WebView2 的拖拽稳定性。
-- Dashboard 只消费既有查询与运行状态，不成为文档或知识的第二写入口。
+- 在 Tauri WebView2 中完成人工高 DPI、拖拽和键盘替代操作验收；
+- 接入真实 Signal 数据后实现 RSS Briefing 与 Signal Inbox Widget；
+- 为 Widget 增加来源时间、权限状态和 canonical 记录跳转；
+- 保持 Dashboard 只消费查询和受控 command，不成为第二写入口。
 
 ## R5：采集与外部集成
 
-RSS、Signal/消息收件箱、邮件、日历和网页裁剪仍属于未来集成。接入顺序应遵循：
+Signal/消息收件箱、邮件 OAuth、日历和网页裁剪仍属于未来集成。标准 IMAP 邮箱读取已按[邮箱连接器与收件箱](email-inbox.md)完成首个只读版本；RSS 已按[RSS 连接器与收件箱](rss-inbox.md)完成手动条件同步与统一收件箱版本。后续接入顺序应遵循：
 
 1. 先以 MCP Resource 或受限只读工具读取。
 2. 保存来源、时间、权限和内容哈希。
 3. 让模型产出候选、摘要或任务，不直接写正式知识。
 4. 需要副作用的外部动作必须逐次授权并保留审计。
+
+页面归属遵循[工作区导航与信息架构](navigation-information-architecture.md)：连接配置进入“连接与扩展”，采集内容进入“收件箱”，跨来源摘要进入“信息面板”。
 
 ## 暂不进入近期范围
 

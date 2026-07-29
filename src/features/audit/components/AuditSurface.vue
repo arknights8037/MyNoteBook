@@ -93,11 +93,11 @@ watch(category, () => void load())
 </script>
 
 <template>
-  <section class="operations-page" aria-label="审计记录">
+  <section class="operations-page" aria-label="活动与审计">
     <header class="operations-page__header">
       <div>
-        <span class="operations-page__eyebrow"><ClipboardList :size="15" />AUDIT</span>
-        <h1>审计记录</h1>
+        <span class="operations-page__eyebrow"><ClipboardList :size="15" />ACTIVITY & AUDIT</span>
+        <h1>活动与审计</h1>
         <p>{{ entries.length }} 条记录 · {{ activeCount }} 条进行中 · {{ errorCount }} 条异常</p>
       </div>
       <NButton secondary :loading="loading" @click="load">

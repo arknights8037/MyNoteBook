@@ -1,4 +1,4 @@
-export type CreateViewKind = 'document' | 'slides' | 'uml' | 'table' | 'mindmap'
+export type CreateViewKind = 'document' | 'slides' | 'uml' | 'table' | 'mindmap' | 'dashboard'
 
 export interface CreateViewOption {
   id: CreateViewKind
@@ -36,6 +36,11 @@ export const CREATE_VIEW_OPTIONS: readonly CreateViewOption[] = [
     id: 'table',
     title: '表格',
     description: '复用文档表格字段、行列和编辑能力',
+  },
+  {
+    id: 'dashboard',
+    title: '信息面板',
+    description: '组合自动化结果与 Agent 工作状态',
   },
 ]
 

@@ -25,7 +25,7 @@ automation_tasks
 
 当前实现分布在 `src/models/automation`、`src/services/automation`、`src/repositories/automation`、`src/infrastructure/database/automation` 和自动化页面组件；migration `0008` 拥有表、触发器与唯一索引。
 
-“审计记录”页面统一展示：
+“活动与审计”页面统一展示：
 
 - Agent 任务
 - Agent 工具调用

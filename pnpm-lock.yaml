@@ -119,6 +119,9 @@ importers:
       ai:
         specifier: ^7.0.22
         version: 7.0.22(zod@4.4.3)
+      grid-layout-plus:
+        specifier: 1.1.1
+        version: 1.1.1(vue@3.5.38(typescript@6.0.3))
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
@@ -762,6 +765,9 @@ packages:
   '@iconify/utils@3.1.3':
     resolution: {integrity: sha512-LPKOXPn/zV+zis1oOfGWogaXVpqUybF3ZS6SCZIsz8vg0ivVp9+fVqyYB7xq0aiST/VhUQYGO1qo6uoYSiEJqw==}
 
+  '@interactjs/types@1.10.27':
+    resolution: {integrity: sha512-BUdv0cvs4H5ODuwft2Xp4eL8Vmi3LcihK42z0Ft/FbVJZoRioBsxH+LlsBdK4tAie7PqlKGy+1oyOncu1nQ6eA==}
+
   '@internationalized/date@3.12.2':
     resolution: {integrity: sha512-FY1Y+H64NDs+HAF6omlnWxm3mEpfgaCSWtL5l551ZZfImA+kGjPFgrnJrGjH6lfmLL0g8Z/mBu1R3kufeCp6Jw==}
 
@@ -792,6 +798,9 @@ packages:
     resolution: {integrity: sha512-vvcyZ+10EDZKbEyB1J2kXOGfDaiZR2LurZGSqi2r5STHyKr+Te85DWaBxTwRGgM7U1LtIvNx85BzzjElRKoAIg==}
     peerDependencies:
       zod: ^4.0.0
+
+  '@juggle/resize-observer@3.4.0':
+    resolution: {integrity: sha512-dfLbk+PwWvFzSxwk3n5ySL0hfBog779o8h68wK/7/APo/7cgyWp5jcXockbxdk5kFRkbeXWm4Fbi9FrdN381sA==}
 
   '@leichtgewicht/ip-codec@2.0.5':
     resolution: {integrity: sha512-Vo+PSpZG2/fmgmiNzYK9qWRh8h/CHrwD0mo1h1DzL4yzHNSfWYujGTYsWGreD000gcgmZ7K4Ys6Tx9TxtsKdDw==}
@@ -2279,6 +2288,14 @@ packages:
     resolution: {integrity: sha512-UycprH3T6n3jH0k44NHMa7pnFHGu/N05MjojYr+Mc6I7obkoLIJujSWwin1pCvdy/eOxrI/l3uDLQsmcrOb4ug==}
     engines: {node: '>= 20'}
 
+  '@vexip-ui/hooks@2.9.4':
+    resolution: {integrity: sha512-dGUiBAeHIsnSVigGSPHcuHBVqrSGW8LV+zGohvOpBfXs8Ynn5ZcSmybIWJ3G826NsicPu9rqwcJG8uvSgG4k4Q==}
+    peerDependencies:
+      vue: ^3.2.25
+
+  '@vexip-ui/utils@2.16.4':
+    resolution: {integrity: sha512-KX+Q4EsuwDp6ZlRJ7OAkiYxu52D5CVM8zpqQz/FXYV+JUtzl9T3dvxgtA8gQ0wm5Sh/xT6jp8Wo4X7tLAzRh/A==}
+
   '@visactor/vdataset@1.0.23':
     resolution: {integrity: sha512-zrLk9FBUWJoW6b30XnPKzXwAXl8USdLDfed6QZLsmdkylRU8V7yZeXE2aKwU8Lg1U4HmQngqmqOx7/QlbX44Tg==}
 
@@ -3623,6 +3640,11 @@ packages:
     resolution: {integrity: sha512-5v6yZd4JK3eMI3FqqCouswVqwugaA9r4dNZB1wwcmrD02QkV5H0y7XBQW8QwQqEaZY1pM9aqORSORhJRdNK44Q==}
     engines: {node: '>=6.0'}
 
+  grid-layout-plus@1.1.1:
+    resolution: {integrity: sha512-7CWehJubrVC8Ps5QFUlnDsp0kiREvKfi3Pdjp21EyY8BNzSusqI3Utcxvu1Y9UUKe3YExvbhJzIxHK6rorbRaQ==}
+    peerDependencies:
+      vue: ^3.0.0
+
   gzip-size@6.0.0:
     resolution: {integrity: sha512-ax7ZYomf6jqPTQ4+XCpUGyXKHk5WweS+e05MBO4/y3WJ5RkmPXNKvX+bx1behVILVwr6JSQvZAku021CHPXG3Q==}
     engines: {node: '>=10'}
@@ -3760,6 +3782,9 @@ packages:
   ini@6.0.0:
     resolution: {integrity: sha512-IBTdIkzZNOpqm7q3dRqJvMaldXjDHWkEDfrwGEQTs5eaQMWV+djAhR+wahyNNMAa+qpbDUhBMVt4ZKNwpPm7xQ==}
     engines: {node: ^20.17.0 || >=22.9.0}
+
+  interactjs@1.10.27:
+    resolution: {integrity: sha512-y/8RcCftGAF24gSp76X2JS3XpHiUvDQyhF8i7ujemBz77hwiHDuJzftHx7thY8cxGogwGiPJ+o97kWB6eAXnsA==}
 
   internmap@1.0.1:
     resolution: {integrity: sha512-lDB5YccMydFBtasVtxnZ3MRBHuaoE8GKsppq+EchKL2U4nK/DmEpPHNH8MZe5HkMtpSiTSOZwfN0tzYjO/lJEw==}
@@ -6239,6 +6264,8 @@ snapshots:
       '@iconify/types': 2.0.0
       import-meta-resolve: 4.2.0
 
+  '@interactjs/types@1.10.27': {}
+
   '@internationalized/date@3.12.2':
     dependencies:
       '@swc/helpers': 0.5.23
@@ -6278,6 +6305,8 @@ snapshots:
   '@json-render/core@0.19.0(zod@4.4.3)':
     dependencies:
       zod: 4.4.3
+
+  '@juggle/resize-observer@3.4.0': {}
 
   '@leichtgewicht/ip-codec@2.0.5': {}
 
@@ -8029,6 +8058,15 @@ snapshots:
 
   '@vercel/oidc@3.2.0': {}
 
+  '@vexip-ui/hooks@2.9.4(vue@3.5.38(typescript@6.0.3))':
+    dependencies:
+      '@floating-ui/dom': 1.7.6
+      '@juggle/resize-observer': 3.4.0
+      '@vexip-ui/utils': 2.16.4
+      vue: 3.5.38(typescript@6.0.3)
+
+  '@vexip-ui/utils@2.16.4': {}
+
   '@visactor/vdataset@1.0.23':
     dependencies:
       '@turf/flatten': 6.5.0
@@ -9624,6 +9662,13 @@ snapshots:
       section-matter: 1.0.0
       strip-bom-string: 1.0.0
 
+  grid-layout-plus@1.1.1(vue@3.5.38(typescript@6.0.3)):
+    dependencies:
+      '@vexip-ui/hooks': 2.9.4(vue@3.5.38(typescript@6.0.3))
+      '@vexip-ui/utils': 2.16.4
+      interactjs: 1.10.27
+      vue: 3.5.38(typescript@6.0.3)
+
   gzip-size@6.0.0:
     dependencies:
       duplexer: 0.1.2
@@ -9755,6 +9800,10 @@ snapshots:
   ini@4.1.1: {}
 
   ini@6.0.0: {}
+
+  interactjs@1.10.27:
+    dependencies:
+      '@interactjs/types': 1.10.27
 
   internmap@1.0.1: {}
 

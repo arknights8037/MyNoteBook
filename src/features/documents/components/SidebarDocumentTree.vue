@@ -6,6 +6,7 @@ import {
   FileText,
   GitBranch,
   Info,
+  LayoutDashboard,
   Network,
   Pencil,
   Pin,
@@ -132,6 +133,7 @@ function viewIcon(id: string) {
   const type = props.workspaceViewTypes[id]
   if (type === 'slides') return Presentation
   if (type === 'uml') return GitBranch
+  if (type === 'dashboard') return LayoutDashboard
   return Table2
 }
 
@@ -162,7 +164,8 @@ function showContentProperties(id: string): void {
           class="document-list__item document-list__item--article document-list__item--tree"
           :class="{
             'document-list__item--mindmap': contentKind(node.document.id) === 'mindmap',
-            'document-list__item--workspace-view': contentKind(node.document.id) === 'workspace-view',
+            'document-list__item--workspace-view':
+              contentKind(node.document.id) === 'workspace-view',
             'document-list__item--active': isActive(node.document.id),
             'document-list__item--dragging':
               node.document.id === draggedArticleId ||
@@ -186,14 +189,37 @@ function showContentProperties(id: string): void {
           </button>
           <span v-else class="document-list__toggle-spacer" aria-hidden="true"></span>
 
-          <button type="button" class="document-list__select" :disabled="busy" @click="selectContent(node.document.id)">
+          <button
+            type="button"
+            class="document-list__select"
+            :disabled="busy"
+            @click="selectContent(node.document.id)"
+          >
             <Network v-if="contentKind(node.document.id) === 'mindmap'" :size="16" />
-            <component :is="viewIcon(node.document.id)" v-else-if="contentKind(node.document.id) === 'workspace-view'" :size="16" />
+            <component
+              :is="viewIcon(node.document.id)"
+              v-else-if="contentKind(node.document.id) === 'workspace-view'"
+              :size="16"
+            />
             <FileText v-else :size="16" />
             <span class="document-list__main">
-              <NTooltip trigger="hover"><template #trigger><span class="document-list__title"><SearchHighlight :text="displayTitle(node.document)" :query="filterQuery" /></span></template>{{ displayTitle(node.document) }}</NTooltip>
-              <span v-if="contentKind(node.document.id) !== 'document' || node.children.length > 0" class="document-list__meta">
-                {{ contentKind(node.document.id) === 'document' ? `${node.children.length} 个子页面` : node.document.description }}
+              <NTooltip trigger="hover"
+                ><template #trigger
+                  ><span class="document-list__title"
+                    ><SearchHighlight
+                      :text="displayTitle(node.document)"
+                      :query="filterQuery" /></span></template
+                >{{ displayTitle(node.document) }}</NTooltip
+              >
+              <span
+                v-if="contentKind(node.document.id) !== 'document' || node.children.length > 0"
+                class="document-list__meta"
+              >
+                {{
+                  contentKind(node.document.id) === 'document'
+                    ? `${node.children.length} 个子页面`
+                    : node.document.description
+                }}
               </span>
             </span>
           </button>
@@ -201,25 +227,75 @@ function showContentProperties(id: string): void {
           <span class="document-list__actions document-list__actions--menu">
             <DropdownMenuRoot>
               <DropdownMenuTrigger as-child>
-                <NButton class="document-list__more" size="tiny" quaternary :aria-label="`${displayTitle(node.document)}更多操作`" :disabled="busy" @click.stop @dragstart.stop.prevent>
-                  <template #icon><NIcon :size="15"><Ellipsis /></NIcon></template>
+                <NButton
+                  class="document-list__more"
+                  size="tiny"
+                  quaternary
+                  :aria-label="`${displayTitle(node.document)}更多操作`"
+                  :disabled="busy"
+                  @click.stop
+                  @dragstart.stop.prevent
+                >
+                  <template #icon
+                    ><NIcon :size="15"><Ellipsis /></NIcon
+                  ></template>
                 </NButton>
               </DropdownMenuTrigger>
               <DropdownMenuPortal>
                 <DropdownMenuContent class="document-card-menu" align="end" :side-offset="5">
-                  <DropdownMenuItem class="document-card-menu__item" @select="emit('createChildView', node.document.id)"><Plus :size="14" />新建内容</DropdownMenuItem>
+                  <DropdownMenuItem
+                    class="document-card-menu__item"
+                    @select="emit('createChildView', node.document.id)"
+                    ><Plus :size="14" />新建内容</DropdownMenuItem
+                  >
                   <template v-if="contentKind(node.document.id) === 'document'">
-                    <DropdownMenuItem class="document-card-menu__item" @select="emit('properties', node.document)"><Info :size="14" />属性</DropdownMenuItem>
-                    <DropdownMenuItem class="document-card-menu__item" @select="emit('rename', node.document)"><Pencil :size="14" />重命名</DropdownMenuItem>
+                    <DropdownMenuItem
+                      class="document-card-menu__item"
+                      @select="emit('properties', node.document)"
+                      ><Info :size="14" />属性</DropdownMenuItem
+                    >
+                    <DropdownMenuItem
+                      class="document-card-menu__item"
+                      @select="emit('rename', node.document)"
+                      ><Pencil :size="14" />重命名</DropdownMenuItem
+                    >
                     <DropdownMenuSeparator class="document-card-menu__separator" />
-                    <DropdownMenuItem class="document-card-menu__item document-card-menu__item--danger" @select="emit('delete', node.document)"><Trash2 :size="14" />删除</DropdownMenuItem>
+                    <DropdownMenuItem
+                      class="document-card-menu__item document-card-menu__item--danger"
+                      @select="emit('delete', node.document)"
+                      ><Trash2 :size="14" />删除</DropdownMenuItem
+                    >
                   </template>
                   <template v-else>
-                    <DropdownMenuItem v-if="contentKind(node.document.id) === 'workspace-view'" class="document-card-menu__item" @select="emit('pinWorkspaceView', node.document.id)"><Pin :size="14" />{{ workspaceViewPinnedAt[node.document.id] !== null && workspaceViewPinnedAt[node.document.id] !== undefined ? '取消置顶' : '置顶' }}</DropdownMenuItem>
-                    <DropdownMenuItem class="document-card-menu__item" @select="showContentProperties(node.document.id)"><Info :size="14" />属性</DropdownMenuItem>
-                    <DropdownMenuItem class="document-card-menu__item" @select="renameContent(node.document.id)"><Pencil :size="14" />重命名</DropdownMenuItem>
+                    <DropdownMenuItem
+                      v-if="contentKind(node.document.id) === 'workspace-view'"
+                      class="document-card-menu__item"
+                      @select="emit('pinWorkspaceView', node.document.id)"
+                      ><Pin :size="14" />{{
+                        workspaceViewPinnedAt[node.document.id] !== null &&
+                        workspaceViewPinnedAt[node.document.id] !== undefined
+                          ? '取消置顶'
+                          : '置顶'
+                      }}</DropdownMenuItem
+                    >
+                    <DropdownMenuItem
+                      class="document-card-menu__item"
+                      @select="showContentProperties(node.document.id)"
+                      ><Info :size="14" />属性</DropdownMenuItem
+                    >
+                    <DropdownMenuItem
+                      class="document-card-menu__item"
+                      @select="renameContent(node.document.id)"
+                      ><Pencil :size="14" />重命名</DropdownMenuItem
+                    >
                     <DropdownMenuSeparator class="document-card-menu__separator" />
-                    <DropdownMenuItem class="document-card-menu__item document-card-menu__item--danger" @select="deleteContent(node.document.id)"><Trash2 :size="14" />删除{{ contentKind(node.document.id) === 'mindmap' ? '思维导图' : '视图' }}</DropdownMenuItem>
+                    <DropdownMenuItem
+                      class="document-card-menu__item document-card-menu__item--danger"
+                      @select="deleteContent(node.document.id)"
+                      ><Trash2 :size="14" />删除{{
+                        contentKind(node.document.id) === 'mindmap' ? '思维导图' : '视图'
+                      }}</DropdownMenuItem
+                    >
                   </template>
                 </DropdownMenuContent>
               </DropdownMenuPortal>
@@ -229,19 +305,59 @@ function showContentProperties(id: string): void {
       </ContextMenuTrigger>
       <ContextMenuPortal>
         <ContextMenuContent class="document-card-menu" :collision-padding="8">
-          <ContextMenuItem class="document-card-menu__item" @select="emit('createChildView', node.document.id)"><Plus :size="14" />新建内容</ContextMenuItem>
+          <ContextMenuItem
+            class="document-card-menu__item"
+            @select="emit('createChildView', node.document.id)"
+            ><Plus :size="14" />新建内容</ContextMenuItem
+          >
           <template v-if="contentKind(node.document.id) === 'document'">
-            <ContextMenuItem class="document-card-menu__item" @select="emit('properties', node.document)"><Info :size="14" />属性</ContextMenuItem>
-            <ContextMenuItem class="document-card-menu__item" @select="emit('rename', node.document)"><Pencil :size="14" />重命名</ContextMenuItem>
+            <ContextMenuItem
+              class="document-card-menu__item"
+              @select="emit('properties', node.document)"
+              ><Info :size="14" />属性</ContextMenuItem
+            >
+            <ContextMenuItem
+              class="document-card-menu__item"
+              @select="emit('rename', node.document)"
+              ><Pencil :size="14" />重命名</ContextMenuItem
+            >
             <ContextMenuSeparator class="document-card-menu__separator" />
-            <ContextMenuItem class="document-card-menu__item document-card-menu__item--danger" @select="emit('delete', node.document)"><Trash2 :size="14" />删除</ContextMenuItem>
+            <ContextMenuItem
+              class="document-card-menu__item document-card-menu__item--danger"
+              @select="emit('delete', node.document)"
+              ><Trash2 :size="14" />删除</ContextMenuItem
+            >
           </template>
           <template v-else>
-            <ContextMenuItem v-if="contentKind(node.document.id) === 'workspace-view'" class="document-card-menu__item" @select="emit('pinWorkspaceView', node.document.id)"><Pin :size="14" />{{ workspaceViewPinnedAt[node.document.id] !== null && workspaceViewPinnedAt[node.document.id] !== undefined ? '取消置顶' : '置顶' }}</ContextMenuItem>
-            <ContextMenuItem class="document-card-menu__item" @select="showContentProperties(node.document.id)"><Info :size="14" />属性</ContextMenuItem>
-            <ContextMenuItem class="document-card-menu__item" @select="renameContent(node.document.id)"><Pencil :size="14" />重命名</ContextMenuItem>
+            <ContextMenuItem
+              v-if="contentKind(node.document.id) === 'workspace-view'"
+              class="document-card-menu__item"
+              @select="emit('pinWorkspaceView', node.document.id)"
+              ><Pin :size="14" />{{
+                workspaceViewPinnedAt[node.document.id] !== null &&
+                workspaceViewPinnedAt[node.document.id] !== undefined
+                  ? '取消置顶'
+                  : '置顶'
+              }}</ContextMenuItem
+            >
+            <ContextMenuItem
+              class="document-card-menu__item"
+              @select="showContentProperties(node.document.id)"
+              ><Info :size="14" />属性</ContextMenuItem
+            >
+            <ContextMenuItem
+              class="document-card-menu__item"
+              @select="renameContent(node.document.id)"
+              ><Pencil :size="14" />重命名</ContextMenuItem
+            >
             <ContextMenuSeparator class="document-card-menu__separator" />
-            <ContextMenuItem class="document-card-menu__item document-card-menu__item--danger" @select="deleteContent(node.document.id)"><Trash2 :size="14" />删除{{ contentKind(node.document.id) === 'mindmap' ? '思维导图' : '视图' }}</ContextMenuItem>
+            <ContextMenuItem
+              class="document-card-menu__item document-card-menu__item--danger"
+              @select="deleteContent(node.document.id)"
+              ><Trash2 :size="14" />删除{{
+                contentKind(node.document.id) === 'mindmap' ? '思维导图' : '视图'
+              }}</ContextMenuItem
+            >
           </template>
         </ContextMenuContent>
       </ContextMenuPortal>

@@ -56,29 +56,32 @@ type BrowserDragEvent = InstanceType<typeof globalThis.DragEvent>
 type BrowserInputElement = InstanceType<typeof globalThis.HTMLInputElement>
 type BrowserKeyboardEvent = InstanceType<typeof globalThis.KeyboardEvent>
 
-const props = withDefaults(defineProps<{
-  documents: DocumentSummary[]
-  deletedDocuments: DocumentSummary[]
-  view: SidebarView
-  activeSurface: WorkspaceSurface
-  currentDocumentId: DocumentId
-  selectedGroupId: DocumentId | null
-  collapsedGroupIds: Set<DocumentId>
-  collapsedDocumentIds: Set<DocumentId>
-  draggedArticleId: DocumentId | null
-  draggedMindMapId?: string | null
-  draggedWorkspaceViewId?: string | null
-  dropTargetGroupId: DocumentId | null
-  importFileAccept: string
-  busy: boolean
-  mindMaps: MindMapSummary[]
-  activeMindMapId: string | null
-  workspaceViews: StructuredWorkspaceViewSummary[]
-  activeWorkspaceViewId: string | null
-}>(), {
-  draggedMindMapId: null,
-  draggedWorkspaceViewId: null,
-})
+const props = withDefaults(
+  defineProps<{
+    documents: DocumentSummary[]
+    deletedDocuments: DocumentSummary[]
+    view: SidebarView
+    activeSurface: WorkspaceSurface
+    currentDocumentId: DocumentId
+    selectedGroupId: DocumentId | null
+    collapsedGroupIds: Set<DocumentId>
+    collapsedDocumentIds: Set<DocumentId>
+    draggedArticleId: DocumentId | null
+    draggedMindMapId?: string | null
+    draggedWorkspaceViewId?: string | null
+    dropTargetGroupId: DocumentId | null
+    importFileAccept: string
+    busy: boolean
+    mindMaps: MindMapSummary[]
+    activeMindMapId: string | null
+    workspaceViews: StructuredWorkspaceViewSummary[]
+    activeWorkspaceViewId: string | null
+  }>(),
+  {
+    draggedMindMapId: null,
+    draggedWorkspaceViewId: null,
+  },
+)
 
 const emit = defineEmits<{
   search: []
@@ -160,9 +163,11 @@ const isFiltering = computed(() => normalizedFilter.value.length > 0)
 function documentMatchesQuery(document: DocumentSummary): boolean {
   const q = normalizedFilter.value
   if (!q) return true
-  return matchesFilter(displayDocumentTitle(document), q) ||
+  return (
+    matchesFilter(displayDocumentTitle(document), q) ||
     matchesFilter(document.description, q) ||
     document.tags.some((tag) => matchesFilter(tag, q))
+  )
 }
 
 function groupHasMatch(group: DocumentSummary): boolean {
@@ -185,52 +190,65 @@ const activeDocumentId = computed(() =>
 )
 const mindMapIds = computed(() => new Set(props.mindMaps.map((mindMap) => mindMap.id)))
 const workspaceViewIds = computed(() => new Set(props.workspaceViews.map((view) => view.id)))
-const workspaceViewTypes = computed(() => Object.fromEntries(props.workspaceViews.map((view) => [view.id, view.viewType])))
-const workspaceViewPinnedAt = computed(() => Object.fromEntries(props.workspaceViews.map((view) => [view.id, view.pinnedAt])))
-const sidebarPages = computed<DocumentSummary[]>(() => [
-  ...props.documents,
-  ...props.mindMaps.map((mindMap) => ({
-    id: mindMap.id,
-    parentId: mindMap.parentId,
-    documentKind: 'article' as const,
-    title: mindMap.title,
-    tags: [],
-    sourceUrl: '',
-    author: '',
-    description: `${mindMap.nodeCount} 个节点`,
-    plainText: '',
-    revision: mindMap.version,
-    sortOrder: mindMap.sortOrder,
-    isDeleted: false,
-    createdAt: mindMap.createdAt,
-    updatedAt: mindMap.updatedAt,
-  })),
-  ...props.workspaceViews.map((workspaceView) => ({
-    id: workspaceView.id,
-    parentId: workspaceView.parentId,
-    documentKind: 'article' as const,
-    title: workspaceView.title,
-    tags: [],
-    sourceUrl: '',
-    author: '',
-    description: workspaceView.viewType === 'table' ? '表格' : workspaceView.viewType === 'uml' ? 'UML / 流程图' : '幻灯片',
-    plainText: '',
-    revision: workspaceView.version,
-    sortOrder: workspaceView.sortOrder,
-    isDeleted: false,
-    createdAt: workspaceView.createdAt,
-    updatedAt: workspaceView.updatedAt,
-  })),
-].sort((left, right) => {
-  const leftPinned = workspaceViewPinnedAt.value[left.id] ?? null
-  const rightPinned = workspaceViewPinnedAt.value[right.id] ?? null
-  if (leftPinned !== null || rightPinned !== null) {
-    if (leftPinned === null) return 1
-    if (rightPinned === null) return -1
-    return rightPinned - leftPinned
-  }
-  return left.sortOrder - right.sortOrder || right.updatedAt - left.updatedAt
-}))
+const workspaceViewTypes = computed(() =>
+  Object.fromEntries(props.workspaceViews.map((view) => [view.id, view.viewType])),
+)
+const workspaceViewPinnedAt = computed(() =>
+  Object.fromEntries(props.workspaceViews.map((view) => [view.id, view.pinnedAt])),
+)
+const sidebarPages = computed<DocumentSummary[]>(() =>
+  [
+    ...props.documents,
+    ...props.mindMaps.map((mindMap) => ({
+      id: mindMap.id,
+      parentId: mindMap.parentId,
+      documentKind: 'article' as const,
+      title: mindMap.title,
+      tags: [],
+      sourceUrl: '',
+      author: '',
+      description: `${mindMap.nodeCount} 个节点`,
+      plainText: '',
+      revision: mindMap.version,
+      sortOrder: mindMap.sortOrder,
+      isDeleted: false,
+      createdAt: mindMap.createdAt,
+      updatedAt: mindMap.updatedAt,
+    })),
+    ...props.workspaceViews.map((workspaceView) => ({
+      id: workspaceView.id,
+      parentId: workspaceView.parentId,
+      documentKind: 'article' as const,
+      title: workspaceView.title,
+      tags: [],
+      sourceUrl: '',
+      author: '',
+      description:
+        workspaceView.viewType === 'table'
+          ? '表格'
+          : workspaceView.viewType === 'uml'
+            ? 'UML / 流程图'
+            : workspaceView.viewType === 'dashboard'
+              ? '信息面板'
+              : '幻灯片',
+      plainText: '',
+      revision: workspaceView.version,
+      sortOrder: workspaceView.sortOrder,
+      isDeleted: false,
+      createdAt: workspaceView.createdAt,
+      updatedAt: workspaceView.updatedAt,
+    })),
+  ].sort((left, right) => {
+    const leftPinned = workspaceViewPinnedAt.value[left.id] ?? null
+    const rightPinned = workspaceViewPinnedAt.value[right.id] ?? null
+    if (leftPinned !== null || rightPinned !== null) {
+      if (leftPinned === null) return 1
+      if (rightPinned === null) return -1
+      return rightPinned - leftPinned
+    }
+    return left.sortOrder - right.sortOrder || right.updatedAt - left.updatedAt
+  }),
+)
 const documentForest = computed(() => buildSidebarDocumentForest(sidebarPages.value))
 const articleGroups = computed(() =>
   props.documents.filter(
@@ -262,7 +280,9 @@ function getGroupArticleCount(groupId: DocumentId): number {
 function canDropArticleIntoGroup(groupId: DocumentId): boolean {
   const mindMap = props.mindMaps.find((item) => item.id === props.draggedMindMapId)
   if (mindMap) return mindMap.parentId !== groupId
-  const workspaceView = props.workspaceViews.find((item) => item.id === props.draggedWorkspaceViewId)
+  const workspaceView = props.workspaceViews.find(
+    (item) => item.id === props.draggedWorkspaceViewId,
+  )
   if (workspaceView) return workspaceView.parentId !== groupId
   const article = props.documents.find((document) => document.id === props.draggedArticleId)
   return article?.documentKind === 'article' && article.parentId !== groupId
@@ -302,7 +322,10 @@ defineExpose({ openFilePicker })
       </div>
     </header>
 
-    <div v-if="view === 'documents'" class="context-sidebar__actions context-sidebar__actions--documents">
+    <div
+      v-if="view === 'documents'"
+      class="context-sidebar__actions context-sidebar__actions--documents"
+    >
       <button type="button" :disabled="busy" @click="emit('create-group')">
         <Folder :size="15" /><span>新建分组</span>
       </button>
@@ -355,8 +378,11 @@ defineExpose({ openFilePicker })
                 <span class="document-list__main">
                   <NTooltip trigger="hover">
                     <template #trigger
-                      ><span class="document-list__title"><SearchHighlight :text="displayDocumentTitle(group)" :query="filterQuery" /></span></template
-                    >
+                      ><span class="document-list__title"
+                        ><SearchHighlight
+                          :text="displayDocumentTitle(group)"
+                          :query="filterQuery" /></span
+                    ></template>
                     {{ displayDocumentTitle(group) }}
                   </NTooltip>
                   <span class="document-list__meta"
@@ -385,7 +411,11 @@ defineExpose({ openFilePicker })
                   </DropdownMenuTrigger>
                   <DropdownMenuPortal>
                     <DropdownMenuContent class="document-card-menu" align="end" :side-offset="5">
-                      <DropdownMenuItem class="document-card-menu__item" @select="emit('create-view', group.id)"><Plus :size="14" />新建内容</DropdownMenuItem>
+                      <DropdownMenuItem
+                        class="document-card-menu__item"
+                        @select="emit('create-view', group.id)"
+                        ><Plus :size="14" />新建内容</DropdownMenuItem
+                      >
                       <DropdownMenuItem
                         class="document-card-menu__item"
                         @select="emit('properties', group)"
@@ -463,7 +493,9 @@ defineExpose({ openFilePicker })
           @delete="emit('delete', $event)"
           @drag-start="emit('article-drag-start', $event.event, $event.document)"
           @mind-map-drag-start="emit('mind-map-drag-start', $event.event, $event.mindMapId)"
-          @workspace-view-drag-start="emit('workspace-view-drag-start', $event.event, $event.viewId)"
+          @workspace-view-drag-start="
+            emit('workspace-view-drag-start', $event.event, $event.viewId)
+          "
           @drag-end="emit('article-drag-end')"
         />
       </div>

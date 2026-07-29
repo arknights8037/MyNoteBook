@@ -23,7 +23,11 @@ import { useAiPreferences } from '@/composables/useAiPreferences'
 import { useHomeKeyboardShortcuts } from '@/composables/useHomeKeyboardShortcuts'
 import { ensureTopLevelBlockIds } from '@/editor/blocks/blockId'
 import { parseEditorContentJson } from '@/editor/core/editorContent'
-import { EMPTY_TIPTAP_DOCUMENT, type DocumentId, type DocumentSummary } from '@/models/documents/document'
+import {
+  EMPTY_TIPTAP_DOCUMENT,
+  type DocumentId,
+  type DocumentSummary,
+} from '@/models/documents/document'
 import { UNGROUPED_AGENT_PROJECT_ID } from '@/models/ai/aiChatHistory'
 import { createIdleAgentRuntimeState } from '@/models/agent/agentRuntime'
 import type { AgentTask } from '@/models/agent/agent'
@@ -52,6 +56,7 @@ import { applyApplicationTypography } from '@/services/appearance/applicationTyp
 import DocumentSidebar from '@/features/documents/components/DocumentSidebar.vue'
 import type {
   DocumentSidebarView,
+  InboxSection,
   WorkspaceSurface as WorkspaceSurfaceName,
 } from '@/models/workspace/workspaceSurface'
 import AgentAuthorizationModal from './home/AgentAuthorizationModal.vue'
@@ -87,6 +92,7 @@ const AuditSurface = defineLazySurface(() => import('@/features/audit/components
 const KnowledgeControlSurface = defineLazySurface(
   () => import('@/features/knowledge-control/components/KnowledgeControlSurface.vue'),
 )
+const InboxSurface = defineLazySurface(() => import('@/features/inbox/components/InboxSurface.vue'))
 const AgentPatchReviewModal = defineLazyComponent(() => import('./home/AgentPatchReviewModal.vue'))
 const CreateViewModal = defineLazyComponent(() => import('./home/CreateViewModal.vue'))
 const DeveloperInspectorDrawer = defineLazyComponent(
@@ -141,11 +147,13 @@ const editorShell = ref<EditorShellExpose | null>(null)
 const documentSidebar = ref<DocumentSidebarExpose | null>(null)
 const sidebarView = ref<DocumentSidebarView>('documents')
 const knowledgeSection = ref('assets')
-const pluginSection = ref('skills')
+const inboxSection = ref<InboxSection>('pending')
+const pluginSection = ref('connections')
 const automationSection = ref('tasks')
 const auditCategory = ref('all')
 const settingsSection = ref('general')
 const agentProjectCreateRequest = ref(0)
+const openingInformationHome = ref(false)
 
 function requestNewAgentProject(): void {
   agentProjectCreateRequest.value += 1
@@ -159,6 +167,7 @@ const {
   aiChatFullscreen,
   aiPanelMode,
   showSettings,
+  showInbox,
   showPluginSkills,
   showAutomations,
   showAudit,
@@ -167,6 +176,7 @@ const {
   openAgentWorkspace,
   openDockedAiChat,
   openSettingsSurface,
+  openInboxSurface,
   openPluginSkillsSurface,
   openAutomationsSurface,
   openAuditSurface,
@@ -353,14 +363,45 @@ const {
   dropOnGroup: handleGroupDrop,
 })
 
+const activeNavigationSurface = computed<WorkspaceSurfaceName | 'home' | 'work'>(() => {
+  if (activeSurface.value === 'agent' || activeSurface.value === 'automations') return 'work'
+  if (activeSurface.value !== 'document' || !activeWorkspaceViewId.value) {
+    return activeSurface.value
+  }
+  return workspaceViews.value.find((view) => view.id === activeWorkspaceViewId.value)?.viewType ===
+    'dashboard'
+    ? 'home'
+    : activeSurface.value
+})
+
+async function openInformationHome(): Promise<void> {
+  if (openingInformationHome.value) return
+  openingInformationHome.value = true
+  try {
+    await refreshWorkspaceViews()
+    const dashboard = workspaceViews.value.find((view) => view.viewType === 'dashboard')
+    if (dashboard) {
+      openWorkspaceView(dashboard.id)
+      return
+    }
+    openCreateView(null)
+    await createAndOpenView('dashboard')
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : String(error))
+  } finally {
+    openingInformationHome.value = false
+  }
+}
+
 const openTabs = ref<WorkspaceTab[]>([])
-const persistentSurfaceIds = new Set<WorkspaceSurfaceName>(['agent', 'knowledge'])
+const persistentSurfaceIds = new Set<WorkspaceSurfaceName>(['agent', 'inbox', 'knowledge'])
 const surfaceTitles: Partial<Record<WorkspaceSurfaceName, string>> = {
   agent: 'Agent Work',
+  inbox: '收件箱',
   knowledge: '知识控制',
-  plugins: '插件技能',
+  plugins: '连接与扩展',
   automations: '自动化任务',
-  audit: '审计记录',
+  audit: '活动与审计',
   settings: '设置',
 }
 
@@ -375,11 +416,18 @@ const activeTab = computed<WorkspaceTab | null>(() => {
   if (activeMindMapId.value) {
     const item = mindMaps.value.find((candidate) => candidate.id === activeMindMapId.value)
     return item
-      ? { key: `mindmap:${item.id}`, kind: 'mindmap', id: item.id, title: item.title || '未命名思维导图' }
+      ? {
+          key: `mindmap:${item.id}`,
+          kind: 'mindmap',
+          id: item.id,
+          title: item.title || '未命名思维导图',
+        }
       : null
   }
   if (activeWorkspaceViewId.value) {
-    const item = workspaceViews.value.find((candidate) => candidate.id === activeWorkspaceViewId.value)
+    const item = workspaceViews.value.find(
+      (candidate) => candidate.id === activeWorkspaceViewId.value,
+    )
     return item
       ? { key: `view:${item.id}`, kind: 'view', id: item.id, title: item.title || '未命名视图' }
       : null
@@ -427,6 +475,7 @@ async function activateWorkspaceTab(tab: WorkspaceTab): Promise<void> {
   if (tab.kind === 'view') return openWorkspaceView(tab.id)
   const actions: Record<string, () => void> = {
     agent: openAgentWorkspace,
+    inbox: openInboxSurface,
     knowledge: openKnowledgeControlSurface,
     plugins: openPluginSkillsSurface,
     automations: openAutomationsSurface,
@@ -537,8 +586,7 @@ function scheduleAgentRollbackToastDismissal(): void {
 const activeAgentTask = computed(
   () =>
     agentTasks.value.find(
-      (task) =>
-        task.status === 'running' && task.conversationId === currentAiChatHistoryId.value,
+      (task) => task.status === 'running' && task.conversationId === currentAiChatHistoryId.value,
     ) ??
     (pendingAgentTask.value?.conversationId === currentAiChatHistoryId.value
       ? pendingAgentTask.value
@@ -566,9 +614,7 @@ const currentAiProject = aiConversation.activeProject
 const currentAgentRuntimeProjectId = computed(() =>
   currentAiProjectId.value === UNGROUPED_AGENT_PROJECT_ID ? '' : currentAiProjectId.value,
 )
-const agentWorkspaceOptions = computed(() =>
-  buildAgentWorkspaceOptions(documents.value),
-)
+const agentWorkspaceOptions = computed(() => buildAgentWorkspaceOptions(documents.value))
 const currentAgentWorkspaceRootIds = computed(() => currentAiProject.value?.workspaceRootIds ?? [])
 const agentTargetOptions = computed<AgentTargetOption[]>(() =>
   buildAgentTargetOptions(documents.value, currentDocumentId.value),
@@ -1180,9 +1226,7 @@ async function deleteEntireGroup(group: DocumentSummary): Promise<void> {
     (item) => item.documentKind === 'article' && containerIds.has(item.id),
   )
   const mindMapCount = mindMaps.value.filter((item) => containerIds.has(item.id)).length
-  const workspaceViewCount = workspaceViews.value.filter((item) =>
-    containerIds.has(item.id),
-  ).length
+  const workspaceViewCount = workspaceViews.value.filter((item) => containerIds.has(item.id)).length
   const permanentCount = mindMapCount + workspaceViewCount
   const confirmed = await confirmEntireGroupRemoval(
     group,
@@ -1358,13 +1402,14 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
       }"
     >
       <WorkspaceActivityRail
-        :active-surface="activeSurface"
-        @agent="openAgentWorkspace"
+        :active-surface="activeNavigationSurface"
+        @home="openInformationHome"
+        @inbox="openInboxSurface"
+        @work="openAgentWorkspace"
         @documents="openDocumentSurface"
         @knowledge="openKnowledgeControlSurface"
-        @plugins="openPluginSkillsSurface"
-        @automations="openAutomationsSurface"
-        @audit="openAuditSurface"
+        @extensions="openPluginSkillsSurface"
+        @activity="openAuditSurface"
         @settings="openSettingsSurface"
       />
       <DocumentSidebar
@@ -1428,6 +1473,7 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
       />
       <WorkspaceContextSidebar
         v-else
+        v-model:inbox-section="inboxSection"
         v-model:knowledge-section="knowledgeSection"
         v-model:plugin-section="pluginSection"
         v-model:automation-section="automationSection"
@@ -1446,6 +1492,8 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
         @new-project="requestNewAgentProject"
         @pin-project="aiConversation.toggleProjectPin"
         @delete-project="aiConversation.deleteProject"
+        @open-agent="openAgentWorkspace"
+        @open-automations="openAutomationsSurface"
       />
       <div class="workspace-main">
         <WorkspaceTabs
@@ -1457,112 +1505,121 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
         />
         <div class="workspace-main__surface">
           <Transition name="settings-surface" mode="out-in">
-        <SettingsSurface
-          v-if="showSettings"
-          key="settings"
-          v-model:section="settingsSection"
-          context-navigation
-          :settings="appSettings"
-          :ai-settings="aiSettings"
-          :default-data-directory="defaultDataDirectory"
-          :data-busy="isChangingDataDirectory"
-          @change="updateSettings"
-          @ai-change="updateAiSettings"
-          @ai-section-open="ensureAiSecretLoaded"
-          @reset="resetSettings"
-          @choose-data-directory="chooseDataDirectory"
-          @restore-data-directory="restoreDefaultDataDirectory"
-          @close="openDocumentSurface"
-        />
+            <InboxSurface
+              v-if="showInbox"
+              key="inbox"
+              :section="inboxSection"
+              @open-connections="openPluginSkillsSurface"
+            />
 
-        <PluginSkillsSurface
-          v-else-if="showPluginSkills"
-          key="plugin-skills"
-          v-model:tab="pluginSection"
-          context-navigation
-          :mcp-client="dependencies.agentRunServices.mcpClient"
-        />
+            <SettingsSurface
+              v-else-if="showSettings"
+              key="settings"
+              v-model:section="settingsSection"
+              context-navigation
+              :settings="appSettings"
+              :ai-settings="aiSettings"
+              :default-data-directory="defaultDataDirectory"
+              :data-busy="isChangingDataDirectory"
+              @change="updateSettings"
+              @ai-change="updateAiSettings"
+              @ai-section-open="ensureAiSecretLoaded"
+              @reset="resetSettings"
+              @choose-data-directory="chooseDataDirectory"
+              @restore-data-directory="restoreDefaultDataDirectory"
+              @close="openDocumentSurface"
+            />
 
-        <AutomationSurface
-          v-else-if="showAutomations"
-          key="automations"
-          v-model:tab="automationSection"
-          context-navigation
-          :current-document-id="currentDocumentId"
-          :current-document-title="documentTitle"
-          :get-service="dependencies.getAutomationService"
-        />
+            <PluginSkillsSurface
+              v-else-if="showPluginSkills"
+              key="plugin-skills"
+              v-model:tab="pluginSection"
+              context-navigation
+              :mcp-client="dependencies.agentRunServices.mcpClient"
+            />
 
-        <AuditSurface
-          v-else-if="showAudit"
-          key="audit"
-          v-model:category="auditCategory"
-          context-navigation
-          :get-repository="dependencies.getAuditRepository"
-        />
+            <AutomationSurface
+              v-else-if="showAutomations"
+              key="automations"
+              v-model:tab="automationSection"
+              context-navigation
+              :current-document-id="currentDocumentId"
+              :current-document-title="documentTitle"
+              :get-service="dependencies.getAutomationService"
+            />
 
-        <KnowledgeControlSurface
-          v-else-if="showKnowledgeControl"
-          key="knowledge-control"
-          v-model:tab="knowledgeSection"
-          context-navigation
-          :current-document-id="currentDocumentId"
-          :current-document-revision="currentDocument?.revision ?? 0"
-          :get-service="dependencies.getKnowledgeControlService"
-          :chat-history="aiChatHistory"
-          @research-assets="researchKnowledgeAssets"
-        />
+            <AuditSurface
+              v-else-if="showAudit"
+              key="audit"
+              v-model:category="auditCategory"
+              context-navigation
+              :get-repository="dependencies.getAuditRepository"
+            />
 
-        <div
-          v-else
-          key="document-workspace"
-          class="document-workspace"
-          :class="{ 'document-workspace--agent-workspace': showAiChat && aiChatFullscreen }"
-        >
-          <AiChatPanel
-            v-if="showAiChat && aiChatFullscreen"
-            v-bind="aiChatPanelBindings"
-            workspace
-            external-navigation
-            :project-create-request="agentProjectCreateRequest"
-          />
+            <KnowledgeControlSurface
+              v-else-if="showKnowledgeControl"
+              key="knowledge-control"
+              v-model:tab="knowledgeSection"
+              context-navigation
+              :current-document-id="currentDocumentId"
+              :current-document-revision="currentDocument?.revision ?? 0"
+              :get-service="dependencies.getKnowledgeControlService"
+              :chat-history="aiChatHistory"
+              @research-assets="researchKnowledgeAssets"
+            />
 
-          <WorkspaceEditorPane
-            ref="editorShell"
-            :active-mind-map-id="activeMindMapId"
-            :active-workspace-view-id="activeWorkspaceViewId"
-            :mind-maps="mindMaps"
-            :workspace-views="workspaceViews"
-            :document-title="documentTitle"
-            :editor-content="editorContent"
-            :editor-settings="editorSettings"
-            :internal-documents="internalDocuments"
-            :current-document-id="currentDocumentId"
-            :current-document="currentDocument"
-            :loading="isLoadingDocument"
-            :load-error="loadError"
-            :busy="isBusy"
-            :save-status-class="saveStatusClass"
-            :save-status-text="saveStatusText"
-            :preparing-share="isPreparingShare"
-            :get-mind-map-service="mindMapService"
-            :get-workspace-view-service="workspaceViewService"
-            :class="{ 'editor-panel--behind-ai': showAiChat && aiChatFullscreen }"
-            @update:title="documentTitle = $event"
-            @title-input="handleTitleInput"
-            @commit-title="commitCurrentTitle"
-            @create-child="createAndOpenDocument(currentDocumentId)"
-            @share="openShareView"
-            @inspect="showInspector = true"
-            @search="openSearch"
-            @update:editor-content="handleEditorContentUpdate"
-            @text-update="handleTextUpdate"
-            @image-error="message.error"
-            @open-document="openEditorDocument"
-            @mind-map-saved="handleMindMapSaved"
-            @workspace-view-saved="handleWorkspaceViewSaved"
-          />
-        </div>
+            <div
+              v-else
+              key="document-workspace"
+              class="document-workspace"
+              :class="{ 'document-workspace--agent-workspace': showAiChat && aiChatFullscreen }"
+            >
+              <AiChatPanel
+                v-if="showAiChat && aiChatFullscreen"
+                v-bind="aiChatPanelBindings"
+                workspace
+                external-navigation
+                :project-create-request="agentProjectCreateRequest"
+              />
+
+              <WorkspaceEditorPane
+                ref="editorShell"
+                :active-mind-map-id="activeMindMapId"
+                :active-workspace-view-id="activeWorkspaceViewId"
+                :mind-maps="mindMaps"
+                :workspace-views="workspaceViews"
+                :document-title="documentTitle"
+                :editor-content="editorContent"
+                :editor-settings="editorSettings"
+                :internal-documents="internalDocuments"
+                :current-document-id="currentDocumentId"
+                :current-document="currentDocument"
+                :loading="isLoadingDocument"
+                :load-error="loadError"
+                :busy="isBusy"
+                :save-status-class="saveStatusClass"
+                :save-status-text="saveStatusText"
+                :preparing-share="isPreparingShare"
+                :get-mind-map-service="mindMapService"
+                :get-workspace-view-service="workspaceViewService"
+                :get-automation-service="dependencies.getAutomationService"
+                :agent-tasks="agentTasks"
+                :class="{ 'editor-panel--behind-ai': showAiChat && aiChatFullscreen }"
+                @update:title="documentTitle = $event"
+                @title-input="handleTitleInput"
+                @commit-title="commitCurrentTitle"
+                @create-child="createAndOpenDocument(currentDocumentId)"
+                @share="openShareView"
+                @inspect="showInspector = true"
+                @search="openSearch"
+                @update:editor-content="handleEditorContentUpdate"
+                @text-update="handleTextUpdate"
+                @image-error="message.error"
+                @open-document="openEditorDocument"
+                @mind-map-saved="handleMindMapSaved"
+                @workspace-view-saved="handleWorkspaceViewSaved"
+              />
+            </div>
           </Transition>
         </div>
       </div>

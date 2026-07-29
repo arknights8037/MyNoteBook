@@ -15,4 +15,6 @@
 @import './editor/attachment-block.css';
 @import './pages/secondary-pages.css';
 @import './pages/operations.css';
+@import './pages/dashboard.css';
+@import './pages/inbox.css';
 @import './themes/semantic.css';

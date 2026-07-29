@@ -14,11 +14,14 @@ describe('PluginSkillsSurface', () => {
     })
     await flushPromises()
 
-    expect(wrapper.find('.skill-library:not(.mcp-panel)').exists()).toBe(true)
+    expect(wrapper.find('.connector-catalog').exists()).toBe(true)
     expect(wrapper.find('.mcp-panel').exists()).toBe(false)
     expect(wrapper.find('.builtin-plugins').exists()).toBe(false)
 
     const tabs = wrapper.findAll('[role="tab"]')
+    await tabs.find((tab) => tab.text().includes('Skills'))?.trigger('click')
+    expect(wrapper.find('.skill-library:not(.mcp-panel)').exists()).toBe(true)
+
     await tabs.find((tab) => tab.text().includes('MCP Client'))?.trigger('click')
     expect(wrapper.find('.mcp-panel.skill-library').exists()).toBe(true)
     expect(wrapper.find('.mcp-panel .skill-library__toolbar').exists()).toBe(true)

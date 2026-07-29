@@ -7,6 +7,8 @@ describe('useWorkspaceSurface', () => {
     const surface = useWorkspaceSurface()
 
     expect(surface.activeSurface.value).toBe('agent')
+    surface.openInboxSurface()
+    expect(surface.activeSurface.value).toBe('inbox')
     surface.openPluginSkillsSurface()
     expect(surface.activeSurface.value).toBe('plugins')
     surface.openAutomationsSurface()
@@ -41,6 +43,17 @@ describe('useWorkspaceSurface', () => {
 
     expect(surface.activeSurface.value).toBe('audit')
     expect(surface.showSettings.value).toBe(false)
+    expect(surface.showInbox.value).toBe(false)
     expect(surface.showAudit.value).toBe(true)
+  })
+
+  it('opens the inbox as a primary surface and closes workspace AI', () => {
+    const surface = useWorkspaceSurface()
+
+    surface.openInboxSurface()
+
+    expect(surface.activeSurface.value).toBe('inbox')
+    expect(surface.showInbox.value).toBe(true)
+    expect(surface.showAiChat.value).toBe(false)
   })
 })

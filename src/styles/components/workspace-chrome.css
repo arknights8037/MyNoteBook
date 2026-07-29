@@ -237,8 +237,41 @@
   gap: 2px;
 }
 
-.activity-rail__settings {
+.activity-rail__nav--management {
   margin-top: auto;
+  border-top: 1px solid var(--workspace-nav-divider);
+  padding-top: 6px;
+}
+
+.activity-rail__section-label {
+  display: block;
+  height: 16px;
+  overflow: hidden;
+  padding-left: 40px;
+  color: var(--workspace-glass-text-muted, var(--color-text-tertiary, #8b93a7));
+  opacity: 0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 16px;
+  text-transform: uppercase;
+  transition: opacity 120ms ease;
+  white-space: nowrap;
+}
+
+.activity-rail:hover .activity-rail__section-label,
+.activity-rail:has(.activity-rail__item:focus-visible) .activity-rail__section-label {
+  opacity: 1;
+}
+
+.activity-rail__settings {
+  margin-top: 2px;
+}
+
+.activity-rail__brand--active .activity-rail__brand-mark {
+  border-color: color-mix(in srgb, var(--workspace-glass-accent, #2867b2) 45%, transparent);
+  box-shadow: 0 0 0 2px
+    color-mix(in srgb, var(--workspace-glass-accent, #2867b2) 14%, transparent);
 }
 
 .workspace-main {
@@ -356,6 +389,44 @@
   color: var(--workspace-glass-text-primary, var(--color-text-primary, #292927));
   font-size: 12px;
   font-weight: 680;
+}
+
+.context-sidebar__domain-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+  margin: 8px 9px 0;
+  border: 1px solid var(--workspace-nav-divider);
+  border-radius: 7px;
+  padding: 3px;
+  background: color-mix(in srgb, var(--color-bg-subtle) 74%, transparent);
+}
+
+.context-sidebar__domain-switch button {
+  display: inline-flex;
+  min-width: 0;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 5px;
+  padding: 0 7px;
+  color: var(--color-text-tertiary);
+  background: transparent;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.context-sidebar__domain-switch button:hover {
+  color: var(--color-text-primary);
+}
+
+.context-sidebar__domain-switch button.is-active {
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 1px 3px rgba(22, 20, 17, 0.08);
 }
 
 .sidebar-search-trigger {

@@ -363,11 +363,12 @@ export function useWorkspaceItems(options: WorkspaceItemsOptions) {
     createViewParentId.value = null
     showCreateViewModal.value = false
     if (kind === 'mindmap') return createAndOpenMindMap(parentId)
-    if (kind === 'slides' || kind === 'uml' || kind === 'table') {
+    if (kind === 'slides' || kind === 'uml' || kind === 'table' || kind === 'dashboard') {
       const titles: Record<StructuredWorkspaceViewType, string> = {
         slides: '新幻灯片',
         uml: '新 UML 图',
         table: '新表格',
+        dashboard: '信息面板',
       }
       const result = await (await workspaceViewService()).create(kind, titles[kind], parentId)
       if (!result.ok) throw new Error(result.error.message)

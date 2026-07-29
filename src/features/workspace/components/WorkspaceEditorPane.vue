@@ -5,6 +5,8 @@ import type { AppSettings } from '@/models/settings/settings'
 import type { DocumentId, DocumentSummary, TiptapDocumentJson } from '@/models/documents/document'
 import type { MindMapSummary } from '@/models/workspace/mindMap'
 import type { StructuredWorkspaceViewSummary } from '@/models/workspace/workspaceView'
+import type { AgentTask } from '@/models/agent/agent'
+import type { AutomationService } from '@/services/automation/AutomationService'
 import type { MindMapService } from '@/services/workspace/MindMapService'
 import type { WorkspaceViewService } from '@/services/workspace/WorkspaceViewService'
 import EditorTopbar from './home/EditorTopbar.vue'
@@ -49,6 +51,8 @@ defineProps<{
   preparingShare: boolean
   getMindMapService: () => Promise<MindMapService>
   getWorkspaceViewService: () => Promise<WorkspaceViewService>
+  getAutomationService: () => Promise<AutomationService>
+  agentTasks: AgentTask[]
 }>()
 
 const emit = defineEmits<{
@@ -118,6 +122,8 @@ defineExpose<EditorShellExpose>({
       :key="`${activeWorkspaceViewId}:${workspaceViews.find((item) => item.id === activeWorkspaceViewId)?.version ?? 0}`"
       :view-id="activeWorkspaceViewId"
       :get-service="getWorkspaceViewService"
+      :get-automation-service="getAutomationService"
+      :agent-tasks="agentTasks"
       @saved="emit('workspaceViewSaved', $event)"
     />
     <template v-else>

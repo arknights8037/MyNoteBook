@@ -1,5 +1,6 @@
 export type WorkspaceSurface =
   | 'agent'
+  | 'inbox'
   | 'document'
   | 'knowledge'
   | 'plugins'
@@ -8,3 +9,5 @@ export type WorkspaceSurface =
   | 'settings'
 
 export type DocumentSidebarView = 'documents' | 'trash'
+
+export type InboxSection = 'pending' | 'all' | 'rss' | 'messages' | 'email' | 'failures'
