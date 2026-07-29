@@ -9,15 +9,28 @@ const root = resolve(import.meta.dirname, '../../..')
 describe('Runtime architecture boundaries', () => {
   it('keeps contracts and the AI SDK adapter independent from Vue and database adapters', () => {
     for (const file of [
+      'packages/agent-runtime-contracts/src/index.ts',
+      'packages/pi-agent-worker/src/PiAgentRuntimePrototype.ts',
+      'packages/pi-agent-worker/src/PiToolAdapter.ts',
+      'packages/pi-agent-worker/src/StdioPiToolRpcClient.ts',
       'src/models/agent/agentRuntimeContract.ts',
       'src/services/agent/AgentRuntimeClient.ts',
       'src/services/ai/AiSdkAgentRuntime.ts',
     ]) {
       const source = readFileSync(resolve(root, file), 'utf8')
       expect(source, file).not.toMatch(
-        /from ['"]vue['"]|@tauri-apps\/plugin-sql|@\/infrastructure\//,
+        /from ['"]vue['"]|@tauri-apps\/plugin-sql|@\/infrastructure\/|\bsqlite\b|\bsqlx\b/i,
       )
     }
+  })
+
+  it('makes the PI worker consume the frozen manifest without defining another registry', () => {
+    const source = readFileSync(
+      resolve(root, 'packages/pi-agent-worker/src/PiToolAdapter.ts'),
+      'utf8',
+    )
+    expect(source).toContain('manifest.map')
+    expect(source).not.toMatch(/AGENT_TOOL_REGISTRY|buildDomainToolManifest|getAgentToolJsonSchema/)
   })
 
   it('does not add a new WebView SQL writer outside the reviewed baseline', () => {

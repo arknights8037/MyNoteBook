@@ -88,6 +88,7 @@ mod email;
 mod governance;
 mod mcp;
 pub mod mcp_server_exposure;
+mod pi_worker_supervisor;
 mod rss;
 mod secret_store;
 mod sensitive_data;
