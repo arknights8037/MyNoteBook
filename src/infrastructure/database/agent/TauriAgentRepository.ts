@@ -37,7 +37,10 @@ interface AgentPatchBatchCommandResult {
 
 interface AgentTaskRow extends Record<string, unknown> {
   id: string
+  run_id?: string | null
+  workflow_id?: string | null
   session_id: string
+  document_id: string
   project_id?: string | null
   conversation_id?: string | null
   status: string
@@ -107,14 +110,16 @@ export class TauriAgentRepository implements AgentRepository {
     try {
       await this.sqlClient.execute(
         `INSERT INTO agent_tasks (
-          id, session_id, document_id, status, user_instruction, context_scope, model,
+          id, run_id, workflow_id, session_id, document_id, status, user_instruction, context_scope, model,
           current_step, error, created_at, completed_at, correlation_id, causation_id,
           execution_policy_json, context_bundle_id, provider, project_id, conversation_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           task.id,
+          task.runId,
+          task.workflowId,
           task.sessionId,
-          task.sessionId,
+          task.documentId,
           task.status,
           task.userInstruction,
           task.contextScope,
@@ -160,7 +165,7 @@ export class TauriAgentRepository implements AgentRepository {
         )
       }
       const taskRows = await this.sqlClient.select<AgentTaskRow>(
-        `SELECT id, session_id, project_id, conversation_id, status, user_instruction, context_scope, model,
+        `SELECT id, run_id, workflow_id, session_id, document_id, project_id, conversation_id, status, user_instruction, context_scope, model,
                 current_step, error, created_at, completed_at, correlation_id, causation_id,
                 execution_policy_json, context_bundle_id, provider, task_run_id
          FROM agent_tasks
@@ -218,7 +223,7 @@ export class TauriAgentRepository implements AgentRepository {
         : null
       if (lastAppliedTransaction && !lastAppliedTask) {
         const transactionTaskRows = await this.sqlClient.select<AgentTaskRow>(
-          `SELECT id, session_id, project_id, conversation_id, status, user_instruction, context_scope, model,
+          `SELECT id, run_id, workflow_id, session_id, document_id, project_id, conversation_id, status, user_instruction, context_scope, model,
                   current_step, error, created_at, completed_at, correlation_id, causation_id,
                   execution_policy_json, context_bundle_id, provider, task_run_id
            FROM agent_tasks
@@ -265,9 +270,10 @@ export class TauriAgentRepository implements AgentRepository {
     try {
       await this.sqlClient.execute(
         `INSERT INTO agent_tool_calls (
-          id, task_id, tool_name, arguments_json, result_json, status,
-          started_at, completed_at, error, correlation_id, causation_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          id, task_id, run_id, turn_id, provider_tool_call_id, tool_name,
+          arguments_json, result_json, status, started_at, completed_at, error,
+          correlation_id, causation_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           result_json = excluded.result_json,
           status = excluded.status,
@@ -276,6 +282,9 @@ export class TauriAgentRepository implements AgentRepository {
         [
           call.id,
           call.taskId,
+          call.runId,
+          call.turnId,
+          call.providerToolCallId,
           call.toolName,
           call.argumentsJson,
           call.resultJson,
@@ -283,8 +292,8 @@ export class TauriAgentRepository implements AgentRepository {
           call.startedAt,
           call.completedAt,
           call.error,
-          call.taskId,
-          call.taskId,
+          call.runId,
+          call.turnId ?? call.runId,
         ],
       )
       return ok(call)
@@ -634,7 +643,10 @@ function mapTaskRow(row: AgentTaskRow): AgentTask {
     : 'current_document'
   return {
     id: row.id,
+    runId: row.run_id ?? `legacy-run-${row.id}`,
+    workflowId: row.workflow_id ?? null,
     sessionId: row.session_id,
+    documentId: row.document_id,
     projectId: row.project_id ?? '',
     conversationId: row.conversation_id ?? '',
     status,

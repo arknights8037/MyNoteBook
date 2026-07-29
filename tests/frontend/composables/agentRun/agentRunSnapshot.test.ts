@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import { createAiSettings } from '@/models/ai/ai'
-import { captureAgentRunSnapshot, createAgentEditPlan } from '@/composables/agentRun/agentRunSnapshot'
+import {
+  captureAgentRunSnapshot,
+  createAgentEditPlan,
+} from '@/composables/agentRun/agentRunSnapshot'
 
 describe('agentRunSnapshot', () => {
   it('deeply freezes mutable run inputs', () => {
@@ -45,20 +48,39 @@ describe('agentRunSnapshot', () => {
       requestedMode: 'agent',
       settings,
       document: {
-        id: 'doc-1', title: '', tags: [], sourceUrl: '', author: '', text: '', revision: 3,
+        id: 'doc-1',
+        title: '',
+        tags: [],
+        sourceUrl: '',
+        author: '',
+        text: '',
+        revision: 3,
         blocks: [
           { id: 'release', type: 'paragraph', text: '发布流程与灰度验证', index: 0 },
           { id: 'meeting', type: 'paragraph', text: '会议纪要', index: 1 },
         ],
-        selectedBlocks: [], hasBlockSelection: false, documents: [],
+        selectedBlocks: [],
+        hasBlockSelection: false,
+        documents: [],
       },
     })
 
-    const plan = createAgentEditPlan({ snapshot, mode: 'agent', createId: () => 'task-1' })
+    const plan = createAgentEditPlan({
+      snapshot,
+      mode: 'agent',
+      createId: () => 'generated-id',
+      runId: 'run-1',
+      sessionId: 'conversation-1',
+    })
 
     expect(plan?.targetBlocks.map((block) => block.id)).toEqual(['release', 'meeting'])
     expect(plan?.foundTargetScope).toBe(true)
     expect(plan?.task.contextScope).toBe('current_document')
+    expect(plan?.task).toMatchObject({
+      runId: 'run-1',
+      sessionId: 'conversation-1',
+      documentId: 'doc-1',
+    })
   })
 
   it('allows an Agent run without an editable current document', () => {
@@ -69,8 +91,17 @@ describe('agentRunSnapshot', () => {
       requestedMode: 'agent',
       settings,
       document: {
-        id: '', title: '', tags: [], sourceUrl: '', author: '', text: '', revision: null,
-        blocks: [], selectedBlocks: [], hasBlockSelection: false, documents: [],
+        id: '',
+        title: '',
+        tags: [],
+        sourceUrl: '',
+        author: '',
+        text: '',
+        revision: null,
+        blocks: [],
+        selectedBlocks: [],
+        hasBlockSelection: false,
+        documents: [],
       },
     })
 
@@ -79,6 +110,7 @@ describe('agentRunSnapshot', () => {
     expect(plan).not.toBeNull()
     expect(plan?.expectedRevision).toBe(0)
     expect(plan?.targetBlocks).toEqual([])
-    expect(plan?.task.sessionId).toBe('')
+    expect(plan?.task.sessionId).toBe('task-free')
+    expect(plan?.task.documentId).toBe('')
   })
 })

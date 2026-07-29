@@ -2,6 +2,12 @@ import type { AgentToolTag } from '@/models/cognitive/cognitive'
 
 export type AgentToolRisk = 'read' | 'draft' | 'write'
 export type AgentToolCallStatus = 'pending' | 'running' | 'completed' | 'failed' | 'rejected'
+export type AgentAuthorizationRequirement = 'not_required' | 'required'
+
+export interface AgentToolPresentationMetadata {
+  label: string
+  category: 'document' | 'knowledge' | 'system' | 'interaction' | 'external'
+}
 
 export interface AgentToolDefinition {
   name:
@@ -16,6 +22,7 @@ export interface AgentToolDefinition {
     | 'find_blocks_by_regex'
     | 'read_skill_file'
     | 'request_authorizer_input'
+    | 'report_progress'
     | 'execute_shell'
     | 'inspect_environment_paths'
     | 'discover_local_tools'
@@ -31,14 +38,20 @@ export interface AgentToolDefinition {
     | 'submit_document_edits'
   description: string
   risk: AgentToolRisk
-  requiresConfirmation: boolean
-  maxCallsPerTask: number
+  executionAuthorization: AgentAuthorizationRequirement
+  mutationApproval: AgentAuthorizationRequirement
+  externalActionApproval: AgentAuthorizationRequirement
+  maxCallsPerRun: number
   tags: AgentToolTag[]
+  presentation: AgentToolPresentationMetadata
 }
 
 export interface AgentToolCall {
   id: string
   taskId: string
+  runId: string
+  turnId: string | null
+  providerToolCallId: string | null
   toolName: string
   argumentsJson: string
   resultJson: string | null

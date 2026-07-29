@@ -16,10 +16,7 @@ import type {
   UseAgentRunOptions,
 } from '@/composables/agentRun/types'
 import { resolveAgentSlashCommand } from '@/models/agent/agentSlashCommand'
-import type {
-  CognitiveSession,
-  LearningSessionState,
-} from '@/models/cognitive/cognitive'
+import type { CognitiveSession, LearningSessionState } from '@/models/cognitive/cognitive'
 import { inferAiAgentIntent, resolveAiExecutionMode } from '@/services/ai/AiPromptPolicy'
 import type { CognitiveSessionService } from '@/services/cognitive/CognitiveSessionService'
 import {
@@ -53,6 +50,7 @@ export async function prepareAgentRun(input: {
   session?: AgentRunSession
   runContext: AgentRunSession
   options: UseAgentRunOptions
+  runId: string
   hasCognitivePersistence: boolean
   getCognitiveSessionService: () => Promise<CognitiveSessionService>
 }): Promise<PrepareAgentRunResult> {
@@ -68,8 +66,7 @@ export async function prepareAgentRun(input: {
     requestedMode: slashCommand?.command.mode ?? runContext.mode.value,
     settings: options.settings.value,
     document: input.session?.documentSnapshot ?? options.document.captureSnapshot(),
-    explicitTargets:
-      input.session?.explicitTargets?.value ?? options.explicitTargets?.value ?? [],
+    explicitTargets: input.session?.explicitTargets?.value ?? options.explicitTargets?.value ?? [],
     workspace: {
       projectId: runContext.workspace?.projectId.value ?? '',
       projectName: runContext.workspace?.projectName.value ?? '未分组 Agent 项目',
@@ -99,7 +96,9 @@ export async function prepareAgentRun(input: {
   let resumedLearningSession = false
 
   if (!slashCommand && mode === 'agent' && conversationId && input.hasCognitivePersistence) {
-    const listed = await (await input.getCognitiveSessionService()).listByConversation(conversationId)
+    const listed = await (
+      await input.getCognitiveSessionService()
+    ).listByConversation(conversationId)
     if (!listed.ok) return { ok: false, error: listed.error.message }
     const waiting = listed.value.find(
       (session) => session.modeId === 'learning' && session.status === 'waiting_user',
@@ -150,7 +149,13 @@ export async function prepareAgentRun(input: {
       }
     }
     snapshot.document = await hydrateCanonicalDocumentSnapshot(snapshot.document, options.document)
-    editPlan = createAgentEditPlan({ snapshot, mode, createId: options.createId })
+    editPlan = createAgentEditPlan({
+      snapshot,
+      mode,
+      createId: options.createId,
+      runId: input.runId,
+      sessionId: conversationId,
+    })
     if (!editPlan) {
       return { ok: false, error: '当前文档还没有可修改的块或版本信息。' }
     }

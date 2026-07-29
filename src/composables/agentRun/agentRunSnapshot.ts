@@ -1,4 +1,9 @@
-import { createAgentTask, findRelevantBlocksForInstruction, type AgentTask, type SelectedBlock } from '@/models/agent/agent'
+import {
+  createAgentTask,
+  findRelevantBlocksForInstruction,
+  type AgentTask,
+  type SelectedBlock,
+} from '@/models/agent/agent'
 import type { AiChatMode } from '@/models/ai/aiChatMode'
 import type { AiSettings } from '@/models/ai/ai'
 import type { AgentRunDocumentSnapshot, AgentRunSnapshot } from './types'
@@ -39,6 +44,8 @@ export function createAgentEditPlan(input: {
   snapshot: AgentRunSnapshot
   mode: 'edit' | 'agent'
   createId: () => string
+  runId?: string
+  sessionId?: string
 }): AgentEditPlan | null {
   const { snapshot, mode } = input
   const document = snapshot.document
@@ -57,9 +64,12 @@ export function createAgentEditPlan(input: {
   }
   if (mode === 'edit' && (targetBlocks.length === 0 || document.revision === null)) return null
 
+  const taskId = input.createId()
   const task = createAgentTask({
-    id: input.createId(),
-    sessionId: document.id,
+    id: taskId,
+    runId: input.runId ?? input.createId(),
+    sessionId: input.sessionId?.trim() || snapshot.workspace?.conversationId || input.createId(),
+    documentId: document.id,
     projectId: snapshot.workspace?.projectId,
     conversationId: snapshot.workspace?.conversationId,
     userInstruction: snapshot.prompt,

@@ -16,6 +16,8 @@ import type { MindMapService } from '@/services/workspace/MindMapService'
 import type { ResearchCandidateService } from '@/services/cognitive/ResearchCandidateService'
 import type { WorkspaceViewService } from '@/services/workspace/WorkspaceViewService'
 import type { McpClientPort } from '@/services/ports/McpClientPort'
+import type { AuthorizationStorePort } from '@/services/ports/AuthorizationStorePort'
+import { TauriAuthorizationStore } from '@/infrastructure/database/agent/TauriAuthorizationStore'
 
 export interface WorkspaceServiceProviders {
   getCognitiveSessionService: () => Promise<CognitiveSessionService>
@@ -27,9 +29,12 @@ export interface WorkspaceServiceProviders {
   getAgentRepository: () => Promise<AgentRepository>
   agentWorkspaceHistoryStore: AgentWorkspaceHistoryStore
   mcpClient: McpClientPort
+  authorizationStore: AuthorizationStorePort
 }
 
-export function createWorkspaceServiceProviders(mcpClient: McpClientPort): WorkspaceServiceProviders {
+export function createWorkspaceServiceProviders(
+  mcpClient: McpClientPort,
+): WorkspaceServiceProviders {
   return {
     getCognitiveSessionService: lazyProvider(createCognitiveSessionService),
     getMindMapService: lazyProvider(createMindMapService),
@@ -42,6 +47,7 @@ export function createWorkspaceServiceProviders(mcpClient: McpClientPort): Works
     getAgentRepository: lazyProvider(createAgentRepository),
     agentWorkspaceHistoryStore: createAgentWorkspaceHistoryStore(),
     mcpClient,
+    authorizationStore: new TauriAuthorizationStore(),
   }
 }
 

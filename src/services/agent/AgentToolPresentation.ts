@@ -1,4 +1,5 @@
 import type { AgentToolCall } from '@/models/agent/agentTool'
+import { getAgentToolDefinition } from '@/services/agent/AgentToolRegistry'
 
 export interface AgentToolDisplayField {
   label: string
@@ -14,6 +15,8 @@ export interface AgentToolDisplayItem {
 }
 
 export interface AgentToolPresentation {
+  toolLabel: string
+  category: string
   inputFields: AgentToolDisplayField[]
   resultItems: AgentToolDisplayItem[]
   resultText: string
@@ -44,10 +47,13 @@ const FIELD_LABELS: Record<string, string> = {
 }
 
 export function presentAgentToolCall(toolCall: AgentToolCall): AgentToolPresentation {
+  const metadata = getAgentToolDefinition(toolCall.toolName)?.presentation
   const input = parseAgentToolPayload(toolCall.argumentsJson)
   const result = parseAgentToolPayload(toolCall.resultJson)
   const resultItems = collectDisplayItems(result)
   return {
+    toolLabel: metadata?.label ?? toolCall.toolName,
+    category: metadata?.category ?? (toolCall.toolName.startsWith('mcp__') ? 'external' : 'system'),
     inputFields: projectInputFields(input),
     resultItems,
     resultText: extractResultText(result),

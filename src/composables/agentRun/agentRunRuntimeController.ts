@@ -62,13 +62,13 @@ export function createAgentRunRuntimeController(createId: () => string) {
   }
 
   function waitForAuthorizerInput(
-    request: Omit<AgentAuthorizationRequest, 'id'>,
+    request: Omit<AgentAuthorizationRequest, 'id'> & { id?: string },
     task: AgentTask,
   ): Promise<string> {
     cancelPendingAuthorization('Agent 提出了新的授权问题。')
     const authorizationRequest: AgentAuthorizationRequest = {
       ...request,
-      id: createId(),
+      id: request.id ?? createId(),
       options: request.options.slice(0, 5),
     }
     task.currentStep = '等待授权人回答'
@@ -143,7 +143,8 @@ export function createAgentRunRuntimeController(createId: () => string) {
       const timelineIndex = runtimeState.value.timelineEvents.findIndex(
         (event) => event.id === update.timelineEvent?.id,
       )
-      if (timelineIndex >= 0) runtimeState.value.timelineEvents[timelineIndex] = update.timelineEvent
+      if (timelineIndex >= 0)
+        runtimeState.value.timelineEvents[timelineIndex] = update.timelineEvent
       else runtimeState.value.timelineEvents.push(update.timelineEvent)
       if (update.timelineEvent.stepNumber) {
         runtimeState.value.rounds = Math.max(
@@ -222,10 +223,7 @@ export function createAgentRunRuntimeController(createId: () => string) {
     runtimeState.value.summary ||= detail
   }
 
-  function appendTimelineStatus(
-    status: 'running' | 'completed' | 'failed',
-    detail: string,
-  ): void {
+  function appendTimelineStatus(status: 'running' | 'completed' | 'failed', detail: string): void {
     const occurredAt = Date.now()
     runtimeState.value.timelineEvents.push({
       id: `status:${createId()}`,

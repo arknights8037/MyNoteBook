@@ -494,9 +494,9 @@ mod tests {
             .expect("agent transaction document");
         }
         sqlx::query(
-            "INSERT INTO agent_tasks (id, session_id, document_id, status, user_instruction, \
+            "INSERT INTO agent_tasks (id, run_id, session_id, document_id, status, user_instruction, \
              context_scope, model, current_step, created_at) \
-             VALUES ('multi-document-task', 'session', 'agent-doc-1', 'running', 'sync', \
+             VALUES ('multi-document-task', 'run-multi-document-task', 'session', 'agent-doc-1', 'running', 'sync', \
              'workspace', 'test', 'running', 1)",
         )
         .execute(pool.as_ref())
@@ -1187,5 +1187,75 @@ mod tests {
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(path.with_extension("db-wal"));
         let _ = fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[tokio::test]
+    async fn runtime_contract_migration_creates_identity_and_authorization_constraints() {
+        let root = std::env::temp_dir().join(format!(
+            "my-notebook-runtime-contract-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let preparation = prepare_database_path(&root, &DATABASE_MIGRATOR)
+            .await
+            .expect("prepare runtime contract database");
+        assert!(preparation.database_path.ends_with(DATABASE_FILENAME));
+        let path = root.join(DATABASE_FILENAME);
+        let pool = get_pool_for_path(&path, false)
+            .await
+            .expect("open database");
+
+        for column in ["run_id", "workflow_id"] {
+            assert!(column_exists(pool.as_ref(), "agent_tasks", column)
+                .await
+                .expect("agent task column"));
+        }
+        for column in ["run_id", "turn_id", "provider_tool_call_id"] {
+            assert!(column_exists(pool.as_ref(), "agent_tool_calls", column)
+                .await
+                .expect("tool call column"));
+        }
+
+        sqlx::query(
+            "INSERT INTO approvals (id, approval_kind, entity_type, entity_id, decision, status, \
+             request_json, details_json, correlation_id, created_at) \
+             VALUES ('auth-pending', 'execution_authorization', 'tool_call', 'tool-1', \
+             'pending', 'pending', '{}', '{}', 'corr-1', 1)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("pending authorization");
+        let status: String =
+            sqlx::query_scalar("SELECT status FROM approvals WHERE id = 'auth-pending'")
+                .fetch_one(pool.as_ref())
+                .await
+                .expect("authorization status");
+        assert_eq!(status, "pending");
+
+        sqlx::query(
+            "INSERT INTO approvals (id, entity_type, entity_id, decision, actor_id, details_json, \
+             correlation_id, created_at) VALUES \
+             ('legacy-approval', 'change_set', 'change-1', 'approved', 'local_user', '{}', 'corr-2', 2)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("legacy approval insert");
+        let legacy: (String, String) = sqlx::query_as(
+            "SELECT approval_kind, status FROM approvals WHERE id = 'legacy-approval'",
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("legacy approval mapping");
+        assert_eq!(
+            legacy,
+            ("mutation_approval".to_string(), "approved".to_string())
+        );
+
+        drop(pool);
+        close_pool(&path).await.expect("close database");
+        let _ = fs::remove_dir_all(&root);
     }
 }

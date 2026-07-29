@@ -207,13 +207,14 @@ pub async fn save_agent_context_bundle(
         return Err("Context Bundle 对应的 Agent 任务不存在。".to_string());
     }
     sqlx::query(
-        "INSERT INTO context_bundles (id, task_id, version, scope_json, permission_snapshot_json, \
+        "INSERT INTO context_bundles (id, task_id, run_id, version, scope_json, permission_snapshot_json, \
          sources_json, active_rules_json, decisions_json, conflicts_json, compiler_json, \
          snapshot_hash, correlation_id, causation_id, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+         VALUES (?, ?, (SELECT run_id FROM agent_tasks WHERE id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT(task_id, snapshot_hash) DO NOTHING",
     )
     .bind(&input.id)
+    .bind(&input.task_id)
     .bind(&input.task_id)
     .bind(input.version)
     .bind(&input.scope_json)
@@ -1568,11 +1569,12 @@ mod tests {
             ("newer", "completed", 3_i64),
         ] {
             sqlx::query(
-                "INSERT INTO agent_tasks (id, session_id, document_id, status, user_instruction, \
+                "INSERT INTO agent_tasks (id, run_id, session_id, document_id, status, user_instruction, \
                  context_scope, model, current_step, created_at) \
-                 VALUES (?, 'session', 'doc', ?, 'sync', 'workspace', 'test', 'step', ?)",
+                 VALUES (?, ?, 'session', 'doc', ?, 'sync', 'workspace', 'test', 'step', ?)",
             )
             .bind(id)
+            .bind(format!("run-{id}"))
             .bind(status)
             .bind(created_at)
             .execute(pool.as_ref())

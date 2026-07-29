@@ -6,6 +6,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 
 import { TauriAgentRepository } from '@/infrastructure/database/agent/TauriAgentRepository'
 import type { AgentPatchSet, AgentTask, BlockPatch } from '@/models/agent/agent'
+import { createDefaultExecutionPolicy } from '@/models/agent/executionPolicy'
 import type { SqlClient, SqlExecuteResult } from '@/repositories/shared/SqlClient'
 import type { SqlValue } from '@/repositories/shared/SqlClient'
 
@@ -186,7 +187,7 @@ describe('TauriAgentRepository recovery', () => {
     const sqlClient = new SqliteRecoveryClient()
     sqlClient.database.exec(`
       CREATE TABLE agent_tasks (
-        id TEXT PRIMARY KEY, session_id TEXT NOT NULL, document_id TEXT NOT NULL,
+        id TEXT PRIMARY KEY, run_id TEXT, workflow_id TEXT, session_id TEXT NOT NULL, document_id TEXT NOT NULL,
         project_id TEXT NOT NULL DEFAULT '', conversation_id TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL, user_instruction TEXT NOT NULL, context_scope TEXT NOT NULL,
         model TEXT NOT NULL, current_step TEXT NOT NULL, error TEXT,
@@ -221,10 +222,10 @@ describe('TauriAgentRepository recovery', () => {
         action TEXT NOT NULL, details_json TEXT NOT NULL, created_at INTEGER NOT NULL
       );
       INSERT INTO agent_tasks (
-        id, session_id, document_id, status, user_instruction, context_scope,
+        id, run_id, session_id, document_id, status, user_instruction, context_scope,
         model, current_step, error, created_at, completed_at
       ) VALUES
-        ('task-1', 'doc-1', 'doc-1', 'completed', '修改正文', 'current_document',
+        ('task-1', 'run-1', 'conversation-1', 'doc-1', 'completed', '修改正文', 'current_document',
          'test-model', '修改已写入文档', NULL, 10, 20);
       INSERT INTO agent_patch_sets VALUES ('task-1', 'test-model', 11);
       INSERT INTO agent_patches VALUES
@@ -301,7 +302,12 @@ describe('TauriAgentRepository creation confirmation', () => {
 function task(): AgentTask {
   return {
     id: 'task-1',
-    sessionId: 'doc-1',
+    runId: 'run-1',
+    workflowId: null,
+    sessionId: 'conversation-1',
+    documentId: 'doc-1',
+    projectId: '',
+    conversationId: 'conversation-1',
     status: 'waiting_confirmation',
     userInstruction: '创建内容',
     contextScope: 'current_document',
@@ -310,6 +316,12 @@ function task(): AgentTask {
     createdAt: 1,
     completedAt: null,
     error: null,
+    correlationId: 'task-1',
+    causationId: null,
+    executionPolicy: createDefaultExecutionPolicy({ tokenBudget: 2048, allowedTools: [] }),
+    contextBundleId: null,
+    provider: 'openai',
+    taskRunId: null,
   }
 }
 

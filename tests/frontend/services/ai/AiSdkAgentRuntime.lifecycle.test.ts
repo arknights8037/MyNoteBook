@@ -16,7 +16,12 @@ const agentHarness = vi.hoisted(() => ({
   streamError: null as Error | null,
   run: null as
     | null
-    | ((tools: Record<string, { execute: (args: unknown) => Promise<unknown> }>) => Promise<void>),
+    | ((
+        tools: Record<
+          string,
+          { execute: (args: unknown, options?: { toolCallId?: string }) => Promise<unknown> }
+        >,
+      ) => Promise<void>),
 }))
 
 vi.mock('ai', () => ({
@@ -31,10 +36,16 @@ vi.mock('ai', () => ({
   stepCountIs: () => () => false,
   tool: (definition: unknown) => definition,
   ToolLoopAgent: class {
-    private readonly tools: Record<string, { execute: (args: unknown) => Promise<unknown> }>
+    private readonly tools: Record<
+      string,
+      { execute: (args: unknown, options?: { toolCallId?: string }) => Promise<unknown> }
+    >
 
     constructor(options: {
-      tools: Record<string, { execute: (args: unknown) => Promise<unknown> }>
+      tools: Record<
+        string,
+        { execute: (args: unknown, options?: { toolCallId?: string }) => Promise<unknown> }
+      >
       instructions: string
       onStepStart?: (event: { stepNumber: number }) => void
       onStepEnd?: (event: {
@@ -415,6 +426,34 @@ describe('AI SDK Agent tool lifecycle', () => {
     })
 
     expect(executeTool).toHaveBeenCalledOnce()
+  })
+
+  it('maps a provider tool-call id without replacing the internal audit id', async () => {
+    const records: AgentToolCall[] = []
+    agentHarness.run = async (tools) => {
+      await tools.search_documents?.execute(
+        { query: 'provider mapping' },
+        { toolCallId: 'provider-call-1' },
+      )
+    }
+
+    await runAiSdkAgent({
+      taskId: 'task-provider-id',
+      runId: 'run-provider-id',
+      prompt: '检查映射',
+      context: '',
+      settings: settings(),
+      systemPrompt: '',
+      createId: () => 'internal-call-1',
+      executeTool: async () => ({ ok: true, value: [] }),
+      recordToolCall: async (call) => records.push({ ...call }),
+    })
+
+    expect(records.at(-1)).toMatchObject({
+      id: 'internal-call-1',
+      runId: 'run-provider-id',
+      providerToolCallId: 'provider-call-1',
+    })
   })
 
   it('reuses an identical successful document read without reading the file again', async () => {
