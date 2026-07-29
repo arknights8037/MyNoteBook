@@ -21,14 +21,19 @@ export function getDatabase(): Promise<SqlClient> {
   // migration on every startup.
   databasePromise ??= invoke('prepare_database', {
     dataDirectory,
-  }).then(() => Database.load(databaseUrl)).then(async (database) => {
-    await database.execute('PRAGMA foreign_keys = ON')
-    await database.execute('PRAGMA journal_mode = WAL')
-    await database.execute('PRAGMA busy_timeout = 5000')
-    await database.execute('PRAGMA synchronous = NORMAL')
-    await database.execute('PRAGMA temp_store = MEMORY')
-    return database
   })
+    .then(() => Database.load(databaseUrl))
+    .then(async (database) => {
+      await database.execute('PRAGMA foreign_keys = ON')
+      await database.execute('PRAGMA journal_mode = WAL')
+      await database.execute('PRAGMA busy_timeout = 5000')
+      await database.execute('PRAGMA synchronous = NORMAL')
+      await database.execute('PRAGMA temp_store = MEMORY')
+      await invoke('resume_dingtalk_connectors', { dataDirectory }).catch((error) => {
+        console.warn('Unable to resume DingTalk connectors', error)
+      })
+      return database
+    })
   return databasePromise
 }
 

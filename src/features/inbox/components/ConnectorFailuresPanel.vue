@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { AlertTriangle, ArrowRight, Mail, Rss, ShieldCheck } from '@lucide/vue'
+import { AlertTriangle, ArrowRight, Mail, MessageCircle, Rss, ShieldCheck } from '@lucide/vue'
 import { onMounted, ref } from 'vue'
 
 import { createEmailService } from '@/app/composition/emailServiceFactory'
 import { createRssService } from '@/app/composition/rssServiceFactory'
+import { createDingTalkService } from '@/app/composition/dingTalkServiceFactory'
 
 const emit = defineEmits<{ openConnections: [] }>()
-const issues = ref<Array<{ id: string; kind: 'email' | 'rss'; name: string; detail: string }>>([])
+const issues = ref<
+  Array<{ id: string; kind: 'email' | 'rss' | 'im'; name: string; detail: string }>
+>([])
 const loading = ref(false)
 const error = ref('')
 
@@ -14,11 +17,20 @@ async function load(): Promise<void> {
   if (!Reflect.has(globalThis, '__TAURI_INTERNALS__')) return
   loading.value = true
   error.value = ''
-  const [email, rss] = await Promise.all([createEmailService(), createRssService()])
-  const [accounts, sources] = await Promise.all([email.listAccounts(), rss.listSources()])
+  const [email, rss, im] = await Promise.all([
+    createEmailService(),
+    createRssService(),
+    createDingTalkService(),
+  ])
+  const [accounts, sources, connectors] = await Promise.all([
+    email.listAccounts(),
+    rss.listSources(),
+    im.listConnectors(),
+  ])
   loading.value = false
   if (!accounts.ok) return void (error.value = accounts.error.message)
   if (!sources.ok) return void (error.value = sources.error.message)
+  if (!connectors.ok) return void (error.value = connectors.error.message)
   issues.value = [
     ...accounts.value
       .filter((account) => account.lastError)
@@ -36,6 +48,19 @@ async function load(): Promise<void> {
         name: source.displayName,
         detail: source.lastError!,
       })),
+    ...connectors.value
+      .filter(
+        (connector) =>
+          connector.lastError ||
+          connector.runtimeStatus === 'auth_error' ||
+          connector.runtimeStatus === 'error',
+      )
+      .map((connector) => ({
+        id: `im:${connector.id}`,
+        kind: 'im' as const,
+        name: connector.displayName,
+        detail: connector.lastError || '钉钉 Stream 连接异常。',
+      })),
   ]
 }
 
@@ -52,7 +77,7 @@ onMounted(() => void load())
   <section v-else-if="!issues.length" class="inbox-empty-state">
     <span class="inbox-empty-state__icon"><ShieldCheck :size="25" /></span>
     <h2>当前没有采集异常</h2>
-    <p>邮箱与 RSS 最近一次同步没有记录错误。</p>
+    <p>钉钉、邮箱与 RSS 当前没有记录采集错误。</p>
   </section>
   <section v-else class="connector-failure-list" aria-label="采集异常列表">
     <header>
@@ -62,9 +87,13 @@ onMounted(() => void load())
       </button>
     </header>
     <article v-for="issue in issues" :key="issue.id">
-      <span><component :is="issue.kind === 'email' ? Mail : Rss" :size="17" /></span>
+      <span
+        ><component
+          :is="issue.kind === 'email' ? Mail : issue.kind === 'rss' ? Rss : MessageCircle"
+          :size="17"
+      /></span>
       <div>
-        <small>{{ issue.kind === 'email' ? 'EMAIL' : 'RSS' }}</small
+        <small>{{ issue.kind === 'email' ? 'EMAIL' : issue.kind === 'rss' ? 'RSS' : 'IM' }}</small
         ><strong>{{ issue.name }}</strong>
         <p>{{ issue.detail }}</p>
       </div>

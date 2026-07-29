@@ -705,6 +705,21 @@
   overflow-wrap: anywhere;
 }
 
+.im-inbox-panel .email-inbox-panel__sync i {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-status-success);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 680;
+  letter-spacing: 0.06em;
+}
+
+.im-inbox-panel > .inbox-boundary-note {
+  margin: 0;
+}
+
 @media (max-width: 820px) {
   .inbox-surface__header {
     align-items: flex-start;

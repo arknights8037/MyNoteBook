@@ -81,6 +81,7 @@ mod agent_tools;
 mod ai_models;
 mod ai_proxy;
 mod database;
+mod dingtalk;
 mod document_core;
 mod domain_events;
 mod email;
@@ -295,6 +296,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0033_add_inbox_source_cursors.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 34,
+            description: "add_dingtalk_inbox",
+            sql: include_str!("../migrations/0034_add_dingtalk_inbox.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -320,6 +327,7 @@ pub fn run() {
             Ok(())
         })
         .manage(secret_store::AiSecretState::default())
+        .manage(dingtalk::DingTalkRuntimeState::default())
         .invoke_handler(tauri::generate_handler![
             storage::get_system_fonts,
             storage::get_default_data_directory,
@@ -366,6 +374,12 @@ pub fn run() {
             email::set_email_account_secret,
             email::delete_email_account_secret,
             email::sync_email_account,
+            dingtalk::test_dingtalk_connection,
+            dingtalk::set_dingtalk_connector_secret,
+            dingtalk::delete_dingtalk_connector_secret,
+            dingtalk::start_dingtalk_connector,
+            dingtalk::stop_dingtalk_connector,
+            dingtalk::resume_dingtalk_connectors,
             rss::fetch_rss_feed,
             rss::fetch_rss_article,
             ai_models::fetch_ai_models,

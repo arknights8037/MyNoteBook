@@ -45,6 +45,7 @@ import McpServerExposurePanel from '@/features/integrations/mcp/components/McpSe
 import type { McpClientPort } from '@/services/ports/McpClientPort'
 import EmailAccountPanel from '@/features/integrations/email/components/EmailAccountPanel.vue'
 import RssSourcePanel from '@/features/integrations/rss/components/RssSourcePanel.vue'
+import DingTalkConnectorPanel from '@/features/integrations/dingtalk/components/DingTalkConnectorPanel.vue'
 
 withDefaults(defineProps<{ mcpClient: McpClientPort; contextNavigation?: boolean }>(), {
   contextNavigation: false,
@@ -455,18 +456,19 @@ onMounted(() => void loadSkills())
       <section v-if="activeTab === 'connections'" class="connector-catalog" aria-label="连接器目录">
         <header>
           <div><strong>信息连接器</strong><small>配置来源，不在这里阅读内容</small></div>
-          <span>RSS 与邮箱已开放连接</span>
+          <span>钉钉、RSS 与邮箱已开放连接</span>
         </header>
         <div>
           <article>
             <span><MessageCircle :size="20" /></span>
             <div>
               <strong>IM / 消息</strong>
-              <p>协作空间、频道范围、权限和同步状态。</p>
+              <p>钉钉 Stream 在线接收，凭据与运行状态在下方管理。</p>
             </div>
-            <em>规划中</em>
+            <em>可用</em>
           </article>
         </div>
+        <DingTalkConnectorPanel />
         <RssSourcePanel />
         <EmailAccountPanel />
         <aside>

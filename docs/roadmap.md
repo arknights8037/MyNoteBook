@@ -84,7 +84,7 @@ Review 已完成真实 DeepSeek/Tauri smoke；Research 与 Learning 仍需要在
 
 ## R5：采集与外部集成
 
-Signal/消息收件箱、邮件 OAuth、日历和网页裁剪仍属于未来集成。标准 IMAP 邮箱读取已按[邮箱连接器与收件箱](email-inbox.md)完成首个只读版本；RSS 已按[RSS 连接器与收件箱](rss-inbox.md)完成手动条件同步与统一收件箱版本。后续接入顺序应遵循：
+更广泛的 Signal/消息连接、邮件 OAuth、日历和网页裁剪仍属于未来集成。标准 IMAP 邮箱读取已按[邮箱连接器与收件箱](email-inbox.md)完成首个只读版本；RSS 已按[RSS 连接器与收件箱](rss-inbox.md)完成手动条件同步与统一收件箱版本；钉钉已按[钉钉消息连接器与收件箱](dingtalk-inbox.md)完成企业机器人 Stream 只读接收版本。后续接入顺序应遵循：
 
 1. 先以 MCP Resource 或受限只读工具读取。
 2. 保存来源、时间、权限和内容哈希。

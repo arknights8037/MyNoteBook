@@ -5,22 +5,27 @@ import {
   ExternalLink,
   FileText,
   Mail,
+  MessageCircle,
   RefreshCw,
   RotateCcw,
   Rss,
 } from '@lucide/vue'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import { createDingTalkService } from '@/app/composition/dingTalkServiceFactory'
 import { createEmailService } from '@/app/composition/emailServiceFactory'
 import { createRssService } from '@/app/composition/rssServiceFactory'
 import type { EmailAccount, EmailMessage, EmailProcessingStatus } from '@/models/inbox/email'
 import type { RssEntry, RssProcessingStatus, RssSource } from '@/models/inbox/rss'
+import type { ImConnector, ImMessage, ImProcessingStatus } from '@/models/inbox/im'
+import type { DingTalkService } from '@/services/inbox/DingTalkService'
 import type { EmailService } from '@/services/inbox/EmailService'
 import type { RssService } from '@/services/inbox/RssService'
 import { useMessage } from '@/ui/services'
 
-type UnifiedStatus = EmailProcessingStatus | RssProcessingStatus
+type UnifiedStatus = EmailProcessingStatus | RssProcessingStatus | ImProcessingStatus
 type UnifiedItem =
   | {
       kind: 'email'
@@ -46,6 +51,18 @@ type UnifiedItem =
       status: UnifiedStatus
       payload: RssEntry
     }
+  | {
+      kind: 'im'
+      id: string
+      timestamp: number
+      source: string
+      category: string
+      author: string
+      title: string
+      preview: string
+      status: UnifiedStatus
+      payload: ImMessage
+    }
 
 const props = defineProps<{ mode: 'pending' | 'all' }>()
 const emit = defineEmits<{ openConnections: [] }>()
@@ -55,6 +72,8 @@ const accounts = ref<EmailAccount[]>([])
 const sources = ref<RssSource[]>([])
 const emails = ref<EmailMessage[]>([])
 const rssEntries = ref<RssEntry[]>([])
+const imConnectors = ref<ImConnector[]>([])
+const imMessages = ref<ImMessage[]>([])
 const selectedId = ref('')
 const loading = ref(false)
 const syncing = ref(false)
@@ -63,9 +82,12 @@ const extractingId = ref('')
 const error = ref('')
 let emailPromise: Promise<EmailService> | null = null
 let rssPromise: Promise<RssService> | null = null
+let imPromise: Promise<DingTalkService> | null = null
+let unlisten: UnlistenFn | null = null
 
 const emailService = () => (emailPromise ??= createEmailService())
 const rssService = () => (rssPromise ??= createRssService())
+const imService = () => (imPromise ??= createDingTalkService())
 const allItems = computed<UnifiedItem[]>(() =>
   [
     ...emails.value.map(
@@ -100,6 +122,24 @@ const allItems = computed<UnifiedItem[]>(() =>
         payload: entry,
       }),
     ),
+    ...imMessages.value.map(
+      (message): UnifiedItem => ({
+        kind: 'im',
+        id: `im:${message.id}`,
+        timestamp: message.sentAt,
+        source:
+          imConnectors.value.find((connector) => connector.id === message.connectorId)
+            ?.displayName ?? '钉钉',
+        category:
+          imConnectors.value.find((connector) => connector.id === message.connectorId)
+            ?.sourceCategory ?? '未分类',
+        author: message.senderName || '钉钉用户',
+        title: message.conversationTitle,
+        preview: message.bodyText,
+        status: message.processingStatus,
+        payload: message,
+      }),
+    ),
   ].sort((left, right) => right.timestamp - left.timestamp),
 )
 const items = computed(() =>
@@ -109,7 +149,11 @@ const items = computed(() =>
 )
 const categoryOptions = computed(() => [
   'all',
-  ...new Set([...accounts.value, ...sources.value].map((source) => source.sourceCategory)),
+  ...new Set(
+    [...accounts.value, ...sources.value, ...imConnectors.value].map(
+      (source) => source.sourceCategory,
+    ),
+  ),
 ])
 const selected = computed(() => items.value.find((item) => item.id === selectedId.value) ?? null)
 const pendingCount = computed(() => items.value.filter((item) => item.status === 'pending').length)
@@ -131,27 +175,56 @@ const latestCursorAt = computed(() =>
     null,
   ),
 )
+const latestStreamAt = computed(() =>
+  imConnectors.value.reduce<number | null>(
+    (latest, connector) =>
+      connector.lastEventAt && (!latest || connector.lastEventAt > latest)
+        ? connector.lastEventAt
+        : latest,
+    null,
+  ),
+)
 
-async function load(): Promise<void> {
+async function load(showLoading = true): Promise<void> {
   if (!native) return
-  loading.value = true
+  if (showLoading) loading.value = true
   error.value = ''
-  const [email, rss] = await Promise.all([emailService(), rssService()])
+  const [email, rss, im] = await Promise.all([emailService(), rssService(), imService()])
   const status = props.mode === 'pending' ? 'pending' : undefined
-  const [accountResult, sourceResult, emailResult, rssResult] = await Promise.all([
-    email.listAccounts(),
-    rss.listSources(),
-    email.listMessages({ status, limit: 200 }),
-    rss.listEntries({ status, limit: 200 }),
-  ])
-  loading.value = false
-  const failed = [accountResult, sourceResult, emailResult, rssResult].find((result) => !result.ok)
+  const [accountResult, sourceResult, connectorResult, emailResult, rssResult, imResult] =
+    await Promise.all([
+      email.listAccounts(),
+      rss.listSources(),
+      im.listConnectors(),
+      email.listMessages({ status, limit: 200 }),
+      rss.listEntries({ status, limit: 200 }),
+      im.listMessages({ status, limit: 200 }),
+    ])
+  if (showLoading) loading.value = false
+  const failed = [
+    accountResult,
+    sourceResult,
+    connectorResult,
+    emailResult,
+    rssResult,
+    imResult,
+  ].find((result) => !result.ok)
   if (failed && !failed.ok) return void (error.value = failed.error.message)
-  if (!accountResult.ok || !sourceResult.ok || !emailResult.ok || !rssResult.ok) return
+  if (
+    !accountResult.ok ||
+    !sourceResult.ok ||
+    !connectorResult.ok ||
+    !emailResult.ok ||
+    !rssResult.ok ||
+    !imResult.ok
+  )
+    return
   accounts.value = accountResult.value
   sources.value = sourceResult.value
+  imConnectors.value = connectorResult.value
   emails.value = emailResult.value
   rssEntries.value = rssResult.value
+  imMessages.value = imResult.value
   if (!items.value.some((item) => item.id === selectedId.value))
     selectedId.value = items.value[0]?.id ?? ''
 }
@@ -186,7 +259,9 @@ async function setStatus(item: UnifiedItem, status: UnifiedStatus): Promise<void
   const result =
     item.kind === 'email'
       ? await (await emailService()).setMessageStatus(item.payload.id, status)
-      : await (await rssService()).setEntryStatus(item.payload.id, status)
+      : item.kind === 'rss'
+        ? await (await rssService()).setEntryStatus(item.payload.id, status)
+        : await (await imService()).setMessageStatus(item.payload.id, status)
   if (!result.ok) return void (error.value = result.error.message)
   await load()
 }
@@ -236,7 +311,11 @@ function formatFullTime(timestamp: number): string {
   }).format(new Date(timestamp))
 }
 
-onMounted(() => void load())
+onMounted(async () => {
+  await load()
+  if (native) unlisten = await listen('dingtalk-message-received', () => void load(false))
+})
+onBeforeUnmount(() => unlisten?.())
 watch(
   () => props.mode,
   () => void load(),
@@ -259,7 +338,7 @@ watch(categoryFilter, () => {
           ><span>待处理</span>
         </div>
         <div>
-          <strong>{{ accounts.length + sources.length }}</strong
+          <strong>{{ accounts.length + sources.length + imConnectors.length }}</strong
           ><span>信息来源</span>
         </div>
       </div>
@@ -269,7 +348,8 @@ watch(categoryFilter, () => {
           }}<template v-if="latestCursorAt">
             / CONTENT · {{ formatFullTime(latestCursorAt) }}</template
           ></span
-        ><span v-else>尚未完成同步</span>
+        ><span v-else-if="latestStreamAt">STREAM · {{ formatFullTime(latestStreamAt) }}</span
+        ><span v-else>尚未收到或同步内容</span>
         <button
           type="button"
           :disabled="syncing || (!accounts.length && !sources.length)"
@@ -294,14 +374,17 @@ watch(categoryFilter, () => {
       </button>
     </nav>
     <div v-if="loading" class="inbox-empty-state"><span>正在读取统一收件箱…</span></div>
-    <div v-else-if="!accounts.length && !sources.length" class="inbox-empty-state">
+    <div
+      v-else-if="!accounts.length && !sources.length && !imConnectors.length"
+      class="inbox-empty-state"
+    >
       <h2>还没有信息来源</h2>
-      <p>先连接邮箱或添加 RSS 订阅。</p>
+      <p>先连接钉钉、邮箱或添加 RSS 订阅。</p>
       <button type="button" @click="emit('openConnections')">配置连接器</button>
     </div>
     <div v-else-if="!items.length" class="inbox-empty-state">
       <h2>{{ mode === 'pending' ? '没有待处理信息' : '暂时没有动态' }}</h2>
-      <p>点击同步全部检查邮件和 RSS 更新。</p>
+      <p>点击同步全部检查邮件和 RSS；钉钉消息会在应用在线时实时进入。</p>
     </div>
     <div v-else class="email-inbox-layout unified-inbox-layout">
       <div class="email-message-list unified-inbox-list" role="listbox" aria-label="统一动态列表">
@@ -318,16 +401,19 @@ watch(categoryFilter, () => {
           <span class="email-message-list__content">
             <span class="email-message-list__sender"
               ><strong
-                ><component :is="item.kind === 'email' ? Mail : Rss" :size="11" />{{
-                  item.source
-                }}</strong
+                ><component
+                  :is="item.kind === 'email' ? Mail : item.kind === 'rss' ? Rss : MessageCircle"
+                  :size="11"
+                />{{ item.source }}</strong
               ><time>{{ formatListTime(item.timestamp) }}</time></span
             >
             <span class="email-message-list__subject">{{ item.title }}</span
             ><span class="email-message-list__preview">{{ item.preview }}</span>
             <span class="email-message-list__footer"
               ><small :data-status="item.status">{{ processingLabel(item.status) }}</small
-              ><span>{{ item.kind === 'email' ? 'EMAIL' : 'RSS' }}</span
+              ><span>{{
+                item.kind === 'email' ? 'EMAIL' : item.kind === 'rss' ? 'RSS' : 'IM'
+              }}</span
               ><span>{{ item.category }}</span
               ><span>{{ item.author }}</span></span
             >
@@ -340,7 +426,13 @@ watch(categoryFilter, () => {
             <span>{{ selected.kind.toUpperCase() }} / {{ selected.source }}</span>
             <h2>{{ selected.title }}</h2>
             <div class="email-message-detail__sender">
-              <span><component :is="selected.kind === 'email' ? Mail : Rss" :size="15" /></span>
+              <span
+                ><component
+                  :is="
+                    selected.kind === 'email' ? Mail : selected.kind === 'rss' ? Rss : MessageCircle
+                  "
+                  :size="15"
+              /></span>
               <p>
                 <strong>{{ selected.author }}</strong
                 ><small>{{ selected.source }}</small>
@@ -391,7 +483,9 @@ watch(categoryFilter, () => {
         </header>
         <dl>
           <dt>类型</dt>
-          <dd>{{ selected.kind === 'email' ? '邮件' : 'RSS' }}</dd>
+          <dd>
+            {{ selected.kind === 'email' ? '邮件' : selected.kind === 'rss' ? 'RSS' : '钉钉消息' }}
+          </dd>
           <dt>状态</dt>
           <dd>
             <span class="email-message-detail__status" :data-status="selected.status">{{

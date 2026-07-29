@@ -21,4 +21,12 @@ describe('InboxSurface', () => {
     expect(wrapper.text()).toContain('当前没有采集异常')
     expect(wrapper.find('.inbox-overview-strip').exists()).toBe(false)
   })
+
+  it('routes the messages section to the live DingTalk inbox', () => {
+    const wrapper = mount(InboxSurface, { props: { section: 'messages' } })
+
+    expect(wrapper.get('h1').text()).toBe('消息')
+    expect(wrapper.find('.im-inbox-panel').exists()).toBe(true)
+    expect(wrapper.text()).toContain('实时通道，不是历史同步')
+  })
 })

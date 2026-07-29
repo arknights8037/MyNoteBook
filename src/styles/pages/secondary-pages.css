@@ -265,6 +265,25 @@
   white-space: nowrap;
 }
 
+.dingtalk-connector-panel .email-account-list__main > span[data-runtime-status='online'] {
+  color: var(--color-status-success);
+}
+
+.dingtalk-connector-panel .email-account-list__main > span[data-runtime-status='connecting'],
+.dingtalk-connector-panel .email-account-list__main > span[data-runtime-status='reconnecting'] {
+  color: var(--color-agent-accent);
+}
+
+.dingtalk-connector-panel .email-account-list__main > span[data-runtime-status='auth_error'],
+.dingtalk-connector-panel .email-account-list__main > span[data-runtime-status='error'] {
+  color: var(--color-status-error);
+}
+
+.dingtalk-connector-panel .email-account-modal__hint {
+  padding-left: 22px;
+  line-height: 1.65;
+}
+
 .email-account-list__actions {
   display: flex;
   gap: 3px;

@@ -12,27 +12,28 @@ SQLite schema 只由 `src-tauri/migrations/` 中的 SQLx 迁移管理。应用�
 
 ## 当前持久化内容
 
-| 域               | 表/文件                                                                                                                             |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| 文档与层级       | `documents`；只读块投影 `blocks`                                                                                                    |
-| 标签             | `tags`、`document_tags`                                                                                                             |
-| 附件元数据       | `assets`；二进制文件位于数据库同级 `assets/`                                                                                        |
-| 本地集成文件     | `skills/`、`mcp-servers.json`、`mcp-server-exposure.json`；与数据库使用同一个可迁移数据目录                                         |
-| 全文检索         | FTS5 `document_search` 与同步触发器                                                                                                 |
-| Agent 任务与审计 | `agent_*` 表保存 task、tool call、Patch、confirmation、transaction 和 request；`agent_workspace_state` 保存版本化项目/任务消息快照  |
-| Agent 通信与路由 | `agent_requests` 保存 request mode、result、revision、decision 和 project/branch routing；`agent_branches` 保存 A2A 分支目录        |
-| 自动化与运行队列 | `automation_tasks`、`automation_runs`                                                                                               |
-| 上下文追溯       | `context_bundles`；Agent ExecutionPolicy、Provider 参数、Skill 版本与关联 ID                                                        |
-| 结构化知识       | `knowledge_objects`、`knowledge_object_relations`                                                                                   |
-| 认知会话与验证   | `cognitive_sessions`、`knowledge_object_sources`、`knowledge_validations`                                                           |
-| Mind Map         | `mind_maps`、`mind_map_revisions`；版本化 canonical JSON 与树形位置                                                                 |
-| 结构化工作区     | `workspace_views`、`workspace_view_revisions`；Slidev/UML/Table payload、树形位置与 `pinned_at`                                     |
-| 统一 Work        | `task_definitions`、`task_runs`；兼容既有 Automation/Agent 表                                                                       |
-| 交付与治理       | `work_artifacts`、`work_evidence`、`result_verifications`、`change_sets`、`approvals`；验证结果可保存 Confirmation Envelope 与 hash |
-| 可重建 View      | `view_definitions`、`view_snapshots`、`view_dependencies`                                                                           |
-| 外部委派         | `delegations`、`external_submissions`、`idempotency_records`                                                                        |
-| 事件投递         | `domain_events`、`outbox_messages`                                                                                                  |
-| API Key          | AES-256-GCM 密文文件；随机数据密钥由系统凭据库保护，不进入 SQLite 或 localStorage                                                   |
+| 域               | 表/文件                                                                                                                               |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 文档与层级       | `documents`；只读块投影 `blocks`                                                                                                      |
+| 标签             | `tags`、`document_tags`                                                                                                               |
+| 附件元数据       | `assets`；二进制文件位于数据库同级 `assets/`                                                                                          |
+| 本地集成文件     | `skills/`、`mcp-servers.json`、`mcp-server-exposure.json`；与数据库使用同一个可迁移数据目录                                           |
+| 全文检索         | FTS5 `document_search` 与同步触发器                                                                                                   |
+| Agent 任务与审计 | `agent_*` 表保存 task、tool call、Patch、confirmation、transaction 和 request；`agent_workspace_state` 保存版本化项目/任务消息快照    |
+| 消息连接器       | `im_connectors` 保存非敏感连接配置和运行状态；`im_conversations`、`im_messages` 保存标准化钉钉会话与消息；Client Secret 不进入 SQLite |
+| Agent 通信与路由 | `agent_requests` 保存 request mode、result、revision、decision 和 project/branch routing；`agent_branches` 保存 A2A 分支目录          |
+| 自动化与运行队列 | `automation_tasks`、`automation_runs`                                                                                                 |
+| 上下文追溯       | `context_bundles`；Agent ExecutionPolicy、Provider 参数、Skill 版本与关联 ID                                                          |
+| 结构化知识       | `knowledge_objects`、`knowledge_object_relations`                                                                                     |
+| 认知会话与验证   | `cognitive_sessions`、`knowledge_object_sources`、`knowledge_validations`                                                             |
+| Mind Map         | `mind_maps`、`mind_map_revisions`；版本化 canonical JSON 与树形位置                                                                   |
+| 结构化工作区     | `workspace_views`、`workspace_view_revisions`；Slidev/UML/Table payload、树形位置与 `pinned_at`                                       |
+| 统一 Work        | `task_definitions`、`task_runs`；兼容既有 Automation/Agent 表                                                                         |
+| 交付与治理       | `work_artifacts`、`work_evidence`、`result_verifications`、`change_sets`、`approvals`；验证结果可保存 Confirmation Envelope 与 hash   |
+| 可重建 View      | `view_definitions`、`view_snapshots`、`view_dependencies`                                                                             |
+| 外部委派         | `delegations`、`external_submissions`、`idempotency_records`                                                                          |
+| 事件投递         | `domain_events`、`outbox_messages`                                                                                                    |
+| API Key          | AES-256-GCM 密文文件；随机数据密钥由系统凭据库保护，不进入 SQLite 或 localStorage                                                     |
 
 API Key 首次使用时从系统凭据库取得数据密钥并完成一次 AES-GCM 解密，随后缓存在应用进程内存中。Agent 请求不会重复执行 KDF、系统凭据读取或 AES 解密。写入时使用新的随机 nonce，GCM 认证标签同时校验密文完整性。
 

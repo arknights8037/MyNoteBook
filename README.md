@@ -169,6 +169,9 @@ MyNoteBook 的目标不是增加更多孤立工具，而是建立一个长期存
 - [数据库持久化与运维](docs/database.md)：Schema 所有权、迁移、数据目录和备份恢复。
 - [自动化任务与审计](docs/automations.md)：自动化定义、运行队列及当前执行边界。
 - [MCP Client 与外部协议](docs/mcp-client.md)：Tools、Resources、只读 MCP Server 和 Delegation 边界。
+- [钉钉消息连接器与收件箱](docs/dingtalk-inbox.md)：Stream 接收范围、在线语义、凭据保护和消息去重。
+- [邮箱连接器与收件箱](docs/email-inbox.md)：IMAP 只读同步、来源游标与网易 ID 兼容。
+- [RSS 连接器与收件箱](docs/rss-inbox.md)：条件拉取、正文提取和统一时间线。
 - [工作空间视图](docs/workspace-views.md)：文档、思维导图、幻灯片、UML/流程图和表格。
 
 维护文档只描述当前事实或明确标记的未来设计。历史实施过程通过 Git 追溯。

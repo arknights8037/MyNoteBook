@@ -7,6 +7,7 @@ import EmailInboxPanel from './EmailInboxPanel.vue'
 import RssInboxPanel from './RssInboxPanel.vue'
 import UnifiedInboxPanel from './UnifiedInboxPanel.vue'
 import ConnectorFailuresPanel from './ConnectorFailuresPanel.vue'
+import ImInboxPanel from './ImInboxPanel.vue'
 
 const props = defineProps<{ section: InboxSection }>()
 const emit = defineEmits<{ openConnections: [] }>()
@@ -96,6 +97,12 @@ const visibleSources = computed(() => {
       <RssInboxPanel
         v-else-if="section === 'rss'"
         mode="rss"
+        @open-connections="emit('openConnections')"
+      />
+
+      <ImInboxPanel
+        v-else-if="section === 'messages'"
+        mode="messages"
         @open-connections="emit('openConnections')"
       />
 
