@@ -17,7 +17,7 @@
 | 重试策略没有真正执行              | 已关闭   | `maxRetries` 传给 Provider；只有显式 `retryable` 的幂等只读工具允许有界重试，写入和未知副作用工具不重试  |
 | 失败工具可按相同参数反复调用      | 已关闭   | 相同工具和规范化参数的失败调用会被抑制；成功的相同 `read_document` 在单次运行内复用 Observation          |
 
-这组关闭不意味着可以放松安全边界：工具执行仍必须先写 `running` 审计，取消仍需等待已开始调用写入终态。重新核对后发现 MCP 当前实际使用 `requiresConfirmation = !serverTrusted`，`readOnlyHint` 没有参与免确认判定；因此“信任与只读同时满足”仍是目标规则，不是已经落实的现状，对应 P0 修复见 [路线图 Phase 0](roadmap.md#4-phase-0安全与基础契约)。
+这组关闭不意味着可以放松安全边界：工具执行仍必须先写 `running` 审计，取消仍需等待已开始调用写入终态。MCP 当前只有 `serverTrusted && readOnly` 才可免 `executionAuthorization`，其余组合均需授权。
 
 ## 原 P2 问题复核
 

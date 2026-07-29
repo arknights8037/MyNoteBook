@@ -266,20 +266,18 @@ Rust tools/list
        readOnly/serverTrusted
   -> createMcpRuntimeTools()
        runtimeName = mcp__<safe-server-id>__<safe-tool-name>
-       requiresConfirmation = !serverTrusted
+       executionAuthorization = !(serverTrusted && readOnly)
        tags = external.read | external.may_write
   -> buildAgentToolSet()
        jsonSchema(inputSchema)
   -> createExecuteToolCallback()
-       当前 server trusted 可直接调用
-       server untrusted 时 request_authorizer_input
+       trusted + readOnly 可直接调用
+       其余组合通过 authorization.started / request_authorizer_input
   -> TauriMcpClient.callTool()
   -> Rust rmcp call_tool
 ```
 
-**当前代码事实**：`createMcpRuntimeTools()` 设置 `requiresConfirmation = !serverTrusted`；`readOnlyHint` 只决定 `external.read` / `external.may_write` tag 和只读重试，不参与普通 Agent 的调用前确认。因此 trusted server 暴露的非只读工具当前也会免逐次确认。项目现有说明写的是“trusted + readOnly 才免确认”，两者不一致。一次任务也可选择“允许本次任务”缓存 untrusted server 的后续授权。
-
-这应在 PI Adapter 前先修正并加契约测试：目标安全策略应显式写成 `requiresConfirmation = !(serverTrusted && readOnly)`，并确保 Cognitive tag 过滤不能替代调用时授权。
+**当前代码事实**：`createMcpRuntimeTools()` 只有在 `serverTrusted && readOnly` 时才免 `executionAuthorization`；trusted/write、untrusted/read 和 untrusted/write 都必须获得授权。一次任务仍可选择“允许本次任务”缓存同一 Server 的后续授权，Cognitive tag 过滤不能替代调用时授权。
 
 ### 4.4 MCP 保留建议所需的 Adapter 点
 
@@ -346,7 +344,7 @@ Skill 当前：
 
 ### P1：Tool contract 与错误语义未单源化
 
-同一工具可能同时存在：Registry definition、AI SDK Zod schema、TS argument parser、Rust Rig JSON Schema/Rust Args、MCP descriptor、UI presentation。`requiresConfirmation` 还混合“调用前授权”和“写后 Patch 审批”两类语义。MCP 已出现具体偏差：实现只检查 `serverTrusted`，目标安全不变量则要求 `serverTrusted && readOnly`。
+Provider 侧工具名称、Zod/JSON Schema、风险、三类授权、调用上限、tags 和 presentation 已由 Domain Tool Catalog 生成；Rust Rig JSON Schema/Rust Args 仍作为原生安全边界独立校验。MCP 只有 `serverTrusted && readOnly` 才免执行授权。
 
 PI Adapter 若直接建立在其中任意一层，会保留漂移。应先形成可生成 provider schema 的 Domain Tool manifest，executor 和 UI metadata 引用同一稳定 ID/version。
 
