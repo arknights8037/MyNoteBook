@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Boxes, Check, Home, Pencil, RotateCcw, Undo2, X } from '@lucide/vue'
+import { Boxes, Check, Pencil, RotateCcw, Undo2, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { createEmailService } from '@/app/composition/emailServiceFactory'
@@ -128,6 +128,29 @@ function copyWidget(id: string): void {
 function removeWidget(id: string): void {
   mutate((payload) => {
     payload.widgets = payload.widgets.filter((widget) => widget.id !== id)
+  })
+}
+
+function cycleWidgetSize(id: string): void {
+  const presets = [
+    { w: 4, h: 3 },
+    { w: 6, h: 4 },
+    { w: 8, h: 5 },
+    { w: 12, h: 5 },
+  ]
+  mutate((payload) => {
+    const widget = payload.widgets.find((candidate) => candidate.id === id)
+    if (!widget) return
+    const currentIndex = presets.findIndex((preset) => widget.layout.desktop.w <= preset.w)
+    const next = presets[(currentIndex + 1 + presets.length) % presets.length]!
+    widget.layout.desktop = {
+      ...widget.layout.desktop,
+      x: Math.min(widget.layout.desktop.x, 12 - next.w),
+      w: next.w,
+      h: next.h,
+      minW: Math.min(widget.layout.desktop.minW ?? 1, next.w),
+      minH: Math.min(widget.layout.desktop.minH ?? 1, next.h),
+    }
   })
 }
 
@@ -298,42 +321,6 @@ onBeforeUnmount(() => {
     :class="{ 'dashboard-surface--editing': editing }"
     aria-label="首页信息面板"
   >
-    <header class="dashboard-toolbar">
-      <div>
-        <span class="dashboard-toolbar__eyebrow"><Home :size="12" />INFORMATION HOME</span
-        ><strong>{{ editing ? '正在编排首页' : '信息首页' }}</strong
-        ><small>独立面板 · {{ draft.widgets.length }} 个模块 · 不属于文档树</small>
-      </div>
-      <div class="dashboard-toolbar__actions">
-        <template v-if="editing">
-          <button type="button" @click="showLibrary = !showLibrary">
-            <Boxes :size="16" />模块库
-          </button>
-          <button type="button" :disabled="!undoStack.length" @click="undo">
-            <Undo2 :size="16" />撤销
-          </button>
-          <button type="button" @click="reset"><RotateCcw :size="16" />恢复默认</button>
-          <button type="button" @click="cancelEdit"><X :size="16" />取消</button>
-          <button
-            type="button"
-            class="dashboard-toolbar__primary"
-            :disabled="!dirty || saving"
-            @click="save"
-          >
-            <Check :size="16" />{{ saving ? '保存中' : '保存布局' }}
-          </button>
-        </template>
-        <button
-          v-else
-          type="button"
-          class="dashboard-toolbar__primary"
-          :disabled="!home"
-          @click="beginEdit"
-        >
-          <Pencil :size="16" />编辑首页
-        </button>
-      </div>
-    </header>
     <p v-if="!native" class="dashboard-widget-state">独立首页数据需要在 Tauri 桌面应用中读取。</p>
     <p v-else-if="loading" class="dashboard-widget-state">正在加载信息首页…</p>
     <p v-if="error" class="information-home-surface__error" role="alert">{{ error }}</p>
@@ -353,6 +340,7 @@ onBeforeUnmount(() => {
         @generate-summary="generateSummary('manual')"
         @toggle-auto-summary="toggleAutoSummary"
         @change-summary-interval="changeSummaryInterval"
+        @resize="cycleWidgetSize"
       />
       <Transition name="dashboard-library"
         ><InformationHomeWidgetLibrary
@@ -360,6 +348,28 @@ onBeforeUnmount(() => {
           @add="addWidget"
           @close="showLibrary = false"
       /></Transition>
+    </div>
+    <div
+      v-if="native && !loading"
+      class="information-home-controls"
+      :class="{ 'is-editing': editing }"
+    >
+      <template v-if="editing">
+        <button type="button" @click="showLibrary = !showLibrary">
+          <Boxes :size="16" />模块库
+        </button>
+        <button type="button" :disabled="!undoStack.length" @click="undo">
+          <Undo2 :size="16" />撤销
+        </button>
+        <button type="button" @click="reset"><RotateCcw :size="16" />恢复默认</button>
+        <button type="button" @click="cancelEdit"><X :size="16" />取消</button>
+        <button type="button" class="is-primary" :disabled="!dirty || saving" @click="save">
+          <Check :size="16" />{{ saving ? '保存中' : '保存布局' }}
+        </button>
+      </template>
+      <button v-else type="button" class="is-primary" :disabled="!home" @click="beginEdit">
+        <Pencil :size="16" />编辑布局
+      </button>
     </div>
   </section>
 </template>

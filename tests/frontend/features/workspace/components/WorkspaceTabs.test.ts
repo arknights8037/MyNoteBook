@@ -6,14 +6,17 @@ import WorkspaceTabs from '@/features/workspace/components/WorkspaceTabs.vue'
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: vi.fn() }))
 
 describe('WorkspaceTabs', () => {
-  it('keeps native window controls while hiding page tabs on the independent home', () => {
+  it('renders the independent home as a normal tab and keeps native window controls', () => {
     const wrapper = mount(WorkspaceTabs, {
-      props: { tabs: [], activeKey: '', chromeOnly: true },
+      props: {
+        tabs: [{ key: 'surface:home', kind: 'surface', id: 'home', title: '首页' }],
+        activeKey: 'surface:home',
+      },
     })
 
-    expect(wrapper.get('.workspace-tabs__home-label').text()).toContain('首页')
-    expect(wrapper.find('.workspace-tabs__scroll').exists()).toBe(false)
-    expect(wrapper.find('.workspace-tabs__new').exists()).toBe(false)
+    expect(wrapper.get('.workspace-tab--active').text()).toContain('首页')
+    expect(wrapper.find('.workspace-tabs__scroll').exists()).toBe(true)
+    expect(wrapper.find('.workspace-tabs__new').exists()).toBe(true)
     expect(wrapper.findAll('.workspace-tabs__window-controls button')).toHaveLength(3)
     expect(wrapper.get('.workspace-tabs__window-close').attributes('aria-label')).toBe('关闭窗口')
     expect(wrapper.find('[data-tauri-drag-region]').exists()).toBe(true)

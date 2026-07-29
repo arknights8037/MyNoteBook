@@ -26,6 +26,7 @@ const emit = defineEmits<{
   generateSummary: []
   toggleAutoSummary: []
   changeSummaryInterval: []
+  resize: [id: string]
 }>()
 
 const breakpoint = ref('lg')
@@ -115,7 +116,7 @@ function updateLayout(next: Layout): void {
       :is-draggable="editing"
       :is-resizable="editing"
       drag-allow-from=".dashboard-widget-frame__drag-handle"
-      drag-ignore-from="button, input, .dashboard-widget-frame__body"
+      drag-ignore-from="button, input, select, .dashboard-widget-frame__body"
     >
       <InformationHomeWidgetHost
         :widget="widget"
@@ -131,6 +132,7 @@ function updateLayout(next: Layout): void {
         @generate-summary="emit('generateSummary')"
         @toggle-auto-summary="emit('toggleAutoSummary')"
         @change-summary-interval="emit('changeSummaryInterval')"
+        @resize="emit('resize', widget.id)"
       />
     </GridItem>
   </GridLayout>

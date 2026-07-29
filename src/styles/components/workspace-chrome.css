@@ -390,29 +390,6 @@
   font-weight: 680;
 }
 
-.workspace-tabs__home-label {
-  display: flex;
-  min-width: 180px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 7px;
-  padding: 0 14px;
-  color: var(--color-text-secondary, #686864);
-  user-select: none;
-}
-
-.workspace-tabs__home-label span {
-  color: var(--color-text-primary, #292927);
-  font-size: 12px;
-  font-weight: 680;
-}
-
-.workspace-tabs__home-label small {
-  color: var(--color-text-tertiary, #92928d);
-  font-size: 8px;
-  letter-spacing: 0.1em;
-}
-
 .context-sidebar__domain-switch {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

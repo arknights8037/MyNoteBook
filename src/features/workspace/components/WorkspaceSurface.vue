@@ -373,8 +373,9 @@ const activeNavigationSurface = computed<WorkspaceSurfaceName | 'work'>(() => {
 })
 
 const openTabs = ref<WorkspaceTab[]>([])
-const persistentSurfaceIds = new Set<WorkspaceSurfaceName>(['agent', 'inbox', 'knowledge'])
+const persistentSurfaceIds = new Set<WorkspaceSurfaceName>(['home', 'agent', 'inbox', 'knowledge'])
 const surfaceTitles: Partial<Record<WorkspaceSurfaceName, string>> = {
+  home: '首页',
   agent: 'Agent Work',
   inbox: '收件箱',
   knowledge: '知识控制',
@@ -453,6 +454,7 @@ async function activateWorkspaceTab(tab: WorkspaceTab): Promise<void> {
   if (tab.kind === 'mindmap') return openMindMap(tab.id)
   if (tab.kind === 'view') return openWorkspaceView(tab.id)
   const actions: Record<string, () => void> = {
+    home: openInformationHome,
     agent: openAgentWorkspace,
     inbox: openInboxSurface,
     knowledge: openKnowledgeControlSurface,
@@ -1479,7 +1481,6 @@ const { aiChatPanelBindings } = useAiChatPanelBindings({
         <WorkspaceTabs
           :tabs="openTabs"
           :active-key="activeTabKey"
-          :chrome-only="activeSurface === 'home'"
           @activate="activateWorkspaceTab"
           @close="closeWorkspaceTab"
           @create="openCreateView()"

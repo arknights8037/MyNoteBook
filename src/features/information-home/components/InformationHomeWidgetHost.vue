@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Scaling } from '@lucide/vue'
 import { computed, onErrorCaptured, ref } from 'vue'
 
 import type { InformationHomeSummary, InformationHomeWidget } from '@/models/home/informationHome'
@@ -24,6 +25,7 @@ const emit = defineEmits<{
   generateSummary: []
   toggleAutoSummary: []
   changeSummaryInterval: []
+  resize: []
 }>()
 
 const emailWidget = ref<InstanceType<typeof EmailActionsHomeWidget> | null>(null)
@@ -56,6 +58,11 @@ function refresh(): void {
     @remove="emit('remove')"
     @refresh="refresh"
   >
+    <template v-if="editing" #actions>
+      <button type="button" aria-label="切换卡片尺寸" title="切换尺寸预设" @click="emit('resize')">
+        <Scaling :size="15" />
+      </button>
+    </template>
     <div v-if="renderError" class="dashboard-widget-state dashboard-widget-state--error">
       <strong>模块渲染失败</strong><span>{{ renderError }}</span
       ><button type="button" @click="refresh">重试</button>

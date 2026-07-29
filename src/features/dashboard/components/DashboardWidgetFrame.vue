@@ -27,6 +27,7 @@ const emit = defineEmits<{
         </div>
       </div>
       <div class="dashboard-widget-frame__actions">
+        <slot name="actions" />
         <button
           v-if="refreshable !== false"
           type="button"

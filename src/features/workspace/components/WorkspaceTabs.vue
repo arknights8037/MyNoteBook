@@ -28,7 +28,6 @@ export interface WorkspaceTab {
 defineProps<{
   tabs: WorkspaceTab[]
   activeKey: string
-  chromeOnly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -87,6 +86,7 @@ function iconFor(tab: WorkspaceTab) {
   if (tab.kind === 'document') return FileText
   if (tab.kind === 'mindmap') return BrainCircuit
   if (tab.kind === 'view') return LayoutGrid
+  if (tab.id === 'home') return House
   if (tab.id === 'agent') return Bot
   if (tab.id === 'inbox') return Inbox
   if (tab.id === 'knowledge') return BookOpenCheck
@@ -96,11 +96,8 @@ function iconFor(tab: WorkspaceTab) {
 </script>
 
 <template>
-  <header class="workspace-tabs" :aria-label="chromeOnly ? '首页窗口标题栏' : '打开的页面'">
-    <div v-if="chromeOnly" class="workspace-tabs__home-label">
-      <House :size="14" /><span>首页</span><small>INFORMATION HOME</small>
-    </div>
-    <div v-else class="workspace-tabs__scroll" role="tablist">
+  <header class="workspace-tabs" aria-label="打开的页面">
+    <div class="workspace-tabs__scroll" role="tablist">
       <div
         v-for="tab in tabs"
         :key="tab.key"
@@ -129,7 +126,6 @@ function iconFor(tab: WorkspaceTab) {
       </div>
     </div>
     <button
-      v-if="!chromeOnly"
       type="button"
       class="workspace-tabs__new"
       aria-label="新建内容"
