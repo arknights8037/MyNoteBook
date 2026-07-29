@@ -9,8 +9,11 @@ export interface EmailAccount {
   username: string
   mailbox: string
   authType: 'password'
+  sourceCategory: string
   enabled: boolean
   lastSyncedAt: number | null
+  syncCursorAt: number | null
+  lastRemoteUid: number
   lastError: string | null
   createdAt: number
   updatedAt: number
@@ -57,6 +60,7 @@ export interface CreateEmailAccountInput {
   username: string
   mailbox: string
   password: string
+  sourceCategory: string
 }
 
 export interface EmailConnectionInput {
@@ -81,6 +85,8 @@ export function validateEmailAccountInput(input: CreateEmailAccountInput): strin
   if (!input.username.trim() || input.username.length > 320) return 'IMAP 用户名无效。'
   if (!input.mailbox.trim() || input.mailbox.length > 255) return '邮箱文件夹名称无效。'
   if (!input.password) return '请输入邮箱密码或应用专用密码。'
+  if (!input.sourceCategory.trim() || input.sourceCategory.trim().length > 80)
+    return '来源分类不能为空且不能超过 80 个字符。'
   return null
 }
 

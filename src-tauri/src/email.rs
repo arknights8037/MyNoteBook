@@ -159,6 +159,7 @@ pub struct EmailSyncInput {
     port: u16,
     username: String,
     mailbox: String,
+    after_uid: Option<u32>,
     limit: usize,
 }
 
@@ -268,19 +269,20 @@ fn sync_messages(
         .map_err(|(error, _)| email_error(error))?;
     send_client_identity(&mut session)?;
     session.examine(&input.mailbox).map_err(email_error)?;
-    let mut all_ids: Vec<u32> = session
-        .search("ALL")
+    let all_ids: Vec<u32> = session
+        .uid_search(match input.after_uid {
+            Some(after_uid) => format!("UID {}:*", after_uid.saturating_add(1)),
+            None => "ALL".to_string(),
+        })
         .map_err(email_error)?
         .into_iter()
         .collect();
-    if all_ids.is_empty() {
+    let recent_ids = select_sync_uids(all_ids, input.after_uid, limit);
+    if recent_ids.is_empty() {
         session.logout().map_err(email_error)?;
         return Ok(Vec::new());
     }
-    all_ids.sort_unstable();
     let unseen: HashSet<u32> = session.search("UNSEEN").map_err(email_error)?;
-    let mut recent_ids: Vec<u32> = all_ids.into_iter().rev().take(limit).collect();
-    recent_ids.sort_unstable();
     let sequence_set = recent_ids
         .iter()
         .map(u32::to_string)
@@ -288,7 +290,7 @@ fn sync_messages(
         .join(",");
     let fetch_items = format!("(UID BODY.PEEK[]<0.{MAX_MESSAGE_BYTES}>)");
     let fetched = session
-        .fetch(&sequence_set, &fetch_items)
+        .uid_fetch(&sequence_set, &fetch_items)
         .map_err(email_error)?;
     let now = now_millis();
     let mut messages = fetched
@@ -300,6 +302,23 @@ fn sync_messages(
     messages.sort_by(|left, right| right.received_at.cmp(&left.received_at));
     session.logout().map_err(email_error)?;
     Ok(messages)
+}
+
+fn select_sync_uids(mut uids: Vec<u32>, after_uid: Option<u32>, limit: usize) -> Vec<u32> {
+    uids.retain(|uid| after_uid.is_none_or(|cursor| *uid > cursor));
+    uids.sort_unstable();
+    if after_uid.is_some() {
+        uids.truncate(limit);
+        uids
+    } else {
+        uids.into_iter()
+            .rev()
+            .take(limit)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -317,6 +336,7 @@ pub(crate) fn real_sync_smoke(
         port,
         username,
         mailbox,
+        after_uid: None,
         limit: 5,
     };
     validate_connection(&input.host, input.port, &input.username, &input.mailbox)?;
@@ -581,6 +601,13 @@ mod tests {
             quote_id_value("client \\\"name\"\n"),
             "\"client \\\\\\\"name\\\"\""
         );
+    }
+
+    #[test]
+    fn selects_latest_uids_initially_and_only_newer_uids_after_cursor() {
+        assert_eq!(select_sync_uids(vec![3, 1, 2], None, 2), vec![2, 3]);
+        assert_eq!(select_sync_uids(vec![4, 2, 3, 1], Some(1), 2), vec![2, 3]);
+        assert!(select_sync_uids(vec![1, 2, 3], Some(3), 25).is_empty());
     }
 
     #[test]

@@ -27,6 +27,7 @@ type UnifiedItem =
       id: string
       timestamp: number
       source: string
+      category: string
       author: string
       title: string
       preview: string
@@ -38,6 +39,7 @@ type UnifiedItem =
       id: string
       timestamp: number
       source: string
+      category: string
       author: string
       title: string
       preview: string
@@ -56,6 +58,7 @@ const rssEntries = ref<RssEntry[]>([])
 const selectedId = ref('')
 const loading = ref(false)
 const syncing = ref(false)
+const categoryFilter = ref('all')
 const extractingId = ref('')
 const error = ref('')
 let emailPromise: Promise<EmailService> | null = null
@@ -63,7 +66,7 @@ let rssPromise: Promise<RssService> | null = null
 
 const emailService = () => (emailPromise ??= createEmailService())
 const rssService = () => (rssPromise ??= createRssService())
-const items = computed<UnifiedItem[]>(() =>
+const allItems = computed<UnifiedItem[]>(() =>
   [
     ...emails.value.map(
       (message): UnifiedItem => ({
@@ -72,6 +75,9 @@ const items = computed<UnifiedItem[]>(() =>
         timestamp: message.receivedAt,
         source:
           accounts.value.find((account) => account.id === message.accountId)?.displayName ?? '邮箱',
+        category:
+          accounts.value.find((account) => account.id === message.accountId)?.sourceCategory ??
+          '未分类',
         author: message.fromName || message.fromAddress || '未知发件人',
         title: message.subject,
         preview: message.preview,
@@ -85,6 +91,8 @@ const items = computed<UnifiedItem[]>(() =>
         id: `rss:${entry.id}`,
         timestamp: entry.publishedAt,
         source: sources.value.find((source) => source.id === entry.sourceId)?.displayName ?? 'RSS',
+        category:
+          sources.value.find((source) => source.id === entry.sourceId)?.sourceCategory ?? '未分类',
         author: entry.author || 'RSS 来源',
         title: entry.title,
         preview: entry.preview,
@@ -94,6 +102,15 @@ const items = computed<UnifiedItem[]>(() =>
     ),
   ].sort((left, right) => right.timestamp - left.timestamp),
 )
+const items = computed(() =>
+  categoryFilter.value === 'all'
+    ? allItems.value
+    : allItems.value.filter((item) => item.category === categoryFilter.value),
+)
+const categoryOptions = computed(() => [
+  'all',
+  ...new Set([...accounts.value, ...sources.value].map((source) => source.sourceCategory)),
+])
 const selected = computed(() => items.value.find((item) => item.id === selectedId.value) ?? null)
 const pendingCount = computed(() => items.value.filter((item) => item.status === 'pending').length)
 const latestSyncAt = computed(() =>
@@ -101,6 +118,15 @@ const latestSyncAt = computed(() =>
     (latest, source) =>
       source.lastSyncedAt && (!latest || source.lastSyncedAt > latest)
         ? source.lastSyncedAt
+        : latest,
+    null,
+  ),
+)
+const latestCursorAt = computed(() =>
+  [...accounts.value, ...sources.value].reduce<number | null>(
+    (latest, source) =>
+      source.syncCursorAt && (!latest || source.syncCursorAt > latest)
+        ? source.syncCursorAt
         : latest,
     null,
   ),
@@ -215,6 +241,9 @@ watch(
   () => props.mode,
   () => void load(),
 )
+watch(categoryFilter, () => {
+  selectedId.value = items.value[0]?.id ?? ''
+})
 </script>
 
 <template>
@@ -235,7 +264,11 @@ watch(
         </div>
       </div>
       <div class="email-inbox-panel__sync">
-        <span v-if="latestSyncAt">LAST SYNC · {{ formatFullTime(latestSyncAt) }}</span
+        <span v-if="latestSyncAt"
+          >CHECK · {{ formatFullTime(latestSyncAt)
+          }}<template v-if="latestCursorAt">
+            / CONTENT · {{ formatFullTime(latestCursorAt) }}</template
+          ></span
         ><span v-else>尚未完成同步</span>
         <button
           type="button"
@@ -249,6 +282,17 @@ watch(
       </div>
     </header>
     <p v-if="error" class="email-inbox-panel__error" role="alert">{{ error }}</p>
+    <nav v-if="categoryOptions.length > 2" class="inbox-source-filters" aria-label="统一来源分类">
+      <button
+        v-for="category in categoryOptions"
+        :key="category"
+        type="button"
+        :class="{ 'is-active': categoryFilter === category }"
+        @click="categoryFilter = category"
+      >
+        {{ category === 'all' ? '全部来源' : category }}
+      </button>
+    </nav>
     <div v-if="loading" class="inbox-empty-state"><span>正在读取统一收件箱…</span></div>
     <div v-else-if="!accounts.length && !sources.length" class="inbox-empty-state">
       <h2>还没有信息来源</h2>
@@ -284,6 +328,7 @@ watch(
             <span class="email-message-list__footer"
               ><small :data-status="item.status">{{ processingLabel(item.status) }}</small
               ><span>{{ item.kind === 'email' ? 'EMAIL' : 'RSS' }}</span
+              ><span>{{ item.category }}</span
               ><span>{{ item.author }}</span></span
             >
           </span>
@@ -355,6 +400,8 @@ watch(
           </dd>
           <dt>来源</dt>
           <dd>{{ selected.source }}</dd>
+          <dt>分类</dt>
+          <dd>{{ selected.category }}</dd>
           <dt>时间</dt>
           <dd>{{ formatFullTime(selected.timestamp) }}</dd>
           <template v-if="selected.kind === 'rss'">

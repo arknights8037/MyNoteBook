@@ -11,6 +11,7 @@ describe('email connector model', () => {
     username: 'me@example.com',
     mailbox: 'INBOX',
     password: 'app-password',
+    sourceCategory: '工作',
   }
 
   it('accepts a constrained TLS IMAP account', () => {

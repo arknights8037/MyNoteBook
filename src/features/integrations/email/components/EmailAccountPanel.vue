@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlertTriangle, Mail, Plus, RefreshCw, ShieldCheck, Trash2 } from '@lucide/vue'
+import { AlertTriangle, Mail, Plus, RefreshCw, ShieldCheck, Tag, Trash2 } from '@lucide/vue'
 import { onMounted, ref } from 'vue'
 
 import { createEmailService } from '@/app/composition/emailServiceFactory'
@@ -84,6 +84,17 @@ async function remove(account: EmailAccount): Promise<void> {
   notify.success('邮箱连接已删除')
 }
 
+async function editCategory(account: EmailAccount): Promise<void> {
+  const category = globalThis.prompt('设置邮箱来源分类', account.sourceCategory)
+  if (category == null || category.trim() === account.sourceCategory) return
+  const result = await (await service()).updateCategory(account.id, category)
+  if (!result.ok) return void (error.value = result.error.message)
+  accounts.value = accounts.value.map((candidate) =>
+    candidate.id === account.id ? result.value : candidate,
+  )
+  notify.success('邮箱来源分类已更新')
+}
+
 function defaultForm() {
   return {
     displayName: '',
@@ -93,6 +104,7 @@ function defaultForm() {
     username: '',
     mailbox: 'INBOX',
     password: '',
+    sourceCategory: '未分类',
   }
 }
 
@@ -128,14 +140,23 @@ onMounted(() => void load())
         <span class="email-account-list__icon"><Mail :size="19" /></span>
         <div class="email-account-list__main">
           <strong>{{ account.displayName }}</strong>
-          <small>{{ account.emailAddress }} · {{ account.imapHost }}:{{ account.imapPort }}</small>
-          <em v-if="account.lastError">{{ account.lastError }}</em>
-          <span v-else-if="account.lastSyncedAt"
-            >上次同步 {{ new Date(account.lastSyncedAt).toLocaleString() }}</span
+          <small
+            >{{ account.emailAddress }} · {{ account.imapHost }}:{{ account.imapPort }} ·
+            {{ account.sourceCategory }}</small
           >
-          <span v-else>已连接，尚未同步</span>
+          <em v-if="account.lastError">{{ account.lastError }}</em>
+          <span v-if="account.lastSyncedAt"
+            >上次检查 {{ new Date(account.lastSyncedAt).toLocaleString() }}</span
+          ><span v-else>已连接，尚未检查</span>
+          <span v-if="account.syncCursorAt"
+            >最新内容 {{ new Date(account.syncCursorAt).toLocaleString() }} · UID
+            {{ account.lastRemoteUid }}</span
+          >
         </div>
         <div class="email-account-list__actions">
+          <NButton quaternary circle aria-label="修改来源分类" @click="editCategory(account)">
+            <template #icon><Tag :size="15" /></template>
+          </NButton>
           <NButton
             quaternary
             circle
@@ -196,6 +217,10 @@ onMounted(() => void load())
         /></label>
         <label
           ><span>文件夹</span><NInput v-model:value="form.mailbox" placeholder="INBOX"
+        /></label>
+        <label
+          ><span>来源分类</span
+          ><NInput v-model:value="form.sourceCategory" placeholder="例如：工作 / 个人"
         /></label>
         <label class="is-wide"
           ><span>密码 / 应用专用密码</span

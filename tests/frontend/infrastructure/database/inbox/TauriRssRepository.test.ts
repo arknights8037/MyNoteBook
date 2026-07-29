@@ -25,11 +25,20 @@ describe('TauriRssRepository', () => {
   it('deduplicates entries, preserves local status, stores validators, and cascades deletion', async () => {
     const client = new Client()
     client.database.exec(
+      readFileSync(join(process.cwd(), 'src-tauri/migrations/0030_add_email_inbox.sql'), 'utf8'),
+    )
+    client.database.exec(
       readFileSync(join(process.cwd(), 'src-tauri/migrations/0031_add_rss_inbox.sql'), 'utf8'),
     )
     client.database.exec(
       readFileSync(
         join(process.cwd(), 'src-tauri/migrations/0032_add_rss_article_extraction.sql'),
+        'utf8',
+      ),
+    )
+    client.database.exec(
+      readFileSync(
+        join(process.cwd(), 'src-tauri/migrations/0033_add_inbox_source_cursors.sql'),
         'utf8',
       ),
     )
@@ -40,10 +49,12 @@ describe('TauriRssRepository', () => {
       feedUrl: 'https://example.com/feed.xml',
       siteUrl: 'https://example.com',
       description: 'Updates',
+      sourceCategory: '技术',
       etag: '"v1"',
       lastModified: null,
       enabled: true,
       lastSyncedAt: 1,
+      syncCursorAt: null,
       lastError: null,
       createdAt: 1,
       updatedAt: 1,
@@ -51,6 +62,10 @@ describe('TauriRssRepository', () => {
     expect(await repository.createSource(source)).toMatchObject({
       ok: true,
       value: { id: source.id },
+    })
+    expect(await repository.updateCategory(source.id, '行业', 2)).toMatchObject({
+      ok: true,
+      value: { sourceCategory: '行业' },
     })
     const remote = {
       remoteId: 'hash-1',
@@ -99,10 +114,14 @@ describe('TauriRssRepository', () => {
         etag: '"v2"',
         lastModified: 'Tue, 28 Jul 2026 12:00:00 GMT',
         lastSyncedAt: 5,
+        syncCursorAt: 4,
         lastError: null,
         updatedAt: 5,
       }),
-    ).toMatchObject({ ok: true, value: { etag: '"v2"', lastSyncedAt: 5 } })
+    ).toMatchObject({
+      ok: true,
+      value: { etag: '"v2"', lastSyncedAt: 5, syncCursorAt: 4 },
+    })
     await repository.deleteSource(source.id)
     expect(await repository.listEntries()).toEqual({ ok: true, value: [] })
   })

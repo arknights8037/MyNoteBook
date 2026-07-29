@@ -53,8 +53,11 @@ export class EmailService {
       username: input.username.trim(),
       mailbox: input.mailbox.trim(),
       authType: 'password',
+      sourceCategory: input.sourceCategory.trim(),
       enabled: true,
       lastSyncedAt: null,
+      syncCursorAt: null,
+      lastRemoteUid: 0,
       lastError: null,
       createdAt,
       updatedAt: createdAt,
@@ -84,6 +87,7 @@ export class EmailService {
           port: account.imapPort,
           username: account.username,
           mailbox: account.mailbox,
+          afterUid: account.lastRemoteUid || null,
           limit: Math.max(1, Math.min(limit, 50)),
         },
       })
@@ -96,8 +100,18 @@ export class EmailService {
         })
         return stored
       }
+      const nextCursor = messages.reduce(
+        (latest, message) => Math.max(latest, message.receivedAt),
+        account.syncCursorAt ?? 0,
+      )
+      const nextRemoteUid = messages.reduce(
+        (latest, message) => Math.max(latest, message.remoteUid),
+        account.lastRemoteUid,
+      )
       const syncState = await this.repository.updateSyncState(account.id, {
         lastSyncedAt: syncedAt,
+        syncCursorAt: nextCursor || null,
+        lastRemoteUid: nextRemoteUid,
         lastError: null,
         updatedAt: syncedAt,
       })
@@ -127,6 +141,15 @@ export class EmailService {
 
   setMessageStatus(id: string, status: EmailProcessingStatus) {
     return this.repository.setMessageStatus(id, status)
+  }
+
+  updateCategory(id: string, sourceCategory: string) {
+    const normalized = sourceCategory.trim()
+    if (!normalized || normalized.length > 80)
+      return Promise.resolve(
+        err({ code: 'validation-error', message: '来源分类不能为空且不能超过 80 个字符。' }),
+      )
+    return this.repository.updateCategory(id, normalized, this.now())
   }
 }
 

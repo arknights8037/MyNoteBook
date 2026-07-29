@@ -46,10 +46,12 @@ export class RssService {
       feedUrl: input.feedUrl.trim(),
       siteUrl: fetched.siteUrl,
       description: fetched.feedDescription ?? '',
+      sourceCategory: input.sourceCategory.trim(),
       etag: fetched.etag,
       lastModified: fetched.lastModified,
       enabled: true,
       lastSyncedAt: createdAt,
+      syncCursorAt: latestEntryTime(fetched.entries),
       lastError: null,
       createdAt,
       updatedAt: createdAt,
@@ -86,6 +88,7 @@ export class RssService {
         needsArticleBackfill ? null : source.etag,
         needsArticleBackfill ? null : source.lastModified,
         limit,
+        needsArticleBackfill ? null : source.syncCursorAt,
       )
       const stored = fetched.notModified
         ? ok(0)
@@ -98,12 +101,14 @@ export class RssService {
         })
         return stored
       }
+      const nextCursor = Math.max(source.syncCursorAt ?? 0, latestEntryTime(fetched.entries) ?? 0)
       const updated = await this.repository.updateSyncState(source.id, {
         siteUrl: fetched.siteUrl,
         description: fetched.feedDescription,
         etag: fetched.etag,
         lastModified: fetched.lastModified,
         lastSyncedAt: syncedAt,
+        syncCursorAt: nextCursor || null,
         lastError: null,
         updatedAt: syncedAt,
       })
@@ -128,6 +133,15 @@ export class RssService {
     return this.repository.setEntryStatus(id, status)
   }
 
+  updateCategory(id: string, sourceCategory: string) {
+    const normalized = sourceCategory.trim()
+    if (!normalized || normalized.length > 80)
+      return Promise.resolve(
+        err({ code: 'validation-error', message: '来源分类不能为空且不能超过 80 个字符。' }),
+      )
+    return this.repository.updateCategory(id, normalized, this.now())
+  }
+
   async extractArticle(entry: RssEntry): Promise<AppResult<RssEntry>> {
     if (!entry.articleUrl)
       return err({ code: 'validation-error', message: '该 RSS 条目没有文章链接。' })
@@ -146,14 +160,23 @@ export class RssService {
     etag: string | null,
     lastModified: string | null,
     limit: number,
+    afterPublishedAt: number | null = null,
   ): Promise<RssFetchResult> {
     return invoke<RssFetchResult>('fetch_rss_feed', {
       input: {
         url,
         etag,
         lastModified,
+        afterPublishedAt,
         limit: Math.max(1, Math.min(limit, 100)),
       },
     })
   }
+}
+
+function latestEntryTime(entries: RssFetchResult['entries']): number | null {
+  return entries.reduce<number | null>((latest, entry) => {
+    const timestamp = entry.updatedAt ?? entry.publishedAt
+    return latest == null || timestamp > latest ? timestamp : latest
+  }, null)
 }

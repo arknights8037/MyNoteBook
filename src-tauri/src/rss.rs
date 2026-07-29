@@ -31,6 +31,7 @@ pub struct RssFetchInput {
     url: String,
     etag: Option<String>,
     last_modified: Option<String>,
+    after_published_at: Option<i64>,
     limit: usize,
 }
 
@@ -110,10 +111,30 @@ pub async fn fetch_rss_feed(input: RssFetchInput) -> Result<RssFetchResult, Stri
         response.effective_url,
         response.etag,
         response.last_modified,
-        limit,
+        MAX_ENTRIES,
     );
+    if let Some(after_published_at) = input.after_published_at {
+        result
+            .entries
+            .retain(|entry| entry_is_after_cursor(entry, after_published_at));
+        result.entries.sort_by_key(entry_cursor_time);
+        result.entries.truncate(limit);
+        result
+            .entries
+            .sort_by(|left, right| entry_cursor_time(right).cmp(&entry_cursor_time(left)));
+    } else {
+        result.entries.truncate(limit);
+    }
     enrich_entries(&mut result.entries).await;
     Ok(result)
+}
+
+fn entry_is_after_cursor(entry: &RemoteRssEntry, cursor: i64) -> bool {
+    entry_cursor_time(entry) > cursor
+}
+
+fn entry_cursor_time(entry: &RemoteRssEntry) -> i64 {
+    entry.updated_at.unwrap_or(entry.published_at)
 }
 
 #[tauri::command]
@@ -461,7 +482,7 @@ fn map_feed(
         .take(limit)
         .map(|entry| map_entry(entry, now))
         .collect::<Vec<_>>();
-    entries.sort_by(|left, right| right.published_at.cmp(&left.published_at));
+    entries.sort_by(|left, right| entry_cursor_time(right).cmp(&entry_cursor_time(left)));
     RssFetchResult {
         not_modified: false,
         effective_url: effective_url.to_string(),
@@ -690,6 +711,14 @@ mod tests {
         assert!(!first.entries[0].body_text.contains("bad()"));
         assert_eq!(first.entries[0].remote_id, second.entries[0].remote_id);
         assert_eq!(first.entries[0].categories, vec!["News"]);
+        assert!(entry_is_after_cursor(
+            &first.entries[0],
+            first.entries[0].published_at - 1
+        ));
+        assert!(!entry_is_after_cursor(
+            &first.entries[0],
+            first.entries[0].published_at
+        ));
     }
 
     #[test]
@@ -716,6 +745,7 @@ mod tests {
             url: "https://github.com/vuejs/core/releases.atom".to_string(),
             etag: None,
             last_modified: None,
+            after_published_at: None,
             limit: 5,
         })
         .await
@@ -732,6 +762,7 @@ mod tests {
             url: "https://openai.com/news/rss.xml".to_string(),
             etag: None,
             last_modified: None,
+            after_published_at: None,
             limit: 3,
         })
         .await

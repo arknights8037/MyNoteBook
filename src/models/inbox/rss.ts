@@ -7,10 +7,12 @@ export interface RssSource {
   feedUrl: string
   siteUrl: string | null
   description: string
+  sourceCategory: string
   etag: string | null
   lastModified: string | null
   enabled: boolean
   lastSyncedAt: number | null
+  syncCursorAt: number | null
   lastError: string | null
   createdAt: number
   updatedAt: number
@@ -72,10 +74,13 @@ export interface RssFetchResult {
 export interface CreateRssSourceInput {
   feedUrl: string
   displayName: string
+  sourceCategory: string
 }
 
 export function validateRssSourceInput(input: CreateRssSourceInput): string | null {
   if (input.displayName.trim().length > 160) return '订阅名称不能超过 160 个字符。'
+  if (!input.sourceCategory.trim() || input.sourceCategory.trim().length > 80)
+    return '来源分类不能为空且不能超过 80 个字符。'
   if (input.feedUrl.trim().length > 2048) return 'RSS 地址不能超过 2048 个字符。'
   try {
     const url = new URL(input.feedUrl.trim())

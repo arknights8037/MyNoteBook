@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import { AlertTriangle, ExternalLink, Plus, RefreshCw, Rss, ShieldCheck, Trash2 } from '@lucide/vue'
+import {
+  AlertTriangle,
+  ExternalLink,
+  Plus,
+  RefreshCw,
+  Rss,
+  ShieldCheck,
+  Tag,
+  Trash2,
+} from '@lucide/vue'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { onMounted, ref } from 'vue'
 
@@ -17,7 +26,7 @@ const saving = ref(false)
 const syncingId = ref('')
 const error = ref('')
 const showCreate = ref(false)
-const form = ref({ displayName: '', feedUrl: '' })
+const form = ref({ displayName: '', feedUrl: '', sourceCategory: '未分类' })
 let servicePromise: Promise<RssService> | null = null
 
 const service = () => (servicePromise ??= createRssService())
@@ -39,7 +48,7 @@ async function connect(): Promise<void> {
     const result = await (await service()).createSource({ ...form.value })
     if (!result.ok) return void (error.value = result.error.message)
     showCreate.value = false
-    form.value = { displayName: '', feedUrl: '' }
+    form.value = { displayName: '', feedUrl: '', sourceCategory: '未分类' }
     sources.value = [result.value.source, ...sources.value]
     notify.success(`RSS 已连接，导入 ${result.value.imported} 条`)
   } finally {
@@ -71,6 +80,17 @@ async function remove(source: RssSource): Promise<void> {
   if (!result.ok) return void (error.value = result.error.message)
   sources.value = sources.value.filter((candidate) => candidate.id !== source.id)
   notify.success('RSS 订阅已删除')
+}
+
+async function editCategory(source: RssSource): Promise<void> {
+  const category = globalThis.prompt('设置 RSS 来源分类', source.sourceCategory)
+  if (category == null || category.trim() === source.sourceCategory) return
+  const result = await (await service()).updateCategory(source.id, category)
+  if (!result.ok) return void (error.value = result.error.message)
+  sources.value = sources.value.map((candidate) =>
+    candidate.id === source.id ? result.value : candidate,
+  )
+  notify.success('RSS 来源分类已更新')
 }
 
 async function openSite(source: RssSource): Promise<void> {
@@ -114,14 +134,19 @@ onMounted(() => void load())
         <span class="email-account-list__icon"><Rss :size="19" /></span>
         <div class="email-account-list__main">
           <strong>{{ source.displayName }}</strong>
-          <small>{{ source.feedUrl }}</small>
+          <small>{{ source.feedUrl }} · {{ source.sourceCategory }}</small>
           <em v-if="source.lastError">{{ source.lastError }}</em>
-          <span v-else-if="source.lastSyncedAt"
-            >上次同步 {{ new Date(source.lastSyncedAt).toLocaleString() }}</span
+          <span v-if="source.lastSyncedAt"
+            >上次检查 {{ new Date(source.lastSyncedAt).toLocaleString() }}</span
+          ><span v-else>已添加，尚未检查</span>
+          <span v-if="source.syncCursorAt"
+            >最新内容 {{ new Date(source.syncCursorAt).toLocaleString() }}</span
           >
-          <span v-else>已添加，尚未同步</span>
         </div>
         <div class="email-account-list__actions">
+          <NButton quaternary circle aria-label="修改来源分类" @click="editCategory(source)">
+            <template #icon><Tag :size="15" /></template>
+          </NButton>
           <NButton
             v-if="source.siteUrl"
             quaternary
@@ -174,6 +199,10 @@ onMounted(() => void load())
         <label class="is-wide"
           ><span>显示名称（可选）</span
           ><NInput v-model:value="form.displayName" placeholder="留空时使用订阅源标题"
+        /></label>
+        <label class="is-wide"
+          ><span>来源分类</span
+          ><NInput v-model:value="form.sourceCategory" placeholder="例如：技术 / 行业 / 公告"
         /></label>
       </div>
       <p class="email-account-modal__hint">

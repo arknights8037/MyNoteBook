@@ -289,6 +289,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0032_add_rss_article_extraction.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 33,
+            description: "add_inbox_source_cursors",
+            sql: include_str!("../migrations/0033_add_inbox_source_cursors.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

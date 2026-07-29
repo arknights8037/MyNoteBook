@@ -13,7 +13,18 @@ export interface EmailRepository {
   deleteAccount(id: string): Promise<AppResult<void>>
   updateSyncState(
     id: string,
-    state: { lastSyncedAt: number | null; lastError: string | null; updatedAt: number },
+    state: {
+      lastSyncedAt: number | null
+      syncCursorAt?: number | null
+      lastRemoteUid?: number
+      lastError: string | null
+      updatedAt: number
+    },
+  ): Promise<AppResult<EmailAccount>>
+  updateCategory(
+    id: string,
+    sourceCategory: string,
+    updatedAt: number,
   ): Promise<AppResult<EmailAccount>>
   upsertMessages(
     account: EmailAccount,

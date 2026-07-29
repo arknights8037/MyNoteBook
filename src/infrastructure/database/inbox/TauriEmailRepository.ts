@@ -18,8 +18,11 @@ interface EmailAccountRow extends Record<string, unknown> {
   username: string
   mailbox: string
   auth_type: string
+  source_category: string
   enabled: number
   last_synced_at: number | null
+  sync_cursor_at: number | null
+  last_remote_uid: number
   last_error: string | null
   created_at: number
   updated_at: number
@@ -77,8 +80,9 @@ export class TauriEmailRepository implements EmailRepository {
       await this.sql.execute(
         `INSERT INTO email_accounts (
           id, display_name, email_address, imap_host, imap_port, username, mailbox,
-          auth_type, enabled, last_synced_at, last_error, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'password', 1, NULL, NULL, ?, ?)`,
+          auth_type, source_category, enabled, last_synced_at, sync_cursor_at,
+          last_remote_uid, last_error, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'password', ?, 1, NULL, NULL, 0, NULL, ?, ?)`,
         [
           account.id,
           account.displayName,
@@ -87,6 +91,7 @@ export class TauriEmailRepository implements EmailRepository {
           account.imapPort,
           account.username,
           account.mailbox,
+          account.sourceCategory,
           account.createdAt,
           account.updatedAt,
         ],
@@ -110,16 +115,49 @@ export class TauriEmailRepository implements EmailRepository {
 
   async updateSyncState(
     id: string,
-    state: { lastSyncedAt: number | null; lastError: string | null; updatedAt: number },
+    state: {
+      lastSyncedAt: number | null
+      syncCursorAt?: number | null
+      lastRemoteUid?: number
+      lastError: string | null
+      updatedAt: number
+    },
   ): Promise<AppResult<EmailAccount>> {
     try {
       await this.sql.execute(
-        'UPDATE email_accounts SET last_synced_at = ?, last_error = ?, updated_at = ? WHERE id = ?',
-        [state.lastSyncedAt, state.lastError, state.updatedAt, id],
+        `UPDATE email_accounts SET last_synced_at = ?,
+         sync_cursor_at = COALESCE(?, sync_cursor_at),
+         last_remote_uid = COALESCE(?, last_remote_uid),
+         last_error = ?, updated_at = ? WHERE id = ?`,
+        [
+          state.lastSyncedAt,
+          state.syncCursorAt ?? null,
+          state.lastRemoteUid ?? null,
+          state.lastError,
+          state.updatedAt,
+          id,
+        ],
       )
       return this.getAccount(id)
     } catch (error) {
       return err(normalizeError(error, '无法更新邮箱同步状态。'))
+    }
+  }
+
+  async updateCategory(
+    id: string,
+    sourceCategory: string,
+    updatedAt: number,
+  ): Promise<AppResult<EmailAccount>> {
+    try {
+      const result = await this.sql.execute(
+        'UPDATE email_accounts SET source_category = ?, updated_at = ? WHERE id = ?',
+        [sourceCategory, updatedAt, id],
+      )
+      if (result.rowsAffected !== 1) return err({ code: 'not-found', message: '邮箱账户不存在。' })
+      return this.getAccount(id)
+    } catch (error) {
+      return err(normalizeError(error, '无法更新邮箱来源分类。'))
     }
   }
 
@@ -233,8 +271,11 @@ function mapAccount(row: EmailAccountRow): EmailAccount {
     username: row.username,
     mailbox: row.mailbox,
     authType: 'password',
+    sourceCategory: row.source_category,
     enabled: Boolean(row.enabled),
     lastSyncedAt: row.last_synced_at == null ? null : Number(row.last_synced_at),
+    syncCursorAt: row.sync_cursor_at == null ? null : Number(row.sync_cursor_at),
+    lastRemoteUid: Number(row.last_remote_uid),
     lastError: row.last_error,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),

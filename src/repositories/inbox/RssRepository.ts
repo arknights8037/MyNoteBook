@@ -20,9 +20,15 @@ export interface RssRepository {
       etag?: string | null
       lastModified?: string | null
       lastSyncedAt: number | null
+      syncCursorAt?: number | null
       lastError: string | null
       updatedAt: number
     },
+  ): Promise<AppResult<RssSource>>
+  updateCategory(
+    id: string,
+    sourceCategory: string,
+    updatedAt: number,
   ): Promise<AppResult<RssSource>>
   upsertEntries(
     source: RssSource,

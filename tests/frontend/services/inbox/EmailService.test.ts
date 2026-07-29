@@ -32,7 +32,7 @@ describe('EmailService', () => {
   it('syncs remote messages into the repository and records success', async () => {
     const repository = createRepository()
     const account = accountValue()
-    invoke.mockResolvedValue([{ remoteUid: 1, subject: 'Hello' }])
+    invoke.mockResolvedValue([{ remoteUid: 1, receivedAt: 15, subject: 'Hello' }])
     const service = new EmailService(
       repository,
       () => 'unused',
@@ -45,11 +45,13 @@ describe('EmailService', () => {
     expect(invoke).toHaveBeenCalledWith(
       'sync_email_account',
       expect.objectContaining({
-        input: expect.objectContaining({ accountId: account.id, limit: 25 }),
+        input: expect.objectContaining({ accountId: account.id, afterUid: null, limit: 25 }),
       }),
     )
     expect(repository.updateSyncState).toHaveBeenCalledWith(account.id, {
       lastSyncedAt: 20,
+      syncCursorAt: 15,
+      lastRemoteUid: 1,
       lastError: null,
       updatedAt: 20,
     })
@@ -58,7 +60,7 @@ describe('EmailService', () => {
   it('records a local persistence failure as the account sync error', async () => {
     const repository = createRepository()
     const account = accountValue()
-    invoke.mockResolvedValue([{ remoteUid: 1, subject: 'Hello' }])
+    invoke.mockResolvedValue([{ remoteUid: 1, receivedAt: 15, subject: 'Hello' }])
     repository.upsertMessages.mockResolvedValue(
       err({ code: 'database-error', message: '无法保存同步邮件。' }),
     )
@@ -92,6 +94,7 @@ function createRepository() {
     upsertMessages: vi.fn(async (_account, messages) => ok(messages.length)),
     listMessages: vi.fn(async () => ok([])),
     setMessageStatus: vi.fn(),
+    updateCategory: vi.fn(),
   } satisfies EmailRepository
 }
 
@@ -104,6 +107,7 @@ function validInput() {
     username: 'me@example.com',
     mailbox: 'INBOX',
     password: 'app-password',
+    sourceCategory: '工作',
   }
 }
 
@@ -117,8 +121,11 @@ function accountValue() {
     username: 'me@example.com',
     mailbox: 'INBOX',
     authType: 'password' as const,
+    sourceCategory: '工作',
     enabled: true,
     lastSyncedAt: null,
+    syncCursorAt: null,
+    lastRemoteUid: 0,
     lastError: null,
     createdAt: 10,
     updatedAt: 10,

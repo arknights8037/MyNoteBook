@@ -23,6 +23,7 @@ describe('RssService', () => {
     const result = await service.createSource({
       displayName: '',
       feedUrl: 'https://example.com/feed.xml',
+      sourceCategory: '技术',
     })
 
     expect(result).toMatchObject({
@@ -30,7 +31,13 @@ describe('RssService', () => {
       value: { imported: 1, source: { displayName: 'Example Feed' } },
     })
     expect(invoke).toHaveBeenCalledWith('fetch_rss_feed', {
-      input: { url: 'https://example.com/feed.xml', etag: null, lastModified: null, limit: 50 },
+      input: {
+        url: 'https://example.com/feed.xml',
+        etag: null,
+        lastModified: null,
+        afterPublishedAt: null,
+        limit: 50,
+      },
     })
     expect(repository.upsertEntries).toHaveBeenCalledOnce()
   })
@@ -51,6 +58,7 @@ describe('RssService', () => {
         url: source.feedUrl,
         etag: source.etag,
         lastModified: source.lastModified,
+        afterPublishedAt: source.syncCursorAt,
         limit: 50,
       },
     })
@@ -78,6 +86,7 @@ describe('RssService', () => {
         url: source.feedUrl,
         etag: null,
         lastModified: null,
+        afterPublishedAt: null,
         limit: 50,
       },
     })
@@ -117,6 +126,7 @@ function createRepository() {
     upsertEntries: vi.fn(async (_source, entries) => ok(entries.length)),
     listEntries: vi.fn(async () => ok([])),
     setEntryStatus: vi.fn(),
+    updateCategory: vi.fn(),
     updateArticleContent: vi.fn(),
   } satisfies RssRepository
 }
@@ -128,10 +138,12 @@ function sourceValue(): RssSource {
     feedUrl: 'https://example.com/feed.xml',
     siteUrl: 'https://example.com',
     description: 'Updates',
+    sourceCategory: '技术',
     etag: '"v1"',
     lastModified: 'Mon, 27 Jul 2026 12:00:00 GMT',
     enabled: true,
     lastSyncedAt: 10,
+    syncCursorAt: 5,
     lastError: null,
     createdAt: 10,
     updatedAt: 10,

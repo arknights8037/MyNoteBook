@@ -17,10 +17,12 @@ interface RssSourceRow extends Record<string, unknown> {
   feed_url: string
   site_url: string | null
   description: string
+  source_category: string
   etag: string | null
   last_modified: string | null
   enabled: number
   last_synced_at: number | null
+  sync_cursor_at: number | null
   last_error: string | null
   created_at: number
   updated_at: number
@@ -78,8 +80,8 @@ export class TauriRssRepository implements RssRepository {
       await this.sql.execute(
         `INSERT INTO rss_sources (
           id, display_name, feed_url, site_url, description, etag, last_modified,
-          enabled, last_synced_at, last_error, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, NULL, ?, ?)`,
+          source_category, enabled, last_synced_at, sync_cursor_at, last_error, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL, ?, ?)`,
         [
           source.id,
           source.displayName,
@@ -88,7 +90,9 @@ export class TauriRssRepository implements RssRepository {
           source.description,
           source.etag,
           source.lastModified,
+          source.sourceCategory,
           source.lastSyncedAt,
+          source.syncCursorAt,
           source.createdAt,
           source.updatedAt,
         ],
@@ -118,6 +122,7 @@ export class TauriRssRepository implements RssRepository {
       etag?: string | null
       lastModified?: string | null
       lastSyncedAt: number | null
+      syncCursorAt?: number | null
       lastError: string | null
       updatedAt: number
     },
@@ -127,13 +132,15 @@ export class TauriRssRepository implements RssRepository {
         `UPDATE rss_sources SET
           site_url = COALESCE(?, site_url), description = COALESCE(?, description),
           etag = COALESCE(?, etag), last_modified = COALESCE(?, last_modified),
-          last_synced_at = ?, last_error = ?, updated_at = ? WHERE id = ?`,
+          last_synced_at = ?, sync_cursor_at = COALESCE(?, sync_cursor_at),
+          last_error = ?, updated_at = ? WHERE id = ?`,
         [
           state.siteUrl ?? null,
           state.description ?? null,
           state.etag ?? null,
           state.lastModified ?? null,
           state.lastSyncedAt,
+          state.syncCursorAt ?? null,
           state.lastError,
           state.updatedAt,
           id,
@@ -142,6 +149,24 @@ export class TauriRssRepository implements RssRepository {
       return this.getSource(id)
     } catch (error) {
       return err(normalizeError(error, '无法更新 RSS 同步状态。'))
+    }
+  }
+
+  async updateCategory(
+    id: string,
+    sourceCategory: string,
+    updatedAt: number,
+  ): Promise<AppResult<RssSource>> {
+    try {
+      const result = await this.sql.execute(
+        'UPDATE rss_sources SET source_category = ?, updated_at = ? WHERE id = ?',
+        [sourceCategory, updatedAt, id],
+      )
+      if (result.rowsAffected !== 1)
+        return err({ code: 'not-found', message: 'RSS 订阅源不存在。' })
+      return this.getSource(id)
+    } catch (error) {
+      return err(normalizeError(error, '无法更新 RSS 来源分类。'))
     }
   }
 
@@ -275,10 +300,12 @@ function mapSource(row: RssSourceRow): RssSource {
     feedUrl: row.feed_url,
     siteUrl: row.site_url,
     description: row.description,
+    sourceCategory: row.source_category,
     etag: row.etag,
     lastModified: row.last_modified,
     enabled: Boolean(row.enabled),
     lastSyncedAt: row.last_synced_at == null ? null : Number(row.last_synced_at),
+    syncCursorAt: row.sync_cursor_at == null ? null : Number(row.sync_cursor_at),
     lastError: row.last_error,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),

@@ -26,25 +26,48 @@ const entries = ref<RssEntry[]>([])
 const selectedId = ref('')
 const loading = ref(false)
 const syncing = ref(false)
+const categoryFilter = ref('all')
 const extractingId = ref('')
 const error = ref('')
 let servicePromise: Promise<RssService> | null = null
 
 const service = () => (servicePromise ??= createRssService())
+const visibleEntries = computed(() =>
+  categoryFilter.value === 'all'
+    ? entries.value
+    : entries.value.filter(
+        (entry) =>
+          sources.value.find((source) => source.id === entry.sourceId)?.sourceCategory ===
+          categoryFilter.value,
+      ),
+)
+const categoryOptions = computed(() => [
+  'all',
+  ...new Set(sources.value.map((source) => source.sourceCategory)),
+])
 const selected = computed(
-  () => entries.value.find((entry) => entry.id === selectedId.value) ?? null,
+  () => visibleEntries.value.find((entry) => entry.id === selectedId.value) ?? null,
 )
 const selectedSource = computed(
   () => sources.value.find((source) => source.id === selected.value?.sourceId) ?? null,
 )
 const pendingCount = computed(
-  () => entries.value.filter((entry) => entry.processingStatus === 'pending').length,
+  () => visibleEntries.value.filter((entry) => entry.processingStatus === 'pending').length,
 )
 const latestSyncAt = computed(() =>
   sources.value.reduce<number | null>(
     (latest, source) =>
       source.lastSyncedAt && (!latest || source.lastSyncedAt > latest)
         ? source.lastSyncedAt
+        : latest,
+    null,
+  ),
+)
+const latestCursorAt = computed(() =>
+  sources.value.reduce<number | null>(
+    (latest, source) =>
+      source.syncCursorAt && (!latest || source.syncCursorAt > latest)
+        ? source.syncCursorAt
         : latest,
     null,
   ),
@@ -66,8 +89,8 @@ async function load(): Promise<void> {
   if (!entryResult.ok) return void (error.value = entryResult.error.message)
   sources.value = sourceResult.value
   entries.value = entryResult.value
-  if (!entries.value.some((entry) => entry.id === selectedId.value))
-    selectedId.value = entries.value[0]?.id ?? ''
+  if (!visibleEntries.value.some((entry) => entry.id === selectedId.value))
+    selectedId.value = visibleEntries.value[0]?.id ?? ''
 }
 
 async function syncAll(): Promise<void> {
@@ -165,6 +188,9 @@ watch(
   () => props.mode,
   () => void load(),
 )
+watch(categoryFilter, () => {
+  selectedId.value = visibleEntries.value[0]?.id ?? ''
+})
 </script>
 
 <template>
@@ -172,7 +198,7 @@ watch(
     <header class="email-inbox-panel__toolbar">
       <div class="email-inbox-panel__metrics" aria-label="RSS 统计">
         <div>
-          <strong>{{ entries.length }}</strong
+          <strong>{{ visibleEntries.length }}</strong
           ><span>当前载入</span>
         </div>
         <div>
@@ -185,7 +211,11 @@ watch(
         </div>
       </div>
       <div class="email-inbox-panel__sync">
-        <span v-if="latestSyncAt">LAST SYNC · {{ formatFullTime(latestSyncAt) }}</span
+        <span v-if="latestSyncAt"
+          >CHECK · {{ formatFullTime(latestSyncAt)
+          }}<template v-if="latestCursorAt">
+            / CONTENT · {{ formatFullTime(latestCursorAt) }}</template
+          ></span
         ><span v-else>尚未完成同步</span>
         <button type="button" :disabled="!native || syncing || !sources.length" @click="syncAll">
           <RefreshCw :class="{ 'is-spinning': syncing }" :size="15" />{{
@@ -195,6 +225,17 @@ watch(
       </div>
     </header>
     <p v-if="error" class="email-inbox-panel__error" role="alert">{{ error }}</p>
+    <nav v-if="categoryOptions.length > 2" class="inbox-source-filters" aria-label="RSS 来源分类">
+      <button
+        v-for="category in categoryOptions"
+        :key="category"
+        type="button"
+        :class="{ 'is-active': categoryFilter === category }"
+        @click="categoryFilter = category"
+      >
+        {{ category === 'all' ? '全部来源' : category }}
+      </button>
+    </nav>
     <div v-if="loading" class="inbox-empty-state"><span>正在读取本地 RSS…</span></div>
     <div v-else-if="!sources.length" class="inbox-empty-state">
       <span class="inbox-empty-state__icon"><Rss :size="25" /></span>
@@ -202,7 +243,7 @@ watch(
       <p>订阅源在“连接与扩展”中配置，条目会回到这里阅读和处理。</p>
       <button type="button" @click="emit('openConnections')">添加订阅</button>
     </div>
-    <div v-else-if="!entries.length" class="inbox-empty-state">
+    <div v-else-if="!visibleEntries.length" class="inbox-empty-state">
       <span class="inbox-empty-state__icon"><Inbox :size="25" /></span>
       <h2>{{ mode === 'pending' ? '没有待处理 RSS' : '订阅源暂时没有条目' }}</h2>
       <p>点击同步检查更新；条件请求会避免重复下载未变化的订阅。</p>
@@ -210,7 +251,7 @@ watch(
     <div v-else class="email-inbox-layout rss-inbox-layout">
       <div class="email-message-list rss-entry-list" role="listbox" aria-label="RSS 条目列表">
         <button
-          v-for="(entry, index) in entries"
+          v-for="(entry, index) in visibleEntries"
           :key="entry.id"
           type="button"
           role="option"

@@ -16,17 +16,33 @@ const messages = ref<EmailMessage[]>([])
 const selectedId = ref('')
 const loading = ref(false)
 const syncing = ref(false)
+const categoryFilter = ref('all')
 const error = ref('')
 let servicePromise: Promise<EmailService> | null = null
 
 const service = () => (servicePromise ??= createEmailService())
+const visibleMessages = computed(() =>
+  categoryFilter.value === 'all'
+    ? messages.value
+    : messages.value.filter(
+        (message) =>
+          accounts.value.find((account) => account.id === message.accountId)?.sourceCategory ===
+          categoryFilter.value,
+      ),
+)
+const categoryOptions = computed(() => [
+  'all',
+  ...new Set(accounts.value.map((account) => account.sourceCategory)),
+])
 const selected = computed(
-  () => messages.value.find((message) => message.id === selectedId.value) ?? null,
+  () => visibleMessages.value.find((message) => message.id === selectedId.value) ?? null,
 )
 const pendingCount = computed(
-  () => messages.value.filter((message) => message.processingStatus === 'pending').length,
+  () => visibleMessages.value.filter((message) => message.processingStatus === 'pending').length,
 )
-const unreadCount = computed(() => messages.value.filter((message) => !message.serverIsRead).length)
+const unreadCount = computed(
+  () => visibleMessages.value.filter((message) => !message.serverIsRead).length,
+)
 const selectedAccount = computed(
   () => accounts.value.find((account) => account.id === selected.value?.accountId) ?? null,
 )
@@ -35,6 +51,15 @@ const latestSyncAt = computed(() =>
     (latest, account) =>
       account.lastSyncedAt && (!latest || account.lastSyncedAt > latest)
         ? account.lastSyncedAt
+        : latest,
+    null,
+  ),
+)
+const latestCursorAt = computed(() =>
+  accounts.value.reduce<number | null>(
+    (latest, account) =>
+      account.syncCursorAt && (!latest || account.syncCursorAt > latest)
+        ? account.syncCursorAt
         : latest,
     null,
   ),
@@ -56,8 +81,8 @@ async function load(): Promise<void> {
   if (!messageResult.ok) return void (error.value = messageResult.error.message)
   accounts.value = accountResult.value
   messages.value = messageResult.value
-  if (!messages.value.some((message) => message.id === selectedId.value)) {
-    selectedId.value = messages.value[0]?.id ?? ''
+  if (!visibleMessages.value.some((message) => message.id === selectedId.value)) {
+    selectedId.value = visibleMessages.value[0]?.id ?? ''
   }
 }
 
@@ -131,6 +156,9 @@ watch(
   () => props.mode,
   () => void load(),
 )
+watch(categoryFilter, () => {
+  selectedId.value = visibleMessages.value[0]?.id ?? ''
+})
 </script>
 
 <template>
@@ -138,7 +166,7 @@ watch(
     <header class="email-inbox-panel__toolbar">
       <div class="email-inbox-panel__metrics" aria-label="邮件统计">
         <div>
-          <strong>{{ messages.length }}</strong
+          <strong>{{ visibleMessages.length }}</strong
           ><span>当前载入</span>
         </div>
         <div>
@@ -151,7 +179,12 @@ watch(
         </div>
       </div>
       <div class="email-inbox-panel__sync">
-        <span v-if="latestSyncAt">LAST SYNC · {{ formatFullTime(latestSyncAt) }}</span>
+        <span v-if="latestSyncAt"
+          >CHECK · {{ formatFullTime(latestSyncAt)
+          }}<template v-if="latestCursorAt">
+            / CONTENT · {{ formatFullTime(latestCursorAt) }}</template
+          ></span
+        >
         <span v-else>尚未完成同步</span>
         <button type="button" :disabled="!native || syncing || !accounts.length" @click="syncAll">
           <RefreshCw :class="{ 'is-spinning': syncing }" :size="15" />{{
@@ -161,6 +194,17 @@ watch(
       </div>
     </header>
     <p v-if="error" class="email-inbox-panel__error" role="alert">{{ error }}</p>
+    <nav v-if="categoryOptions.length > 2" class="inbox-source-filters" aria-label="邮件来源分类">
+      <button
+        v-for="category in categoryOptions"
+        :key="category"
+        type="button"
+        :class="{ 'is-active': categoryFilter === category }"
+        @click="categoryFilter = category"
+      >
+        {{ category === 'all' ? '全部来源' : category }}
+      </button>
+    </nav>
     <div v-if="loading" class="inbox-empty-state"><span>正在读取本地邮件…</span></div>
     <div v-else-if="!accounts.length" class="inbox-empty-state">
       <span class="inbox-empty-state__icon"><Mail :size="25" /></span>
@@ -168,7 +212,7 @@ watch(
       <p>邮箱连接在“连接与扩展”中配置，邮件内容会回到这里处理。</p>
       <button type="button" @click="emit('openConnections')">连接邮箱</button>
     </div>
-    <div v-else-if="!messages.length" class="inbox-empty-state">
+    <div v-else-if="!visibleMessages.length" class="inbox-empty-state">
       <span class="inbox-empty-state__icon"><Inbox :size="25" /></span>
       <h2>{{ mode === 'pending' ? '没有待处理邮件' : '还没有同步邮件' }}</h2>
       <p>点击同步邮箱读取最近邮件；服务器内容和已读状态不会被修改。</p>
@@ -176,7 +220,7 @@ watch(
     <div v-else class="email-inbox-layout">
       <div class="email-message-list" role="listbox" aria-label="邮件列表">
         <button
-          v-for="(message, index) in messages"
+          v-for="(message, index) in visibleMessages"
           :key="message.id"
           type="button"
           role="option"
