@@ -82,6 +82,7 @@ mod agent_tools;
 mod agent_worker_supervisor;
 mod ai_models;
 mod ai_proxy;
+mod cognitive_sessions;
 mod database;
 mod dingtalk;
 mod document_core;
@@ -384,6 +385,10 @@ pub fn run() {
             agent_repository::reject_agent_patch_set,
             agent_repository::cleanup_orphan_agent_tasks,
             agent_repository::rollback_agent_transaction,
+            cognitive_sessions::create_cognitive_session,
+            cognitive_sessions::get_cognitive_session,
+            cognitive_sessions::list_cognitive_sessions,
+            cognitive_sessions::update_cognitive_session,
             secret_store::get_ai_api_key,
             secret_store::set_ai_api_key,
             email::test_email_connection,

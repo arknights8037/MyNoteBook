@@ -1,69 +1,66 @@
-import { DatabaseSync } from 'node:sqlite'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { SqlClient, SqlExecuteResult, SqlValue } from '@/repositories/shared/SqlClient'
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke }))
+
 import { CognitiveSessionService } from '@/services/cognitive/CognitiveSessionService'
 import { TauriCognitiveSessionRepository } from '@/infrastructure/database/cognitive/TauriCognitiveSessionRepository'
 
-class Client implements SqlClient {
-  database = new DatabaseSync(':memory:')
-  async execute(sql: string, values: SqlValue[] = []): Promise<SqlExecuteResult> {
-    const result = this.database.prepare(sql).run(...values)
-    return { rowsAffected: Number(result.changes) }
-  }
-  async select<T extends Record<string, unknown>>(
-    sql: string,
-    values: SqlValue[] = [],
-  ): Promise<T[]> {
-    return this.database.prepare(sql).all(...values) as T[]
+describe('TauriCognitiveSessionRepository', () => {
+  beforeEach(() => invoke.mockReset())
+
+  it('uses Rust commands for session lifecycle operations', async () => {
+    invoke.mockResolvedValueOnce(session({ status: 'active', version: 1 }))
+    invoke.mockResolvedValueOnce(session({ status: 'waiting_user', version: 2 }))
+    invoke.mockResolvedValueOnce([session({ status: 'waiting_user', version: 2 })])
+    const service = new CognitiveSessionService(new TauriCognitiveSessionRepository())
+
+    expect((await service.start(input())).ok).toBe(true)
+    expect((await service.waitForUser('session-1', 1, { phase: 'waiting' })).ok).toBe(true)
+    expect(await service.listByConversation('conversation-1')).toMatchObject({
+      ok: true,
+      value: [{ status: 'waiting_user', version: 2 }],
+    })
+    expect(invoke.mock.calls.map(([command]) => command)).toEqual([
+      'create_cognitive_session',
+      'update_cognitive_session',
+      'list_cognitive_sessions',
+    ])
+  })
+})
+
+function input() {
+  return {
+    id: 'session-1',
+    conversationId: 'conversation-1',
+    modeId: 'learning' as const,
+    modeVersion: 1,
+    templateId: 'template',
+    templateVersion: 1,
+    skillIds: [],
+    targetDocumentIds: ['doc-1'],
+    targetBlockIds: [],
+    state: { phase: 'running' },
+    createdAt: 1,
   }
 }
 
-describe('TauriCognitiveSessionRepository', () => {
-  it('persists waiting state, resumes it and rejects stale versions', async () => {
-    const client = new Client()
-    client.database.exec(`CREATE TABLE cognitive_sessions (
-      id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, mode_id TEXT NOT NULL,
-      mode_version INTEGER NOT NULL, template_id TEXT, template_version INTEGER,
-      skill_ids_json TEXT NOT NULL, target_document_ids_json TEXT NOT NULL,
-      target_block_ids_json TEXT NOT NULL, state_json TEXT NOT NULL, status TEXT NOT NULL,
-      version INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
-    )`)
-    const service = new CognitiveSessionService(new TauriCognitiveSessionRepository(client))
-    const started = await service.start({
-      id: 'session-1',
-      conversationId: 'conversation-1',
-      modeId: 'learning',
-      modeVersion: 1,
-      templateId: 'default-cognitive-control',
-      templateVersion: 1,
-      skillIds: [],
-      targetDocumentIds: ['doc-1'],
-      targetBlockIds: [],
-      state: { question: '解释概念' },
-      createdAt: 1,
-    })
-    expect(started.ok).toBe(true)
-    const waitingState = {
-      version: 1,
-      topic: '概念',
-      currentPrompt: '解释概念',
-      promptKind: 'question',
-      hintLevel: 0,
-      attempts: [],
-      understandingState: 'not_assessed',
-      nextStep: 'await_attempt',
-    }
-    const waiting = await service.waitForUser('session-1', 1, waitingState)
-    expect(waiting).toMatchObject({ ok: true, value: { status: 'waiting_user', version: 2 } })
-    const stale = await service.resume('session-1', 1)
-    expect(stale).toMatchObject({ ok: false, error: { code: 'revision-conflict' } })
-    const reopened = new CognitiveSessionService(new TauriCognitiveSessionRepository(client))
-    expect(await reopened.listByConversation('conversation-1')).toMatchObject({
-      ok: true,
-      value: [{ status: 'waiting_user', state: waitingState }],
-    })
-    const resumed = await reopened.resume('session-1', 2)
-    expect(resumed).toMatchObject({ ok: true, value: { status: 'active', state: waitingState } })
-  })
-})
+function session(overrides: Record<string, unknown>) {
+  return {
+    id: 'session-1',
+    conversationId: 'conversation-1',
+    modeId: 'learning',
+    modeVersion: 1,
+    templateId: 'template',
+    templateVersion: 1,
+    skillIds: [],
+    targetDocumentIds: ['doc-1'],
+    targetBlockIds: [],
+    state: { phase: 'running' },
+    status: 'active',
+    version: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  }
+}

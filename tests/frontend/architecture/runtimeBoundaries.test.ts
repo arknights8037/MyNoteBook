@@ -91,7 +91,6 @@ describe('Runtime architecture boundaries', () => {
         'src/infrastructure/database/agent/TauriAgentCommunicationRepository.ts',
         'src/infrastructure/database/agent/TauriAgentRepository.ts',
         'src/infrastructure/database/automation/TauriAutomationRepository.ts',
-        'src/infrastructure/database/cognitive/TauriCognitiveSessionRepository.ts',
         'src/infrastructure/database/documents/TauriDocumentRepository.ts',
         'src/infrastructure/database/home/TauriInformationHomeRepository.ts',
         'src/infrastructure/database/inbox/TauriEmailRepository.ts',
