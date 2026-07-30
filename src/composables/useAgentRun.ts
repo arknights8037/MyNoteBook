@@ -12,7 +12,12 @@ import { buildAiPrompt } from '@/services/ai/AiPromptPolicy'
 import { normalizeDocumentTitle } from '@/models/documents/documentPresentation'
 import { buildAgentRunContext } from './agentRun/agentRunContext'
 import type { AgentCommunicationResult } from '@/services/agent/AgentCommunicationService'
-import type { AgentRunContinuation, AgentRunSession, UseAgentRunOptions } from './agentRun/types'
+import type {
+  AgentRunContinuation,
+  AgentRunSession,
+  AgentRunSnapshot,
+  UseAgentRunOptions,
+} from './agentRun/types'
 import { compileContextBundle } from '@/models/agent/contextBundle'
 import { auditConfiguredModelParameters } from '@/models/agent/providerCapabilities'
 import { prepareAgentRunExecution } from '@/services/agent/AgentRunExecution'
@@ -22,6 +27,7 @@ import {
   compileLearningStateContext,
   createInitialLearningTurn,
 } from '@/services/cognitive/LearningSessionStateService'
+import type { LearningSessionState } from '@/models/cognitive/cognitive'
 import { formatAiErrorMessage } from '@/services/ai/AiErrorMessage'
 import {
   buildContinuationPrompt,
@@ -33,7 +39,7 @@ import {
 } from './agentRun/agentRunSupport'
 import { createAgentRunRuntimeController } from './agentRun/agentRunRuntimeController'
 import { describeAgentRunCompletion } from './agentRun/agentRunIntentStrategy'
-import { prepareAgentRun } from './agentRun/agentRunPreparation'
+import { prepareAgentRun, type AgentEditPlan } from './agentRun/agentRunPreparation'
 import {
   createExecuteToolCallback,
   type ReadableDocument,
@@ -55,6 +61,25 @@ export type {
   AgentRunSession,
 } from './agentRun/types'
 
+interface SidecarRunRecoveryContextV1 {
+  version: 1
+  kind: 'agent_run_output'
+  mode: 'agent'
+  agentIntent: string
+  snapshot: Omit<AgentRunSnapshot, 'settings'>
+  editPlan: AgentEditPlan
+  sources: KnowledgeSource[]
+  readableDocuments: ReadableDocument[]
+  cognitive: {
+    spec: ReturnType<typeof prepareCognitiveRun>['spec']
+    session: { id: string; version: number } | null
+    learningState: LearningSessionState | null
+    learningStateBeforeRun: LearningSessionState | null
+    learningUserAttempt: string | null
+    resumedLearningSession: boolean
+  } | null
+}
+
 let agentRunModulesPromise: ReturnType<typeof loadAgentRunModulesUncached> | null = null
 
 function loadAgentRunModules() {
@@ -73,6 +98,7 @@ async function loadAgentRunModulesUncached() {
     { executeRustAgentTool },
     { loadEnabledSkillPrompt },
     { parseReadDocumentProvenance, validateDocumentEditProvenance },
+    { getAgentOutputContract },
   ] = await Promise.all([
     import('@/services/ai/AiMarkdownService'),
     import('@/services/ai/AiSystemPrompt'),
@@ -84,6 +110,7 @@ async function loadAgentRunModulesUncached() {
     import('@/services/agent/RustAgentToolService'),
     import('@/services/integrations/SkillService'),
     import('@/services/agent/AgentEditProposalGuard'),
+    import('@/services/cognitive/CognitiveRegistry'),
   ])
   return {
     runAiMarkdownCompletion,
@@ -98,6 +125,7 @@ async function loadAgentRunModulesUncached() {
     loadEnabledSkillPrompt,
     parseReadDocumentProvenance,
     validateDocumentEditProvenance,
+    getAgentOutputContract,
   }
 }
 
@@ -647,9 +675,38 @@ export function useAgentRun(options: UseAgentRunOptions) {
             ? await (async () => {
                 if (!runtimeContextBundle) throw new Error('Agent Runtime 缺少 Context Bundle。')
                 const sidecarOwned = options.services?.runtimeOwner === 'rust_worker'
+                const recoveryContext: SidecarRunRecoveryContextV1 | undefined = sidecarOwned
+                  ? {
+                      version: 1,
+                      kind: 'agent_run_output',
+                      mode: 'agent',
+                      agentIntent,
+                      snapshot: {
+                        prompt: snapshot.prompt,
+                        requestedMode: snapshot.requestedMode,
+                        document: snapshot.document,
+                        explicitTargets: snapshot.explicitTargets,
+                        workspace: snapshot.workspace,
+                      },
+                      editPlan,
+                      sources,
+                      readableDocuments: [...readableDocuments.values()],
+                      cognitive: cognitiveRun
+                        ? {
+                            spec: cognitiveRun.spec,
+                            session: cognitiveSession,
+                            learningState,
+                            learningStateBeforeRun,
+                            learningUserAttempt,
+                            resumedLearningSession,
+                          }
+                        : null,
+                    }
+                  : undefined
                 const adapter = sidecarOwned
                   ? new TauriAgentRuntimeAdapter({
                       dataDirectory: options.services?.runtimeDataDirectory?.(),
+                      recoveryContext,
                       requestAuthorizerInput: (request) =>
                         waitForAuthorizerInput(
                           {
@@ -937,10 +994,16 @@ export function useAgentRun(options: UseAgentRunOptions) {
       sessionId: string
       objective: string
       terminalType: 'run.result' | 'run.error'
+      recoverable?: boolean
     }>
   }): Promise<void> {
     if (options.services?.runtimeOwner !== 'rust_worker') return
-    const { TauriAgentRuntimeAdapter, AgentRuntimeClient } = await loadAgentRunModules()
+    const {
+      TauriAgentRuntimeAdapter,
+      AgentRuntimeClient,
+      parseReadDocumentProvenance,
+      getAgentOutputContract,
+    } = await loadAgentRunModules()
     for (const run of snapshot.activeRuns) {
       const runKey = run.sessionId.trim() || run.runId
       if (activeRuns.has(runKey)) continue
@@ -1040,10 +1103,107 @@ export function useAgentRun(options: UseAgentRunOptions) {
         dataDirectory: options.services.runtimeDataDirectory?.(),
       })
       try {
-        const result = await adapter.resumeRun(terminal.runId)
+        const retained = await adapter.getRetainedTerminal(terminal.runId)
+        if (!retained) throw new Error(`run_id ${terminal.runId} 没有待领取终态。`)
+        if (retained.message.type === 'run.error') throw new Error(retained.message.error.message)
+        if (retained.message.type !== 'run.result') {
+          throw new Error(`Rust Core 返回了非终态 Worker 消息：${retained.message.type}`)
+        }
+        const result = retained.message.result
         runtime.recordExecutionResult({ rounds: result.rounds, toolCalls: result.toolCalls })
-        runtime.setSummary('后台 Agent 已完成；结果仍保留在 Rust Core，等待恢复业务持久化。')
-        runtime.complete('后台 Agent 已完成，结果待恢复处理')
+        const recovery = parseSidecarRunRecoveryContext(retained.recoveryContext)
+        if (!recovery) {
+          runtime.setSummary('后台 Agent 已完成；结果仍保留在 Rust Core，等待恢复业务持久化。')
+          runtime.complete('后台 Agent 已完成，结果待恢复处理')
+        } else {
+          const readableDocuments = new Map(
+            recovery.readableDocuments.map((document) => [document.documentId, document]),
+          )
+          for (const call of result.toolCalls) {
+            if (
+              call.status !== 'completed' ||
+              !call.resultJson ||
+              !['read_document', 'get_current_document'].includes(call.toolName)
+            ) {
+              continue
+            }
+            try {
+              const value = JSON.parse(call.resultJson) as unknown
+              const argumentsValue = JSON.parse(call.argumentsJson) as unknown
+              const documentId =
+                call.toolName === 'read_document' &&
+                typeof argumentsValue === 'object' &&
+                argumentsValue !== null &&
+                'documentId' in argumentsValue &&
+                typeof argumentsValue.documentId === 'string'
+                  ? argumentsValue.documentId
+                  : recovery.snapshot.document.id
+              const provenance = parseReadDocumentProvenance(value, documentId)
+              if (provenance) readableDocuments.set(documentId, provenance)
+            } catch {
+              // A malformed audit payload is ignored; Patch validation still requires provenance.
+            }
+          }
+          if (!options.tasks.value.some((task) => task.id === recovery.editPlan.task.id)) {
+            options.tasks.value.unshift(recovery.editPlan.task)
+          }
+          const outputContract = recovery.cognitive
+            ? getAgentOutputContract(recovery.cognitive.spec.outputContractId)
+            : null
+          if (recovery.cognitive && !outputContract) {
+            throw new Error(
+              `Agent Output Contract ${recovery.cognitive.spec.outputContractId} 不存在。`,
+            )
+          }
+          const resolution = await resolveAgentRunOutput({
+            output: result.output,
+            mode: recovery.mode,
+            editPlan: recovery.editPlan,
+            snapshot: {
+              ...recovery.snapshot,
+              settings: options.settings.value,
+            },
+            sources: recovery.sources,
+            readableDocuments,
+            agentRounds: result.rounds,
+            agentToolCallCount: result.toolCalls.length,
+            agentDiagnostics: {
+              finishReason: result.finishReason,
+              usage: result.usage,
+            },
+            agentIntent: recovery.agentIntent,
+            cognitiveRun:
+              recovery.cognitive && outputContract
+                ? {
+                    spec: recovery.cognitive.spec,
+                    systemPrompt: '',
+                    outputContract,
+                  }
+                : null,
+            cognitiveSession: recovery.cognitive?.session ?? null,
+            learningState: recovery.cognitive?.learningState ?? null,
+            learningStateBeforeRun: recovery.cognitive?.learningStateBeforeRun ?? null,
+            learningUserAttempt: recovery.cognitive?.learningUserAttempt ?? null,
+            resumedLearningSession: recovery.cognitive?.resumedLearningSession ?? false,
+            session: { background: true },
+            slashCommand: null,
+            options,
+            assistantMessage: undefined,
+            hasCognitivePersistence,
+            getCognitiveSessionService,
+            setSummary: runtime.setSummary,
+            runtime: { complete: runtime.complete, cancel: runtime.cancel, fail: runtime.fail },
+          })
+          lastRunReport.value = resolution.lastRunReport
+          await adapter.acknowledgeRun(terminal.runId)
+          runtime.complete(
+            describeAgentRunCompletion({
+              hasPatchSet: Boolean(resolution.patchSet),
+              intent: recovery.agentIntent,
+              learningResult: resolution.learningResult,
+            }),
+          )
+        }
       } catch (error) {
         runtime.fail(formatAiErrorMessage(error))
         if (terminal.terminalType === 'run.error') {
@@ -1109,4 +1269,22 @@ export function useAgentRun(options: UseAgentRunOptions) {
     resetRuntime,
     restoreWorkerSnapshot,
   }
+}
+
+function parseSidecarRunRecoveryContext(value: unknown): SidecarRunRecoveryContextV1 | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const candidate = value as Partial<SidecarRunRecoveryContextV1>
+  if (
+    candidate.version !== 1 ||
+    candidate.kind !== 'agent_run_output' ||
+    candidate.mode !== 'agent' ||
+    typeof candidate.agentIntent !== 'string' ||
+    !candidate.snapshot ||
+    !candidate.editPlan ||
+    !Array.isArray(candidate.sources) ||
+    !Array.isArray(candidate.readableDocuments)
+  ) {
+    return null
+  }
+  return candidate as SidecarRunRecoveryContextV1
 }

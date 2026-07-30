@@ -25,6 +25,7 @@ export interface AgentWorkerSnapshot {
     objective: string
     intent: string
     terminalType: 'run.result' | 'run.error'
+    recoverable: boolean
   }>
   lastHeartbeatAt: number | null
   restartCount: number

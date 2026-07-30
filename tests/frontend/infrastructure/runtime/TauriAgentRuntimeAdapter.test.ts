@@ -12,6 +12,7 @@ describe('TauriAgentRuntimeAdapter', () => {
     const bridge = new FakeTauriBridge()
     const adapter = new TauriAgentRuntimeAdapter({
       dataDirectory: 'C:/data',
+      recoveryContext: { version: 1 },
       invoke: bridge.invoke,
       listen: bridge.listen,
     })
@@ -21,7 +22,11 @@ describe('TauriAgentRuntimeAdapter', () => {
     const running = adapter.startRun(request('run-1'))
     await settle()
     expect(bridge.invoke).toHaveBeenCalledWith('start_agent_runtime_run', {
-      input: { dataDirectory: 'C:/data', request: request('run-1') },
+      input: {
+        dataDirectory: 'C:/data',
+        request: request('run-1'),
+        recoveryContext: { version: 1 },
+      },
     })
 
     bridge.emit('agent-runtime://event', event('run-1', 'run.started'))
@@ -100,10 +105,13 @@ describe('TauriAgentRuntimeAdapter', () => {
   it('resumes and acknowledges a terminal retained by Rust Core', async () => {
     const bridge = new FakeTauriBridge()
     bridge.terminal = {
-      version: 1,
-      type: 'run.result',
-      requestId: 'request-restored',
-      result: { runId: 'run-restored', output: 'retained', rounds: 2, toolCalls: [] },
+      message: {
+        version: 1,
+        type: 'run.result',
+        requestId: 'request-restored',
+        result: { runId: 'run-restored', output: 'retained', rounds: 2, toolCalls: [] },
+      },
+      recoveryContext: { version: 1 },
     }
     const adapter = new TauriAgentRuntimeAdapter({ invoke: bridge.invoke, listen: bridge.listen })
 
@@ -125,7 +133,7 @@ describe('TauriAgentRuntimeAdapter', () => {
 
 class FakeTauriBridge {
   private readonly listeners = new Map<string, Set<(event: { payload: unknown }) => void>>()
-  terminal: AgentWorkerMessage | null = null
+  terminal: { message: AgentWorkerMessage; recoveryContext: unknown | null } | null = null
 
   readonly invoke = vi.fn(async <T>(command: string): Promise<T> => {
     if (command === 'get_agent_runtime_terminal') return this.terminal as T

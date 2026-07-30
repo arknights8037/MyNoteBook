@@ -8,7 +8,7 @@ MyNoteBook 的 Agent 是受控的本地知识协作者。它可以读取许可�
 
 Phase 3 的可选链路为：`AgentRuntimeClient -> TauriAgentRuntimeAdapter -> Rust AgentWorkerSupervisor -> NDJSON Worker Host -> AiSdkWorkerRuntime`。Supervisor 维护 Worker 实例、heartbeat、重启计数、活动 Run 与崩溃终态；Worker 维护 AI SDK 模型循环、Tool Manifest、提案捕获和 Runtime events。AI SDK Provider 请求通过自定义 `fetch` 交给 Rust 流式代理，Rust 从 Secret Store 注入凭据，因此密钥值不会进入 Node；Rust 同时写工具审计并执行全部内置 Domain Tool/MCP。Mind Map 读取使用 canonical SQLite，自动化、Skill 与 MCP 写入只生成停用草稿，文档修改仍只形成待 Diff 审阅的 Patch 提案。Composition 仅在 `VITE_AGENT_RUNTIME_OWNER=rust_worker` 时选择该链路，默认仍保留 WebView Adapter。
 
-Rust snapshot 额外保存活动 Run 的脱敏身份投影、待授权请求和待领取终态投影。`run.result/run.error` 的完整消息由 Rust Core 保留，只有当前窗口完成业务持久化后才显式 ACK 删除；Snapshot 不暴露 output 或 compiled context。窗口重建时，`useAgentRun` 按 `sessionId` 恢复运行/等待状态、重新绑定 Runtime event/取消/授权通道，并可重新领取窗口缺席期间产生的终态；当前重建终态只恢复可诊断视图，Patch/Cognitive 的窗口无关最终落库仍待完成。
+Rust snapshot 额外保存活动 Run 的脱敏身份投影、待授权请求和待领取终态投影。`run.result/run.error` 的完整消息由 Rust Core 保留，只有窗口完成业务持久化后才显式 ACK 删除；Snapshot 不暴露 output、compiled context 或恢复上下文。Agent Run 会在 Rust 内同时保留不含 API Key 的结果恢复上下文：普通 Run 保存 Patch provenance，Cognitive Run 保存 contract/spec、session/version 与 Learning 状态。新窗口重新领取后复用现有本地 validator、Patch transaction、Research Candidate 和 Cognitive Session 持久化路径，再 ACK 终态。当前终态在无窗口时保持待领取，不承诺立即完成业务落库。
 
 ```text
 用户输入 / Slash Command

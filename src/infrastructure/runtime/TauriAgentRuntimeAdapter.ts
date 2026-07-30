@@ -23,6 +23,7 @@ type Listen = <T>(event: string, handler: (event: { payload: T }) => void) => Pr
 
 export interface TauriAgentRuntimeAdapterDependencies {
   dataDirectory?: string
+  recoveryContext?: unknown
   invoke?: Invoke
   listen?: Listen
   requestAuthorizerInput?: (request: AgentWorkerAuthorizationRequest) => Promise<string>
@@ -31,6 +32,11 @@ export interface TauriAgentRuntimeAdapterDependencies {
 interface PendingRun {
   resolve: (result: AgentRunResult) => void
   reject: (error: Error) => void
+}
+
+export interface RetainedAgentRuntimeTerminal {
+  message: AgentWorkerMessage
+  recoveryContext: unknown | null
 }
 
 /**
@@ -69,6 +75,9 @@ export class TauriAgentRuntimeAdapter implements AgentRuntimePort {
         input: {
           dataDirectory: this.dependencies.dataDirectory,
           request,
+          ...(this.dependencies.recoveryContext === undefined
+            ? {}
+            : { recoveryContext: this.dependencies.recoveryContext }),
         },
       })
     } catch (error) {
@@ -88,15 +97,21 @@ export class TauriAgentRuntimeAdapter implements AgentRuntimePort {
     }
     this.claimedRunIds.add(runId)
     await this.ensureListening()
-    const message = await this.invoke<AgentWorkerMessage | null>('get_agent_runtime_terminal', {
-      input: { runId },
-    })
-    if (!message) {
+    const retained = await this.getRetainedTerminal(runId)
+    if (!retained) {
       throw new AgentRuntimeContractError('run_not_found', `run_id ${runId} 没有待领取终态。`)
     }
+    const { message } = retained
     if (message.type === 'run.result') return message.result
     if (message.type === 'run.error') throw workerContractError(message.error)
     throw new Error(`Rust Core 返回了非终态 Worker 消息：${message.type}`)
+  }
+
+  async getRetainedTerminal(runId: string): Promise<RetainedAgentRuntimeTerminal | null> {
+    await this.ensureListening()
+    return this.invoke<RetainedAgentRuntimeTerminal | null>('get_agent_runtime_terminal', {
+      input: { runId },
+    })
   }
 
   /** Acknowledges a terminal only after UI-side Patch/Cognitive persistence succeeds. */

@@ -86,11 +86,13 @@ pub(crate) struct AgentWorkerSupervisorState {
 struct BufferedTerminal {
     message: Value,
     projection: Value,
+    recovery_context: Option<Value>,
 }
 
 enum SupervisorCommand {
     StartRun {
         request: Value,
+        recovery_context: Option<Value>,
         response: oneshot::Sender<Result<(), String>>,
     },
     CancelRun {
@@ -119,6 +121,7 @@ pub(crate) struct StartAgentWorkerInput {
 pub(crate) struct StartAgentRuntimeRunInput {
     data_directory: Option<String>,
     request: Value,
+    recovery_context: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -174,7 +177,12 @@ pub(crate) async fn get_agent_runtime_terminal(
         .read()
         .await
         .get(&input.run_id)
-        .map(|terminal| terminal.message.clone()))
+        .map(|terminal| {
+            json!({
+                "message": terminal.message.clone(),
+                "recoveryContext": terminal.recovery_context.clone(),
+            })
+        }))
 }
 
 #[tauri::command]
@@ -206,6 +214,7 @@ pub(crate) async fn start_agent_runtime_run(
     let sender = ensure_supervisor(&app, &state, input.data_directory).await?;
     request_supervisor(&sender, |response| SupervisorCommand::StartRun {
         request: input.request,
+        recovery_context: input.recovery_context,
         response,
     })
     .await
@@ -416,6 +425,7 @@ async fn run_supervisor(
         let mut worker_instance_id: Option<String> = None;
         let mut active_run_ids = HashSet::<String>::new();
         let mut run_requests = HashMap::<String, Value>::new();
+        let mut run_recovery_contexts = HashMap::<String, Value>::new();
         let mut pending_authorizations = HashMap::<String, PendingAuthorization>::new();
         let mut intentional_shutdown = false;
         let mut exit_description = "stdout closed".to_string();
@@ -438,6 +448,7 @@ async fn run_supervisor(
                                 &mut active_run_ids,
                                 &mut claimed_run_ids,
                                 &mut run_requests,
+                                &mut run_recovery_contexts,
                                 &mut pending_authorizations,
                             ).await;
                             update_snapshot(&app, |snapshot| {
@@ -473,6 +484,7 @@ async fn run_supervisor(
                                 worker_instance_id: &mut worker_instance_id,
                                 active_run_ids: &mut active_run_ids,
                                 run_requests: &mut run_requests,
+                                run_recovery_contexts: &mut run_recovery_contexts,
                                 pending_authorizations: &mut pending_authorizations,
                                 data_directory: data_directory.clone(),
                             },
@@ -530,8 +542,14 @@ async fn run_supervisor(
                         "retryable": true
                     }
                 });
-                let _ = buffer_terminal_message(&app, run_id, &terminal, run_requests.get(run_id))
-                    .await;
+                let _ = buffer_terminal_message(
+                    &app,
+                    run_id,
+                    &terminal,
+                    run_requests.get(run_id),
+                    run_recovery_contexts.get(run_id),
+                )
+                .await;
             }
             refresh_terminal_snapshot(&app).await;
             if let Ok(connection) = database::open_database(&app, data_directory.clone()).await {
@@ -546,6 +564,7 @@ async fn run_supervisor(
             }
             active_run_ids.clear();
             run_requests.clear();
+            run_recovery_contexts.clear();
             pending_authorizations.clear();
             restart_count += 1;
             should_restart = restart_count <= MAX_RESTARTS;
@@ -598,12 +617,17 @@ async fn handle_command(
     active_run_ids: &mut HashSet<String>,
     claimed_run_ids: &mut HashSet<String>,
     run_requests: &mut HashMap<String, Value>,
+    run_recovery_contexts: &mut HashMap<String, Value>,
     pending_authorizations: &mut HashMap<String, PendingAuthorization>,
 ) -> CommandOutcome {
     let mut shutdown = false;
     let mut reason = String::new();
     match command {
-        SupervisorCommand::StartRun { request, response } => {
+        SupervisorCommand::StartRun {
+            request,
+            recovery_context,
+            response,
+        } => {
             let result = run_id_from_request(&request).and_then(|run_id| {
                 if !claimed_run_ids.insert(run_id.clone()) {
                     return Err(format!("run_id {run_id} 已经启动。"));
@@ -626,6 +650,9 @@ async fn handle_command(
                     {
                         Ok(()) => {
                             run_requests.insert(run_id.clone(), request.clone());
+                            if let Some(recovery_context) = recovery_context {
+                                run_recovery_contexts.insert(run_id.clone(), recovery_context);
+                            }
                             active_run_ids.insert(run_id);
                             Ok(())
                         }
@@ -728,6 +755,7 @@ struct WorkerLineContext<'a> {
     worker_instance_id: &'a mut Option<String>,
     active_run_ids: &'a mut HashSet<String>,
     run_requests: &'a mut HashMap<String, Value>,
+    run_recovery_contexts: &'a mut HashMap<String, Value>,
     pending_authorizations: &'a mut HashMap<String, PendingAuthorization>,
     data_directory: Option<String>,
 }
@@ -815,9 +843,18 @@ async fn handle_worker_line(
                 .or_else(|| message.get("runId").and_then(Value::as_str))
             {
                 let run_request = context.run_requests.get(run_id).cloned();
-                buffer_terminal_message(app, run_id, &message, run_request.as_ref()).await?;
+                let recovery_context = context.run_recovery_contexts.get(run_id).cloned();
+                buffer_terminal_message(
+                    app,
+                    run_id,
+                    &message,
+                    run_request.as_ref(),
+                    recovery_context.as_ref(),
+                )
+                .await?;
                 context.active_run_ids.remove(run_id);
                 context.run_requests.remove(run_id);
+                context.run_recovery_contexts.remove(run_id);
                 context.pending_authorizations.retain(|_, pending| {
                     pending.request.get("runId").and_then(Value::as_str) != Some(run_id)
                 });
@@ -1813,9 +1850,10 @@ async fn buffer_terminal_message(
     run_id: &str,
     message: &Value,
     run_request: Option<&Value>,
+    recovery_context: Option<&Value>,
 ) -> Result<(), String> {
     validate_run_id(run_id)?;
-    let projection = terminal_projection(run_id, message, run_request);
+    let projection = terminal_projection(run_id, message, run_request, recovery_context.is_some());
     let state = app.state::<AgentWorkerSupervisorState>();
     let mut terminals = state.terminal_messages.write().await;
     if terminals.contains_key(run_id) {
@@ -1826,6 +1864,7 @@ async fn buffer_terminal_message(
         BufferedTerminal {
             message: message.clone(),
             projection,
+            recovery_context: recovery_context.cloned(),
         },
     );
     Ok(())
@@ -1840,7 +1879,12 @@ async fn refresh_terminal_snapshot(app: &AppHandle) {
     update_snapshot(app, |snapshot| snapshot.pending_terminals = projections).await;
 }
 
-fn terminal_projection(run_id: &str, message: &Value, run_request: Option<&Value>) -> Value {
+fn terminal_projection(
+    run_id: &str,
+    message: &Value,
+    run_request: Option<&Value>,
+    recoverable: bool,
+) -> Value {
     let message_type = message
         .get("type")
         .and_then(Value::as_str)
@@ -1853,6 +1897,7 @@ fn terminal_projection(run_id: &str, message: &Value, run_request: Option<&Value
         "objective": run_request.and_then(|request| request.get("objective")).cloned().unwrap_or(Value::Null),
         "intent": run_request.and_then(|request| request.get("intent")).cloned().unwrap_or(Value::Null),
         "terminalType": message_type,
+        "recoverable": recoverable,
     })
 }
 
@@ -2114,7 +2159,7 @@ mod tests {
             "requestId": "request-1",
             "result": { "runId": "run-1", "output": "sensitive result" }
         });
-        let projection = terminal_projection("run-1", &terminal_message, Some(&request));
+        let projection = terminal_projection("run-1", &terminal_message, Some(&request), true);
         assert_eq!(
             projection.get("terminalType").and_then(Value::as_str),
             Some("run.result")
@@ -2126,6 +2171,7 @@ mod tests {
             BufferedTerminal {
                 message: terminal_message,
                 projection,
+                recovery_context: Some(json!({ "version": 1 })),
             },
         )]);
         assert_eq!(sorted_terminal_projections(&terminals).len(), 1);

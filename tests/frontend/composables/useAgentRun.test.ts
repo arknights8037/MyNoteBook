@@ -15,6 +15,7 @@ import type { CognitiveSession, CreateCognitiveSessionInput } from '@/models/cog
 import type { CognitiveSessionService } from '@/services/cognitive/CognitiveSessionService'
 import { ok } from '@/models/shared/result'
 import type { McpClientPort } from '@/services/ports/McpClientPort'
+import { createAgentTask } from '@/models/agent/agent'
 
 const completion = vi.hoisted(() => vi.fn())
 const agentLoop = vi.hoisted(() => vi.fn())
@@ -22,7 +23,9 @@ const listMcpTools = vi.hoisted(() => vi.fn())
 const callMcpTool = vi.hoisted(() => vi.fn())
 const sidecarStartRun = vi.hoisted(() => vi.fn())
 const sidecarResumeRun = vi.hoisted(() => vi.fn())
+const sidecarGetRetainedTerminal = vi.hoisted(() => vi.fn())
 const sidecarAcknowledgeRun = vi.hoisted(() => vi.fn())
+const sidecarDependencies = vi.hoisted(() => vi.fn())
 
 vi.mock('@/services/ai/AiMarkdownService', () => ({
   runAiMarkdownCompletion: completion,
@@ -32,8 +35,12 @@ vi.mock('@/services/agent/AgentRuntime', () => ({
 }))
 vi.mock('@/infrastructure/runtime/TauriAgentRuntimeAdapter', () => ({
   TauriAgentRuntimeAdapter: class {
+    constructor(dependencies: unknown) {
+      sidecarDependencies(dependencies)
+    }
     startRun = sidecarStartRun
     resumeRun = sidecarResumeRun
+    getRetainedTerminal = sidecarGetRetainedTerminal
     acknowledgeRun = sidecarAcknowledgeRun
     cancelRun = vi.fn(async () => undefined)
     steerRun = vi.fn(async () => undefined)
@@ -59,8 +66,19 @@ describe('useAgentRun', () => {
     sidecarStartRun.mockResolvedValue(noChangeAgentResult(1))
     sidecarResumeRun.mockReset()
     sidecarResumeRun.mockResolvedValue(noChangeAgentResult(1, 'run-restored'))
+    sidecarGetRetainedTerminal.mockReset()
+    sidecarGetRetainedTerminal.mockResolvedValue({
+      message: {
+        version: 1,
+        type: 'run.result',
+        requestId: 'request-restored',
+        result: noChangeAgentResult(1, 'run-restored'),
+      },
+      recoveryContext: null,
+    })
     sidecarAcknowledgeRun.mockReset()
     sidecarAcknowledgeRun.mockResolvedValue(undefined)
+    sidecarDependencies.mockReset()
   })
 
   it('freezes document and model context before the first asynchronous boundary', async () => {
@@ -155,6 +173,57 @@ describe('useAgentRun', () => {
     expect(sidecarAcknowledgeRun).toHaveBeenCalledTimes(1)
   })
 
+  it('freezes Cognitive finalization state for Rust terminal recovery', async () => {
+    sidecarStartRun.mockResolvedValueOnce({
+      output: JSON.stringify({
+        summary: '发现一项无来源结论。',
+        issues: [
+          {
+            id: 'M1',
+            issueType: 'missing_source',
+            severity: 'warning',
+            title: '结论缺少来源',
+            explanation: '正文给出结论但没有引用证据。',
+            affectedText: '该方案一定能提升效率。',
+            suggestedAction: '补充可定位来源或收窄表述。',
+            sources: [],
+          },
+        ],
+        unresolvedQuestions: [],
+      }),
+      rounds: 2,
+      toolCalls: [],
+    })
+    const settings = ref(createAiSettings('openai'))
+    settings.value.model = 'test-model'
+    const cognitive = createMemoryCognitiveSessionService()
+    const run = createRun(
+      settings,
+      snapshot(),
+      async () => true,
+      'agent',
+      '/review 检查结论',
+      [],
+      cognitive.service,
+      { runtimeOwner: 'rust_worker', runtimeDataDirectory: () => 'C:/data' },
+    )
+
+    await run.workflow.run()
+
+    expect(sidecarDependencies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recoveryContext: expect.objectContaining({
+          agentIntent: 'review',
+          cognitive: expect.objectContaining({
+            spec: expect.objectContaining({ outputContractId: 'review-result' }),
+            session: expect.objectContaining({ id: expect.any(String), version: 1 }),
+          }),
+        }),
+      }),
+    )
+    expect(cognitive.current()?.status).toBe('completed')
+  })
+
   it('projects a Rust-retained terminal without acknowledging unpersisted output', async () => {
     const settings = ref(createAiSettings('openai'))
     const run = createRun(
@@ -182,12 +251,239 @@ describe('useAgentRun', () => {
       ],
     })
 
-    expect(sidecarResumeRun).toHaveBeenCalledWith('run-restored')
+    expect(sidecarGetRetainedTerminal).toHaveBeenCalledWith('run-restored')
     expect(sidecarAcknowledgeRun).not.toHaveBeenCalled()
     expect(run.workflow.isConversationRunning('conversation-restored')).toBe(false)
     expect(run.workflow.runtimeStateFor('conversation-restored')).toMatchObject({
       status: 'completed',
       detail: '后台 Agent 已完成，结果待恢复处理',
+    })
+  })
+
+  it('finalizes and acknowledges a recoverable non-cognitive terminal', async () => {
+    const settings = ref(createAiSettings('openai'))
+    const document = snapshot()
+    const run = createRun(
+      settings,
+      document,
+      async () => true,
+      'agent',
+      '恢复终态',
+      [],
+      undefined,
+      { runtimeOwner: 'rust_worker', runtimeDataDirectory: () => 'C:/data' },
+    )
+    const task = createAgentTask({
+      id: 'task-restored',
+      runId: 'run-restored',
+      sessionId: 'conversation-restored',
+      documentId: document.id,
+      userInstruction: '恢复终态',
+      contextScope: 'current_document',
+      model: 'test-model',
+    })
+    task.status = 'running'
+    sidecarGetRetainedTerminal.mockResolvedValueOnce({
+      message: {
+        version: 1,
+        type: 'run.result',
+        requestId: 'request-restored',
+        result: noChangeAgentResult(2, 'run-restored'),
+      },
+      recoveryContext: {
+        version: 1,
+        kind: 'agent_run_output',
+        mode: 'agent',
+        agentIntent: 'default',
+        snapshot: {
+          prompt: '恢复终态',
+          requestedMode: 'agent',
+          document,
+          explicitTargets: [],
+          workspace: {
+            projectId: 'project-1',
+            projectName: 'Project',
+            rootDocumentIds: [],
+            conversationId: 'conversation-restored',
+          },
+        },
+        editPlan: {
+          task,
+          targetBlocks: document.blocks,
+          expectedRevision: 1,
+          usesSelection: false,
+          foundTargetScope: false,
+        },
+        sources: [],
+        readableDocuments: [],
+        cognitive: null,
+      },
+    })
+
+    await run.workflow.restoreWorkerSnapshot({
+      activeRuns: [],
+      pendingAuthorizations: [],
+      pendingTerminals: [
+        {
+          runId: 'run-restored',
+          workItemId: 'task-restored',
+          sessionId: 'conversation-restored',
+          objective: '恢复终态',
+          terminalType: 'run.result',
+          recoverable: true,
+        },
+      ],
+    })
+
+    expect(run.repository.updateTask).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'task-restored', status: 'completed' }),
+    )
+    expect(sidecarAcknowledgeRun).toHaveBeenCalledWith('run-restored')
+    expect(run.workflow.runtimeStateFor('conversation-restored')).toMatchObject({
+      status: 'completed',
+      detail: '任务已完成',
+    })
+  })
+
+  it('finalizes a retained Cognitive terminal through the local contract registry', async () => {
+    const settings = ref(createAiSettings('openai'))
+    settings.value.model = 'test-model'
+    const document = snapshot()
+    const cognitive = createMemoryCognitiveSessionService()
+    const started = await cognitive.service.start({
+      id: 'cognitive-restored',
+      conversationId: 'conversation-restored',
+      modeId: 'review',
+      modeVersion: 1,
+      templateId: 'review-findings',
+      templateVersion: 1,
+      skillIds: [],
+      targetDocumentIds: [document.id],
+      targetBlockIds: [],
+      state: {},
+    })
+    expect(started.ok).toBe(true)
+    const run = createRun(
+      settings,
+      document,
+      async () => true,
+      'agent',
+      '/review 检查结论',
+      [],
+      cognitive.service,
+      { runtimeOwner: 'rust_worker', runtimeDataDirectory: () => 'C:/data' },
+    )
+    const task = createAgentTask({
+      id: 'task-restored',
+      runId: 'run-restored',
+      sessionId: 'conversation-restored',
+      documentId: document.id,
+      userInstruction: '/review 检查结论',
+      contextScope: 'current_document',
+      model: 'test-model',
+    })
+    task.status = 'running'
+    sidecarGetRetainedTerminal.mockResolvedValueOnce({
+      message: {
+        version: 1,
+        type: 'run.result',
+        requestId: 'request-restored',
+        result: {
+          runId: 'run-restored',
+          output: JSON.stringify({
+            summary: '发现一项无来源结论。',
+            issues: [
+              {
+                id: 'M1',
+                issueType: 'missing_source',
+                severity: 'warning',
+                title: '结论缺少来源',
+                explanation: '正文给出结论但没有引用证据。',
+                affectedText: '该方案一定能提升效率。',
+                suggestedAction: '补充来源。',
+                sources: [],
+              },
+            ],
+            unresolvedQuestions: [],
+          }),
+          rounds: 2,
+          toolCalls: [],
+        },
+      },
+      recoveryContext: {
+        version: 1,
+        kind: 'agent_run_output',
+        mode: 'agent',
+        agentIntent: 'review',
+        snapshot: {
+          prompt: '/review 检查结论',
+          requestedMode: 'agent',
+          document,
+          explicitTargets: [],
+          workspace: {
+            projectId: 'project-1',
+            projectName: 'Project',
+            rootDocumentIds: [],
+            conversationId: 'conversation-restored',
+          },
+        },
+        editPlan: {
+          task,
+          targetBlocks: document.blocks,
+          expectedRevision: 1,
+          usesSelection: false,
+          foundTargetScope: false,
+        },
+        sources: [],
+        readableDocuments: [],
+        cognitive: {
+          spec: {
+            modeId: 'review',
+            modeVersion: 1,
+            templateId: 'review-findings',
+            templateVersion: 1,
+            skillIds: [],
+            interactionPolicy: { allowUserInput: true, allowWriteProposals: false },
+            contextPolicy: {
+              includeCurrentDocument: true,
+              includeSelection: true,
+              includeEffectiveKnowledge: true,
+              includeSessionState: true,
+              maxSourceDocuments: 12,
+            },
+            executionPolicy: task.executionPolicy,
+            outputContractId: 'review-result',
+            promptFragments: [],
+          },
+          session: { id: 'cognitive-restored', version: 1 },
+          learningState: null,
+          learningStateBeforeRun: null,
+          learningUserAttempt: null,
+          resumedLearningSession: false,
+        },
+      },
+    })
+
+    await run.workflow.restoreWorkerSnapshot({
+      activeRuns: [],
+      pendingAuthorizations: [],
+      pendingTerminals: [
+        {
+          runId: 'run-restored',
+          workItemId: 'task-restored',
+          sessionId: 'conversation-restored',
+          objective: '/review 检查结论',
+          terminalType: 'run.result',
+          recoverable: true,
+        },
+      ],
+    })
+
+    expect(cognitive.current()?.status).toBe('completed')
+    expect(sidecarAcknowledgeRun).toHaveBeenCalledWith('run-restored')
+    expect(run.workflow.lastRunReport.value?.cognitive).toMatchObject({
+      mode: 'review',
+      result: { summary: '发现一项无来源结论。' },
     })
   })
 
@@ -984,6 +1280,13 @@ function createRun(
       ? { getCognitiveSessionService: async () => cognitiveSessionService }
       : {}),
   }
+  const repository = {
+    createTask: vi.fn(async (task) => ({ ok: true, value: task })),
+    updateTask: vi.fn(async (task) => ({ ok: true, value: task })),
+    recordToolCall: vi.fn(async (call) => ({ ok: true, value: call })),
+    saveContextBundle: vi.fn(async (bundle) => ({ ok: true, value: bundle })),
+    savePatchSet: vi.fn(async (patchSet) => ({ ok: true, value: patchSet })),
+  } as unknown as AgentRepository
   const workflow = useAgentRun({
     settings,
     mode: ref(mode),
@@ -1022,17 +1325,11 @@ function createRun(
       pendingTask: ref(null),
       pendingPatchSet: ref(null),
       showModal: ref(false),
-      getRepository: async () =>
-        ({
-          createTask: vi.fn(async (task) => ({ ok: true, value: task })),
-          updateTask: vi.fn(async (task) => ({ ok: true, value: task })),
-          recordToolCall: vi.fn(async (call) => ({ ok: true, value: call })),
-          saveContextBundle: vi.fn(async (bundle) => ({ ok: true, value: bundle })),
-        }) as unknown as AgentRepository,
+      getRepository: async () => repository,
       updateTaskPersistence: async () => undefined,
     },
   })
-  return { workflow, messages, isRunning, prompt }
+  return { workflow, messages, isRunning, prompt, repository }
 }
 
 function attemptLearningTurn() {
