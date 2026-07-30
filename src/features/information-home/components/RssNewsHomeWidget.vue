@@ -1,21 +1,44 @@
 <script setup lang="ts">
-import { ArrowUpRight, Check, EyeOff } from '@lucide/vue'
-import { onMounted, ref } from 'vue'
+import { ArrowUpRight, Check, EyeOff, Flame, Sparkles } from '@lucide/vue'
+import { computed, onMounted, ref } from 'vue'
 
 import { createRssService } from '@/app/composition/rssServiceFactory'
 import type { RssEntry, RssProcessingStatus, RssSource } from '@/models/inbox/rss'
+import type { InformationHomeSummary } from '@/models/home/informationHome'
+import { findLatestRssInsight } from '@/services/inbox/RssInsightService'
 
-const props = defineProps<{ limit: number }>()
+const props = defineProps<{
+  limit: number
+  summary: InformationHomeSummary | null
+  generating: boolean
+  autoEnabled: boolean
+}>()
 const emit = defineEmits<{
   open: [id?: string]
   refreshing: [value: boolean]
   metrics: [items: Array<{ value: number; label: string }>]
+  generate: []
+  toggleAuto: []
 }>()
 const sources = ref<RssSource[]>([])
 const entries = ref<RssEntry[]>([])
 const error = ref('')
 const loading = ref(true)
 const processingId = ref('')
+const insight = computed(() => findLatestRssInsight(props.summary ? [props.summary] : []))
+const hotItemIds = computed(
+  () => new Set(insight.value?.hotItems.map((item) => item.entryId) ?? []),
+)
+const orderedEntries = computed(() => {
+  const rank = new Map(insight.value?.hotItems.map((item, index) => [item.entryId, index]) ?? [])
+  return [...entries.value].sort((left, right) => {
+    const leftRank = rank.get(left.id)
+    const rightRank = rank.get(right.id)
+    if (leftRank != null || rightRank != null)
+      return (leftRank ?? Number.MAX_SAFE_INTEGER) - (rightRank ?? Number.MAX_SAFE_INTEGER)
+    return right.publishedAt - left.publishedAt
+  })
+})
 
 function publishMetrics(): void {
   emit('metrics', [
@@ -70,6 +93,25 @@ onMounted(() => void refresh())
 
 <template>
   <div class="dashboard-widget-content home-signal-widget">
+    <div v-if="sources.length" class="home-rss-insight-toolbar">
+      <span v-if="insight?.hotItems.length"
+        ><Flame :size="13" />{{ insight.hotItems.length }} 条热点</span
+      >
+      <span v-else><Sparkles :size="13" />等待 RSS 研判</span>
+      <div>
+        <button
+          type="button"
+          :class="{ 'is-active': autoEnabled }"
+          :aria-pressed="autoEnabled"
+          @click="emit('toggleAuto')"
+        >
+          自动 {{ autoEnabled ? '开' : '关' }}
+        </button>
+        <button type="button" :disabled="generating || !entries.length" @click="emit('generate')">
+          {{ generating ? '生成中…' : '生成速览' }}
+        </button>
+      </div>
+    </div>
     <p v-if="loading" class="dashboard-widget-state">正在读取 RSS 新闻…</p>
     <div v-else-if="error" class="dashboard-widget-state dashboard-widget-state--error">
       <strong>读取失败</strong><span>{{ error }}</span>
@@ -77,13 +119,19 @@ onMounted(() => void refresh())
     <p v-else-if="!sources.length" class="dashboard-widget-state">尚未添加 RSS 来源。</p>
     <p v-else-if="!entries.length" class="dashboard-widget-state">当前没有 RSS 新闻。</p>
     <ul v-else class="dashboard-widget-list">
-      <li v-for="item in entries" :key="item.id">
+      <li
+        v-for="item in orderedEntries"
+        :key="item.id"
+        :class="{ 'is-rss-hot': hotItemIds.has(item.id) }"
+      >
         <span
           class="dashboard-status-dot"
           :class="`dashboard-status-dot--${item.processingStatus}`"
         />
         <span class="dashboard-widget-list__main"
-          ><strong>{{ item.title }}</strong
+          ><strong
+            ><span v-if="hotItemIds.has(item.id)" class="home-rss-hot-label">HOT</span
+            >{{ item.title }}</strong
           ><small
             >{{ item.author || sourceName(item.sourceId) }} · {{ sourceName(item.sourceId) }}</small
           ></span

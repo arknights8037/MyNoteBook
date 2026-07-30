@@ -4,17 +4,26 @@ import {
   Check,
   ExternalLink,
   FileText,
+  Flame,
   Inbox,
   RefreshCw,
   RotateCcw,
   Rss,
+  Sparkles,
 } from '@lucide/vue'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import { createInformationHomeService } from '@/app/composition/informationHomeServiceFactory'
 import { createRssService } from '@/app/composition/rssServiceFactory'
+import type { InformationHome, InformationHomeSummary } from '@/models/home/informationHome'
 import type { RssEntry, RssProcessingStatus, RssSource } from '@/models/inbox/rss'
+import { publishSignalRefresh } from '@/services/agent/SignalAgentService'
+import { renderAiMarkdown } from '@/services/ai/AiMarkdownRenderer'
+import type { InformationHomeService } from '@/services/home/InformationHomeService'
 import type { RssService } from '@/services/inbox/RssService'
+import { findLatestRssInsight } from '@/services/inbox/RssInsightService'
 import { useMessage } from '@/ui/services'
 
 const props = defineProps<{ mode: 'pending' | 'all' | 'rss'; targetId?: string }>()
@@ -28,10 +37,29 @@ const loading = ref(false)
 const syncing = ref(false)
 const categoryFilter = ref('all')
 const extractingId = ref('')
+const generatingSummary = ref(false)
 const error = ref('')
+const home = ref<InformationHome | null>(null)
+const summaries = ref<InformationHomeSummary[]>([])
 let servicePromise: Promise<RssService> | null = null
+let homeServicePromise: Promise<InformationHomeService> | null = null
+let unlistenSignalAgent: UnlistenFn | null = null
 
 const service = () => (servicePromise ??= createRssService())
+const homeService = () => (homeServicePromise ??= createInformationHomeService())
+const rssInsight = computed(() => findLatestRssInsight(summaries.value))
+const renderedOverview = computed(() => renderAiMarkdown(rssInsight.value?.overviewMarkdown ?? ''))
+const hotEntries = computed(() =>
+  (rssInsight.value?.hotItems ?? [])
+    .map((item) => ({ ...item, entry: entries.value.find((entry) => entry.id === item.entryId) }))
+    .filter((item) => item.entry),
+)
+const automaticSummaryDue = computed(
+  () =>
+    !rssInsight.value ||
+    !home.value ||
+    Date.now() - rssInsight.value.summary.generatedAt >= home.value.summaryIntervalMinutes * 60_000,
+)
 const visibleEntries = computed(() =>
   categoryFilter.value === 'all'
     ? entries.value
@@ -77,18 +105,22 @@ async function load(): Promise<void> {
   if (!native) return
   loading.value = true
   error.value = ''
-  const [sourceResult, entryResult] = await Promise.all([
+  const [sourceResult, entryResult, homeResult, summaryResult] = await Promise.all([
     (await service()).listSources(),
     (await service()).listEntries({
       status: props.mode === 'pending' ? 'pending' : undefined,
       limit: 200,
     }),
+    (await homeService()).getOrCreate(),
+    (await homeService()).listSummaries(20),
   ])
   loading.value = false
   if (!sourceResult.ok) return void (error.value = sourceResult.error.message)
   if (!entryResult.ok) return void (error.value = entryResult.error.message)
   sources.value = sourceResult.value
   entries.value = entryResult.value
+  if (homeResult.ok) home.value = homeResult.value
+  if (summaryResult.ok) summaries.value = summaryResult.value
   const requested = props.targetId
   if (requested && visibleEntries.value.some((entry) => entry.id === requested))
     selectedId.value = requested
@@ -97,6 +129,7 @@ async function load(): Promise<void> {
 }
 
 async function syncAll(): Promise<void> {
+  const refreshStartedAt = Date.now()
   syncing.value = true
   error.value = ''
   let imported = 0
@@ -108,11 +141,53 @@ async function syncAll(): Promise<void> {
       else syncError = result.error.message
     }
     await load()
+    if (home.value?.autoSummaryEnabled && imported > 0 && automaticSummaryDue.value)
+      await generateRssSummary('auto', refreshStartedAt, imported)
     if (syncError) error.value = syncError
     else notify.success(imported ? `RSS 同步完成，读取 ${imported} 条` : 'RSS 已是最新状态')
   } finally {
     syncing.value = false
   }
+}
+
+async function generateRssSummary(
+  trigger: 'manual' | 'auto' = 'manual',
+  since = Date.now() - 48 * 60 * 60 * 1_000,
+  importedCount = 0,
+): Promise<void> {
+  if (generatingSummary.value || !entries.value.length) return
+  generatingSummary.value = true
+  error.value = ''
+  try {
+    await publishSignalRefresh({
+      since,
+      triggerSource: trigger === 'manual' ? 'manual' : 'sync',
+      importedCount,
+      scope: 'rss',
+    })
+    notify.success(trigger === 'manual' ? 'RSS 速览已提交生成' : '新 RSS 已交给 Agent 自动总结')
+  } catch (value) {
+    generatingSummary.value = false
+    error.value = value instanceof Error ? value.message : String(value)
+  }
+}
+
+async function toggleAutoSummary(): Promise<void> {
+  if (!home.value) return
+  const result = await (
+    await homeService()
+  ).updateSummarySettings(!home.value.autoSummaryEnabled, home.value.summaryIntervalMinutes)
+  if (!result.ok) return void (error.value = result.error.message)
+  home.value = result.value
+  notify.success(home.value.autoSummaryEnabled ? 'RSS 自动总结已开启' : 'RSS 自动总结已关闭')
+}
+
+async function openHotEntry(entryId: string): Promise<void> {
+  if (!visibleEntries.value.some((entry) => entry.id === entryId)) {
+    categoryFilter.value = 'all'
+    await nextTick()
+  }
+  selectedId.value = entryId
 }
 
 async function setStatus(entry: RssEntry, status: RssProcessingStatus): Promise<void> {
@@ -186,7 +261,25 @@ function formatFullTime(timestamp: number): string {
   }).format(new Date(timestamp))
 }
 
-onMounted(() => void load())
+onMounted(async () => {
+  await load()
+  const internals = Reflect.get(globalThis, '__TAURI_INTERNALS__')
+  if (
+    internals &&
+    typeof internals === 'object' &&
+    typeof Reflect.get(internals, 'transformCallback') === 'function'
+  )
+    unlistenSignalAgent = await listen<{
+      latestUpdateAt?: number
+      queuedCount?: number
+      runningCount?: number
+    }>('signal-agent://changed', ({ payload }) => {
+      if (typeof payload.queuedCount === 'number' && typeof payload.runningCount === 'number')
+        generatingSummary.value = payload.queuedCount + payload.runningCount > 0
+      if (payload.latestUpdateAt) void load()
+    })
+})
+onBeforeUnmount(() => unlistenSignalAgent?.())
 watch(
   () => props.mode,
   () => void load(),
@@ -235,6 +328,53 @@ watch(categoryFilter, () => {
       </div>
     </header>
     <p v-if="error" class="email-inbox-panel__error" role="alert">{{ error }}</p>
+    <section v-if="sources.length" class="rss-insight-panel" aria-label="RSS 自动总结与热点">
+      <header>
+        <div>
+          <span><Sparkles :size="14" />RSS 研判</span>
+          <small v-if="rssInsight"
+            >更新于 {{ formatFullTime(rssInsight.summary.generatedAt) }}</small
+          >
+          <small v-else>总结趋势并从原始条目中生成热点</small>
+        </div>
+        <div>
+          <button
+            type="button"
+            :class="{ 'is-active': home?.autoSummaryEnabled }"
+            :aria-pressed="home?.autoSummaryEnabled ?? false"
+            :disabled="!home"
+            @click="toggleAutoSummary"
+          >
+            自动总结 {{ home?.autoSummaryEnabled ? '已开' : '已关' }}
+          </button>
+          <button
+            type="button"
+            :disabled="generatingSummary || !entries.length"
+            @click="generateRssSummary('manual')"
+          >
+            <Sparkles :size="13" />{{ generatingSummary ? '生成中…' : '生成本期速览' }}
+          </button>
+        </div>
+      </header>
+      <div v-if="rssInsight" class="rss-insight-panel__content">
+        <!-- renderAiMarkdown escapes text and filters link protocols before returning HTML. -->
+        <!-- eslint-disable-next-line vue/no-v-html -->
+        <div class="markdown-preview" v-html="renderedOverview"></div>
+        <div v-if="hotEntries.length" class="rss-insight-panel__hot">
+          <strong><Flame :size="13" />热点条目</strong>
+          <button
+            v-for="item in hotEntries"
+            :key="item.entryId"
+            type="button"
+            @click="openHotEntry(item.entryId)"
+          >
+            <span>{{ item.title }}</span
+            ><small>{{ item.reason }}</small>
+          </button>
+        </div>
+      </div>
+      <p v-else>尚无 RSS 速览。可立即生成；开启自动总结后，新条目同步完成时会自动研判。</p>
+    </section>
     <nav v-if="categoryOptions.length > 2" class="inbox-source-filters" aria-label="RSS 来源分类">
       <button
         v-for="category in categoryOptions"

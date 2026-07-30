@@ -254,10 +254,10 @@ fn resolve_command(command: &str, environment: &HashMap<String, String>) -> Opti
 fn command_candidates(directory: &Path, command: &str) -> Vec<PathBuf> {
     #[cfg(target_os = "windows")]
     {
-        return ["exe", "cmd", "bat", "com"]
+        ["exe", "cmd", "bat", "com"]
             .into_iter()
             .map(|extension| directory.join(format!("{command}.{extension}")))
-            .collect();
+            .collect()
     }
     #[cfg(not(target_os = "windows"))]
     {

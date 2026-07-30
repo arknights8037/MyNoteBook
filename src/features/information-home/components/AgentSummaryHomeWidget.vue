@@ -22,6 +22,21 @@ const rendered = computed(() => renderAiMarkdown(props.summary?.content ?? ''))
         <small>Agent 自主核对邮件、会议与知识库，只写入本地待办和日历。</small>
       </div>
       <div>
+        <button
+          type="button"
+          :class="{ 'is-active': autoEnabled }"
+          :aria-pressed="autoEnabled"
+          @click="emit('toggleAuto')"
+        >
+          自动摘要 {{ autoEnabled ? '已开' : '已关' }}
+        </button>
+        <button type="button" title="调整自动摘要间隔" @click="emit('changeInterval')">
+          {{
+            intervalMinutes >= 1440
+              ? `${Math.round(intervalMinutes / 1440)} 天`
+              : `${intervalMinutes} 分钟`
+          }}
+        </button>
         <button type="button" :disabled="generating" @click="emit('generate')">
           {{ generating ? '已提交…' : '处理相关更新' }}
         </button>

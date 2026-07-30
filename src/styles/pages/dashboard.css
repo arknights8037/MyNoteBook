@@ -624,6 +624,55 @@
   gap: 3px;
 }
 
+.home-rss-insight-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 7px;
+  padding: 5px 6px 5px 8px;
+  background: var(--color-bg-subtle);
+}
+
+.home-rss-insight-toolbar > span,
+.home-rss-insight-toolbar > div {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.home-rss-insight-toolbar > span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
+}
+
+.dashboard-widget-frame .home-rss-insight-toolbar button {
+  min-height: 24px;
+  border-color: transparent;
+  padding: 2px 6px;
+  background: transparent;
+  font-size: var(--font-size-micro);
+}
+
+.dashboard-widget-frame .home-rss-insight-toolbar button.is-active,
+.home-agent-summary > header button.is-active {
+  color: var(--color-agent-accent-contrast, #111);
+  border-color: var(--color-agent-accent);
+  background: var(--color-agent-accent);
+}
+
+.dashboard-widget-list li.is-rss-hot {
+  box-shadow: inset 2px 0 var(--color-agent-accent);
+}
+
+.home-rss-hot-label {
+  margin-right: 5px;
+  color: var(--color-agent-accent);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
 .home-signal-widget__item-tools > span {
   display: flex;
   gap: 1px;

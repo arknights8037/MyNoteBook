@@ -23,6 +23,7 @@ const props = defineProps<{
   widget: InformationHomeWidget
   editing: boolean
   summary: InformationHomeSummary | null
+  rssSummary?: InformationHomeSummary | null
   generatingSummary: boolean
   autoSummaryEnabled: boolean
   summaryIntervalMinutes: number
@@ -157,9 +158,14 @@ function removeWidget(): void {
       v-else-if="widget.widgetType === 'rss-news'"
       ref="rssWidget"
       :limit="widget.query.limit"
+      :summary="rssSummary ?? summary"
+      :generating="generatingSummary"
+      :auto-enabled="autoSummaryEnabled"
       @open="emit('openRss', $event)"
       @refreshing="refreshing = $event"
       @metrics="updateMetrics"
+      @generate="emit('generateSummary')"
+      @toggle-auto="emit('toggleAutoSummary')"
     />
     <AgentSummaryHomeWidget
       v-else-if="widget.widgetType === 'agent-summary'"

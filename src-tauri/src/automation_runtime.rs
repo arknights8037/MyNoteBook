@@ -122,8 +122,8 @@ pub(crate) async fn bind_agent_task(
         "UPDATE automation_runs SET agent_task_id = ? WHERE id = ? AND status = 'running' AND run_id = ?",
     )
     .bind(task_id)
-    .bind(&automation_run_id)
-    .bind(&run_id)
+    .bind(automation_run_id)
+    .bind(run_id)
     .execute(connection)
     .await
     .map_err(database::database_error)?;

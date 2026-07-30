@@ -276,6 +276,129 @@
   background: var(--color-bg-elevated);
 }
 
+.rss-insight-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 10px;
+  margin: 0 14px 12px;
+  padding: 12px;
+  background: linear-gradient(135deg, var(--color-bg-elevated), var(--color-bg-subtle));
+}
+
+.rss-insight-panel > header,
+.rss-insight-panel > header > div,
+.rss-insight-panel > header span,
+.rss-insight-panel__hot > strong {
+  display: flex;
+  align-items: center;
+}
+
+.rss-insight-panel > header {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rss-insight-panel > header > div {
+  gap: 6px;
+}
+
+.rss-insight-panel > header > div:first-child {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rss-insight-panel > header span,
+.rss-insight-panel__hot > strong {
+  gap: 5px;
+  font-size: var(--font-size-caption);
+}
+
+.rss-insight-panel > header small,
+.rss-insight-panel > p,
+.rss-insight-panel__hot button small {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+}
+
+.rss-insight-panel > header button,
+.rss-insight-panel__hot button {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-elevated);
+}
+
+.rss-insight-panel > header button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+}
+
+.rss-insight-panel > header button.is-active {
+  color: var(--color-agent-accent-contrast, #111);
+  border-color: var(--color-agent-accent);
+  background: var(--color-agent-accent);
+}
+
+.rss-insight-panel__content {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(260px, 1fr);
+  gap: 14px;
+  min-height: 0;
+}
+
+.rss-insight-panel .markdown-preview {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+  line-height: 1.6;
+}
+
+.rss-insight-panel .markdown-preview > :first-child,
+.rss-insight-panel .markdown-preview > :last-child,
+.rss-insight-panel > p {
+  margin: 0;
+}
+
+.rss-insight-panel__hot {
+  display: grid;
+  gap: 5px;
+}
+
+.rss-insight-panel__hot button {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 7px 8px;
+  text-align: left;
+}
+
+.rss-insight-panel__hot button:hover {
+  border-color: var(--color-agent-accent);
+  background: var(--color-bg-hover);
+}
+
+.rss-insight-panel__hot button span,
+.rss-insight-panel__hot button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .rss-insight-panel__content {
+    grid-template-columns: 1fr;
+  }
+
+  .rss-insight-panel > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 .email-inbox-layout {
   display: grid;
   height: min(720px, calc(100vh - 270px));

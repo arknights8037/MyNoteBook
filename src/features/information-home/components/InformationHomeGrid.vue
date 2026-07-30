@@ -17,6 +17,7 @@ const props = defineProps<{
   widgets: InformationHomeWidget[]
   editing: boolean
   summary: InformationHomeSummary | null
+  rssSummary: InformationHomeSummary | null
   generatingSummary: boolean
   autoSummaryEnabled: boolean
   summaryIntervalMinutes: number
@@ -215,6 +216,7 @@ onBeforeUnmount(() => {
           :widget="widget"
           :editing="editing"
           :summary="summary"
+          :rss-summary="rssSummary"
           :generating-summary="generatingSummary"
           :auto-summary-enabled="autoSummaryEnabled"
           :summary-interval-minutes="summaryIntervalMinutes"

@@ -16,6 +16,7 @@ import {
 } from '@/models/home/informationHome'
 import { publishSignalRefresh } from '@/services/agent/SignalAgentService'
 import type { InformationHomeService } from '@/services/home/InformationHomeService'
+import { findLatestRssInsight } from '@/services/inbox/RssInsightService'
 import {
   getInformationHomeWidgetDefinition,
   INFORMATION_HOME_WIDGET_REGISTRY,
@@ -31,6 +32,12 @@ const props = defineProps<{
 const emit = defineEmits<{ openInbox: [section: 'email' | 'rss', id?: string] }>()
 
 const native = Reflect.has(globalThis, '__TAURI_INTERNALS__')
+const canListenToTauriEvents =
+  typeof Reflect.get(globalThis, '__TAURI_INTERNALS__') === 'object' &&
+  typeof Reflect.get(
+    Reflect.get(globalThis, '__TAURI_INTERNALS__') as object,
+    'transformCallback',
+  ) === 'function'
 const home = ref<InformationHome | null>(null)
 const draft = ref<InformationHomePayload>(createDefaultInformationHomePayload(createId))
 const summaries = ref<InformationHomeSummary[]>([])
@@ -52,6 +59,9 @@ let pendingSettingsSaves = 0
 
 const service = () => (servicePromise ??= createInformationHomeService())
 const latestSummary = computed(() => summaries.value[0] ?? null)
+const latestRssSummary = computed(
+  () => summaries.value.find((summary) => findLatestRssInsight([summary]) !== null) ?? null,
+)
 const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(home.value?.payload))
 
 async function load(): Promise<void> {
@@ -333,7 +343,7 @@ function clone<T>(value: T): T {
 
 onMounted(async () => {
   await load()
-  if (native)
+  if (canListenToTauriEvents)
     unlistenSignalAgent = await listen<{
       latestUpdateAt?: number
       queuedCount?: number
@@ -465,6 +475,7 @@ onBeforeUnmount(() => {
         :widgets="draft.widgets"
         :editing="editing"
         :summary="latestSummary"
+        :rss-summary="latestRssSummary"
         :generating-summary="generatingSummary"
         :auto-summary-enabled="home?.autoSummaryEnabled ?? false"
         :summary-interval-minutes="home?.summaryIntervalMinutes ?? 360"
