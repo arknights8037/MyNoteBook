@@ -2,8 +2,13 @@ import { computed, ref, shallowReactive } from 'vue'
 
 import type { AgentRuntimeResult } from '@/services/agent/AgentRuntime'
 import type { ContextBundle } from '@/models/agent/contextBundle'
-import type { AgentRuntimeEvent } from '@/models/agent/agentRuntimeContract'
+import type {
+  AgentRuntimeEvent,
+  AgentSidecarFinalizationV1,
+  AgentSidecarSubmissionV1,
+} from '@/models/agent/agentRuntimeContract'
 import type { AgentToolCall } from '@/models/agent/agentTool'
+import type { AgentTask } from '@/models/agent/agent'
 import type { AgentRuntimeClient } from '@/services/agent/AgentRuntimeClient'
 import type { KnowledgeSource } from '@/models/knowledge/knowledgeRetrieval'
 import { createIdleAgentRuntimeState } from '@/models/agent/agentRuntime'
@@ -11,7 +16,12 @@ import { buildAiPrompt } from '@/services/ai/AiPromptPolicy'
 import { normalizeDocumentTitle } from '@/models/documents/documentPresentation'
 import { buildAgentRunContext } from './agentRun/agentRunContext'
 import type { AgentCommunicationResult } from '@/services/agent/AgentCommunicationService'
-import type { AgentRunContinuation, AgentRunSession, UseAgentRunOptions } from './agentRun/types'
+import type {
+  AgentRunContinuation,
+  AgentRunSession,
+  AgentRunSnapshot,
+  UseAgentRunOptions,
+} from './agentRun/types'
 import { compileContextBundle } from '@/models/agent/contextBundle'
 import { auditConfiguredModelParameters } from '@/models/agent/providerCapabilities'
 import { prepareAgentRunExecution } from '@/services/agent/AgentRunExecution'
@@ -21,6 +31,7 @@ import {
   compileLearningStateContext,
   createInitialLearningTurn,
 } from '@/services/cognitive/LearningSessionStateService'
+import type { LearningSessionState } from '@/models/cognitive/cognitive'
 import { formatAiErrorMessage } from '@/services/ai/AiErrorMessage'
 import {
   buildContinuationPrompt,
@@ -32,12 +43,15 @@ import {
 } from './agentRun/agentRunSupport'
 import { createAgentRunRuntimeController } from './agentRun/agentRunRuntimeController'
 import { describeAgentRunCompletion } from './agentRun/agentRunIntentStrategy'
-import { prepareAgentRun } from './agentRun/agentRunPreparation'
+import { prepareAgentRun, type AgentEditPlan } from './agentRun/agentRunPreparation'
 import {
   createExecuteToolCallback,
   type ReadableDocument,
 } from './agentRun/agentRunToolExecutorFactory'
-import { resolveAgentRunOutput } from './agentRun/agentRunOutputResolution'
+import {
+  resolveAgentRunOutput,
+  type AgentRunOutputResolution,
+} from './agentRun/agentRunOutputResolution'
 
 export {
   compileConversationContinuationContext,
@@ -54,6 +68,25 @@ export type {
   AgentRunSession,
 } from './agentRun/types'
 
+interface SidecarRunRecoveryContextV1 {
+  version: 1
+  kind: 'agent_run_output'
+  mode: 'agent'
+  agentIntent: string
+  snapshot: Omit<AgentRunSnapshot, 'settings'>
+  editPlan: AgentEditPlan
+  sources: KnowledgeSource[]
+  readableDocuments: ReadableDocument[]
+  cognitive: {
+    spec: ReturnType<typeof prepareCognitiveRun>['spec']
+    session: { id: string; version: number } | null
+    learningState: LearningSessionState | null
+    learningStateBeforeRun: LearningSessionState | null
+    learningUserAttempt: string | null
+    resumedLearningSession: boolean
+  } | null
+}
+
 let agentRunModulesPromise: ReturnType<typeof loadAgentRunModulesUncached> | null = null
 
 function loadAgentRunModules() {
@@ -65,27 +98,32 @@ async function loadAgentRunModulesUncached() {
     { runAiMarkdownCompletion },
     { buildAiSystemPrompt },
     { AiSdkAgentRuntimeAdapter },
+    { TauriAgentRuntimeAdapter },
     { AgentRuntimeClient },
     { buildDomainToolManifest },
     { executeAgentTool, prepareReadDocumentObservation },
     { executeRustAgentTool },
     { loadEnabledSkillPrompt },
     { parseReadDocumentProvenance, validateDocumentEditProvenance },
+    { getAgentOutputContract },
   ] = await Promise.all([
     import('@/services/ai/AiMarkdownService'),
     import('@/services/ai/AiSystemPrompt'),
     import('@/services/ai/AiSdkAgentRuntime'),
+    import('@/infrastructure/runtime/TauriAgentRuntimeAdapter'),
     import('@/services/agent/AgentRuntimeClient'),
     import('@/services/agent/DomainToolManifest'),
     import('@/services/agent/AgentToolExecutor'),
     import('@/services/agent/RustAgentToolService'),
     import('@/services/integrations/SkillService'),
     import('@/services/agent/AgentEditProposalGuard'),
+    import('@/services/cognitive/CognitiveRegistry'),
   ])
   return {
     runAiMarkdownCompletion,
     buildAiSystemPrompt,
     AiSdkAgentRuntimeAdapter,
+    TauriAgentRuntimeAdapter,
     AgentRuntimeClient,
     buildDomainToolManifest,
     executeAgentTool,
@@ -94,6 +132,7 @@ async function loadAgentRunModulesUncached() {
     loadEnabledSkillPrompt,
     parseReadDocumentProvenance,
     validateDocumentEditProvenance,
+    getAgentOutputContract,
   }
 }
 
@@ -221,6 +260,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
       runAiMarkdownCompletion,
       buildAiSystemPrompt,
       AiSdkAgentRuntimeAdapter,
+      TauriAgentRuntimeAdapter,
       AgentRuntimeClient,
       buildDomainToolManifest,
       executeAgentTool,
@@ -230,10 +270,12 @@ export function useAgentRun(options: UseAgentRunOptions) {
       parseReadDocumentProvenance,
       validateDocumentEditProvenance,
     } = await loadAgentRunModules()
+    const sidecarOwned = options.services?.runtimeOwner === 'rust_worker'
     let sources: KnowledgeSource[] = []
     let agentRounds = 0
     let agentToolCallCount = 0
     let agentDiagnostics: Pick<AgentRuntimeResult, 'finishReason' | 'usage'> = {}
+    let acknowledgeSidecarTerminal: (() => Promise<void>) | null = null
     const workspaceDocumentIds = resolveWorkspaceDocumentIds(
       snapshot.document.documents,
       snapshot.workspace?.rootDocumentIds ?? [],
@@ -277,7 +319,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
     }
 
     try {
-      if (continuation) {
+      if (continuation && !sidecarOwned) {
         for (const documentId of new Set(continuation.patches.map((patch) => patch.documentId))) {
           const targetBlockIds = continuation.patches
             .filter((patch) => patch.documentId === documentId)
@@ -296,15 +338,20 @@ export function useAgentRun(options: UseAgentRunOptions) {
           readableDocuments.set(documentId, provenance)
         }
       }
-      const context = await buildAgentRunContext({
-        snapshot,
-        mode,
-        targetBlocks: editPlan?.targetBlocks,
-        document: options.document,
-      })
-      const conversationContext = compileConversationContinuationContext(priorConversationMessages)
-      if (conversationContext) {
-        context.text += `\n\n${conversationContext}`
+      const context = sidecarOwned
+        ? { text: '', sources: [] as KnowledgeSource[] }
+        : await buildAgentRunContext({
+            snapshot,
+            mode,
+            targetBlocks: editPlan?.targetBlocks,
+            document: options.document,
+          })
+      if (!sidecarOwned) {
+        const conversationContext =
+          compileConversationContinuationContext(priorConversationMessages)
+        if (conversationContext) {
+          context.text += `\n\n${conversationContext}`
+        }
       }
       sources = context.sources
       assistantMessage.sources = sources
@@ -313,42 +360,46 @@ export function useAgentRun(options: UseAgentRunOptions) {
         instructions: '',
         skills: [],
       }))
-      const effectiveKnowledge = options.services?.getKnowledgeRepository
-        ? await options.services
-            .getKnowledgeRepository()
-            .then(async (repository) => {
-              const result = await repository.listObjects({
-                types: ['rule', 'decision'],
-                documentId: snapshot.document.id,
-                effectiveAt: Date.now(),
-                limit: 100,
+      const effectiveKnowledge =
+        !sidecarOwned && options.services?.getKnowledgeRepository
+          ? await options.services
+              .getKnowledgeRepository()
+              .then(async (repository) => {
+                const result = await repository.listObjects({
+                  types: ['rule', 'decision'],
+                  documentId: snapshot.document.id,
+                  effectiveAt: Date.now(),
+                  limit: 100,
+                })
+                return result.ok ? result.value : []
               })
-              return result.ok ? result.value : []
-            })
-            .catch(() => [])
-        : []
-      const approvedReferenceKnowledge = options.services?.getKnowledgeRepository
-        ? await options.services
-            .getKnowledgeRepository()
-            .then(async (repository) => {
-              const result = await repository.listObjects({
-                types: [
-                  'claim',
-                  'evidence',
-                  'inference',
-                  'assumption',
-                  'concept',
-                  'question',
-                  'limitation',
-                  'fact',
-                ],
-                effectiveAt: Date.now(),
-                limit: 80,
+              .catch(() => [])
+          : []
+      const approvedReferenceKnowledge =
+        !sidecarOwned && options.services?.getKnowledgeRepository
+          ? await options.services
+              .getKnowledgeRepository()
+              .then(async (repository) => {
+                const result = await repository.listObjects({
+                  types: [
+                    'claim',
+                    'evidence',
+                    'inference',
+                    'assumption',
+                    'concept',
+                    'question',
+                    'limitation',
+                    'fact',
+                  ],
+                  effectiveAt: Date.now(),
+                  limit: 80,
+                })
+                return result.ok
+                  ? selectRelevantApprovedKnowledge(result.value, snapshot.prompt)
+                  : []
               })
-              return result.ok ? selectRelevantApprovedKnowledge(result.value, snapshot.prompt) : []
-            })
-            .catch(() => [])
-        : []
+              .catch(() => [])
+          : []
       if (effectiveKnowledge.length > 0) {
         context.text += [
           '',
@@ -371,7 +422,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
           '这些对象可用于检索、比较和写作，但不是强制规则。保留其验证状态；unverified 或 warning 内容不得改写成确定事实。',
         ].join('\n')
       }
-      if (editPlan) {
+      if (editPlan && !sidecarOwned) {
         const bundleSources =
           mode === 'agent' || sources.some((source) => source.documentId === snapshot.document.id)
             ? sources
@@ -446,7 +497,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
         runtimeContextBundle = contextBundle
       }
       const mcpRuntimeTools =
-        mode === 'agent' && options.services?.mcpClient
+        !sidecarOwned && mode === 'agent' && options.services?.mcpClient
           ? await options.services.mcpClient
               .listTools()
               .then(async (tools) => {
@@ -613,6 +664,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
           },
         ) => Promise<string>
       } | null = null
+      let sidecarFinalization: AgentSidecarFinalizationV1 | undefined
       const executeToolCallback = editPlan
         ? createExecuteToolCallback({
             snapshot,
@@ -639,86 +691,222 @@ export function useAgentRun(options: UseAgentRunOptions) {
           ? JSON.stringify(createInitialLearningTurn(learningState.topic))
           : mode === 'agent' && editPlan
             ? await (async () => {
-                if (!runtimeContextBundle) throw new Error('Agent Runtime 缺少 Context Bundle。')
-                const adapter = new AiSdkAgentRuntimeAdapter({
-                  createId: options.createId,
-                  resolveCredential: async () => snapshot.settings.apiKey,
-                  executeTool: executeToolCallback!,
-                  recordToolCall: async (call) => {
-                    const result = await (
-                      await options.patches.getRepository()
-                    ).recordToolCall(call)
-                    if (!result.ok) throw new Error(result.error.message)
-                  },
-                  requestAuthorizerInput: (request) =>
-                    waitForAuthorizerInput(request, editPlan.task),
-                  answerAuthorization: runtime.answerAuthorization,
-                  resolveOutputContract: (descriptor) => {
-                    const contract = cognitiveRun?.outputContract
-                    return contract &&
-                      contract.id === descriptor.id &&
-                      contract.version === descriptor.version
-                      ? contract
-                      : null
-                  },
-                  validateDocumentEditProposal: (proposal) =>
-                    validateDocumentEditProvenance(proposal, [...readableDocuments.values()]),
-                })
-                runtimeAuthorizationBridge = adapter
+                if (!sidecarOwned && !runtimeContextBundle) {
+                  throw new Error('Agent Runtime 缺少 Context Bundle。')
+                }
+                const recoveryContext: SidecarRunRecoveryContextV1 | undefined = sidecarOwned
+                  ? {
+                      version: 1,
+                      kind: 'agent_run_output',
+                      mode: 'agent',
+                      agentIntent,
+                      snapshot: {
+                        prompt: snapshot.prompt,
+                        requestedMode: snapshot.requestedMode,
+                        document: snapshot.document,
+                        explicitTargets: snapshot.explicitTargets,
+                        workspace: snapshot.workspace,
+                      },
+                      editPlan,
+                      sources,
+                      readableDocuments: [...readableDocuments.values()],
+                      cognitive: cognitiveRun
+                        ? {
+                            spec: cognitiveRun.spec,
+                            session: cognitiveSession,
+                            learningState,
+                            learningStateBeforeRun,
+                            learningUserAttempt,
+                            resumedLearningSession,
+                          }
+                        : null,
+                    }
+                  : undefined
+                const adapter = sidecarOwned
+                  ? new TauriAgentRuntimeAdapter({
+                      dataDirectory: options.services?.runtimeDataDirectory?.(),
+                      recoveryContext,
+                      requestAuthorizerInput: (request) =>
+                        waitForAuthorizerInput(
+                          {
+                            id: request.authorizationId,
+                            question: request.question,
+                            context: request.context,
+                            options: request.options,
+                            allowFreeText: request.allowFreeText,
+                          },
+                          editPlan.task,
+                        ),
+                    })
+                  : new AiSdkAgentRuntimeAdapter({
+                      createId: options.createId,
+                      resolveCredential: async () => snapshot.settings.apiKey,
+                      executeTool: executeToolCallback!,
+                      recordToolCall: async (call) => {
+                        const result = await (
+                          await options.patches.getRepository()
+                        ).recordToolCall(call)
+                        if (!result.ok) throw new Error(result.error.message)
+                      },
+                      requestAuthorizerInput: (request) =>
+                        waitForAuthorizerInput(request, editPlan.task),
+                      answerAuthorization: runtime.answerAuthorization,
+                      resolveOutputContract: (descriptor) => {
+                        const contract = cognitiveRun?.outputContract
+                        return contract &&
+                          contract.id === descriptor.id &&
+                          contract.version === descriptor.version
+                          ? contract
+                          : null
+                      },
+                      validateDocumentEditProposal: (proposal) =>
+                        validateDocumentEditProvenance(proposal, [...readableDocuments.values()]),
+                    })
+                if (sidecarOwned && adapter instanceof TauriAgentRuntimeAdapter) {
+                  acknowledgeSidecarTerminal = () => adapter.acknowledgeRun(editPlan.task.runId)
+                }
+                runtimeAuthorizationBridge = sidecarOwned ? null : adapter
                 const client = new AgentRuntimeClient(adapter)
                 const active = activeRuns.get(runKey)
                 if (active) {
                   active.runtimeClient = client
                   active.runtimeRunId = editPlan.task.runId
                 }
-                const unsubscribe = client.subscribeEvents(editPlan.task.runId, (event) => {
-                  projectRuntimeEvent(event)
-                })
-                if (active) active.unsubscribeRuntime = unsubscribe
-                const result = await client.startRun({
-                  version: 1,
-                  runId: editPlan.task.runId,
-                  workItemId: editPlan.task.id,
-                  workflowId: editPlan.task.workflowId ?? undefined,
-                  sessionId: editPlan.task.sessionId,
-                  objective: runtimeExecution!.prompt,
-                  intent: runtimeExecution!.intent,
-                  systemInstructions: runtimeExecution!.systemPrompt,
-                  compiledContext: runtimeExecution!.context,
-                  contextBundle: runtimeContextBundle,
-                  executionPolicy: runtimeExecution!.executionPolicy,
-                  toolManifest: buildDomainToolManifest(runtimeExecution!.externalTools),
-                  modelPolicy: {
-                    provider: snapshot.settings.provider,
-                    model: snapshot.settings.model,
-                    endpoint: snapshot.settings.endpoint,
-                    temperature: snapshot.settings.temperature,
-                    topP: snapshot.settings.topP,
-                    reasoningEffort: snapshot.settings.reasoningEffort,
-                    maxOutputTokens: resolveAgentOutputTokenLimit(
-                      snapshot.settings.maxTokens,
-                      runtimeExecution!.executionPolicy,
-                    ),
-                    credentialRef: {
-                      kind: 'provider_secret',
-                      provider: snapshot.settings.provider,
-                    },
+                const unsubscribe = (sidecarOwned ? adapter : client).subscribeEvents(
+                  editPlan.task.runId,
+                  (event) => {
+                    projectRuntimeEvent(event)
                   },
-                  ...(runtimeExecution!.outputContract
-                    ? {
-                        outputContract: {
-                          id: runtimeExecution!.outputContract.id,
-                          version: runtimeExecution!.outputContract.version,
-                          jsonSchema: runtimeExecution!.outputContract.jsonSchema,
-                          systemInstruction: runtimeExecution!.outputContract.systemInstruction,
+                )
+                if (active) active.unsubscribeRuntime = unsubscribe
+                const result = sidecarOwned
+                  ? await adapter.startSubmission({
+                      version: 1,
+                      runId: editPlan.task.runId,
+                      workItemId: editPlan.task.id,
+                      ...(editPlan.task.workflowId ? { workflowId: editPlan.task.workflowId } : {}),
+                      sessionId: editPlan.task.sessionId,
+                      document: {
+                        id: snapshot.document.id,
+                        title: snapshot.document.title,
+                        tags: [...snapshot.document.tags],
+                        sourceUrl: snapshot.document.sourceUrl,
+                        author: snapshot.document.author,
+                        text: snapshot.document.text,
+                        markdown: snapshot.document.markdown,
+                        revision: snapshot.document.revision,
+                        blocks: snapshot.document.blocks.map((block) => ({ ...block })),
+                        selectedBlockIds: snapshot.document.selectedBlocks.map((block) => block.id),
+                        documents: snapshot.document.documents.map((document) => ({
+                          id: document.id,
+                          title: document.title,
+                          documentKind: document.documentKind,
+                          isDeleted: document.isDeleted,
+                          parentId: document.parentId,
+                        })),
+                      },
+                      workspace: {
+                        projectId: snapshot.workspace?.projectId ?? '',
+                        projectName: snapshot.workspace?.projectName ?? '未分组 Agent 项目',
+                        rootDocumentIds: [...(snapshot.workspace?.rootDocumentIds ?? [])],
+                        conversationId:
+                          snapshot.workspace?.conversationId ?? editPlan.task.sessionId,
+                      },
+                      objective: snapshot.prompt,
+                      intent: agentIntent,
+                      systemInstructions: systemPrompt,
+                      skillInstructions: skillPrompt.instructions,
+                      modelPolicy: {
+                        provider: snapshot.settings.provider,
+                        model: snapshot.settings.model,
+                        endpoint: snapshot.settings.endpoint,
+                        temperature: snapshot.settings.temperature,
+                        topP: snapshot.settings.topP,
+                        reasoningEffort: snapshot.settings.reasoningEffort,
+                        maxOutputTokens: snapshot.settings.maxTokens,
+                        credentialRef: {
+                          kind: 'provider_secret',
+                          provider: snapshot.settings.provider,
                         },
-                      }
-                    : {}),
-                  correlationId: editPlan.task.correlationId,
-                  causationId: editPlan.task.causationId,
-                })
+                      },
+                      configuredMaxTokens: snapshot.settings.maxTokens,
+                      externalTools: mcpRuntimeTools.map((tool) => ({ ...tool })),
+                      explicitTargets: snapshot.explicitTargets.map((target) => ({ ...target })),
+                      correlationId: editPlan.task.correlationId,
+                      causationId: editPlan.task.causationId,
+                    } satisfies AgentSidecarSubmissionV1)
+                  : await client.startRun({
+                      version: 1,
+                      runId: editPlan.task.runId,
+                      workItemId: editPlan.task.id,
+                      workflowId: editPlan.task.workflowId ?? undefined,
+                      sessionId: editPlan.task.sessionId,
+                      objective: runtimeExecution!.prompt,
+                      intent: runtimeExecution!.intent,
+                      systemInstructions: runtimeExecution!.systemPrompt,
+                      compiledContext: runtimeExecution!.context,
+                      contextBundle: runtimeContextBundle!,
+                      executionPolicy: runtimeExecution!.executionPolicy,
+                      toolManifest: buildDomainToolManifest(runtimeExecution!.externalTools),
+                      modelPolicy: {
+                        provider: snapshot.settings.provider,
+                        model: snapshot.settings.model,
+                        endpoint: snapshot.settings.endpoint,
+                        temperature: snapshot.settings.temperature,
+                        topP: snapshot.settings.topP,
+                        reasoningEffort: snapshot.settings.reasoningEffort,
+                        maxOutputTokens: resolveAgentOutputTokenLimit(
+                          snapshot.settings.maxTokens,
+                          runtimeExecution!.executionPolicy,
+                        ),
+                        credentialRef: {
+                          kind: 'provider_secret',
+                          provider: snapshot.settings.provider,
+                        },
+                      },
+                      ...(runtimeExecution!.outputContract
+                        ? {
+                            outputContract: {
+                              id: runtimeExecution!.outputContract.id,
+                              version: runtimeExecution!.outputContract.version,
+                              jsonSchema: runtimeExecution!.outputContract.jsonSchema,
+                              systemInstruction: runtimeExecution!.outputContract.systemInstruction,
+                            },
+                          }
+                        : {}),
+                      correlationId: editPlan.task.correlationId,
+                      causationId: editPlan.task.causationId,
+                    })
+                if (sidecarOwned) {
+                  for (const call of result.toolCalls) {
+                    if (
+                      call.status !== 'completed' ||
+                      !call.resultJson ||
+                      !['read_document', 'get_current_document'].includes(call.toolName)
+                    ) {
+                      continue
+                    }
+                    try {
+                      const value = JSON.parse(call.resultJson) as unknown
+                      const argumentsValue = JSON.parse(call.argumentsJson) as unknown
+                      const documentId =
+                        call.toolName === 'read_document' &&
+                        typeof argumentsValue === 'object' &&
+                        argumentsValue !== null &&
+                        'documentId' in argumentsValue &&
+                        typeof argumentsValue.documentId === 'string'
+                          ? argumentsValue.documentId
+                          : snapshot.document.id
+                      const provenance = parseReadDocumentProvenance(value, documentId)
+                      if (provenance) readableDocuments.set(documentId, provenance)
+                    } catch {
+                      // Malformed audit payloads must not turn a completed sidecar run into a UI failure.
+                    }
+                  }
+                }
                 return result
               })().then((result) => {
+                sidecarFinalization = result.sidecarFinalization
                 agentRounds = result.rounds
                 agentToolCallCount = result.toolCalls.length
                 agentDiagnostics = {
@@ -738,36 +926,57 @@ export function useAgentRun(options: UseAgentRunOptions) {
                 onDelta: handleDelta,
               })
 
-      const resolution = await resolveAgentRunOutput({
-        output,
-        mode,
-        editPlan,
-        snapshot,
-        sources,
-        readableDocuments,
-        agentRounds,
-        agentToolCallCount,
-        agentDiagnostics,
-        agentIntent,
-        cognitiveRun: cognitiveRun as Parameters<typeof resolveAgentRunOutput>[0]['cognitiveRun'],
-        cognitiveSession,
-        learningState,
-        learningStateBeforeRun,
-        learningUserAttempt,
-        resumedLearningSession,
-        session,
-        slashCommand,
-        options,
-        assistantMessage: runContext.messages.value[assistantIndex],
-        hasCognitivePersistence,
-        getCognitiveSessionService,
-        setSummary,
-        runtime: { complete: runtime.complete, cancel: runtime.cancel, fail: runtime.fail },
-      })
+      const resolution =
+        sidecarOwned && sidecarFinalization
+          ? await projectPersistedSidecarFinalization({
+              finalization: sidecarFinalization,
+              editPlan,
+              options,
+              assistantMessage: runContext.messages.value[assistantIndex],
+              setSummary,
+            })
+          : await resolveAgentRunOutput({
+              output,
+              mode,
+              editPlan,
+              snapshot,
+              sources,
+              readableDocuments,
+              agentRounds,
+              agentToolCallCount,
+              agentDiagnostics,
+              agentIntent,
+              cognitiveRun: cognitiveRun as Parameters<
+                typeof resolveAgentRunOutput
+              >[0]['cognitiveRun'],
+              cognitiveSession,
+              learningState,
+              learningStateBeforeRun,
+              learningUserAttempt,
+              resumedLearningSession,
+              session,
+              slashCommand,
+              options,
+              assistantMessage: runContext.messages.value[assistantIndex],
+              hasCognitivePersistence,
+              getCognitiveSessionService,
+              setSummary,
+              runtime: { complete: runtime.complete, cancel: runtime.cancel, fail: runtime.fail },
+            })
       const { patchSet, learningResult } = resolution
       cognitiveSession = resolution.cognitiveSession
       learningState = resolution.learningState
       lastRunReport.value = resolution.lastRunReport
+
+      if (acknowledgeSidecarTerminal) {
+        try {
+          await acknowledgeSidecarTerminal()
+        } catch (acknowledgementError) {
+          const message = `Agent 结果已保存，但 Rust 终态确认失败：${formatAiErrorMessage(acknowledgementError)}`
+          lastRunIssue.value = message
+          options.notify.error(message)
+        }
+      }
 
       const completionDetail = describeAgentRunCompletion({
         hasPatchSet: Boolean(patchSet),
@@ -808,6 +1017,9 @@ export function useAgentRun(options: UseAgentRunOptions) {
             persistenceError instanceof Error ? persistenceError.message : String(persistenceError),
           )
         }
+      }
+      if (acknowledgeSidecarTerminal) {
+        await acknowledgeSidecarTerminal().catch(() => undefined)
       }
       const currentMessage = runContext.messages.value[assistantIndex]
       if (currentMessage) {
@@ -851,10 +1063,257 @@ export function useAgentRun(options: UseAgentRunOptions) {
     target?.runtime.cancelPendingAuthorization('用户停止了 Agent。')
   }
 
+  async function restoreWorkerSnapshot(snapshot: {
+    activeRuns: Array<{
+      runId: string
+      workItemId: string
+      sessionId: string
+      objective: string
+    }>
+    pendingAuthorizations: Array<{
+      authorizationId: string
+      runId: string
+      question: string
+      context: string
+      options: string[]
+      allowFreeText: boolean
+    }>
+    pendingTerminals?: Array<{
+      runId: string
+      workItemId: string
+      sessionId: string
+      objective: string
+      terminalType: 'run.result' | 'run.error'
+      recoverable?: boolean
+    }>
+  }): Promise<void> {
+    if (options.services?.runtimeOwner !== 'rust_worker') return
+    const {
+      TauriAgentRuntimeAdapter,
+      AgentRuntimeClient,
+      parseReadDocumentProvenance,
+      getAgentOutputContract,
+    } = await loadAgentRunModules()
+    for (const run of snapshot.activeRuns) {
+      const runKey = run.sessionId.trim() || run.runId
+      if (activeRuns.has(runKey)) continue
+      const runtime = createAgentRunRuntimeController(options.createId)
+      const pending = snapshot.pendingAuthorizations.find((request) => request.runId === run.runId)
+      runtime.restoreActive({
+        runId: run.runId,
+        goal: run.objective,
+        detail: pending ? '等待授权人回答' : '已从 Rust Worker 恢复运行视图',
+        authorizationRequest: pending
+          ? {
+              id: pending.authorizationId,
+              question: pending.question,
+              context: pending.context,
+              options: [...pending.options],
+              allowFreeText: pending.allowFreeText,
+            }
+          : null,
+      })
+      const task = { id: run.workItemId, runId: run.runId, currentStep: '' } as AgentTask
+      const adapter = new TauriAgentRuntimeAdapter({
+        dataDirectory: options.services.runtimeDataDirectory?.(),
+        requestAuthorizerInput: (request) =>
+          runtime.waitForAuthorizerInput(
+            {
+              id: request.authorizationId,
+              question: request.question,
+              context: request.context,
+              options: request.options,
+              allowFreeText: request.allowFreeText,
+            },
+            task,
+          ),
+      })
+      const client = new AgentRuntimeClient(adapter)
+      const unsubscribe = client.subscribeEvents(run.runId, (event) => {
+        if (event.type === 'run.progress') {
+          const phase = event.payload.phase
+          if (
+            phase === 'planning' ||
+            phase === 'tool_running' ||
+            phase === 'tool_completed' ||
+            phase === 'finalizing'
+          ) {
+            runtime.applyProgressUpdate({
+              phase,
+              detail:
+                typeof event.payload.detail === 'string' ? event.payload.detail : 'Agent 正在运行',
+            })
+          }
+        } else if (event.type.startsWith('tool.')) {
+          const call = event.payload.toolCall as AgentToolCall | undefined
+          if (call) {
+            runtime.applyProgressUpdate({
+              phase: call.status === 'completed' ? 'tool_completed' : 'tool_running',
+              toolName: call.toolName,
+              detail: call.error || call.toolName,
+              toolCall: call,
+            })
+          }
+        } else if (event.type === 'run.completed') {
+          runtime.complete('后台 Agent 运行已完成')
+          finishRun(runKey, runtime)
+          void adapter.dispose()
+        } else if (event.type === 'run.failed') {
+          runtime.fail(
+            typeof event.payload.error === 'string' ? event.payload.error : '后台 Agent 运行失败',
+          )
+          finishRun(runKey, runtime)
+          void adapter.dispose()
+        } else if (event.type === 'run.cancelled') {
+          runtime.cancel('后台 Agent 运行已取消')
+          finishRun(runKey, runtime)
+          void adapter.dispose()
+        }
+      })
+      runtimes.set(runKey, runtime)
+      activeRuns.set(runKey, {
+        abortController: new AbortController(),
+        runtime,
+        runtimeClient: client,
+        runtimeRunId: run.runId,
+        unsubscribeRuntime: unsubscribe,
+      })
+      activeConversationId.value = runKey
+    }
+    for (const terminal of snapshot.pendingTerminals ?? []) {
+      const runKey = terminal.sessionId.trim() || terminal.runId
+      if (activeRuns.has(runKey) || runtimes.has(runKey)) continue
+      const runtime = createAgentRunRuntimeController(options.createId)
+      runtime.restoreActive({
+        runId: terminal.runId,
+        goal: terminal.objective,
+        detail: '正在从 Rust Core 领取后台终态',
+      })
+      const adapter = new TauriAgentRuntimeAdapter({
+        dataDirectory: options.services.runtimeDataDirectory?.(),
+      })
+      try {
+        const retained = await adapter.getRetainedTerminal(terminal.runId)
+        if (!retained) throw new Error(`run_id ${terminal.runId} 没有待领取终态。`)
+        if (retained.message.type === 'run.error') throw new Error(retained.message.error.message)
+        if (retained.message.type !== 'run.result') {
+          throw new Error(`Rust Core 返回了非终态 Worker 消息：${retained.message.type}`)
+        }
+        const result = retained.message.result
+        runtime.recordExecutionResult({ rounds: result.rounds, toolCalls: result.toolCalls })
+        const recovery = parseSidecarRunRecoveryContext(retained.recoveryContext)
+        if (!recovery) {
+          runtime.setSummary('后台 Agent 已完成；结果仍保留在 Rust Core，等待恢复业务持久化。')
+          runtime.complete('后台 Agent 已完成，结果待恢复处理')
+        } else {
+          const readableDocuments = new Map(
+            recovery.readableDocuments.map((document) => [document.documentId, document]),
+          )
+          for (const call of result.toolCalls) {
+            if (
+              call.status !== 'completed' ||
+              !call.resultJson ||
+              !['read_document', 'get_current_document'].includes(call.toolName)
+            ) {
+              continue
+            }
+            try {
+              const value = JSON.parse(call.resultJson) as unknown
+              const argumentsValue = JSON.parse(call.argumentsJson) as unknown
+              const documentId =
+                call.toolName === 'read_document' &&
+                typeof argumentsValue === 'object' &&
+                argumentsValue !== null &&
+                'documentId' in argumentsValue &&
+                typeof argumentsValue.documentId === 'string'
+                  ? argumentsValue.documentId
+                  : recovery.snapshot.document.id
+              const provenance = parseReadDocumentProvenance(value, documentId)
+              if (provenance) readableDocuments.set(documentId, provenance)
+            } catch {
+              // A malformed audit payload is ignored; Patch validation still requires provenance.
+            }
+          }
+          if (!options.tasks.value.some((task) => task.id === recovery.editPlan.task.id)) {
+            options.tasks.value.unshift(recovery.editPlan.task)
+          }
+          const outputContract = recovery.cognitive
+            ? getAgentOutputContract(recovery.cognitive.spec.outputContractId)
+            : null
+          if (recovery.cognitive && !outputContract) {
+            throw new Error(
+              `Agent Output Contract ${recovery.cognitive.spec.outputContractId} 不存在。`,
+            )
+          }
+          const resolution = await resolveAgentRunOutput({
+            output: result.output,
+            mode: recovery.mode,
+            editPlan: recovery.editPlan,
+            snapshot: {
+              ...recovery.snapshot,
+              settings: options.settings.value,
+            },
+            sources: recovery.sources,
+            readableDocuments,
+            agentRounds: result.rounds,
+            agentToolCallCount: result.toolCalls.length,
+            agentDiagnostics: {
+              finishReason: result.finishReason,
+              usage: result.usage,
+            },
+            agentIntent: recovery.agentIntent,
+            cognitiveRun:
+              recovery.cognitive && outputContract
+                ? {
+                    spec: recovery.cognitive.spec,
+                    systemPrompt: '',
+                    outputContract,
+                  }
+                : null,
+            cognitiveSession: recovery.cognitive?.session ?? null,
+            learningState: recovery.cognitive?.learningState ?? null,
+            learningStateBeforeRun: recovery.cognitive?.learningStateBeforeRun ?? null,
+            learningUserAttempt: recovery.cognitive?.learningUserAttempt ?? null,
+            resumedLearningSession: recovery.cognitive?.resumedLearningSession ?? false,
+            session: { background: true },
+            slashCommand: null,
+            options,
+            assistantMessage: undefined,
+            hasCognitivePersistence,
+            getCognitiveSessionService,
+            setSummary: runtime.setSummary,
+            runtime: { complete: runtime.complete, cancel: runtime.cancel, fail: runtime.fail },
+          })
+          lastRunReport.value = resolution.lastRunReport
+          await adapter.acknowledgeRun(terminal.runId)
+          runtime.complete(
+            describeAgentRunCompletion({
+              hasPatchSet: Boolean(resolution.patchSet),
+              intent: recovery.agentIntent,
+              learningResult: resolution.learningResult,
+            }),
+          )
+        }
+      } catch (error) {
+        runtime.fail(formatAiErrorMessage(error))
+        if (terminal.terminalType === 'run.error') {
+          await adapter.acknowledgeRun(terminal.runId).catch(() => undefined)
+        }
+      } finally {
+        await adapter.dispose()
+      }
+      runtimes.set(runKey, runtime)
+      activeConversationId.value = runKey
+    }
+    options.isRunning.value = activeRuns.size > 0
+  }
+
   function answerAuthorization(requestId: string, answer: string): boolean {
     for (const active of activeRuns.values()) {
       if (active.runtime.runtimeState.value.authorizationRequest?.id !== requestId) continue
       if (active.runtimeClient && active.runtimeRunId) {
+        if (active.runtime.answerAuthorization(requestId, answer)) return true
+        active.runtime.settleRestoredAuthorization(requestId)
         void active.runtimeClient
           .steerRun(active.runtimeRunId, {
             kind: 'authorization_response',
@@ -898,5 +1357,81 @@ export function useAgentRun(options: UseAgentRunOptions) {
     isConversationRunning,
     runtimeStateFor,
     resetRuntime,
+    restoreWorkerSnapshot,
+  }
+}
+
+function parseSidecarRunRecoveryContext(value: unknown): SidecarRunRecoveryContextV1 | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const candidate = value as Partial<SidecarRunRecoveryContextV1>
+  if (
+    candidate.version !== 1 ||
+    candidate.kind !== 'agent_run_output' ||
+    candidate.mode !== 'agent' ||
+    typeof candidate.agentIntent !== 'string' ||
+    !candidate.snapshot ||
+    !candidate.editPlan ||
+    !Array.isArray(candidate.sources) ||
+    !Array.isArray(candidate.readableDocuments)
+  ) {
+    return null
+  }
+  return candidate as SidecarRunRecoveryContextV1
+}
+
+/**
+ * Rust has already persisted this projection. Vue only updates its local
+ * review/message state and must not parse model output or write Agent rows.
+ */
+async function projectPersistedSidecarFinalization(input: {
+  finalization: AgentSidecarFinalizationV1
+  editPlan: AgentEditPlan | null
+  options: UseAgentRunOptions
+  assistantMessage: AiConversationMessage | undefined
+  setSummary: (summary: string) => void
+}): Promise<AgentRunOutputResolution> {
+  const { finalization, editPlan, options } = input
+  let patchSet: AgentPatchSet | null = null
+  if (editPlan) {
+    editPlan.task.status = finalization.taskStatus
+    editPlan.task.currentStep = finalization.currentStep
+    editPlan.task.completedAt = finalization.completedAt
+    if (!options.tasks.value.some((task) => task.id === editPlan.task.id)) {
+      options.tasks.value.unshift(editPlan.task)
+    }
+    if (finalization.patches.length > 0) {
+      patchSet = {
+        taskId: finalization.taskId,
+        model: editPlan.task.model,
+        createdAt: Date.now(),
+        contextSources: finalization.sources.map((source) => ({ ...source })),
+        patches: finalization.patches.map((patch) => ({ ...patch, accepted: true })),
+      }
+      if (options.patches.queueReview) options.patches.queueReview(editPlan.task, patchSet)
+      else {
+        options.patches.pendingTask.value = editPlan.task
+        options.patches.pendingPatchSet.value = patchSet
+        options.patches.showModal.value = true
+      }
+    }
+  }
+  if (input.assistantMessage) {
+    input.assistantMessage.content = finalization.summary
+    input.assistantMessage.status = 'done'
+  }
+  input.setSummary(finalization.summary)
+  return {
+    patchSet,
+    outcome: finalization.outcome,
+    summary: finalization.summary,
+    researchResult: null,
+    reviewResult: null,
+    learningResult: null,
+    researchCandidates: [],
+    cognitiveProvenance: null,
+    lastRunReport: finalization.report,
+    agentTaskResultPersisted: true,
+    cognitiveSession: null,
+    learningState: null,
   }
 }

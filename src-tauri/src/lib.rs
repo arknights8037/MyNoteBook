@@ -77,9 +77,12 @@ unsafe fn apply_fixed_light_acrylic(hwnd: *mut core::ffi::c_void) {
 
 mod agent_cancellation;
 mod agent_repository;
+mod agent_request_watcher;
 mod agent_tools;
+mod agent_worker_supervisor;
 mod ai_models;
 mod ai_proxy;
+mod cognitive_sessions;
 mod database;
 mod dingtalk;
 mod document_core;
@@ -88,7 +91,6 @@ mod email;
 mod governance;
 mod mcp;
 pub mod mcp_server_exposure;
-mod pi_worker_supervisor;
 mod rss;
 mod secret_store;
 mod sensitive_data;
@@ -341,6 +343,8 @@ pub fn run() {
         })
         .manage(secret_store::AiSecretState::default())
         .manage(dingtalk::DingTalkRuntimeState::default())
+        .manage(agent_worker_supervisor::AgentWorkerSupervisorState::default())
+        .manage(agent_request_watcher::AgentRequestWatcherState::default())
         .invoke_handler(tauri::generate_handler![
             storage::get_system_fonts,
             storage::get_default_data_directory,
@@ -381,6 +385,10 @@ pub fn run() {
             agent_repository::reject_agent_patch_set,
             agent_repository::cleanup_orphan_agent_tasks,
             agent_repository::rollback_agent_transaction,
+            cognitive_sessions::create_cognitive_session,
+            cognitive_sessions::get_cognitive_session,
+            cognitive_sessions::list_cognitive_sessions,
+            cognitive_sessions::update_cognitive_session,
             secret_store::get_ai_api_key,
             secret_store::set_ai_api_key,
             email::test_email_connection,
@@ -399,6 +407,18 @@ pub fn run() {
             ai_proxy::proxy_ai_request,
             agent_cancellation::cancel_agent_tool_call,
             agent_tools::execute_rig_tool,
+            agent_worker_supervisor::start_agent_worker,
+            agent_worker_supervisor::get_agent_worker_snapshot,
+            agent_worker_supervisor::get_agent_runtime_terminal,
+            agent_worker_supervisor::acknowledge_agent_runtime_terminal,
+            agent_worker_supervisor::start_agent_runtime_run,
+            agent_worker_supervisor::start_agent_sidecar_orchestration,
+            agent_worker_supervisor::cancel_agent_runtime_run,
+            agent_worker_supervisor::steer_agent_runtime_run,
+            agent_worker_supervisor::shutdown_agent_worker,
+            agent_request_watcher::start_agent_request_watcher,
+            agent_request_watcher::claim_agent_request,
+            agent_request_watcher::settle_agent_request,
             work::commit_result_verification,
             work::decide_change_set,
             work::record_authorization,

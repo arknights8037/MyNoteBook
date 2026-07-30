@@ -13,12 +13,12 @@ const MAX_REQUEST_BODY_BYTES: usize = 2 * 1024 * 1024;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProxyAiRequestInput {
-    url: String,
+    pub(crate) url: String,
     #[serde(default)]
-    method: Option<String>,
+    pub(crate) method: Option<String>,
     #[serde(default)]
-    headers: HashMap<String, String>,
-    body: Option<String>,
+    pub(crate) headers: HashMap<String, String>,
+    pub(crate) body: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -34,11 +34,52 @@ pub enum ProxyAiEvent {
     Finished,
 }
 
+pub(crate) struct StreamingAiResponse {
+    pub(crate) status: u16,
+    pub(crate) headers: HashMap<String, String>,
+    response: reqwest::Response,
+}
+
+impl StreamingAiResponse {
+    pub(crate) async fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, String> {
+        self.response
+            .chunk()
+            .await
+            .map(|chunk| chunk.map(|value| value.to_vec()))
+            .map_err(|error| format!("无法读取 AI 响应流：{error}"))
+    }
+}
+
 #[tauri::command]
 pub async fn proxy_ai_request(
     input: ProxyAiRequestInput,
     on_event: Channel<ProxyAiEvent>,
 ) -> Result<(), String> {
+    let mut response = start_ai_request(input).await?;
+    on_event
+        .send(ProxyAiEvent::Started {
+            status: response.status,
+            headers: response.headers.clone(),
+        })
+        .map_err(|error| format!("无法发送 AI 响应头：{error}"))?;
+
+    while let Some(chunk) = response.next_chunk().await? {
+        on_event
+            .send(ProxyAiEvent::Chunk {
+                body: BASE64_STANDARD.encode(chunk),
+            })
+            .map_err(|error| format!("无法发送 AI 响应流：{error}"))?;
+    }
+    on_event
+        .send(ProxyAiEvent::Finished)
+        .map_err(|error| format!("无法结束 AI 响应流：{error}"))?;
+
+    Ok(())
+}
+
+pub(crate) async fn start_ai_request(
+    input: ProxyAiRequestInput,
+) -> Result<StreamingAiResponse, String> {
     let url = ai_request_url(&input.url)?;
     let headers = request_headers(input.headers)?;
     let method = input.method.unwrap_or_else(|| "GET".to_string());
@@ -54,35 +95,18 @@ pub async fn proxy_ai_request(
         .timeout(AI_REQUEST_TIMEOUT)
         .build()
         .map_err(|error| format!("无法创建 AI 请求：{error}"))?;
-    let mut response = client
+    let response = client
         .request(method, url)
         .headers(headers)
         .body(body)
         .send()
         .await
         .map_err(|error| format!("AI 请求失败：{error}"))?;
-    let status = response.status().as_u16();
-    let headers = response_headers(response.headers());
-    on_event
-        .send(ProxyAiEvent::Started { status, headers })
-        .map_err(|error| format!("无法发送 AI 响应头：{error}"))?;
-
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| format!("无法读取 AI 响应流：{error}"))?
-    {
-        on_event
-            .send(ProxyAiEvent::Chunk {
-                body: BASE64_STANDARD.encode(chunk),
-            })
-            .map_err(|error| format!("无法发送 AI 响应流：{error}"))?;
-    }
-    on_event
-        .send(ProxyAiEvent::Finished)
-        .map_err(|error| format!("无法结束 AI 响应流：{error}"))?;
-
-    Ok(())
+    Ok(StreamingAiResponse {
+        status: response.status().as_u16(),
+        headers: response_headers(response.headers()),
+        response,
+    })
 }
 
 fn ai_request_url(url: &str) -> Result<Url, String> {
@@ -141,6 +165,7 @@ fn response_headers(headers: &HeaderMap) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{routing::post, Router};
 
     #[test]
     fn rejects_non_http_or_credentialed_urls() {
@@ -158,5 +183,39 @@ mod tests {
 
         assert!(headers.get("connection").is_none());
         assert_eq!(headers.get("authorization").unwrap(), "Bearer key");
+    }
+
+    #[tokio::test]
+    async fn streams_provider_responses_through_the_shared_rust_proxy() {
+        let router = Router::new().route(
+            "/v1/chat",
+            post(|| async { ([("x-runtime", "rust-proxy")], "hello worker") }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind provider fixture");
+        let address = listener.local_addr().expect("fixture address");
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, router).await;
+        });
+        let mut response = start_ai_request(ProxyAiRequestInput {
+            url: format!("http://{address}/v1/chat"),
+            method: Some("POST".to_string()),
+            headers: HashMap::from([("content-type".to_string(), "application/json".to_string())]),
+            body: Some("{}".to_string()),
+        })
+        .await
+        .expect("start provider request");
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            response.headers.get("x-runtime").map(String::as_str),
+            Some("rust-proxy")
+        );
+        let mut body = Vec::new();
+        while let Some(chunk) = response.next_chunk().await.expect("response chunk") {
+            body.extend(chunk);
+        }
+        assert_eq!(String::from_utf8(body).unwrap(), "hello worker");
+        server.abort();
     }
 }

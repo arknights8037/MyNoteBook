@@ -8,6 +8,8 @@ import type {
 } from '@/repositories/agent/AgentCommunicationRepository'
 import type { SqlClient } from '@/repositories/shared/SqlClient'
 import { parseVersionedJson } from '@/repositories/shared/jsonCodec'
+import { invoke } from '@tauri-apps/api/core'
+import { loadAppSettings } from '@/models/settings/settings'
 
 interface AgentRequestRow extends Record<string, unknown> {
   id: string
@@ -26,7 +28,6 @@ interface AgentRequestRow extends Record<string, unknown> {
   parent_conversation_id?: string | null
 }
 
-const STALE_RUNNING_REQUEST_MS = 50 * 60 * 1_000
 const AGENT_REQUEST_SELECT = `id, prompt, mode, status, task_id, previous_task_id,
   revision_feedback, revision_count, result_json, decision_json, project_id, branch_id,
   (SELECT title FROM agent_branches WHERE id = agent_requests.branch_id) AS branch_title,
@@ -40,48 +41,15 @@ export class TauriAgentCommunicationRepository implements AgentCommunicationRepo
   ) {}
 
   async claimNext(): Promise<AgentCommunicationRequest | null> {
-    const staleRunningBefore = this.now() - STALE_RUNNING_REQUEST_MS
-    const rows = await this.database.select<AgentRequestRow>(
-      `SELECT ${AGENT_REQUEST_SELECT} FROM agent_requests
-       WHERE previous_task_id IS NULL AND (status = 'queued'
-          OR (status = 'running' AND task_id IS NULL AND updated_at < ?))
-       ORDER BY created_at ASC LIMIT 1`,
-      [staleRunningBefore],
-    )
-    const row = rows[0]
-    if (!row) return null
-    const result = await this.database.execute(
-      `UPDATE agent_requests SET status = 'running', updated_at = ?
-       WHERE id = ? AND (
-         status = 'queued' OR (status = 'running' AND task_id IS NULL AND updated_at < ?)
-       )`,
-      [this.now(), row.id, staleRunningBefore],
-    )
-    if (result.rowsAffected !== 1) return null
-    return mapRequest({ ...row, status: 'running' })
+    return invoke<AgentCommunicationRequest | null>('claim_agent_request', {
+      input: { dataDirectory: loadAppSettings().dataDirectory, previousTaskId: null },
+    })
   }
 
   async claimRevisionForTask(taskId: string): Promise<AgentCommunicationRequest | null> {
-    const staleRunningBefore = this.now() - STALE_RUNNING_REQUEST_MS
-    const rows = await this.database.select<AgentRequestRow>(
-      `SELECT ${AGENT_REQUEST_SELECT} FROM agent_requests
-       WHERE previous_task_id = ? AND (
-         status = 'queued' OR (status = 'running' AND task_id IS NULL AND updated_at < ?)
-       )
-       ORDER BY updated_at ASC LIMIT 1`,
-      [taskId, staleRunningBefore],
-    )
-    const row = rows[0]
-    if (!row) return null
-    const result = await this.database.execute(
-      `UPDATE agent_requests SET status = 'running', updated_at = ?
-       WHERE id = ? AND previous_task_id = ? AND (
-         status = 'queued' OR (status = 'running' AND task_id IS NULL AND updated_at < ?)
-       )`,
-      [this.now(), row.id, taskId, staleRunningBefore],
-    )
-    if (result.rowsAffected !== 1) return null
-    return mapRequest({ ...row, status: 'running' })
+    return invoke<AgentCommunicationRequest | null>('claim_agent_request', {
+      input: { dataDirectory: loadAppSettings().dataDirectory, previousTaskId: taskId },
+    })
   }
 
   async findDecisionForTask(taskId: string): Promise<AgentCommunicationRequest | null> {
@@ -136,11 +104,17 @@ export class TauriAgentCommunicationRepository implements AgentCommunicationRepo
     completedAt: number | null,
     result: AgentCommunicationResult | null,
   ): Promise<void> {
-    await this.database.execute(
-      `UPDATE agent_requests SET status = ?, task_id = COALESCE(?, task_id), error = ?,
-       result_json = COALESCE(?, result_json), updated_at = ?, completed_at = ? WHERE id = ?`,
-      [status, taskId, error, result ? JSON.stringify(result) : null, this.now(), completedAt, id],
-    )
+    await invoke('settle_agent_request', {
+      input: {
+        dataDirectory: loadAppSettings().dataDirectory,
+        id,
+        status,
+        taskId,
+        error,
+        result,
+        completedAt,
+      },
+    })
   }
 }
 

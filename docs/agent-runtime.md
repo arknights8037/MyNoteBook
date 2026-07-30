@@ -1,10 +1,14 @@
 # Agent Runtime 与工具协议
 
-MyNoteBook 的 Agent 是受控的本地知识协作者。它可以读取许可范围内的文档、知识和外部工具结果，生成回答或结构化修改提案；它不能绕过本地权限、确认与可信写入边界。本文先记录当前生产事实；Runtime Port 与 AI SDK Adapter 已落地，Phase 2 决策保留 AI SDK，Worker 和后台执行仍见 [后续开发路线图](roadmap.md)，不能当作已实现能力。
+MyNoteBook 的 Agent 是受控的本地知识协作者。它可以读取许可范围内的文档、知识和外部工具结果，生成回答或结构化修改提案；它不能绕过本地权限、确认与可信写入边界。Runtime Port 与 AI SDK Adapter 已落地，Phase 2 决策保留 AI SDK。Phase 3 的默认生产链路运行在 Rust 托管的 AI SDK sidecar，WebView 仅保留显式兼容回归路径。
 
 ## 1. 入口与执行流程
 
-当前生产 Runtime 仍位于 Vue/WebView。`useAgentRun` 冻结输入并构造可序列化 `AgentRunRequest v1`，通过 `AgentRuntimeClient` 的 `startRun/cancelRun/steerRun/subscribeEvents` 驱动 `AiSdkAgentRuntimeAdapter`；`prepareAgentRun()` 恢复 Cognitive Session 并创建任务；`AgentRunEngine` 继续提供 UI lifecycle projection。
+当前生产 Runtime 位于 Rust 托管的 Node sidecar。`useAgentRun` 冻结交互快照，通过 `TauriAgentRuntimeAdapter` 提交、取消和转发授权回复，并把 Runtime 事件投影到现有 UI；WebView 版 `AiSdkAgentRuntimeAdapter` 仅由显式兼容配置启用。
+
+Phase 3 的生产链路为：`UI interaction snapshot -> TauriAgentRuntimeAdapter -> Rust AgentWorkerSupervisor -> NDJSON Worker Host -> SidecarRunPlanner -> AiSdkWorkerRuntime`。UI 不再组装 `AgentRunRequestV1`；SidecarRunPlanner 从冻结的文档/工作区/模型交互快照生成 Task、Context Bundle、ExecutionPolicy、Tool Manifest 和 Cognitive Output Contract，随后交给 AI SDK Runtime。Supervisor 维护 Worker 实例、heartbeat、重启计数、活动 Run 与崩溃终态，并在收到 `orchestration.prepared` 时写入 Task/Context Bundle。AI SDK Provider 请求通过自定义 `fetch` 交给 Rust 流式代理，Rust 从 Secret Store 注入凭据，因此密钥值不会进入 Node；Rust 同时写工具审计并执行全部内置 Domain Tool/MCP。Mind Map 读取使用 canonical SQLite，自动化、Skill 与 MCP 写入只生成停用草稿，文档修改仍只形成待 Diff 审阅的 Patch 提案。Composition 默认使用该链路，`VITE_AGENT_RUNTIME_OWNER=webview` 仅保留给兼容回归。
+
+标准 Agent/Create/Plan Run 在侧车中将模型输出编译为可审计的 proposal projection；Rust 在转发 `run.result` 前原子写入 Patch、来源和任务状态，随后 Vue 只投影已持久化结果到既有 Diff 审阅 UI。Rust 还在提交前枚举 MCP 工具并冻结 trusted/read 授权矩阵。Rust snapshot 额外保存活动 Run 的脱敏身份投影、待授权请求和待领取终态投影。Cognitive 与 A2A 的跨窗口业务投影属于后续 Workflow/数据库所有权阶段，不属于 Runtime 进程迁移承诺。
 
 ```text
 用户输入 / Slash Command
@@ -190,7 +194,7 @@ Agent 任务按项目组管理。左侧采用项目文件夹树，项目下直�
 
 当前身份模型尚未收敛：`AgentTask.id`、通用 `task_runs.id`、前端临时 run ID 和 Provider tool-call ID 分属不同层，部分 Agent 调用还把 document ID 复用于 `sessionId`。因此目前不存在贯穿 Workflow、Run、Turn 和 Tool Call 的稳定 ID 契约。路线图将分别引入 `work_item_id`、`workflow_id`、`run_id`、`turn_id`、`tool_call_id` 和可选 `provider_tool_call_id`；`session_id` 只表示对话或认知连续性。
 
-项目还提供本地 Agent 请求通信队列。持有 capability token 的调用方先通过 stdio MCP 读取项目、资料根、任务和 A2A 分支目录，再可在指定项目下创建稳定分支，并把任务路由到 `project_id` / `branch_id`。桌面应用轮询后会在该项目资料范围内运行现有 `useAgentRun`；同一分支复用同一条持久化任务记录，父分支关系随历史快照保存。未提供路由参数的旧调用继续作为未分组独立任务处理。请求保存 `request_mode`、路由和版本化 decision envelope；批准、拒绝与修订都返回 action、reply、request/task、结果摘要和时间等可审计信息。跨文档写入只对本次运行已成功读取且 revision 未变化的文档开放，最终结果仍是待审阅 Patch。MCP 的提交动作不会批准或应用修改；查询 Patch 后必须另行批准或拒绝，应用仍走同一 Rust transaction。
+项目还提供本地 Agent 请求通信队列。持有 capability token 的调用方先通过 stdio MCP 读取项目、资料根、任务和 A2A 分支目录，再可在指定项目下创建稳定分支，并把任务路由到 `project_id` / `branch_id`。Rust watcher 发现队列变化后通知桌面应用；请求领取由 Rust transaction 原子完成，awaiting-review/completed/failed 结算也只通过 Rust command 写入。当前仍由窗口内 Workflow 触发对应 `useAgentRun`，因此尚不承诺无窗口自动调度。同一分支复用同一条持久化任务记录，父分支关系随历史快照保存。未提供路由参数的旧调用继续作为未分组独立任务处理。请求保存 `request_mode`、路由和版本化 decision envelope；批准、拒绝与修订都返回 action、reply、request/task、结果摘要和时间等可审计信息。跨文档写入只对本次运行已成功读取且 revision 未变化的文档开放，最终结果仍是待审阅 Patch。MCP 的提交动作不会批准或应用修改；查询 Patch 后必须另行批准或拒绝，应用仍走同一 Rust transaction。
 
 ## 9. Patch、确认与撤销
 
@@ -255,7 +259,7 @@ Run lifecycle、Plan snapshot、运行级事件和 Step/tool timeline 会绑定�
 - `/learn` 已绑定 Learning Mode、`learning-turn` v1 contract 与多轮 Cognitive Session。首次解释题由本地状态机生成且不请求 Provider；后续普通回复按 conversation 恢复 `waiting_user` session，将用户回复保存为 Attempt 后再更新理解状态、提示层级和下一问题。Learning 运行没有文档或正式知识写权限，临时候选理解记录只保存在结果消息中。
 - 自动化有定义和运行队列，但没有后台无人值守模型调度器。
 - 普通 Agent Run 没有 durable checkpoint/resume；应用重启后不能从中间 tool step 恢复。Learning Session 的跨 run 继续和待确认 Patch 的恢复不等同于恢复同一个 Run。
-- Runtime、授权等待和 A2A polling 仍由 Vue/WebView 生命周期承载；窗口或应用退出会终止当前执行。
+- 默认 Runtime 的任务规划、模型循环、工具调度和标准 Patch 终态编译均由 Rust 托管 sidecar 承载；Vue 负责用户交互、事件投影和 Diff 审阅。Cognitive Session CRUD、A2A 原子领取和请求结算已经迁入 Rust；A2A 自动调度、审批/修订 Workflow 与 Cognitive 最终业务投影仍待迁入 Rust/sidecar，窗口缺席期间不承诺立即完成这些流程。
 - 当前已有独立 `run_id` 贯穿 Runtime 请求、`agent_tasks`、Context Bundle 和 Tool Call；`task_runs.id` 仍保留历史治理语义，完整轨迹重放和 durable checkpoint 尚未实现。
 - MCP Prompts、Roots、Sampling、OAuth、旧 SSE 和跨任务长连接尚未开放。
 - 真实 DeepSeek Provider、stdio/Streamable HTTP MCP、真实 CLI 外部进程和隔离数据恢复已通过 G0 smoke；Windows 干净安装包仍属于发布流程检查。

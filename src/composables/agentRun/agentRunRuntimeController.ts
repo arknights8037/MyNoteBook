@@ -61,6 +61,36 @@ export function createAgentRunRuntimeController(createId: () => string) {
     runtimeState.value.detail = detail
   }
 
+  function restoreActive(input: {
+    runId: string
+    goal: string
+    detail: string
+    authorizationRequest?: AgentAuthorizationRequest | null
+  }): void {
+    start({ runId: input.runId, goal: input.goal, detail: input.detail })
+    beginExecution(input.detail)
+    if (!input.authorizationRequest) return
+    const request = input.authorizationRequest
+    engine.dispatch({
+      type: 'REQUEST_APPROVAL',
+      approvalId: request.id,
+      stepId: lifecycleState.value.currentStepId,
+      question: request.question,
+    })
+    runtimeState.value.phase = 'waiting_authorizer'
+    runtimeState.value.detail = '等待授权人回答'
+    runtimeState.value.authorizationRequest = { ...request, options: [...request.options] }
+  }
+
+  function settleRestoredAuthorization(requestId: string): boolean {
+    if (runtimeState.value.authorizationRequest?.id !== requestId) return false
+    engine.dispatch({ type: 'GRANT_APPROVAL', approvalId: requestId })
+    runtimeState.value.phase = 'tool_running'
+    runtimeState.value.detail = '已收到授权人回答，继续执行'
+    runtimeState.value.authorizationRequest = null
+    return true
+  }
+
   function waitForAuthorizerInput(
     request: Omit<AgentAuthorizationRequest, 'id'> & { id?: string },
     task: AgentTask,
@@ -278,6 +308,8 @@ export function createAgentRunRuntimeController(createId: () => string) {
     runEvents,
     start,
     beginExecution,
+    restoreActive,
+    settleRestoredAuthorization,
     waitForAuthorizerInput,
     answerAuthorization,
     cancelPendingAuthorization,

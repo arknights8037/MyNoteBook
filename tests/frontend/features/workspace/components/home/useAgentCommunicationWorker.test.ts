@@ -2,7 +2,10 @@ import { ref } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AgentTask } from '@/models/agent/agent'
-import type { AgentCommunicationRequest, AgentCommunicationService } from '@/services/agent/AgentCommunicationService'
+import type {
+  AgentCommunicationRequest,
+  AgentCommunicationService,
+} from '@/services/agent/AgentCommunicationService'
 import { useAgentCommunicationWorker } from '@/features/workspace/components/home/useAgentCommunicationWorker'
 
 describe('useAgentCommunicationWorker', () => {
@@ -51,11 +54,53 @@ describe('useAgentCommunicationWorker', () => {
       acceptAllPatches,
       rejectPatches: vi.fn(async () => undefined),
       notifyError: vi.fn(),
+      createId: () => 'id-1',
     })
 
     await worker.poll()
 
     expect(acceptAllPatches).toHaveBeenCalledOnce()
     expect(markCompleted).toHaveBeenCalledWith('request-1', 'task-1')
+  })
+
+  it('uses the Rust queue watcher instead of a WebView interval', async () => {
+    const claimNext = vi.fn(async () => null)
+    const service = {
+      listRecentCompleted: vi.fn(async () => []),
+      claimNext,
+    } as unknown as AgentCommunicationService
+    let wake: (() => void) | null = null
+    const unlisten = vi.fn()
+    const watchQueue = vi.fn(async (listener: () => void) => {
+      wake = listener
+      return unlisten
+    })
+    const worker = useAgentCommunicationWorker({
+      getService: async () => service,
+      agentRun: {} as Parameters<typeof useAgentCommunicationWorker>[0]['agentRun'],
+      conversation: {
+        migrateLeakedTask: vi.fn(),
+      } as unknown as Parameters<typeof useAgentCommunicationWorker>[0]['conversation'],
+      aiIsRunning: ref(false),
+      isApplyingPatches: ref(false),
+      pendingTask: ref(null),
+      pendingPatchSet: ref(null),
+      showPatchModal: ref(false),
+      aiError: ref(''),
+      createDocumentSnapshot: vi.fn(),
+      acceptAllPatches: vi.fn(async () => undefined),
+      rejectPatches: vi.fn(async () => undefined),
+      notifyError: vi.fn(),
+      createId: () => 'id-1',
+      watchQueue,
+    })
+
+    worker.start()
+    await vi.waitFor(() => expect(watchQueue).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(claimNext).toHaveBeenCalledOnce())
+    wake?.()
+    await vi.waitFor(() => expect(claimNext).toHaveBeenCalledTimes(2))
+    worker.stop()
+    expect(unlisten).toHaveBeenCalledOnce()
   })
 })

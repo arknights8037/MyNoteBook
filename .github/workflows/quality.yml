@@ -44,6 +44,13 @@ jobs:
       - name: Unit tests
         run: pnpm test:run
 
+      - name: Agent Worker contract tests
+        run: |
+          pnpm --filter @mynotebook/agent-runtime-worker typecheck
+          pnpm --filter @mynotebook/agent-runtime-worker test
+          pnpm --filter @mynotebook/agent-runtime-worker build
+          pnpm --filter @mynotebook/agent-runtime-worker build:sidecar
+
       - name: Build web assets
         run: pnpm build
 
@@ -63,6 +70,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+
+      - name: Prepare sidecar placeholder for Rust checks
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
+          New-Item -ItemType File -Force src-tauri/binaries/agent-runtime-worker-x86_64-pc-windows-msvc.exe | Out-Null
 
       - name: Check formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check

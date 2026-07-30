@@ -22,9 +22,9 @@
 
 当前真正限制异步任务、自动化和外部事件发展的不是 Agent 工具不足，而是：
 
-> Agent Runtime、业务编排、授权等待和 A2A 轮询仍运行在 Vue/WebView 生命周期中。
+> 默认 Agent 的任务规划、模型循环、工具调度和标准 Patch 终态编译已位于 Rust 托管 sidecar；Vue 只提交冻结交互快照并投影事件/审阅 UI。Cognitive 与 A2A 的剩余 Workflow 状态机仍是后续迁移重点。
 
-`useAgentRun.ts` 目前已通过 Runtime Client/Port 驱动 AI SDK Adapter，但仍连接 UI 状态、模式分发、Context、MCP、Skill、授权和终态持久化；A2A worker 使用 Vue `setInterval`。窗口/应用退出后普通 Agent Run 不能继续，也不能从 tool step checkpoint 恢复。后续不得继续围绕这条前端热路径叠加邮件、IM、定时器或长期 Workflow。
+`useAgentRun.ts` 通过 Runtime Client/Port 提交冻结交互快照并投影运行、授权和 Diff 审阅状态；它不再为标准 Agent 组装 Runtime request、解析模型 Patch 或写入任务/Patch 终态。A2A 队列由 Rust watcher 轮询并向窗口发送变化事件，Vue 不再持有该 `setInterval`。窗口/应用退出后 sidecar Run 可以继续执行；Cognitive/A2A 的无窗口终态持久化仍未完成。后续不得继续围绕前端热路径叠加邮件、IM、定时器或长期 Workflow。
 
 ## 2. 当前边界与目标边界
 
@@ -208,6 +208,23 @@ AgentRunRequest
 - 不同时迁移 Ask/Edit/Agent/Research/Review/Learning，不让 PI 直接写 Patch 或数据库。
 
 ## 7. Phase 3：Runtime 移出 WebView
+
+### 实施状态（已完成）
+
+默认生产 Runtime 已切换到可运行的 sidecar 纵向链路：
+
+- 共享 contracts 已冻结 Worker v1 envelope，覆盖实例身份、Run、Tool、工具审计、凭据解析、Authorization、heartbeat 和 shutdown。
+- `@mynotebook/agent-runtime-worker` 已提供 Node Worker Host、真实 `AiSdkWorkerRuntime` 与 `SidecarRunPlanner`；前端只提交冻结的交互快照，Task、Context Bundle、ExecutionPolicy、Tool Manifest、Cognitive Output Contract 与 AI SDK 模型循环均在 sidecar 生成/执行。Rust 在发送给 sidecar 前枚举 MCP 目录并冻结授权矩阵，WebView 不再管理生产 Runtime 的 MCP 生命周期。
+- Rust `AgentWorkerSupervisor` 已提供自包含 Worker 路径解析、stdin/stdout NDJSON、实例校验、heartbeat 超时、受控重启、活动 Run 跟踪、崩溃 `interrupted` 终态、Tauri commands 和窗口重建状态快照。Snapshot 只暴露 Run/work item/session/objective 等投影与待授权请求，不泄露 compiled context；新窗口会重建运行/等待视图并继续转发取消或授权。
+- 标准 Agent/Create/Plan Run 在 sidecar 内编译 proposal projection，Rust 会在 `run.result` 前原子写入 Patch、来源和任务状态；Vue 仅投影持久化后的结果到既有 Diff 审阅 UI。Cognitive/A2A Run 仍保留不含凭据的恢复上下文，窗口重建后复用既有持久化路径完成投影。
+- Rust dispatcher 已接管 Provider 网络与凭据注入、工具审计、全部 25 个内置工具和 MCP 调用：AI SDK 的自定义 `fetch` 通过 NDJSON 把请求交给 Rust `reqwest`，响应分片流回 Worker，取消会终止 Rust future；文档、检索、Mind Map、Skill 读取、本机检查走受控读取；自动化、Skill 和 MCP 资源只创建停用草稿；文档写工具仍由 Worker 捕获为 Patch 提案。Node 不访问 SQLite、MCP 配置或密钥值。
+- Node SEA + esbuild 构建可生成按 Tauri target-triple 命名的自包含 sidecar，构建时会执行真实进程协议 smoke；`externalBin` 桌面构建已通过，不要求最终用户安装 Node。
+- composition 默认选择 `rust_worker`；只有显式设置 `VITE_AGENT_RUNTIME_OWNER=webview` 才启用兼容路径。Ask/Edit 的 Markdown completion 路径保持不变。
+- A2A 队列检查已迁入 Rust watcher；WebView 只订阅 `agent-communication://queue-changed` 并触发现有受控执行，不再运行轮询定时器。
+
+Phase 3 的退出条件已经满足。真实 Provider/Tauri 凭据 smoke、A2A 队列决策、Cognitive 最终投影、无窗口业务终态持久化和删除 WebView compatibility path 分别进入 Phase 4/5 的数据库所有权与 Workflow 迁移，不应再阻塞 Runtime 进程边界验收。
+
+Phase 4 的数据库所有权收敛已开始：Cognitive Session 的 create/get/list/update，以及 A2A 请求的原子领取和 awaiting-review/completed/failed 结算，均已迁至 Rust command；现有 WebView repositories 不再拥有这些路径的 SQL 写入口。A2A 自动调度、审批/修订 Workflow 与无窗口终态处理仍未完成。
 
 ### 目标
 

@@ -168,8 +168,10 @@ export async function prepareAgentRun(input: {
         10,
       )
     }
-    const persistenceError = await createPersistedAgentTask(editPlan.task, options)
-    if (persistenceError) return { ok: false, error: persistenceError }
+    if (options.services?.runtimeOwner !== 'rust_worker') {
+      const persistenceError = await createPersistedAgentTask(editPlan.task, options)
+      if (persistenceError) return { ok: false, error: persistenceError }
+    }
   }
 
   return {

@@ -169,6 +169,91 @@ pub fn import_mcp_config_text(
     import_mcp_source(&input.data_directory, &input.content)
 }
 
+pub(crate) fn create_mcp_server_draft(
+    data_directory: &str,
+    name: &str,
+    transport: &str,
+    command: Option<String>,
+    args: Vec<String>,
+    cwd: Option<String>,
+    url: Option<String>,
+) -> Result<Value, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("MCP 服务名称不能为空。".to_string());
+    }
+    let mut store = load_store(data_directory)?;
+    let mut used = store
+        .servers
+        .iter()
+        .map(|server| server.id.clone())
+        .collect::<HashSet<_>>();
+    let id = unique_id(normalize_id(name), &mut used);
+    let server = match transport {
+        "stdio" => {
+            let command = command
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "stdio MCP 必须提供启动命令。".to_string())?;
+            McpServerConfig {
+                id: id.clone(),
+                name: name.to_string(),
+                transport: "stdio".to_string(),
+                enabled: false,
+                trusted: false,
+                command: Some(command),
+                args,
+                env: HashMap::new(),
+                cwd: cwd
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
+                url: None,
+                headers: HashMap::new(),
+            }
+        }
+        "http" => {
+            let url = url
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "HTTP MCP 必须提供 URL。".to_string())?;
+            let parsed =
+                reqwest::Url::parse(&url).map_err(|_| "HTTP MCP URL 无效。".to_string())?;
+            if !matches!(parsed.scheme(), "http" | "https")
+                || !parsed.username().is_empty()
+                || parsed.password().is_some()
+            {
+                return Err("HTTP MCP URL 只支持不含凭据的 http 或 https 地址。".to_string());
+            }
+            McpServerConfig {
+                id: id.clone(),
+                name: name.to_string(),
+                transport: "http".to_string(),
+                enabled: false,
+                trusted: false,
+                command: None,
+                args: Vec::new(),
+                env: HashMap::new(),
+                cwd: None,
+                url: Some(url),
+                headers: HashMap::new(),
+            }
+        }
+        _ => return Err("MCP transport 必须是 stdio 或 http。".to_string()),
+    };
+    store.servers.push(server);
+    store
+        .servers
+        .sort_by(|left, right| left.name.cmp(&right.name));
+    save_store(data_directory, &store)?;
+    Ok(serde_json::json!({
+        "created": true,
+        "id": id,
+        "name": name,
+        "enabled": false,
+        "trusted": false
+    }))
+}
+
 fn import_mcp_source(data_directory: &str, source: &str) -> Result<Vec<McpServerConfig>, String> {
     let value: Value =
         serde_json::from_str(source).map_err(|error| format!("MCP 配置不是有效 JSON：{error}"))?;
@@ -842,6 +927,61 @@ mod tests {
         assert_eq!(servers[0].name, "local");
         assert_eq!(servers[0].command.as_deref(), Some("node"));
         assert!(directory.join(CONFIG_FILE).exists());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn creates_disabled_untrusted_mcp_drafts_with_unique_ids() {
+        let directory = std::env::temp_dir().join(format!(
+            "mynotebook-mcp-draft-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let data_directory = directory.to_string_lossy();
+        let first = create_mcp_server_draft(
+            &data_directory,
+            "Local Tools",
+            "stdio",
+            Some("node".to_string()),
+            vec!["server.mjs".to_string()],
+            None,
+            None,
+        )
+        .expect("first draft");
+        let second = create_mcp_server_draft(
+            &data_directory,
+            "Local Tools",
+            "http",
+            None,
+            Vec::new(),
+            None,
+            Some("https://example.com/mcp".to_string()),
+        )
+        .expect("second draft");
+        assert_eq!(first.get("id").and_then(Value::as_str), Some("local-tools"));
+        assert_eq!(
+            second.get("id").and_then(Value::as_str),
+            Some("local-tools-2")
+        );
+        let store = load_store(&data_directory).expect("load draft store");
+        assert_eq!(store.servers.len(), 2);
+        assert!(store
+            .servers
+            .iter()
+            .all(|server| !server.enabled && !server.trusted));
+        assert!(create_mcp_server_draft(
+            &data_directory,
+            "Unsafe",
+            "http",
+            None,
+            Vec::new(),
+            None,
+            Some("https://user:secret@example.com/mcp".to_string()),
+        )
+        .is_err());
         let _ = fs::remove_dir_all(directory);
     }
 

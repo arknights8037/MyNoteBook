@@ -155,6 +155,81 @@ export interface AgentRunRequestV1 {
   causationId: string | null
 }
 
+/**
+ * UI-to-sidecar launch input. It deliberately contains user-visible state and
+ * model configuration only; the sidecar derives the task, Context Bundle,
+ * policy snapshot and Runtime request without receiving credentials.
+ */
+export interface AgentSidecarSubmissionV1 {
+  version: 1
+  runId: string
+  workItemId: string
+  workflowId?: string
+  sessionId: string
+  document: {
+    id: string
+    title: string
+    tags: string[]
+    sourceUrl: string
+    author: string
+    text: string
+    markdown: string
+    revision: number | null
+    blocks: Array<{
+      id: string
+      type: string
+      text: string
+      markdown?: string
+      index: number
+    }>
+    selectedBlockIds: string[]
+    documents: Array<{
+      id: string
+      title: string
+      documentKind: 'article' | 'group'
+      isDeleted: boolean
+      parentId?: string | null
+    }>
+  }
+  workspace: {
+    projectId: string
+    projectName: string
+    rootDocumentIds: string[]
+    conversationId: string
+  }
+  objective: string
+  intent: AgentRunIntent
+  systemInstructions: string
+  skillInstructions?: string
+  modelPolicy: AgentModelPolicy
+  configuredMaxTokens: number
+  externalTools: Array<{
+    serverId: string
+    serverName: string
+    name: string
+    runtimeName: string
+    description: string
+    inputSchema: Record<string, unknown>
+    readOnly: boolean
+    serverTrusted: boolean
+    executionAuthorization: 'not_required' | 'required'
+    mutationApproval: 'not_required' | 'required'
+    externalActionApproval: 'not_required' | 'required'
+    maxCallsPerRun: number
+    tags: AgentToolTag[]
+    presentation: DomainToolManifestEntry['presentation']
+  }>
+  explicitTargets: Array<{
+    id: string
+    kind: 'document' | 'knowledge_asset'
+    title: string
+    revision?: number | null
+    content?: string
+  }>
+  correlationId: string
+  causationId: string | null
+}
+
 export interface AgentRuntimeUsage {
   inputTokens?: number
   outputTokens?: number
@@ -186,6 +261,52 @@ export interface AgentRunResult {
   toolCalls: AgentToolCall[]
   finishReason?: string
   usage?: AgentRuntimeUsage
+  /** Sidecar-owned terminal projection. It contains proposals only, never applied changes. */
+  sidecarFinalization?: AgentSidecarFinalizationV1
+}
+
+export interface AgentSidecarPatchDraft {
+  patchId: string
+  taskId: string
+  operation:
+    | 'replace'
+    | 'insert_before'
+    | 'insert_after'
+    | 'append'
+    | 'create_document'
+    | 'create_group'
+  documentId: string
+  blockId: string
+  targetBlockIds: string[]
+  expectedVersion: number
+  before: string
+  after: string
+  reason: string
+  documentTitle?: string
+  parentDocumentId?: string | null
+}
+
+/** Serializable result of the sidecar's terminal proposal compiler. */
+export interface AgentSidecarFinalizationV1 {
+  version: 1
+  taskId: string
+  runId: string
+  outcome: 'proposal' | 'no_change' | 'blocked'
+  summary: string
+  taskStatus: 'waiting_confirmation' | 'completed'
+  currentStep: string
+  completedAt: number | null
+  patches: AgentSidecarPatchDraft[]
+  sources: Array<{ documentId: string; documentTitle: string; blockIds: string[] }>
+  report: {
+    version: 1
+    outcome: 'proposal' | 'no_change' | 'blocked'
+    summary: string
+    patchCount: number
+    targetDocumentIds: string[]
+    finishReason?: string
+    usage?: AgentRuntimeUsage
+  }
 }
 
 export interface AgentRuntimeEvent<TPayload = Record<string, unknown>> {
@@ -224,3 +345,256 @@ export class AgentRuntimeContractError extends Error {
     this.name = 'AgentRuntimeContractError'
   }
 }
+
+export const AGENT_WORKER_PROTOCOL_VERSION = 1 as const
+
+export interface AgentWorkerIdentity {
+  protocolVersion: typeof AGENT_WORKER_PROTOCOL_VERSION
+  workerInstanceId: string
+  pid: number
+  runtime: 'ai-sdk'
+  runtimeVersion: string
+}
+
+export interface AgentWorkerToolInvocation {
+  requestId: string
+  runId: string
+  turnId: string | null
+  internalToolCallId: string
+  providerToolCallId: string | null
+  toolName: string
+  arguments: Record<string, unknown>
+  source: DomainToolManifestEntry['source']
+}
+
+export interface AgentWorkerToolResult {
+  ok: boolean
+  value?: unknown
+  error?: string
+  errorCode?: string
+  retryable?: boolean
+  retryAfterMs?: number
+  isError?: boolean
+}
+
+export interface AgentWorkerAuthorizationRequest {
+  authorizationId: string
+  runId: string
+  question: string
+  context: string
+  options: string[]
+  allowFreeText: boolean
+}
+
+export interface AgentWorkerProviderRequest {
+  requestId: string
+  runId: string
+  url: string
+  method: string
+  headers: Record<string, string>
+  body?: string
+}
+
+export interface AgentWorkerError {
+  code:
+    | AgentRuntimeContractError['code']
+    | 'worker_protocol_error'
+    | 'worker_unavailable'
+    | 'runtime_error'
+  message: string
+  retryable: boolean
+}
+
+export type AgentWorkerHostMessage =
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'runtime.hello'
+      supervisorInstanceId: string
+      protocolVersion: typeof AGENT_WORKER_PROTOCOL_VERSION
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.start'
+      requestId: string
+      request: AgentRunRequestV1
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'orchestration.start'
+      requestId: string
+      submission: AgentSidecarSubmissionV1
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.cancel'
+      requestId: string
+      runId: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.steer'
+      requestId: string
+      runId: string
+      input: AgentRunSteerInput
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'tool.result'
+      requestId: string
+      result: AgentWorkerToolResult
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'authorization.result'
+      requestId: string
+      authorizationId: string
+      answer: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'tool.recorded'
+      requestId: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'provider.response.started'
+      requestId: string
+      status: number
+      headers: Record<string, string>
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'provider.response.chunk'
+      requestId: string
+      bodyBase64: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'provider.response.completed'
+      requestId: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'provider.response.failed'
+      requestId: string
+      error: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'shutdown'
+      reason: string
+    }
+
+export type AgentWorkerMessage =
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'runtime.hello'
+      identity: AgentWorkerIdentity
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.event'
+      event: AgentRuntimeEvent
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'orchestration.prepared'
+      requestId: string
+      task: {
+        id: string
+        runId: string
+        workflowId: string | null
+        sessionId: string
+        documentId: string
+        projectId: string
+        conversationId: string
+        status: string
+        userInstruction: string
+        contextScope: string
+        model: string
+        currentStep: string
+        createdAt: number
+        correlationId: string
+        causationId: string | null
+        executionPolicy: ExecutionPolicy
+        contextBundleId: string | null
+        provider: AiProvider
+      }
+      request: AgentRunRequestV1
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'orchestration.completed'
+      requestId: string
+      finalization: AgentSidecarFinalizationV1
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.result'
+      requestId: string
+      result: AgentRunResult
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.error'
+      requestId: string
+      runId: string
+      error: AgentWorkerError
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.cancelled'
+      requestId: string
+      runId: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'run.steered'
+      requestId: string
+      runId: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'tool.invoke'
+      request: AgentWorkerToolInvocation
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'tool.cancel'
+      internalToolCallId: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'tool.record'
+      requestId: string
+      call: AgentToolCall
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'authorization.request'
+      requestId: string
+      request: AgentWorkerAuthorizationRequest
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'provider.request'
+      request: AgentWorkerProviderRequest
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'provider.cancel'
+      requestId: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'heartbeat'
+      workerInstanceId: string
+      activeRunIds: string[]
+      occurredAt: number
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'shutdown'
+      workerInstanceId: string
+      reason: string
+    }

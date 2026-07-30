@@ -10,6 +10,7 @@ exports
 
 src-tauri/target
 src-tauri/gen/schemas
+src-tauri/binaries/agent-runtime-worker-*
 
 .DS_Store
 Thumbs.db

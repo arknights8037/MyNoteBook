@@ -20,10 +20,10 @@ use crate::document_core::validate_and_project_tiptap;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExecuteRigToolInput {
-    data_directory: Option<String>,
-    call_id: Option<String>,
-    name: String,
-    arguments_json: String,
+    pub(crate) data_directory: Option<String>,
+    pub(crate) call_id: Option<String>,
+    pub(crate) name: String,
+    pub(crate) arguments_json: String,
 }
 
 #[derive(Debug)]

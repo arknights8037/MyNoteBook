@@ -68,6 +68,6 @@ Node 不导入数据库实现，不连接 SQLite。读取工具和 MCP 经 `PiTo
 ## 后续约束
 
 - Phase 3 Worker 先承载 AI SDK Adapter；不得把 PI prototype 直接路由到生产模式。
-- PI package 不进入 Tauri bundle，不要求最终用户安装 Node；自包含 Worker 打包由 Phase 3 验收。
+- PI package 不进入 Tauri bundle。Phase 3 的 AI SDK Worker 已能通过 Node SEA 形成自包含 Tauri sidecar；最终用户不需要安装 Node。
 - 若未来重新开启 PI 切换，必须补齐真实 Provider/Tauri proxy smoke、授权等待、structured-output repair、数值并行上限和安装升级测试，再重新做显式决策。
 - Rust Core、Domain Tool、MCP、Skill、审批、Patch 和 SQLite 所有权不因本决策变化。

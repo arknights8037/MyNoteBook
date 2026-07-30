@@ -6,7 +6,7 @@
 
 MyNoteBook 的产品类别是本地优先的 AI 桌面工作中枢。它通过收集、理解、组织、委派、表达和沉淀的持续循环，为知识工作保留可继续的上下文。当前技术实现由 Vue 3 + Tiptap 前端、Tauri/Rust 桌面壳和 SQLite 本地存储组成，是单机桌面应用，不是 React 应用，也不是由多个服务组成的分布式系统。
 
-当前生产 Agent Runtime 仍由 Vue/WebView 生命周期托管，但 `useAgentRun` 只通过 `AgentRuntimeClient` 和 Runtime Port 驱动 `AiSdkAgentRuntimeAdapter`；Adapter 内部继续使用 AI SDK `ToolLoopAgent`。TypeScript repositories 通过 `plugin-sql` 与 Rust SQLx 共同访问同一个 SQLite。项目目前没有 Node Worker、后台 sidecar、托盘常驻或 daemon。这些能力只属于路线图中的既定方向或决策门。
+生产 Agent Runtime 使用真实 AI SDK Node sidecar、Rust Supervisor/dispatcher、Tauri Runtime Adapter 和自包含 SEA `externalBin`。`useAgentRun` 仅冻结交互输入、订阅事件、授权/取消与 UI projection；它不再为 sidecar 路径组装 Task、Context Bundle、ExecutionPolicy、Tool Manifest 或 `AgentRunRequestV1`。TypeScript repositories 通过 `plugin-sql` 与 Rust SQLx 共同访问同一个 SQLite，项目仍没有托盘常驻或 daemon。
 
 产品愿景不能改变当前事实边界：尚未实现的信息来源、后台能力和外部应用接入必须明确标记为未来方向；Agent、View 和模型输出不能被宣传或实现为绕过用户判断的第二事实源。
 
@@ -59,7 +59,7 @@ Vue/Tiptap 编辑状态
 
 模型流式输出、工具结果和 MCP 返回值都不能直接成为文档写入。完整协议见 [Agent Runtime](agent-runtime.md)。
 
-这条链路当前由 `useAgentRun` 所在的 WebView 生命周期拥有。将 Runtime 移出 WebView 是目标方向，不是已经完成的架构事实。
+默认链路由 Rust 托管 sidecar 拥有：`useAgentRun` 提交冻结交互快照并投影运行事件，sidecar 规划 Task/Context/Policy/Manifest、运行模型循环并编译标准 Agent 的终态 proposal；Rust 持久化 proposal 后才转发终态。WebView Runtime 仅由显式兼容配置启用。
 
 ### Knowledge、Work 与 View
 
@@ -87,6 +87,7 @@ Knowledge Object 可锚定 document/block/revision。Context Compiler 已读取�
 - `agent_repository.rs`：Agent task、Context Bundle、Patch、事务与审计持久化。
 - `agent_tools.rs`：数据库工具、只读命令和 Rust 线性时间正则执行。
 - `agent_cancellation.rs`：按 tool call ID 取消正在运行的原生或 MCP future。
+- `agent_worker_supervisor.rs`：Phase 3 Worker 子进程身份、NDJSON 通道、heartbeat、重启、活动/待授权/待领取终态的脱敏快照、标准 proposal 的原子持久化、崩溃终态、Provider 流式代理，以及全部内置 Domain Tool/MCP 的受控分发；默认生产 Agent 由它监督。
 - `ai_models.rs` / `ai_proxy.rs`：Provider 模型列表、请求代理、流式响应和敏感信息边界。
 - `work.rs`：TaskRun、Verifier、ChangeSet 和 Approval 的原子状态变更。
 - `views.rs`：View snapshot/dependency 发布及 override 保护。
@@ -113,6 +114,7 @@ Rust command 应立即委托给对应模块。数据库访问必须复用 `datab
 - `src/composables`：Vue 生命周期和跨组件响应式工作流。
 - `src/services`：应用用例与框架无关的领域编排。
 - `src/repositories`：持久化端口；`src/infrastructure` 提供 Tauri/SQLite 实现。
+- `src/infrastructure/runtime`：Rust-owned Worker 的 Tauri Runtime Port 适配；当前只作为 Phase 3 非生产基础存在。
 - `src/models`：领域类型、版本化协议、默认值和纯校验。
 - `src/editor`：Tiptap/ProseMirror 集成和编辑器纯算法。
 - `src/ui`：不包含产品工作流的通用展示原语。
@@ -175,7 +177,8 @@ Rust command 应立即委托给对应模块。数据库访问必须复用 `datab
 - Tool Tags 已在运行前编译成 `ExecutionPolicy.allowedTools`，Runtime 热路径仍只检查稳定工具名；Mode/Template/Skill 不能扩大基础策略。
 - Knowledge Object 已扩展研究候选所需类型、正文、结构化数据、认知 provenance、多来源、Validation 和 rejected 状态；候选 UI 会在接受前重新验证来源 revision 和稳定 block，并只将显式接受项转为 `approved`。
 - Run lifecycle、Plan、运行级事件和 tool timeline 已绑定 assistant 消息并持久化；规范工具审计仍保存在独立数据库表中。
-- Agent Runtime、授权等待和 A2A polling 仍依附 Vue/WebView；普通 Agent Run 没有 durable checkpoint/resume，窗口退出后不能从中间 tool step 接管。
+- 默认 Agent Runtime 的规划、模型循环、工具调度、MCP manifest 枚举与标准 Patch proposal 编译已移入 sidecar/Rust；Rust 会先持久化这些 proposal，再允许 Vue 显示 Diff。授权 UI 仍由 Vue 投影。A2A 与 Cognitive 的跨窗口业务状态机属于后续 Workflow/数据库所有权迁移；普通 Run 仍没有 durable checkpoint/resume。
+- Cognitive Session 的 create/get/list/update 已通过 Rust command 访问 SQLite；A2A 请求的领取使用 Rust 事务进行条件更新，终态结算也由 Rust command 写入。对应 WebView repositories 只保留类型化 command 适配和查询投影，不再直接执行这些写入 SQL。
 - 新 Agent 任务分别保存 `AgentTask.id`（迁移期 work item）、独立 `run_id`、可空 `workflow_id`、conversation/cognitive `session_id` 和 `document_id`；历史记录使用确定性 `legacy-run-*` 映射，`task_runs.id` 保留原有治理语义。
 - `tokenBudget` 当前主要约束单次输出参数，没有基于累计 input/output usage、成本、模型轮次和并行工具数的统一预算器。
 - Rust SQLx 与 TypeScript `plugin-sql` 仍是双数据库访问路径；Rust 成为唯一写入者是既定迁移方向，不是当前事实。
