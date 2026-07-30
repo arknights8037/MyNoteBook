@@ -25,6 +25,7 @@ run(
     '--platform=node',
     '--format=cjs',
     '--target=node22',
+    '--tsconfig=../../tsconfig.app.json',
     `--outfile=${bundle}`,
   ],
   packageRoot,

@@ -155,6 +155,81 @@ export interface AgentRunRequestV1 {
   causationId: string | null
 }
 
+/**
+ * UI-to-sidecar launch input. It deliberately contains user-visible state and
+ * model configuration only; the sidecar derives the task, Context Bundle,
+ * policy snapshot and Runtime request without receiving credentials.
+ */
+export interface AgentSidecarSubmissionV1 {
+  version: 1
+  runId: string
+  workItemId: string
+  workflowId?: string
+  sessionId: string
+  document: {
+    id: string
+    title: string
+    tags: string[]
+    sourceUrl: string
+    author: string
+    text: string
+    markdown: string
+    revision: number | null
+    blocks: Array<{
+      id: string
+      type: string
+      text: string
+      markdown?: string
+      index: number
+    }>
+    selectedBlockIds: string[]
+    documents: Array<{
+      id: string
+      title: string
+      documentKind: 'article' | 'group'
+      isDeleted: boolean
+      parentId?: string | null
+    }>
+  }
+  workspace: {
+    projectId: string
+    projectName: string
+    rootDocumentIds: string[]
+    conversationId: string
+  }
+  objective: string
+  intent: AgentRunIntent
+  systemInstructions: string
+  skillInstructions?: string
+  modelPolicy: AgentModelPolicy
+  configuredMaxTokens: number
+  externalTools: Array<{
+    serverId: string
+    serverName: string
+    name: string
+    runtimeName: string
+    description: string
+    inputSchema: Record<string, unknown>
+    readOnly: boolean
+    serverTrusted: boolean
+    executionAuthorization: 'not_required' | 'required'
+    mutationApproval: 'not_required' | 'required'
+    externalActionApproval: 'not_required' | 'required'
+    maxCallsPerRun: number
+    tags: AgentToolTag[]
+    presentation: DomainToolManifestEntry['presentation']
+  }>
+  explicitTargets: Array<{
+    id: string
+    kind: 'document' | 'knowledge_asset'
+    title: string
+    revision?: number | null
+    content?: string
+  }>
+  correlationId: string
+  causationId: string | null
+}
+
 export interface AgentRuntimeUsage {
   inputTokens?: number
   outputTokens?: number
@@ -299,6 +374,12 @@ export type AgentWorkerHostMessage =
     }
   | {
       version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'orchestration.start'
+      requestId: string
+      submission: AgentSidecarSubmissionV1
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
       type: 'run.cancel'
       requestId: string
       runId: string
@@ -368,6 +449,32 @@ export type AgentWorkerMessage =
       version: typeof AGENT_WORKER_PROTOCOL_VERSION
       type: 'run.event'
       event: AgentRuntimeEvent
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'orchestration.prepared'
+      requestId: string
+      task: {
+        id: string
+        runId: string
+        workflowId: string | null
+        sessionId: string
+        documentId: string
+        projectId: string
+        conversationId: string
+        status: string
+        userInstruction: string
+        contextScope: string
+        model: string
+        currentStep: string
+        createdAt: number
+        correlationId: string
+        causationId: string | null
+        executionPolicy: ExecutionPolicy
+        contextBundleId: string | null
+        provider: AiProvider
+      }
+      request: AgentRunRequestV1
     }
   | {
       version: typeof AGENT_WORKER_PROTOCOL_VERSION

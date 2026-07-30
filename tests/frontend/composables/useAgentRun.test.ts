@@ -39,6 +39,7 @@ vi.mock('@/infrastructure/runtime/TauriAgentRuntimeAdapter', () => ({
       sidecarDependencies(dependencies)
     }
     startRun = sidecarStartRun
+    startSubmission = sidecarStartRun
     resumeRun = sidecarResumeRun
     getRetainedTerminal = sidecarGetRetainedTerminal
     acknowledgeRun = sidecarAcknowledgeRun
@@ -167,8 +168,13 @@ describe('useAgentRun', () => {
         runId: expect.any(String),
         objective: expect.stringContaining('检查当前文档'),
         modelPolicy: expect.objectContaining({ model: 'sidecar-model' }),
+        document: expect.objectContaining({ id: 'doc-1' }),
       }),
     )
+    expect(sidecarStartRun.mock.calls[0]?.[0]).not.toHaveProperty('compiledContext')
+    expect(sidecarStartRun.mock.calls[0]?.[0]).not.toHaveProperty('contextBundle')
+    expect(sidecarStartRun.mock.calls[0]?.[0]).not.toHaveProperty('toolManifest')
+    expect(run.repository.createTask).not.toHaveBeenCalled()
     expect(agentLoop).not.toHaveBeenCalled()
     expect(sidecarAcknowledgeRun).toHaveBeenCalledTimes(1)
   })

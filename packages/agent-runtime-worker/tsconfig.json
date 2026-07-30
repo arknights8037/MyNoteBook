@@ -2,11 +2,16 @@
   "extends": "@tsconfig/node24/tsconfig.json",
   "compilerOptions": {
     "composite": false,
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["node", "vitest/globals"]
+    "ignoreDeprecations": "6.0",
+    "types": ["node", "vitest/globals"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../../src/*"]
+    }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]
 }

@@ -95,6 +95,11 @@ enum SupervisorCommand {
         recovery_context: Option<Value>,
         response: oneshot::Sender<Result<(), String>>,
     },
+    StartOrchestration {
+        submission: Value,
+        recovery_context: Option<Value>,
+        response: oneshot::Sender<Result<(), String>>,
+    },
     CancelRun {
         run_id: String,
         response: oneshot::Sender<Result<(), String>>,
@@ -121,6 +126,14 @@ pub(crate) struct StartAgentWorkerInput {
 pub(crate) struct StartAgentRuntimeRunInput {
     data_directory: Option<String>,
     request: Value,
+    recovery_context: Option<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StartAgentSidecarOrchestrationInput {
+    data_directory: Option<String>,
+    submission: Value,
     recovery_context: Option<Value>,
 }
 
@@ -214,6 +227,21 @@ pub(crate) async fn start_agent_runtime_run(
     let sender = ensure_supervisor(&app, &state, input.data_directory).await?;
     request_supervisor(&sender, |response| SupervisorCommand::StartRun {
         request: input.request,
+        recovery_context: input.recovery_context,
+        response,
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn start_agent_sidecar_orchestration(
+    app: AppHandle,
+    state: State<'_, AgentWorkerSupervisorState>,
+    input: StartAgentSidecarOrchestrationInput,
+) -> Result<(), String> {
+    let sender = ensure_supervisor(&app, &state, input.data_directory).await?;
+    request_supervisor(&sender, |response| SupervisorCommand::StartOrchestration {
+        submission: input.submission,
         recovery_context: input.recovery_context,
         response,
     })
@@ -663,6 +691,46 @@ async fn handle_command(
             };
             let _ = response.send(result);
         }
+        SupervisorCommand::StartOrchestration {
+            submission,
+            recovery_context,
+            response,
+        } => {
+            let result = run_id_from_request(&submission).and_then(|run_id| {
+                if !claimed_run_ids.insert(run_id.clone()) {
+                    return Err(format!("run_id {run_id} 已经启动。"));
+                }
+                Ok(run_id)
+            });
+            let result = match result {
+                Ok(run_id) => {
+                    let request_id = new_instance_id("orchestration-request");
+                    match write_shared_message(
+                        stdin,
+                        &json!({
+                            "version": PROTOCOL_VERSION,
+                            "type": "orchestration.start",
+                            "requestId": request_id,
+                            "submission": submission.clone(),
+                        }),
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            run_requests.insert(run_id.clone(), submission);
+                            if let Some(recovery_context) = recovery_context {
+                                run_recovery_contexts.insert(run_id.clone(), recovery_context);
+                            }
+                            active_run_ids.insert(run_id);
+                            Ok(())
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            };
+            let _ = response.send(result);
+        }
         SupervisorCommand::CancelRun { run_id, response } => {
             let result = if active_run_ids.contains(&run_id) {
                 write_shared_message(
@@ -818,6 +886,33 @@ async fn handle_worker_line(
             })
             .await;
             Ok(true)
+        }
+        "orchestration.prepared" => {
+            let request = message
+                .get("request")
+                .cloned()
+                .ok_or_else(|| "orchestration.prepared 缺少 request。".to_string())?;
+            let task = message
+                .get("task")
+                .cloned()
+                .ok_or_else(|| "orchestration.prepared 缺少 task。".to_string())?;
+            let run_id = run_id_from_request(&request)?;
+            let task_run_id = task
+                .get("runId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "orchestration.prepared task 缺少 runId。".to_string())?;
+            if task_run_id != run_id {
+                return Err("orchestration.prepared 的 task/run 身份不一致。".to_string());
+            }
+            persist_sidecar_prepared_run(app, context.data_directory.clone(), &task, &request)
+                .await?;
+            context.run_requests.insert(run_id, request);
+            update_snapshot(app, |snapshot| {
+                snapshot.active_run_ids = sorted_run_ids(context.active_run_ids);
+                snapshot.active_runs = sorted_active_runs(context.run_requests);
+            })
+            .await;
+            Ok(false)
         }
         "run.event" => {
             let event = message
@@ -1845,6 +1940,144 @@ async fn update_snapshot(app: &AppHandle, update: impl FnOnce(&mut AgentWorkerSn
     let _ = app.emit(STATUS_EVENT, snapshot);
 }
 
+async fn persist_sidecar_prepared_run(
+    app: &AppHandle,
+    data_directory: Option<String>,
+    task: &Value,
+    request: &Value,
+) -> Result<(), String> {
+    let connection = database::open_database(app, data_directory).await?;
+    persist_sidecar_prepared_run_in_pool(connection.as_ref(), task, request).await
+}
+
+async fn persist_sidecar_prepared_run_in_pool(
+    connection: &SqlitePool,
+    task: &Value,
+    request: &Value,
+) -> Result<(), String> {
+    let required_task_string = |name: &str| {
+        task.get(name)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| format!("sidecar task 缺少 {name}。"))
+    };
+    let task_id = required_task_string("id")?;
+    let run_id = required_task_string("runId")?;
+    let session_id = required_task_string("sessionId")?;
+    let document_id = required_task_string("documentId")?;
+    let user_instruction = required_task_string("userInstruction")?;
+    let model = required_task_string("model")?;
+    let context_bundle = request
+        .get("contextBundle")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "sidecar request 缺少 contextBundle。".to_string())?;
+    let bundle_id = context_bundle
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "sidecar contextBundle 缺少 id。".to_string())?;
+    let bundle_task_id = context_bundle
+        .get("taskId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "sidecar contextBundle 缺少 taskId。".to_string())?;
+    if bundle_task_id != task_id {
+        return Err("sidecar contextBundle 的 taskId 不匹配。".to_string());
+    }
+    let execution_policy = task
+        .get("executionPolicy")
+        .cloned()
+        .ok_or_else(|| "sidecar task 缺少 executionPolicy。".to_string())?;
+    let bundle_json = |name: &str| -> Result<String, String> {
+        Ok(context_bundle
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| json!([]))
+            .to_string())
+    };
+    let created_at = task
+        .get("createdAt")
+        .and_then(Value::as_i64)
+        .unwrap_or_else(now_millis);
+    let mut transaction = connection.begin().await.map_err(database_error)?;
+    sqlx::query(
+        "INSERT INTO agent_tasks (id, run_id, workflow_id, session_id, document_id, status, user_instruction, \
+         context_scope, model, current_step, error, created_at, completed_at, correlation_id, causation_id, \
+         execution_policy_json, context_bundle_id, provider, project_id, conversation_id) \
+         VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(id) DO UPDATE SET run_id = excluded.run_id, workflow_id = excluded.workflow_id, \
+         session_id = excluded.session_id, document_id = excluded.document_id, status = 'running', \
+         current_step = excluded.current_step, error = NULL, execution_policy_json = excluded.execution_policy_json, \
+         context_bundle_id = excluded.context_bundle_id, provider = excluded.provider, project_id = excluded.project_id, \
+         conversation_id = excluded.conversation_id",
+    )
+    .bind(&task_id)
+    .bind(&run_id)
+    .bind(task.get("workflowId").and_then(Value::as_str))
+    .bind(&session_id)
+    .bind(&document_id)
+    .bind(&user_instruction)
+    .bind(task.get("contextScope").and_then(Value::as_str).unwrap_or("current_document"))
+    .bind(&model)
+    .bind(task.get("currentStep").and_then(Value::as_str).unwrap_or("侧车正在运行"))
+    .bind(created_at)
+    .bind(task.get("correlationId").and_then(Value::as_str).unwrap_or(&task_id))
+    .bind(task.get("causationId").and_then(Value::as_str))
+    .bind(execution_policy.to_string())
+    .bind(Option::<&str>::None)
+    .bind(task.get("provider").and_then(Value::as_str).unwrap_or("openai"))
+    .bind(task.get("projectId").and_then(Value::as_str).unwrap_or(""))
+    .bind(task.get("conversationId").and_then(Value::as_str).unwrap_or(""))
+    .execute(&mut *transaction)
+    .await
+    .map_err(database_error)?;
+    sqlx::query(
+        "INSERT INTO context_bundles (id, task_id, run_id, version, scope_json, permission_snapshot_json, \
+         sources_json, active_rules_json, decisions_json, conflicts_json, compiler_json, snapshot_hash, \
+         correlation_id, causation_id, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+         ON CONFLICT(task_id, snapshot_hash) DO NOTHING",
+    )
+    .bind(bundle_id)
+    .bind(&task_id)
+    .bind(&run_id)
+    .bind(context_bundle.get("version").and_then(Value::as_i64).unwrap_or(2))
+    .bind(bundle_json("scope")?)
+    .bind(bundle_json("permissionSnapshot")?)
+    .bind(bundle_json("sources")?)
+    .bind(bundle_json("activeRules")?)
+    .bind(bundle_json("decisions")?)
+    .bind(bundle_json("conflicts")?)
+    .bind(bundle_json("compiler")?)
+    .bind(context_bundle.get("snapshotHash").and_then(Value::as_str).unwrap_or(""))
+    .bind(context_bundle.get("correlationId").and_then(Value::as_str).unwrap_or(&task_id))
+    .bind(context_bundle.get("causationId").and_then(Value::as_str))
+    .bind(context_bundle.get("createdAt").and_then(Value::as_i64).unwrap_or(created_at))
+    .execute(&mut *transaction)
+    .await
+    .map_err(database_error)?;
+    let persisted_bundle_id: String = sqlx::query_scalar(
+        "SELECT id FROM context_bundles WHERE task_id = ? AND snapshot_hash = ? LIMIT 1",
+    )
+    .bind(&task_id)
+    .bind(
+        context_bundle
+            .get("snapshotHash")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+    )
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(database_error)?;
+    sqlx::query("UPDATE agent_tasks SET context_bundle_id = ? WHERE id = ?")
+        .bind(persisted_bundle_id)
+        .bind(&task_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(database_error)?;
+    transaction.commit().await.map_err(database_error)
+}
+
 async fn buffer_terminal_message(
     app: &AppHandle,
     run_id: &str,
@@ -2175,6 +2408,107 @@ mod tests {
             },
         )]);
         assert_eq!(sorted_terminal_projections(&terminals).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn persists_sidecar_prepared_task_and_context_bundle_together() {
+        let path = std::env::temp_dir().join(format!(
+            "my-notebook-sidecar-prepared-{}-{}.db",
+            std::process::id(),
+            now_millis()
+        ));
+        let pool = crate::database::get_pool_for_path(&path, true)
+            .await
+            .expect("open database");
+        crate::database::DATABASE_MIGRATOR
+            .run(pool.as_ref())
+            .await
+            .expect("migrate");
+        sqlx::query(
+            "INSERT INTO documents (id, title, content_json, created_at, updated_at) \
+             VALUES ('doc-1', 'Document', '{\"type\":\"doc\",\"content\":[]}', 1, 1)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("document");
+        let task = json!({
+            "id": "task-1",
+            "runId": "run-1",
+            "workflowId": null,
+            "sessionId": "session-1",
+            "documentId": "doc-1",
+            "projectId": "project-1",
+            "conversationId": "conversation-1",
+            "userInstruction": "Review document",
+            "contextScope": "current_document",
+            "model": "test-model",
+            "currentStep": "侧车正在准备 Agent 任务",
+            "createdAt": 7,
+            "correlationId": "correlation-1",
+            "causationId": null,
+            "provider": "openai",
+            "executionPolicy": {
+                "version": 1,
+                "maxToolRounds": 2,
+                "maxDurationMs": 1000,
+                "maxToolFailures": 1,
+                "tokenBudget": 100,
+                "allowedTools": ["get_current_document"],
+                "riskLevel": "read_only",
+                "allowUserInput": true,
+                "allowWriteProposals": false,
+                "maxRetries": 0
+            }
+        });
+        let request = json!({
+            "runId": "run-1",
+            "contextBundle": {
+                "id": "bundle-1",
+                "taskId": "task-1",
+                "version": 2,
+                "scope": { "documentId": "doc-1" },
+                "permissionSnapshot": { "actor": "local_user", "canReadKnowledge": true, "canProposeWrites": false },
+                "sources": [],
+                "activeRules": [],
+                "decisions": [],
+                "conflicts": [],
+                "compiler": { "version": 1 },
+                "snapshotHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "correlationId": "correlation-1",
+                "causationId": null,
+                "createdAt": 7
+            }
+        });
+        persist_sidecar_prepared_run_in_pool(pool.as_ref(), &task, &request)
+            .await
+            .expect("persist prepared run");
+        let row: (String, String, String) = sqlx::query_as(
+            "SELECT status, context_bundle_id, run_id FROM agent_tasks WHERE id = 'task-1'",
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("task row");
+        assert_eq!(
+            row,
+            (
+                "running".to_string(),
+                "bundle-1".to_string(),
+                "run-1".to_string()
+            )
+        );
+        let bundle_run_id: String =
+            sqlx::query_scalar("SELECT run_id FROM context_bundles WHERE id = 'bundle-1'")
+                .fetch_one(pool.as_ref())
+                .await
+                .expect("bundle row");
+        assert_eq!(bundle_run_id, "run-1");
+        drop(pool);
+        crate::database::close_pool(&path)
+            .await
+            .expect("close database");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
     }
 
     #[test]

@@ -2,7 +2,10 @@ import { computed, ref, shallowReactive } from 'vue'
 
 import type { AgentRuntimeResult } from '@/services/agent/AgentRuntime'
 import type { ContextBundle } from '@/models/agent/contextBundle'
-import type { AgentRuntimeEvent } from '@/models/agent/agentRuntimeContract'
+import type {
+  AgentRuntimeEvent,
+  AgentSidecarSubmissionV1,
+} from '@/models/agent/agentRuntimeContract'
 import type { AgentToolCall } from '@/models/agent/agentTool'
 import type { AgentTask } from '@/models/agent/agent'
 import type { AgentRuntimeClient } from '@/services/agent/AgentRuntimeClient'
@@ -263,6 +266,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
       parseReadDocumentProvenance,
       validateDocumentEditProvenance,
     } = await loadAgentRunModules()
+    const sidecarOwned = options.services?.runtimeOwner === 'rust_worker'
     let sources: KnowledgeSource[] = []
     let agentRounds = 0
     let agentToolCallCount = 0
@@ -311,7 +315,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
     }
 
     try {
-      if (continuation) {
+      if (continuation && !sidecarOwned) {
         for (const documentId of new Set(continuation.patches.map((patch) => patch.documentId))) {
           const targetBlockIds = continuation.patches
             .filter((patch) => patch.documentId === documentId)
@@ -330,15 +334,19 @@ export function useAgentRun(options: UseAgentRunOptions) {
           readableDocuments.set(documentId, provenance)
         }
       }
-      const context = await buildAgentRunContext({
-        snapshot,
-        mode,
-        targetBlocks: editPlan?.targetBlocks,
-        document: options.document,
-      })
-      const conversationContext = compileConversationContinuationContext(priorConversationMessages)
-      if (conversationContext) {
-        context.text += `\n\n${conversationContext}`
+      const context = sidecarOwned
+        ? { text: '', sources: [] as KnowledgeSource[] }
+        : await buildAgentRunContext({
+            snapshot,
+            mode,
+            targetBlocks: editPlan?.targetBlocks,
+            document: options.document,
+          })
+      if (!sidecarOwned) {
+        const conversationContext = compileConversationContinuationContext(priorConversationMessages)
+        if (conversationContext) {
+          context.text += `\n\n${conversationContext}`
+        }
       }
       sources = context.sources
       assistantMessage.sources = sources
@@ -347,7 +355,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
         instructions: '',
         skills: [],
       }))
-      const effectiveKnowledge = options.services?.getKnowledgeRepository
+      const effectiveKnowledge = !sidecarOwned && options.services?.getKnowledgeRepository
         ? await options.services
             .getKnowledgeRepository()
             .then(async (repository) => {
@@ -361,7 +369,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
             })
             .catch(() => [])
         : []
-      const approvedReferenceKnowledge = options.services?.getKnowledgeRepository
+      const approvedReferenceKnowledge = !sidecarOwned && options.services?.getKnowledgeRepository
         ? await options.services
             .getKnowledgeRepository()
             .then(async (repository) => {
@@ -405,7 +413,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
           '这些对象可用于检索、比较和写作，但不是强制规则。保留其验证状态；unverified 或 warning 内容不得改写成确定事实。',
         ].join('\n')
       }
-      if (editPlan) {
+      if (editPlan && !sidecarOwned) {
         const bundleSources =
           mode === 'agent' || sources.some((source) => source.documentId === snapshot.document.id)
             ? sources
@@ -673,8 +681,9 @@ export function useAgentRun(options: UseAgentRunOptions) {
           ? JSON.stringify(createInitialLearningTurn(learningState.topic))
           : mode === 'agent' && editPlan
             ? await (async () => {
-                if (!runtimeContextBundle) throw new Error('Agent Runtime 缺少 Context Bundle。')
-                const sidecarOwned = options.services?.runtimeOwner === 'rust_worker'
+                if (!sidecarOwned && !runtimeContextBundle) {
+                  throw new Error('Agent Runtime 缺少 Context Bundle。')
+                }
                 const recoveryContext: SidecarRunRecoveryContextV1 | undefined = sidecarOwned
                   ? {
                       version: 1,
@@ -753,52 +762,111 @@ export function useAgentRun(options: UseAgentRunOptions) {
                   active.runtimeClient = client
                   active.runtimeRunId = editPlan.task.runId
                 }
-                const unsubscribe = client.subscribeEvents(editPlan.task.runId, (event) => {
-                  projectRuntimeEvent(event)
-                })
-                if (active) active.unsubscribeRuntime = unsubscribe
-                const result = await client.startRun({
-                  version: 1,
-                  runId: editPlan.task.runId,
-                  workItemId: editPlan.task.id,
-                  workflowId: editPlan.task.workflowId ?? undefined,
-                  sessionId: editPlan.task.sessionId,
-                  objective: runtimeExecution!.prompt,
-                  intent: runtimeExecution!.intent,
-                  systemInstructions: runtimeExecution!.systemPrompt,
-                  compiledContext: runtimeExecution!.context,
-                  contextBundle: runtimeContextBundle,
-                  executionPolicy: runtimeExecution!.executionPolicy,
-                  toolManifest: buildDomainToolManifest(runtimeExecution!.externalTools),
-                  modelPolicy: {
-                    provider: snapshot.settings.provider,
-                    model: snapshot.settings.model,
-                    endpoint: snapshot.settings.endpoint,
-                    temperature: snapshot.settings.temperature,
-                    topP: snapshot.settings.topP,
-                    reasoningEffort: snapshot.settings.reasoningEffort,
-                    maxOutputTokens: resolveAgentOutputTokenLimit(
-                      snapshot.settings.maxTokens,
-                      runtimeExecution!.executionPolicy,
-                    ),
-                    credentialRef: {
-                      kind: 'provider_secret',
-                      provider: snapshot.settings.provider,
-                    },
+                const unsubscribe = (sidecarOwned ? adapter : client).subscribeEvents(
+                  editPlan.task.runId,
+                  (event) => {
+                    projectRuntimeEvent(event)
                   },
-                  ...(runtimeExecution!.outputContract
-                    ? {
-                        outputContract: {
-                          id: runtimeExecution!.outputContract.id,
-                          version: runtimeExecution!.outputContract.version,
-                          jsonSchema: runtimeExecution!.outputContract.jsonSchema,
-                          systemInstruction: runtimeExecution!.outputContract.systemInstruction,
+                )
+                if (active) active.unsubscribeRuntime = unsubscribe
+                const result = sidecarOwned
+                  ? await adapter.startSubmission({
+                      version: 1,
+                      runId: editPlan.task.runId,
+                      workItemId: editPlan.task.id,
+                      ...(editPlan.task.workflowId ? { workflowId: editPlan.task.workflowId } : {}),
+                      sessionId: editPlan.task.sessionId,
+                      document: {
+                        id: snapshot.document.id,
+                        title: snapshot.document.title,
+                        tags: [...snapshot.document.tags],
+                        sourceUrl: snapshot.document.sourceUrl,
+                        author: snapshot.document.author,
+                        text: snapshot.document.text,
+                        markdown: snapshot.document.markdown,
+                        revision: snapshot.document.revision,
+                        blocks: snapshot.document.blocks.map((block) => ({ ...block })),
+                        selectedBlockIds: snapshot.document.selectedBlocks.map((block) => block.id),
+                        documents: snapshot.document.documents.map((document) => ({
+                          id: document.id,
+                          title: document.title,
+                          documentKind: document.documentKind,
+                          isDeleted: document.isDeleted,
+                          parentId: document.parentId,
+                        })),
+                      },
+                      workspace: {
+                        projectId: snapshot.workspace?.projectId ?? '',
+                        projectName: snapshot.workspace?.projectName ?? '未分组 Agent 项目',
+                        rootDocumentIds: [...(snapshot.workspace?.rootDocumentIds ?? [])],
+                        conversationId:
+                          snapshot.workspace?.conversationId ?? editPlan.task.sessionId,
+                      },
+                      objective: snapshot.prompt,
+                      intent: agentIntent,
+                      systemInstructions: systemPrompt,
+                      skillInstructions: skillPrompt.instructions,
+                      modelPolicy: {
+                        provider: snapshot.settings.provider,
+                        model: snapshot.settings.model,
+                        endpoint: snapshot.settings.endpoint,
+                        temperature: snapshot.settings.temperature,
+                        topP: snapshot.settings.topP,
+                        reasoningEffort: snapshot.settings.reasoningEffort,
+                        maxOutputTokens: snapshot.settings.maxTokens,
+                        credentialRef: {
+                          kind: 'provider_secret',
+                          provider: snapshot.settings.provider,
                         },
-                      }
-                    : {}),
-                  correlationId: editPlan.task.correlationId,
-                  causationId: editPlan.task.causationId,
-                })
+                      },
+                      configuredMaxTokens: snapshot.settings.maxTokens,
+                      externalTools: mcpRuntimeTools.map((tool) => ({ ...tool })),
+                      explicitTargets: snapshot.explicitTargets.map((target) => ({ ...target })),
+                      correlationId: editPlan.task.correlationId,
+                      causationId: editPlan.task.causationId,
+                    } satisfies AgentSidecarSubmissionV1)
+                  : await client.startRun({
+                      version: 1,
+                      runId: editPlan.task.runId,
+                      workItemId: editPlan.task.id,
+                      workflowId: editPlan.task.workflowId ?? undefined,
+                      sessionId: editPlan.task.sessionId,
+                      objective: runtimeExecution!.prompt,
+                      intent: runtimeExecution!.intent,
+                      systemInstructions: runtimeExecution!.systemPrompt,
+                      compiledContext: runtimeExecution!.context,
+                      contextBundle: runtimeContextBundle!,
+                      executionPolicy: runtimeExecution!.executionPolicy,
+                      toolManifest: buildDomainToolManifest(runtimeExecution!.externalTools),
+                      modelPolicy: {
+                        provider: snapshot.settings.provider,
+                        model: snapshot.settings.model,
+                        endpoint: snapshot.settings.endpoint,
+                        temperature: snapshot.settings.temperature,
+                        topP: snapshot.settings.topP,
+                        reasoningEffort: snapshot.settings.reasoningEffort,
+                        maxOutputTokens: resolveAgentOutputTokenLimit(
+                          snapshot.settings.maxTokens,
+                          runtimeExecution!.executionPolicy,
+                        ),
+                        credentialRef: {
+                          kind: 'provider_secret',
+                          provider: snapshot.settings.provider,
+                        },
+                      },
+                      ...(runtimeExecution!.outputContract
+                        ? {
+                            outputContract: {
+                              id: runtimeExecution!.outputContract.id,
+                              version: runtimeExecution!.outputContract.version,
+                              jsonSchema: runtimeExecution!.outputContract.jsonSchema,
+                              systemInstruction: runtimeExecution!.outputContract.systemInstruction,
+                            },
+                          }
+                        : {}),
+                      correlationId: editPlan.task.correlationId,
+                      causationId: editPlan.task.causationId,
+                    })
                 if (sidecarOwned) {
                   for (const call of result.toolCalls) {
                     if (

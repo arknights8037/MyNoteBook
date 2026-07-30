@@ -407,6 +407,7 @@ pub fn run() {
             agent_worker_supervisor::get_agent_runtime_terminal,
             agent_worker_supervisor::acknowledge_agent_runtime_terminal,
             agent_worker_supervisor::start_agent_runtime_run,
+            agent_worker_supervisor::start_agent_sidecar_orchestration,
             agent_worker_supervisor::cancel_agent_runtime_run,
             agent_worker_supervisor::steer_agent_runtime_run,
             agent_worker_supervisor::shutdown_agent_worker,

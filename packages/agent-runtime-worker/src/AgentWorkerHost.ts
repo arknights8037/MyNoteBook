@@ -1,5 +1,6 @@
 import type {
   AgentRunRequestV1,
+  AgentSidecarSubmissionV1,
   AgentRunSteerInput,
   AgentRuntimePort,
   AgentWorkerAuthorizationRequest,
@@ -12,6 +13,8 @@ import type {
   AgentWorkerToolResult,
   AgentToolCall,
 } from '@mynotebook/agent-runtime-contracts'
+
+import { planSidecarRun } from './SidecarRunPlanner.js'
 
 const AGENT_WORKER_PROTOCOL_VERSION = 1 as const
 
@@ -149,6 +152,9 @@ export class AgentWorkerHost {
       case 'run.start':
         this.startRun(message.requestId, message.request)
         return
+      case 'orchestration.start':
+        void this.startOrchestration(message.requestId, message.submission)
+        return
       case 'run.cancel':
         void this.cancelRun(message.requestId, message.runId)
         return
@@ -217,6 +223,44 @@ export class AgentWorkerHost {
         this.activeRunPromises.delete(request.runId)
       })
     this.activeRunPromises.set(request.runId, running)
+  }
+
+  private async startOrchestration(
+    requestId: string,
+    submission: AgentSidecarSubmissionV1,
+  ): Promise<void> {
+    try {
+      const planned = await planSidecarRun(submission)
+      this.send({
+        version: AGENT_WORKER_PROTOCOL_VERSION,
+        type: 'orchestration.prepared',
+        requestId,
+        task: {
+          id: planned.task.id,
+          runId: planned.task.runId,
+          workflowId: planned.task.workflowId,
+          sessionId: planned.task.sessionId,
+          documentId: planned.task.documentId,
+          projectId: planned.task.projectId,
+          conversationId: planned.task.conversationId,
+          status: planned.task.status,
+          userInstruction: planned.task.userInstruction,
+          contextScope: planned.task.contextScope,
+          model: planned.task.model,
+          currentStep: planned.task.currentStep,
+          createdAt: planned.task.createdAt,
+          correlationId: planned.task.correlationId,
+          causationId: planned.task.causationId,
+          executionPolicy: planned.task.executionPolicy,
+          contextBundleId: planned.task.contextBundleId,
+          provider: planned.task.provider,
+        },
+        request: planned.request,
+      })
+      this.startRun(requestId, planned.request)
+    } catch (error) {
+      this.sendRunError(requestId, submission.runId, normalizeWorkerError(error))
+    }
   }
 
   private async cancelRun(requestId: string, runId: string): Promise<void> {

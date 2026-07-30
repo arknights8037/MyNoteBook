@@ -6,7 +6,7 @@
 
 MyNoteBook 的产品类别是本地优先的 AI 桌面工作中枢。它通过收集、理解、组织、委派、表达和沉淀的持续循环，为知识工作保留可继续的上下文。当前技术实现由 Vue 3 + Tiptap 前端、Tauri/Rust 桌面壳和 SQLite 本地存储组成，是单机桌面应用，不是 React 应用，也不是由多个服务组成的分布式系统。
 
-默认生产 Agent Runtime 仍由 Vue/WebView 生命周期托管，但 `useAgentRun` 只通过 `AgentRuntimeClient` 和 Runtime Port 驱动 Adapter。Phase 3 已加入可选的真实 AI SDK Node sidecar、Rust Supervisor/dispatcher、Tauri Runtime Adapter 和自包含 SEA `externalBin`；composition 可显式选择该链路，默认尚未生产切流。TypeScript repositories 通过 `plugin-sql` 与 Rust SQLx 共同访问同一个 SQLite，项目仍没有托盘常驻或 daemon。
+生产 Agent Runtime 使用真实 AI SDK Node sidecar、Rust Supervisor/dispatcher、Tauri Runtime Adapter 和自包含 SEA `externalBin`。`useAgentRun` 仅冻结交互输入、订阅事件、授权/取消与 UI projection；它不再为 sidecar 路径组装 Task、Context Bundle、ExecutionPolicy、Tool Manifest 或 `AgentRunRequestV1`。TypeScript repositories 通过 `plugin-sql` 与 Rust SQLx 共同访问同一个 SQLite，项目仍没有托盘常驻或 daemon。
 
 产品愿景不能改变当前事实边界：尚未实现的信息来源、后台能力和外部应用接入必须明确标记为未来方向；Agent、View 和模型输出不能被宣传或实现为绕过用户判断的第二事实源。
 

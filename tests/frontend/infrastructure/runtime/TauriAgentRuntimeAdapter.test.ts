@@ -88,6 +88,27 @@ describe('TauriAgentRuntimeAdapter', () => {
     await adapter.dispose()
   })
 
+  it('submits a raw interaction snapshot to the sidecar planner', async () => {
+    const bridge = new FakeTauriBridge()
+    const adapter = new TauriAgentRuntimeAdapter({ invoke: bridge.invoke, listen: bridge.listen })
+    const running = adapter.startSubmission(submission('run-sidecar'))
+    await settle()
+    expect(bridge.invoke).toHaveBeenCalledWith('start_agent_sidecar_orchestration', {
+      input: {
+        dataDirectory: undefined,
+        submission: submission('run-sidecar'),
+      },
+    })
+    bridge.emit('agent-runtime://worker-message', {
+      version: 1,
+      type: 'run.result',
+      requestId: 'sidecar-request',
+      result: { runId: 'run-sidecar', output: 'done', rounds: 1, toolCalls: [] },
+    } satisfies AgentWorkerMessage)
+    await expect(running).resolves.toMatchObject({ runId: 'run-sidecar' })
+    await adapter.dispose()
+  })
+
   it('keeps duplicate-run ownership in the UI client boundary', async () => {
     const bridge = new FakeTauriBridge()
     const adapter = new TauriAgentRuntimeAdapter({ invoke: bridge.invoke, listen: bridge.listen })
@@ -231,6 +252,54 @@ function request(runId: string): AgentRunRequestV1 {
       maxOutputTokens: 100,
       credentialRef: { kind: 'provider_secret', provider: 'openai' },
     },
+    correlationId: 'correlation-1',
+    causationId: null,
+  }
+}
+
+function submission(runId: string) {
+  return {
+    version: 1 as const,
+    runId,
+    workItemId: 'work-1',
+    sessionId: 'session-1',
+    document: {
+      id: 'doc-1',
+      title: 'Document',
+      tags: [],
+      sourceUrl: '',
+      author: '',
+      text: 'Text',
+      markdown: 'Text',
+      revision: 1,
+      blocks: [{ id: 'block-1', type: 'paragraph', text: 'Text', index: 0 }],
+      selectedBlockIds: [],
+      documents: [
+        { id: 'doc-1', title: 'Document', documentKind: 'article' as const, isDeleted: false },
+      ],
+    },
+    workspace: {
+      projectId: '',
+      projectName: 'Project',
+      rootDocumentIds: [],
+      conversationId: 'session-1',
+    },
+    objective: 'test',
+    intent: 'default' as const,
+    systemInstructions: 'system',
+    modelPolicy: {
+      provider: 'openai' as const,
+      model: 'test',
+      endpoint: 'https://example.test/v1',
+      temperature: 0,
+      topP: 1,
+      reasoningEffort: 'auto' as const,
+      maxOutputTokens: 100,
+      credentialRef: { kind: 'provider_secret' as const, provider: 'openai' as const },
+    },
+    configuredMaxTokens: 100,
+    externalTools: [],
+    explicitTargets: [],
     correlationId: 'correlation-1',
     causationId: null,
   }

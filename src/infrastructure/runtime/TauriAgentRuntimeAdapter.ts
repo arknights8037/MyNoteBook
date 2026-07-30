@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import {
   AgentRuntimeContractError,
   type AgentRunRequestV1,
+  type AgentSidecarSubmissionV1,
   type AgentRunResult,
   type AgentRunSteerInput,
   type AgentRuntimeEvent,
@@ -82,6 +83,40 @@ export class TauriAgentRuntimeAdapter implements AgentRuntimePort {
       })
     } catch (error) {
       this.pendingRuns.delete(request.runId)
+      throw normalizeError(error)
+    }
+    return result
+  }
+
+  /**
+   * Starts the sidecar-owned planner. Unlike startRun(), the WebView supplies
+   * only a frozen interaction snapshot; task/context/policy construction runs
+   * inside the Node sidecar and is persisted by Rust Core.
+   */
+  async startSubmission(submission: AgentSidecarSubmissionV1): Promise<AgentRunResult> {
+    if (this.claimedRunIds.has(submission.runId)) {
+      throw new AgentRuntimeContractError(
+        'duplicate_run',
+        `run_id ${submission.runId} 已由 Rust Worker Supervisor 驱动。`,
+      )
+    }
+    this.claimedRunIds.add(submission.runId)
+    await this.ensureListening()
+    const result = new Promise<AgentRunResult>((resolve, reject) => {
+      this.pendingRuns.set(submission.runId, { resolve, reject })
+    })
+    try {
+      await this.invoke<void>('start_agent_sidecar_orchestration', {
+        input: {
+          dataDirectory: this.dependencies.dataDirectory,
+          submission,
+          ...(this.dependencies.recoveryContext === undefined
+            ? {}
+            : { recoveryContext: this.dependencies.recoveryContext }),
+        },
+      })
+    } catch (error) {
+      this.pendingRuns.delete(submission.runId)
       throw normalizeError(error)
     }
     return result

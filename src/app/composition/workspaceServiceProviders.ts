@@ -40,7 +40,7 @@ export function createWorkspaceServiceProviders(
 ): WorkspaceServiceProviders {
   return {
     runtimeOwner:
-      import.meta.env.VITE_AGENT_RUNTIME_OWNER === 'rust_worker' ? 'rust_worker' : 'webview',
+      import.meta.env.VITE_AGENT_RUNTIME_OWNER === 'webview' ? 'webview' : 'rust_worker',
     runtimeDataDirectory: () => loadAppSettings().dataDirectory ?? undefined,
     getCognitiveSessionService: lazyProvider(createCognitiveSessionService),
     getMindMapService: lazyProvider(createMindMapService),
