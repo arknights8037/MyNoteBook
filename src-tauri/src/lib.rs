@@ -404,6 +404,8 @@ pub fn run() {
             agent_tools::execute_rig_tool,
             agent_worker_supervisor::start_agent_worker,
             agent_worker_supervisor::get_agent_worker_snapshot,
+            agent_worker_supervisor::get_agent_runtime_terminal,
+            agent_worker_supervisor::acknowledge_agent_runtime_terminal,
             agent_worker_supervisor::start_agent_runtime_run,
             agent_worker_supervisor::cancel_agent_runtime_run,
             agent_worker_supervisor::steer_agent_runtime_run,

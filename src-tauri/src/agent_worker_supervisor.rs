@@ -51,6 +51,7 @@ pub(crate) struct AgentWorkerSnapshot {
     active_run_ids: Vec<String>,
     active_runs: Vec<Value>,
     pending_authorizations: Vec<Value>,
+    pending_terminals: Vec<Value>,
     last_heartbeat_at: Option<i64>,
     restart_count: u32,
     last_error: Option<String>,
@@ -66,6 +67,7 @@ impl Default for AgentWorkerSnapshot {
             active_run_ids: Vec::new(),
             active_runs: Vec::new(),
             pending_authorizations: Vec::new(),
+            pending_terminals: Vec::new(),
             last_heartbeat_at: None,
             restart_count: 0,
             last_error: None,
@@ -77,6 +79,13 @@ impl Default for AgentWorkerSnapshot {
 pub(crate) struct AgentWorkerSupervisorState {
     control: Mutex<Option<mpsc::Sender<SupervisorCommand>>>,
     snapshot: RwLock<AgentWorkerSnapshot>,
+    terminal_messages: RwLock<HashMap<String, BufferedTerminal>>,
+}
+
+#[derive(Clone, Debug)]
+struct BufferedTerminal {
+    message: Value,
+    projection: Value,
 }
 
 enum SupervisorCommand {
@@ -131,6 +140,12 @@ pub(crate) struct ShutdownAgentWorkerInput {
     reason: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentRuntimeTerminalInput {
+    run_id: String,
+}
+
 #[tauri::command]
 pub(crate) async fn start_agent_worker(
     app: AppHandle,
@@ -146,6 +161,40 @@ pub(crate) async fn get_agent_worker_snapshot(
     state: State<'_, AgentWorkerSupervisorState>,
 ) -> Result<AgentWorkerSnapshot, String> {
     Ok(state.snapshot.read().await.clone())
+}
+
+#[tauri::command]
+pub(crate) async fn get_agent_runtime_terminal(
+    state: State<'_, AgentWorkerSupervisorState>,
+    input: AgentRuntimeTerminalInput,
+) -> Result<Option<Value>, String> {
+    validate_run_id(&input.run_id)?;
+    Ok(state
+        .terminal_messages
+        .read()
+        .await
+        .get(&input.run_id)
+        .map(|terminal| terminal.message.clone()))
+}
+
+#[tauri::command]
+pub(crate) async fn acknowledge_agent_runtime_terminal(
+    app: AppHandle,
+    state: State<'_, AgentWorkerSupervisorState>,
+    input: AgentRuntimeTerminalInput,
+) -> Result<(), String> {
+    validate_run_id(&input.run_id)?;
+    if state
+        .terminal_messages
+        .write()
+        .await
+        .remove(&input.run_id)
+        .is_none()
+    {
+        return Err(format!("run_id {} 没有待确认终态。", input.run_id));
+    }
+    refresh_terminal_snapshot(&app).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -469,6 +518,22 @@ async fn run_supervisor(
         };
         if !intentional_shutdown {
             exit_description = format!("{exit_description}; {status}");
+            for run_id in &active_run_ids {
+                let terminal = json!({
+                    "version": PROTOCOL_VERSION,
+                    "type": "run.error",
+                    "requestId": new_instance_id("worker-crash"),
+                    "runId": run_id,
+                    "error": {
+                        "code": "worker_unavailable",
+                        "message": crate::sensitive_data::redact_sensitive_text(&exit_description),
+                        "retryable": true
+                    }
+                });
+                let _ = buffer_terminal_message(&app, run_id, &terminal, run_requests.get(run_id))
+                    .await;
+            }
+            refresh_terminal_snapshot(&app).await;
             if let Ok(connection) = database::open_database(&app, data_directory.clone()).await {
                 let active = active_run_ids.iter().cloned().collect::<Vec<_>>();
                 let _ = handle_agent_worker_exit(
@@ -731,15 +796,6 @@ async fn handle_worker_line(
                 .get("event")
                 .cloned()
                 .ok_or_else(|| "run.event 缺少 event。".to_string())?;
-            if is_terminal_event(&event) {
-                if let Some(run_id) = event.get("runId").and_then(Value::as_str) {
-                    context.active_run_ids.remove(run_id);
-                    context.run_requests.remove(run_id);
-                    context.pending_authorizations.retain(|_, pending| {
-                        pending.request.get("runId").and_then(Value::as_str) != Some(run_id)
-                    });
-                }
-            }
             app.emit(RUN_EVENT, event)
                 .map_err(|error| format!("无法转发 Runtime event：{error}"))?;
             update_snapshot(app, |snapshot| {
@@ -758,6 +814,8 @@ async fn handle_worker_line(
                 .and_then(Value::as_str)
                 .or_else(|| message.get("runId").and_then(Value::as_str))
             {
+                let run_request = context.run_requests.get(run_id).cloned();
+                buffer_terminal_message(app, run_id, &message, run_request.as_ref()).await?;
                 context.active_run_ids.remove(run_id);
                 context.run_requests.remove(run_id);
                 context.pending_authorizations.retain(|_, pending| {
@@ -773,6 +831,7 @@ async fn handle_worker_line(
                     sorted_pending_authorizations(context.pending_authorizations);
             })
             .await;
+            refresh_terminal_snapshot(app).await;
             Ok(false)
         }
         "authorization.request" => {
@@ -1749,6 +1808,75 @@ async fn update_snapshot(app: &AppHandle, update: impl FnOnce(&mut AgentWorkerSn
     let _ = app.emit(STATUS_EVENT, snapshot);
 }
 
+async fn buffer_terminal_message(
+    app: &AppHandle,
+    run_id: &str,
+    message: &Value,
+    run_request: Option<&Value>,
+) -> Result<(), String> {
+    validate_run_id(run_id)?;
+    let projection = terminal_projection(run_id, message, run_request);
+    let state = app.state::<AgentWorkerSupervisorState>();
+    let mut terminals = state.terminal_messages.write().await;
+    if terminals.contains_key(run_id) {
+        return Err(format!("run_id {run_id} 已经存在唯一终态。"));
+    }
+    terminals.insert(
+        run_id.to_string(),
+        BufferedTerminal {
+            message: message.clone(),
+            projection,
+        },
+    );
+    Ok(())
+}
+
+async fn refresh_terminal_snapshot(app: &AppHandle) {
+    let projections = {
+        let state = app.state::<AgentWorkerSupervisorState>();
+        let terminals = state.terminal_messages.read().await;
+        sorted_terminal_projections(&terminals)
+    };
+    update_snapshot(app, |snapshot| snapshot.pending_terminals = projections).await;
+}
+
+fn terminal_projection(run_id: &str, message: &Value, run_request: Option<&Value>) -> Value {
+    let message_type = message
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("run.error");
+    json!({
+        "runId": run_id,
+        "workItemId": run_request.and_then(|request| request.get("workItemId")).cloned().unwrap_or(Value::Null),
+        "sessionId": run_request.and_then(|request| request.get("sessionId")).cloned().unwrap_or(Value::Null),
+        "workflowId": run_request.and_then(|request| request.get("workflowId")).cloned().unwrap_or(Value::Null),
+        "objective": run_request.and_then(|request| request.get("objective")).cloned().unwrap_or(Value::Null),
+        "intent": run_request.and_then(|request| request.get("intent")).cloned().unwrap_or(Value::Null),
+        "terminalType": message_type,
+    })
+}
+
+fn sorted_terminal_projections(terminals: &HashMap<String, BufferedTerminal>) -> Vec<Value> {
+    let mut values = terminals
+        .values()
+        .map(|terminal| terminal.projection.clone())
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        left.get("runId")
+            .and_then(Value::as_str)
+            .cmp(&right.get("runId").and_then(Value::as_str))
+    });
+    values
+}
+
+fn validate_run_id(run_id: &str) -> Result<(), String> {
+    if run_id.trim().is_empty() {
+        Err("run_id 不能为空。".to_string())
+    } else {
+        Ok(())
+    }
+}
+
 fn run_id_from_request(request: &Value) -> Result<String, String> {
     request
         .get("runId")
@@ -1758,6 +1886,7 @@ fn run_id_from_request(request: &Value) -> Result<String, String> {
         .ok_or_else(|| "AgentRunRequest 缺少 runId。".to_string())
 }
 
+#[cfg(test)]
 fn is_terminal_event(event: &Value) -> bool {
     matches!(
         event.get("type").and_then(Value::as_str),
@@ -1979,6 +2108,27 @@ mod tests {
             Some("conversation-1")
         );
         assert!(active[0].get("compiledContext").is_none());
+        let terminal_message = json!({
+            "version": 1,
+            "type": "run.result",
+            "requestId": "request-1",
+            "result": { "runId": "run-1", "output": "sensitive result" }
+        });
+        let projection = terminal_projection("run-1", &terminal_message, Some(&request));
+        assert_eq!(
+            projection.get("terminalType").and_then(Value::as_str),
+            Some("run.result")
+        );
+        assert!(projection.get("compiledContext").is_none());
+        assert!(projection.get("output").is_none());
+        let terminals = HashMap::from([(
+            "run-1".to_string(),
+            BufferedTerminal {
+                message: terminal_message,
+                projection,
+            },
+        )]);
+        assert_eq!(sorted_terminal_projections(&terminals).len(), 1);
     }
 
     #[test]

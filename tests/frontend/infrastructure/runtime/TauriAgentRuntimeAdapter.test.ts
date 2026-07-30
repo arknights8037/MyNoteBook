@@ -96,15 +96,41 @@ describe('TauriAgentRuntimeAdapter', () => {
     await adapter.dispose()
     await disposed
   })
+
+  it('resumes and acknowledges a terminal retained by Rust Core', async () => {
+    const bridge = new FakeTauriBridge()
+    bridge.terminal = {
+      version: 1,
+      type: 'run.result',
+      requestId: 'request-restored',
+      result: { runId: 'run-restored', output: 'retained', rounds: 2, toolCalls: [] },
+    }
+    const adapter = new TauriAgentRuntimeAdapter({ invoke: bridge.invoke, listen: bridge.listen })
+
+    await expect(adapter.resumeRun('run-restored')).resolves.toMatchObject({
+      runId: 'run-restored',
+      output: 'retained',
+    })
+    expect(bridge.invoke).toHaveBeenCalledWith('get_agent_runtime_terminal', {
+      input: { runId: 'run-restored' },
+    })
+
+    await adapter.acknowledgeRun('run-restored')
+    expect(bridge.invoke).toHaveBeenCalledWith('acknowledge_agent_runtime_terminal', {
+      input: { runId: 'run-restored' },
+    })
+    await adapter.dispose()
+  })
 })
 
 class FakeTauriBridge {
   private readonly listeners = new Map<string, Set<(event: { payload: unknown }) => void>>()
+  terminal: AgentWorkerMessage | null = null
 
-  readonly invoke = vi.fn(async () => undefined) as <T>(
-    command: string,
-    args?: Record<string, unknown>,
-  ) => Promise<T>
+  readonly invoke = vi.fn(async <T>(command: string): Promise<T> => {
+    if (command === 'get_agent_runtime_terminal') return this.terminal as T
+    return undefined as T
+  }) as <T>(command: string, args?: Record<string, unknown>) => Promise<T>
 
   readonly listen = async <T>(
     event: string,

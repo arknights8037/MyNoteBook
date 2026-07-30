@@ -216,12 +216,13 @@ AgentRunRequest
 - 共享 contracts 已冻结 Worker v1 envelope，覆盖实例身份、Run、Tool、工具审计、凭据解析、Authorization、heartbeat 和 shutdown。
 - `@mynotebook/agent-runtime-worker` 已提供 Node Worker Host 和真实 `AiSdkWorkerRuntime`；AI SDK 模型循环、流式事件、Tool Manifest 消费、独立 Tool Call ID、提案捕获、structured-output repair、取消与唯一终态均位于 sidecar。
 - Rust `AgentWorkerSupervisor` 已提供自包含 Worker 路径解析、stdin/stdout NDJSON、实例校验、heartbeat 超时、受控重启、活动 Run 跟踪、崩溃 `interrupted` 终态、Tauri commands 和窗口重建状态快照。Snapshot 只暴露 Run/work item/session/objective 等投影与待授权请求，不泄露 compiled context；新窗口会重建运行/等待视图并继续转发取消或授权。
+- Rust Core 会保留 `run.result/run.error` 直到业务持久化完成后收到显式 ACK；Snapshot 只暴露待领取终态的身份与类型，不暴露输出内容。窗口重建可重新领取终态并避免把对应任务误判为 orphan；当前对重建终态只恢复运行视图，尚未在无原始 Vue 上下文时完成 Patch/Cognitive 业务落库。
 - Rust dispatcher 已接管 Provider 网络与凭据注入、工具审计、全部 25 个内置工具和 MCP 调用：AI SDK 的自定义 `fetch` 通过 NDJSON 把请求交给 Rust `reqwest`，响应分片流回 Worker，取消会终止 Rust future；文档、检索、Mind Map、Skill 读取、本机检查走受控读取；自动化、Skill 和 MCP 资源只创建停用草稿；文档写工具仍由 Worker 捕获为 Patch 提案。Node 不访问 SQLite、MCP 配置或密钥值。
 - Node SEA + esbuild 构建可生成按 Tauri target-triple 命名的自包含 sidecar，构建时会执行真实进程协议 smoke；`externalBin` 桌面构建已通过，不要求最终用户安装 Node。
 - `useAgentRun` 可由 composition 通过 `VITE_AGENT_RUNTIME_OWNER=rust_worker` 选择 Tauri Runtime Port；默认仍为 `webview`，Ask/Edit 路径不变。
 - A2A 队列检查已迁入 Rust watcher；WebView 只订阅 `agent-communication://queue-changed` 并触发现有受控执行，不再运行轮询定时器。
 
-剩余工作是完成真实 Provider/Tauri 凭据 smoke、让 Rust 缓冲并可靠交付窗口缺席期间的 Run 终态、把 Patch/Cognitive 与 A2A 的上下文冻结和终态持久化移出窗口，以及移除 WebView Agent fallback。在这些验收完成前，不得把可选链路描述成默认后台 Agent。
+剩余工作是完成真实 Provider/Tauri 凭据 smoke、把已可可靠领取的终态转换为窗口无关的 Patch/Cognitive 持久化、把 A2A 的上下文冻结和终态持久化移出窗口，以及移除 WebView Agent fallback。在这些验收完成前，不得把可选链路描述成默认后台 Agent。
 
 ### 目标
 

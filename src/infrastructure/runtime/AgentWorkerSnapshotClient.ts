@@ -17,6 +17,15 @@ export interface AgentWorkerSnapshot {
     intent: string
   }>
   pendingAuthorizations: AgentWorkerAuthorizationRequest[]
+  pendingTerminals: Array<{
+    runId: string
+    workItemId: string
+    sessionId: string
+    workflowId: string | null
+    objective: string
+    intent: string
+    terminalType: 'run.result' | 'run.error'
+  }>
   lastHeartbeatAt: number | null
   restartCount: number
   lastError: string | null

@@ -21,6 +21,8 @@ const agentLoop = vi.hoisted(() => vi.fn())
 const listMcpTools = vi.hoisted(() => vi.fn())
 const callMcpTool = vi.hoisted(() => vi.fn())
 const sidecarStartRun = vi.hoisted(() => vi.fn())
+const sidecarResumeRun = vi.hoisted(() => vi.fn())
+const sidecarAcknowledgeRun = vi.hoisted(() => vi.fn())
 
 vi.mock('@/services/ai/AiMarkdownService', () => ({
   runAiMarkdownCompletion: completion,
@@ -31,8 +33,11 @@ vi.mock('@/services/agent/AgentRuntime', () => ({
 vi.mock('@/infrastructure/runtime/TauriAgentRuntimeAdapter', () => ({
   TauriAgentRuntimeAdapter: class {
     startRun = sidecarStartRun
+    resumeRun = sidecarResumeRun
+    acknowledgeRun = sidecarAcknowledgeRun
     cancelRun = vi.fn(async () => undefined)
     steerRun = vi.fn(async () => undefined)
+    dispose = vi.fn(async () => undefined)
     subscribeEvents() {
       return () => undefined
     }
@@ -52,6 +57,10 @@ describe('useAgentRun', () => {
     callMcpTool.mockResolvedValue({ ok: true })
     sidecarStartRun.mockReset()
     sidecarStartRun.mockResolvedValue(noChangeAgentResult(1))
+    sidecarResumeRun.mockReset()
+    sidecarResumeRun.mockResolvedValue(noChangeAgentResult(1, 'run-restored'))
+    sidecarAcknowledgeRun.mockReset()
+    sidecarAcknowledgeRun.mockResolvedValue(undefined)
   })
 
   it('freezes document and model context before the first asynchronous boundary', async () => {
@@ -143,6 +152,43 @@ describe('useAgentRun', () => {
       }),
     )
     expect(agentLoop).not.toHaveBeenCalled()
+    expect(sidecarAcknowledgeRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('projects a Rust-retained terminal without acknowledging unpersisted output', async () => {
+    const settings = ref(createAiSettings('openai'))
+    const run = createRun(
+      settings,
+      snapshot(),
+      async () => true,
+      'agent',
+      '恢复终态',
+      [],
+      undefined,
+      { runtimeOwner: 'rust_worker', runtimeDataDirectory: () => 'C:/data' },
+    )
+
+    await run.workflow.restoreWorkerSnapshot({
+      activeRuns: [],
+      pendingAuthorizations: [],
+      pendingTerminals: [
+        {
+          runId: 'run-restored',
+          workItemId: 'task-restored',
+          sessionId: 'conversation-restored',
+          objective: '恢复终态',
+          terminalType: 'run.result',
+        },
+      ],
+    })
+
+    expect(sidecarResumeRun).toHaveBeenCalledWith('run-restored')
+    expect(sidecarAcknowledgeRun).not.toHaveBeenCalled()
+    expect(run.workflow.isConversationRunning('conversation-restored')).toBe(false)
+    expect(run.workflow.runtimeStateFor('conversation-restored')).toMatchObject({
+      status: 'completed',
+      detail: '后台 Agent 已完成，结果待恢复处理',
+    })
   })
 
   it('rebuilds an active authorization view from the Rust Worker snapshot', async () => {
@@ -897,8 +943,9 @@ function mcpTool(serverTrusted: boolean, readOnly = true) {
   }
 }
 
-function noChangeAgentResult(rounds: number) {
+function noChangeAgentResult(rounds: number, runId?: string) {
   return {
+    ...(runId ? { runId } : {}),
     output: JSON.stringify({
       outcome: 'no_change',
       commands: [],

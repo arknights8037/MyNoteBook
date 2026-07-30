@@ -793,7 +793,7 @@ async function restoreStartupAgentState(): Promise<void> {
   let markInterrupted = true
   if (dependencies.agentRunServices.runtimeOwner === 'rust_worker') {
     const snapshot = await getAgentWorkerSnapshot().catch(() => null)
-    markInterrupted = !snapshot?.activeRunIds.length
+    markInterrupted = !snapshot?.activeRunIds.length && !snapshot?.pendingTerminals.length
     if (snapshot) await agentRun.restoreWorkerSnapshot(snapshot)
   }
   await restoreAgentStateForDocument(currentDocumentId.value, { markInterrupted })

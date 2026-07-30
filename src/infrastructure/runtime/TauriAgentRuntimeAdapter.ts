@@ -78,6 +78,32 @@ export class TauriAgentRuntimeAdapter implements AgentRuntimePort {
     return result
   }
 
+  /** Reattaches a rebuilt WebView to a terminal message retained by Rust Core. */
+  async resumeRun(runId: string): Promise<AgentRunResult> {
+    if (this.claimedRunIds.has(runId)) {
+      throw new AgentRuntimeContractError(
+        'duplicate_run',
+        `run_id ${runId} 已由当前 Runtime adapter 领取。`,
+      )
+    }
+    this.claimedRunIds.add(runId)
+    await this.ensureListening()
+    const message = await this.invoke<AgentWorkerMessage | null>('get_agent_runtime_terminal', {
+      input: { runId },
+    })
+    if (!message) {
+      throw new AgentRuntimeContractError('run_not_found', `run_id ${runId} 没有待领取终态。`)
+    }
+    if (message.type === 'run.result') return message.result
+    if (message.type === 'run.error') throw workerContractError(message.error)
+    throw new Error(`Rust Core 返回了非终态 Worker 消息：${message.type}`)
+  }
+
+  /** Acknowledges a terminal only after UI-side Patch/Cognitive persistence succeeds. */
+  async acknowledgeRun(runId: string): Promise<void> {
+    await this.invoke<void>('acknowledge_agent_runtime_terminal', { input: { runId } })
+  }
+
   async cancelRun(runId: string): Promise<void> {
     await this.invoke<void>('cancel_agent_runtime_run', { input: { runId } })
   }

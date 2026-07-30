@@ -239,6 +239,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
     let agentRounds = 0
     let agentToolCallCount = 0
     let agentDiagnostics: Pick<AgentRuntimeResult, 'finishReason' | 'usage'> = {}
+    let acknowledgeSidecarTerminal: (() => Promise<void>) | null = null
     const workspaceDocumentIds = resolveWorkspaceDocumentIds(
       snapshot.document.documents,
       snapshot.workspace?.rootDocumentIds ?? [],
@@ -685,6 +686,9 @@ export function useAgentRun(options: UseAgentRunOptions) {
                       validateDocumentEditProposal: (proposal) =>
                         validateDocumentEditProvenance(proposal, [...readableDocuments.values()]),
                     })
+                if (sidecarOwned && adapter instanceof TauriAgentRuntimeAdapter) {
+                  acknowledgeSidecarTerminal = () => adapter.acknowledgeRun(editPlan.task.runId)
+                }
                 runtimeAuthorizationBridge = sidecarOwned ? null : adapter
                 const client = new AgentRuntimeClient(adapter)
                 const active = activeRuns.get(runKey)
@@ -817,6 +821,16 @@ export function useAgentRun(options: UseAgentRunOptions) {
       learningState = resolution.learningState
       lastRunReport.value = resolution.lastRunReport
 
+      if (acknowledgeSidecarTerminal) {
+        try {
+          await acknowledgeSidecarTerminal()
+        } catch (acknowledgementError) {
+          const message = `Agent 结果已保存，但 Rust 终态确认失败：${formatAiErrorMessage(acknowledgementError)}`
+          lastRunIssue.value = message
+          options.notify.error(message)
+        }
+      }
+
       const completionDetail = describeAgentRunCompletion({
         hasPatchSet: Boolean(patchSet),
         slashIntent: slashCommand?.command.intent,
@@ -856,6 +870,9 @@ export function useAgentRun(options: UseAgentRunOptions) {
             persistenceError instanceof Error ? persistenceError.message : String(persistenceError),
           )
         }
+      }
+      if (acknowledgeSidecarTerminal) {
+        await acknowledgeSidecarTerminal().catch(() => undefined)
       }
       const currentMessage = runContext.messages.value[assistantIndex]
       if (currentMessage) {
@@ -913,6 +930,13 @@ export function useAgentRun(options: UseAgentRunOptions) {
       context: string
       options: string[]
       allowFreeText: boolean
+    }>
+    pendingTerminals?: Array<{
+      runId: string
+      workItemId: string
+      sessionId: string
+      objective: string
+      terminalType: 'run.result' | 'run.error'
     }>
   }): Promise<void> {
     if (options.services?.runtimeOwner !== 'rust_worker') return
@@ -1001,6 +1025,34 @@ export function useAgentRun(options: UseAgentRunOptions) {
         runtimeRunId: run.runId,
         unsubscribeRuntime: unsubscribe,
       })
+      activeConversationId.value = runKey
+    }
+    for (const terminal of snapshot.pendingTerminals ?? []) {
+      const runKey = terminal.sessionId.trim() || terminal.runId
+      if (activeRuns.has(runKey) || runtimes.has(runKey)) continue
+      const runtime = createAgentRunRuntimeController(options.createId)
+      runtime.restoreActive({
+        runId: terminal.runId,
+        goal: terminal.objective,
+        detail: '正在从 Rust Core 领取后台终态',
+      })
+      const adapter = new TauriAgentRuntimeAdapter({
+        dataDirectory: options.services.runtimeDataDirectory?.(),
+      })
+      try {
+        const result = await adapter.resumeRun(terminal.runId)
+        runtime.recordExecutionResult({ rounds: result.rounds, toolCalls: result.toolCalls })
+        runtime.setSummary('后台 Agent 已完成；结果仍保留在 Rust Core，等待恢复业务持久化。')
+        runtime.complete('后台 Agent 已完成，结果待恢复处理')
+      } catch (error) {
+        runtime.fail(formatAiErrorMessage(error))
+        if (terminal.terminalType === 'run.error') {
+          await adapter.acknowledgeRun(terminal.runId).catch(() => undefined)
+        }
+      } finally {
+        await adapter.dispose()
+      }
+      runtimes.set(runKey, runtime)
       activeConversationId.value = runKey
     }
     options.isRunning.value = activeRuns.size > 0
