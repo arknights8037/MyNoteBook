@@ -29,6 +29,7 @@ const emit = defineEmits<{
   generateSummary: []
   toggleAutoSummary: []
   changeSummaryInterval: []
+  move: [id: string, position: { x: number; y: number }, target: 'desktop' | 'compact']
   resize: [id: string, size: { w: number; h: number }, target: 'desktop' | 'compact']
   updateSettings: [id: string, settings: InformationHomeWidget['settings']]
 }>()
@@ -101,6 +102,10 @@ function commitResize(id: string | number, height: number, width: number): void 
   emit('resize', String(id), { w: width, h: height }, isCompact.value ? 'compact' : 'desktop')
 }
 
+function commitMove(id: string | number, x: number, y: number): void {
+  emit('move', String(id), { x, y }, isCompact.value ? 'compact' : 'desktop')
+}
+
 function syncGridWidth(): void {
   const next = Math.round(gridShell.value?.clientWidth ?? 0)
   if (next > 0 && next !== gridWidth.value) gridWidth.value = next
@@ -136,9 +141,9 @@ onBeforeUnmount(() => {
       :margin="[gridMargin, gridMargin]"
       :is-draggable="editing"
       :is-resizable="editing"
-      :vertical-compact="false"
+      :vertical-compact="true"
       :prevent-collision="false"
-      :restore-on-drag="true"
+      :restore-on-drag="false"
       :use-css-transforms="true"
       @layout-updated="updateLayout"
       @breakpoint-changed="breakpoint = $event"
@@ -159,6 +164,7 @@ onBeforeUnmount(() => {
         :is-resizable="editing"
         drag-allow-from=".dashboard-widget-frame__drag-handle"
         drag-ignore-from="button, input, select, .dashboard-widget-frame__body"
+        @moved="commitMove"
         @resized="commitResize"
       >
         <InformationHomeWidgetHost

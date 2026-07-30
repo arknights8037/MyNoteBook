@@ -57,6 +57,19 @@
   margin-inline: auto;
 }
 
+.information-home-grid > .vgl-item {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.information-home-grid > .vgl-item > .dashboard-widget-frame {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
 .information-home-controls {
   position: absolute;
   z-index: 24;
@@ -204,6 +217,10 @@
   background-size:
     var(--information-home-grid-track-size) var(--information-home-grid-track-size),
     var(--information-home-grid-track-size) var(--information-home-grid-track-size);
+}
+
+.information-home-surface.dashboard-surface--editing .dashboard-widget-frame {
+  overflow: hidden;
 }
 
 .information-home-surface.dashboard-surface--editing

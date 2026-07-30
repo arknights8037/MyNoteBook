@@ -36,8 +36,9 @@ describe('InformationHomeGrid', () => {
     expect(wrapper.find('.vgl-item__resizer').exists()).toBe(true)
     expect(wrapper.find('.information-home-grid__resize-handle').exists()).toBe(false)
     expect(wrapper.get('.vgl-item').classes()).toContain('vgl-item--resizable')
-    expect(wrapper.getComponent(GridLayout).props('verticalCompact')).toBe(false)
+    expect(wrapper.getComponent(GridLayout).props('verticalCompact')).toBe(true)
     expect(wrapper.getComponent(GridLayout).props('preventCollision')).toBe(false)
+    expect(wrapper.getComponent(GridLayout).props('restoreOnDrag')).toBe(false)
     expect(wrapper.getComponent(GridItem).props('minH')).toBe(2)
     expect(wrapper.getComponent(GridItem).props('minW')).toBe(2)
     expect(wrapper.getComponent(GridItem).props('resizeOption')).toEqual({})
@@ -48,6 +49,8 @@ describe('InformationHomeGrid', () => {
 
     wrapper.getComponent(GridItem).vm.$emit('resized', widget.id, 7, 8, 0, 0)
     expect(wrapper.emitted('resize')?.[0]).toEqual([widget.id, { w: 8, h: 7 }, 'desktop'])
+    wrapper.getComponent(GridItem).vm.$emit('moved', widget.id, 3, 4)
+    expect(wrapper.emitted('move')?.[0]).toEqual([widget.id, { x: 3, y: 4 }, 'desktop'])
 
     await wrapper.setProps({ editing: false })
     await nextTick()

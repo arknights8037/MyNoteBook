@@ -177,6 +177,32 @@ function removeWidget(id: string): void {
   })
 }
 
+function moveWidget(
+  id: string,
+  position: { x: number; y: number },
+  target: 'desktop' | 'compact' = 'desktop',
+): void {
+  if (!editing.value) beginEdit()
+  if (!editing.value) return
+  mutate((payload) => {
+    const widget = payload.widgets.find((candidate) => candidate.id === id)
+    if (!widget) return
+    const columns = target === 'compact' ? 6 : 12
+    const current =
+      widget.layout[target] ??
+      ({
+        ...widget.layout.desktop,
+        x: 0,
+        w: Math.min(widget.layout.desktop.w, columns),
+      } satisfies InformationHomeGridPosition)
+    widget.layout[target] = {
+      ...current,
+      x: Math.max(0, Math.min(Math.round(position.x), columns - current.w)),
+      y: Math.max(0, Math.round(position.y)),
+    }
+  })
+}
+
 function resizeWidget(
   id: string,
   size: { w: number; h: number },
@@ -525,6 +551,7 @@ onBeforeUnmount(() => {
         @generate-summary="generateSummary('manual')"
         @toggle-auto-summary="toggleAutoSummary"
         @change-summary-interval="changeSummaryInterval"
+        @move="moveWidget"
         @resize="resizeWidget"
         @update-settings="updateWidgetSettings"
       />

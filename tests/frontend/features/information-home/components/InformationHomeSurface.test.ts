@@ -138,9 +138,9 @@ describe('InformationHomeSurface', () => {
           InformationHomeGrid: {
             name: 'InformationHomeGrid',
             props: ['widgets'],
-            emits: ['resize'],
+            emits: ['move', 'resize'],
             template:
-              "<div><button data-test=\"resize-widget\" @click=\"$emit('resize', 'home-widget-test', { w: 8, h: 7 }, 'desktop')\">resize</button><button data-test=\"resize-widget-compact\" @click=\"$emit('resize', 'home-widget-test', { w: 8, h: 6 }, 'compact')\">compact</button></div>",
+              "<div><button data-test=\"resize-widget\" @click=\"$emit('resize', 'home-widget-test', { w: 8, h: 7 }, 'desktop')\">resize</button><button data-test=\"move-widget\" @click=\"$emit('move', 'home-widget-test', { x: 3, y: 4 }, 'desktop')\">move</button><button data-test=\"resize-widget-compact\" @click=\"$emit('resize', 'home-widget-test', { w: 8, h: 6 }, 'compact')\">compact</button></div>",
           },
         },
       },
@@ -152,6 +152,11 @@ describe('InformationHomeSurface', () => {
       .getComponent({ name: 'InformationHomeGrid' })
       .props('widgets') as typeof home.payload.widgets
     expect(widgets[0]?.layout.desktop).toMatchObject({ w: 8, h: 7 })
+    await wrapper.get('[data-test="move-widget"]').trigger('click')
+    const movedWidgets = wrapper
+      .getComponent({ name: 'InformationHomeGrid' })
+      .props('widgets') as typeof home.payload.widgets
+    expect(movedWidgets[0]?.layout.desktop).toMatchObject({ x: 3, y: 4 })
     await wrapper.get('[data-test="resize-widget-compact"]').trigger('click')
     const compactWidgets = wrapper
       .getComponent({ name: 'InformationHomeGrid' })
