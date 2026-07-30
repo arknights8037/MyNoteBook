@@ -1,17 +1,25 @@
 <script setup lang="ts">
+import { ArrowUpRight, Mail } from '@lucide/vue'
 import { computed } from 'vue'
 
 import type { InformationHomeSummary } from '@/models/home/informationHome'
 import { renderAiMarkdown } from '@/services/ai/AiMarkdownRenderer'
+import { buildSignalResultDigest } from '@/services/home/SignalResultDigestService'
 
 const props = defineProps<{
-  summary: InformationHomeSummary | null
+  summaries: InformationHomeSummary[]
   generating: boolean
   autoEnabled: boolean
   intervalMinutes: number
 }>()
-const emit = defineEmits<{ generate: []; toggleAuto: []; changeInterval: [] }>()
-const rendered = computed(() => renderAiMarkdown(props.summary?.content ?? ''))
+const emit = defineEmits<{
+  generate: []
+  toggleAuto: []
+  changeInterval: []
+  openEmail: [id: string]
+}>()
+const digest = computed(() => buildSignalResultDigest(props.summaries))
+const rendered = computed(() => renderAiMarkdown(digest.value.narrativeMarkdown))
 </script>
 
 <template>
@@ -19,7 +27,7 @@ const rendered = computed(() => renderAiMarkdown(props.summary?.content ?? ''))
     <header>
       <div>
         <strong>事件驱动处理</strong>
-        <small>Agent 自主核对邮件、会议与知识库，只写入本地待办和日历。</small>
+        <small>汇总系统事件的处理结果，并保留邮件等原始条目的定位入口。</small>
       </div>
       <div>
         <button
@@ -43,24 +51,47 @@ const rendered = computed(() => renderAiMarkdown(props.summary?.content ?? ''))
       </div>
     </header>
     <p
-      v-if="summary?.status === 'failed'"
+      v-if="digest.latestResult?.status === 'failed'"
       class="dashboard-widget-state dashboard-widget-state--error"
     >
-      {{ summary.error }}
+      {{ digest.latestResult.error }}
     </p>
-    <div v-else-if="summary" class="home-agent-summary__content">
+    <div
+      v-else-if="digest.primaryResult || digest.emailBriefs.length"
+      class="home-agent-summary__content"
+    >
       <div class="home-agent-summary__meta">
         <span
-          >{{ summary.triggerSource === 'auto' ? 'AUTO' : 'MANUAL' }} · {{ summary.provider }} /
-          {{ summary.model || '默认模型' }}</span
-        ><time>{{ new Date(summary.generatedAt).toLocaleString() }}</time>
+          >已消费 {{ digest.completedCount }} 次事件处理 ·
+          {{ digest.primaryResult?.triggerSource === 'auto' ? 'AUTO' : 'MANUAL' }}</span
+        ><time v-if="digest.primaryResult">{{
+          new Date(digest.primaryResult.generatedAt).toLocaleString()
+        }}</time>
       </div>
       <!-- renderAiMarkdown escapes text and filters link protocols before returning HTML. -->
       <!-- eslint-disable-next-line vue/no-v-html -->
-      <div class="markdown-preview" v-html="rendered"></div>
+      <div v-if="digest.narrativeMarkdown" class="markdown-preview" v-html="rendered"></div>
+      <section v-if="digest.emailBriefs.length" class="home-agent-summary__email-briefs">
+        <header>
+          <strong><Mail :size="14" />邮件简报</strong
+          ><small>{{ digest.emailBriefs.length }} 条</small>
+        </header>
+        <button
+          v-for="item in digest.emailBriefs"
+          :key="item.messageId"
+          type="button"
+          @click="emit('openEmail', item.messageId)"
+        >
+          <span
+            ><strong>{{ item.title }}</strong
+            ><small>{{ item.summary }}</small></span
+          >
+          <ArrowUpRight :size="14" />
+        </button>
+      </section>
     </div>
     <p v-else class="dashboard-widget-state">
-      尚未处理相关更新。点击后由 Agent 自主决定摘要、待办、日程和冲突核对。
+      尚无系统事件处理结果。新邮件、RSS 或手动处理完成后会自动汇总到这里。
     </p>
   </div>
 </template>

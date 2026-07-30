@@ -22,7 +22,7 @@ type BrowserMouseEvent = InstanceType<typeof globalThis.MouseEvent>
 const props = defineProps<{
   widget: InformationHomeWidget
   editing: boolean
-  summary: InformationHomeSummary | null
+  summaries: InformationHomeSummary[]
   rssSummary?: InformationHomeSummary | null
   generatingSummary: boolean
   autoSummaryEnabled: boolean
@@ -158,20 +158,21 @@ function removeWidget(): void {
       v-else-if="widget.widgetType === 'rss-news'"
       ref="rssWidget"
       :limit="widget.query.limit"
-      :summary="rssSummary ?? summary"
+      :summary="rssSummary ?? null"
       @open="emit('openRss', $event)"
       @refreshing="refreshing = $event"
       @metrics="updateMetrics"
     />
     <AgentSummaryHomeWidget
       v-else-if="widget.widgetType === 'agent-summary'"
-      :summary="summary"
+      :summaries="summaries"
       :generating="generatingSummary"
       :auto-enabled="autoSummaryEnabled"
       :interval-minutes="summaryIntervalMinutes"
       @generate="emit('generateSummary')"
       @toggle-auto="emit('toggleAutoSummary')"
       @change-interval="emit('changeSummaryInterval')"
+      @open-email="emit('openEmail', $event)"
     />
     <TodoListHomeWidget
       v-else-if="widget.widgetType === 'todo-list'"

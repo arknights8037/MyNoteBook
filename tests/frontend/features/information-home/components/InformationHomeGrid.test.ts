@@ -28,7 +28,7 @@ describe('InformationHomeGrid', () => {
       props: {
         widgets: [widget],
         editing: true,
-        summary: null,
+        summaries: [],
         generatingSummary: false,
         autoSummaryEnabled: false,
         summaryIntervalMinutes: 360,

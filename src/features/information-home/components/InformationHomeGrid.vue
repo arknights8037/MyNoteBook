@@ -16,7 +16,7 @@ type BrowserPointerEvent = InstanceType<typeof globalThis.PointerEvent>
 const props = defineProps<{
   widgets: InformationHomeWidget[]
   editing: boolean
-  summary: InformationHomeSummary | null
+  summaries: InformationHomeSummary[]
   rssSummary: InformationHomeSummary | null
   generatingSummary: boolean
   autoSummaryEnabled: boolean
@@ -215,7 +215,7 @@ onBeforeUnmount(() => {
         <InformationHomeWidgetHost
           :widget="widget"
           :editing="editing"
-          :summary="summary"
+          :summaries="summaries"
           :rss-summary="rssSummary"
           :generating-summary="generatingSummary"
           :auto-summary-enabled="autoSummaryEnabled"

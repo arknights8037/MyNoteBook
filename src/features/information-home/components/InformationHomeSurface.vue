@@ -489,7 +489,7 @@ onBeforeUnmount(() => {
       <InformationHomeGrid
         :widgets="draft.widgets"
         :editing="editing"
-        :summary="latestSummary"
+        :summaries="summaries"
         :rss-summary="latestRssSummary"
         :generating-summary="generatingSummary"
         :auto-summary-enabled="home?.autoSummaryEnabled ?? false"
