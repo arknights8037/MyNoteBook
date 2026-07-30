@@ -8,7 +8,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 const NOW = 4_000_000
 const execute = vi.fn()
 const select = vi.fn()
-const client: SqlClient = { execute, select }
+const client: SqlClient = { mutate: execute, select }
 
 describe('TauriAgentCommunicationRepository', () => {
   beforeEach(() => {

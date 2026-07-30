@@ -30,7 +30,6 @@
     "@tauri-apps/plugin-fs": "^2.4.0",
     "@tauri-apps/plugin-log": "^2.7.0",
     "@tauri-apps/plugin-opener": "^2.5.0",
-    "@tauri-apps/plugin-sql": "^2.4.0",
     "@tauri-apps/plugin-window-state": "^2.4.0",
     "@tiptap/extension-blockquote": "^3.27.1",
     "@tiptap/extension-bubble-menu": "^3.27.1",

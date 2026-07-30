@@ -1,5 +1,5 @@
-import { invoke } from '@tauri-apps/api/core'
 import { save } from '@tauri-apps/plugin-dialog'
+import { writeTextFile } from '@tauri-apps/plugin-fs'
 
 import type { DocumentTransferFilePort } from '@/services/documents/DocumentTransferService'
 
@@ -18,6 +18,6 @@ export const tauriDocumentTransferFilePort: DocumentTransferFilePort = {
   },
 
   async writeTextFile(path, content) {
-    await invoke('write_text_file', { path, content })
+    await writeTextFile(path, content)
   },
 }

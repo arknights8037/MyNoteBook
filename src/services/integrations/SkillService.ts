@@ -57,14 +57,15 @@ export async function removeInstalledSkill(skillId: string): Promise<void> {
   })
 }
 
-export async function getSkillsDirectory(): Promise<string> {
-  return invoke<string>('get_skills_directory', {
+export async function openSkillsDirectory(): Promise<void> {
+  await invoke('open_skills_directory', {
     input: { dataDirectory: dataDirectory() },
   })
 }
 
 export async function loadEnabledSkillPrompt(): Promise<EnabledSkillPrompt> {
-  if (!Reflect.has(globalThis, '__TAURI_INTERNALS__')) return { catalog: '', instructions: '', skills: [] }
+  if (!Reflect.has(globalThis, '__TAURI_INTERNALS__'))
+    return { catalog: '', instructions: '', skills: [] }
   const enabled = (await listInstalledSkills()).filter((skill) => skill.enabled && skill.valid)
   if (enabled.length === 0) return { catalog: '', instructions: '', skills: [] }
 

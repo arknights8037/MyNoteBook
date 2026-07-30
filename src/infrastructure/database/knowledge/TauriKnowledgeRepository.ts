@@ -78,38 +78,30 @@ export class TauriKnowledgeRepository implements KnowledgeRepository {
     if (validation) return err({ code: 'validation-error', message: validation })
     const now = input.createdAt ?? Date.now()
     try {
-      await this.sqlClient.execute(
-        `INSERT INTO knowledge_objects (
-          id, object_type, status, title, content, structured_data_json, generated_run_id,
-          cognitive_mode, template_id, template_version, owner_id, scope_json, document_id, block_id,
-          source_revision, authority_level, confidence, valid_from, valid_until,
-          verified_at, version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-        [
-          input.id,
-          input.objectType,
-          input.status ?? 'draft',
-          input.title.trim(),
-          input.content?.trim() ?? '',
-          JSON.stringify(input.structuredData ?? {}),
-          input.generatedRunId ?? null,
-          input.cognitiveMode ?? null,
-          input.templateId ?? null,
-          input.templateVersion ?? null,
-          input.ownerId ?? null,
-          JSON.stringify(input.scope ?? {}),
-          input.documentId ?? null,
-          input.blockId ?? null,
-          input.sourceRevision ?? null,
-          input.authorityLevel?.trim() || 'local',
-          input.confidence ?? null,
-          input.validFrom ?? null,
-          input.validUntil ?? null,
-          input.verifiedAt ?? null,
-          now,
-          now,
-        ],
-      )
+      await this.sqlClient.mutate('createKnowledgeObject', [
+        input.id,
+        input.objectType,
+        input.status ?? 'draft',
+        input.title.trim(),
+        input.content?.trim() ?? '',
+        JSON.stringify(input.structuredData ?? {}),
+        input.generatedRunId ?? null,
+        input.cognitiveMode ?? null,
+        input.templateId ?? null,
+        input.templateVersion ?? null,
+        input.ownerId ?? null,
+        JSON.stringify(input.scope ?? {}),
+        input.documentId ?? null,
+        input.blockId ?? null,
+        input.sourceRevision ?? null,
+        input.authorityLevel?.trim() || 'local',
+        input.confidence ?? null,
+        input.validFrom ?? null,
+        input.validUntil ?? null,
+        input.verifiedAt ?? null,
+        now,
+        now,
+      ])
       return this.getObject(input.id)
     } catch (error) {
       return err(normalizeError(error, '无法创建知识对象。'))
@@ -218,36 +210,29 @@ export class TauriKnowledgeRepository implements KnowledgeRepository {
     if (validation) return err({ code: 'validation-error', message: validation })
     try {
       const updatedAt = Date.now()
-      const result = await this.sqlClient.execute(
-        `UPDATE knowledge_objects SET status = ?, title = ?, content = ?, structured_data_json = ?,
-          generated_run_id = ?, cognitive_mode = ?, template_id = ?, template_version = ?, owner_id = ?, scope_json = ?,
-          document_id = ?, block_id = ?, source_revision = ?, authority_level = ?, confidence = ?,
-          valid_from = ?, valid_until = ?, verified_at = ?, version = version + 1, updated_at = ?
-         WHERE id = ? AND version = ?`,
-        [
-          next.status ?? 'draft',
-          next.title.trim(),
-          next.content?.trim() ?? '',
-          JSON.stringify(next.structuredData ?? {}),
-          next.generatedRunId ?? null,
-          next.cognitiveMode ?? null,
-          next.templateId ?? null,
-          next.templateVersion ?? null,
-          next.ownerId ?? null,
-          JSON.stringify(next.scope ?? {}),
-          next.documentId ?? null,
-          next.blockId ?? null,
-          next.sourceRevision ?? null,
-          next.authorityLevel ?? 'local',
-          next.confidence ?? null,
-          next.validFrom ?? null,
-          next.validUntil ?? null,
-          next.verifiedAt ?? null,
-          updatedAt,
-          id,
-          expectedVersion,
-        ],
-      )
+      const result = await this.sqlClient.mutate('updateKnowledgeObject', [
+        next.status ?? 'draft',
+        next.title.trim(),
+        next.content?.trim() ?? '',
+        JSON.stringify(next.structuredData ?? {}),
+        next.generatedRunId ?? null,
+        next.cognitiveMode ?? null,
+        next.templateId ?? null,
+        next.templateVersion ?? null,
+        next.ownerId ?? null,
+        JSON.stringify(next.scope ?? {}),
+        next.documentId ?? null,
+        next.blockId ?? null,
+        next.sourceRevision ?? null,
+        next.authorityLevel ?? 'local',
+        next.confidence ?? null,
+        next.validFrom ?? null,
+        next.validUntil ?? null,
+        next.verifiedAt ?? null,
+        updatedAt,
+        id,
+        expectedVersion,
+      ])
       if (result.rowsAffected !== 1) {
         return err({ code: 'revision-conflict', message: '知识对象版本已变化。' })
       }
@@ -264,22 +249,10 @@ export class TauriKnowledgeRepository implements KnowledgeRepository {
       return err({ code: 'revision-conflict', message: '知识对象版本已变化。' })
     }
     try {
-      await this.sqlClient.execute(
-        'DELETE FROM knowledge_object_relations WHERE from_object_id = ? OR to_object_id = ?',
-        [id, id],
-      )
-      await this.sqlClient.execute(
-        'DELETE FROM knowledge_object_sources WHERE knowledge_object_id = ?',
-        [id],
-      )
-      await this.sqlClient.execute(
-        'DELETE FROM knowledge_validations WHERE knowledge_object_id = ?',
-        [id],
-      )
-      const result = await this.sqlClient.execute(
-        'DELETE FROM knowledge_objects WHERE id = ? AND version = ?',
-        [id, expectedVersion],
-      )
+      await this.sqlClient.mutate('deleteKnowledgeRelations', [id, id])
+      await this.sqlClient.mutate('deleteKnowledgeSources', [id])
+      await this.sqlClient.mutate('deleteKnowledgeValidations', [id])
+      const result = await this.sqlClient.mutate('deleteKnowledgeObject', [id, expectedVersion])
       return result.rowsAffected === 1
         ? ok(undefined)
         : err({ code: 'revision-conflict', message: '知识对象不存在或版本已变化。' })
@@ -300,17 +273,13 @@ export class TauriKnowledgeRepository implements KnowledgeRepository {
     }
     const relation: KnowledgeRelation = { ...input, createdAt: input.createdAt ?? Date.now() }
     try {
-      await this.sqlClient.execute(
-        `INSERT INTO knowledge_object_relations
-         (id, from_object_id, relation_type, to_object_id, created_at) VALUES (?, ?, ?, ?, ?)`,
-        [
-          relation.id,
-          relation.fromObjectId,
-          relation.relationType,
-          relation.toObjectId,
-          relation.createdAt,
-        ],
-      )
+      await this.sqlClient.mutate('addKnowledgeRelation', [
+        relation.id,
+        relation.fromObjectId,
+        relation.relationType,
+        relation.toObjectId,
+        relation.createdAt,
+      ])
       return ok(relation)
     } catch (error) {
       return err(normalizeError(error, '无法创建知识关系。'))
@@ -353,22 +322,17 @@ export class TauriKnowledgeRepository implements KnowledgeRepository {
       return err({ code: 'validation-error', message: '知识来源缺少有效 ID、文档或 revision。' })
     }
     try {
-      await this.sqlClient.execute(
-        `INSERT INTO knowledge_object_sources
-         (id, knowledge_object_id, document_id, block_id, revision, quote, start_offset, end_offset, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          input.id,
-          input.knowledgeObjectId,
-          input.documentId,
-          input.blockId,
-          input.revision,
-          input.quote,
-          input.startOffset,
-          input.endOffset,
-          input.createdAt,
-        ],
-      )
+      await this.sqlClient.mutate('addKnowledgeSource', [
+        input.id,
+        input.knowledgeObjectId,
+        input.documentId,
+        input.blockId,
+        input.revision,
+        input.quote,
+        input.startOffset,
+        input.endOffset,
+        input.createdAt,
+      ])
       return ok(input)
     } catch (error) {
       return err(normalizeError(error, '无法保存知识来源。'))
@@ -389,21 +353,16 @@ export class TauriKnowledgeRepository implements KnowledgeRepository {
 
   async addValidation(input: KnowledgeValidation): Promise<AppResult<KnowledgeValidation>> {
     try {
-      await this.sqlClient.execute(
-        `INSERT INTO knowledge_validations
-         (id, knowledge_object_id, rule_id, verdict, severity, message, source_json, validated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          input.id,
-          input.knowledgeObjectId,
-          input.ruleId,
-          input.verdict,
-          input.severity,
-          input.message,
-          JSON.stringify(input.source),
-          input.validatedAt,
-        ],
-      )
+      await this.sqlClient.mutate('addKnowledgeValidation', [
+        input.id,
+        input.knowledgeObjectId,
+        input.ruleId,
+        input.verdict,
+        input.severity,
+        input.message,
+        JSON.stringify(input.source),
+        input.validatedAt,
+      ])
       return ok(input)
     } catch (error) {
       return err(normalizeError(error, '无法保存知识验证。'))

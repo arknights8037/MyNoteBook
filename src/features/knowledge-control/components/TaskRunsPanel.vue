@@ -94,9 +94,7 @@ function runSource(run: TaskRun): string {
           placeholder="CLI envelope 导出绝对路径"
           @input="emit('update:exportPath', ($event.target as HTMLInputElement).value)"
         />
-        <NButton secondary :disabled="!exportPath.trim()" @click="emit('export')"
-          >导出 CLI Envelope</NButton
-        >
+        <NButton secondary @click="emit('export')">导出 CLI Envelope</NButton>
       </form>
       <form class="p1-view-form" @submit.prevent="emit('import')">
         <input
@@ -110,10 +108,7 @@ function runSource(run: TaskRun): string {
           placeholder="Capability token"
           @input="emit('update:capabilityToken', ($event.target as HTMLInputElement).value)"
         />
-        <NButton
-          secondary
-          :disabled="!submissionPath.trim() || !capabilityToken.trim()"
-          @click="emit('import')"
+        <NButton secondary :disabled="!capabilityToken.trim()" @click="emit('import')"
           >导入外部提交</NButton
         >
       </form>

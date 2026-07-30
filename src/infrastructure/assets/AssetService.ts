@@ -1,5 +1,4 @@
 import { invoke } from '@tauri-apps/api/core'
-import { openPath } from '@tauri-apps/plugin-opener'
 
 import { getDatabase } from '@/infrastructure/database/shared/connection'
 import { loadAppSettings } from '@/models/settings/settings'
@@ -57,44 +56,19 @@ export class TauriAssetService implements AssetPort {
 
     const database = await getDatabase()
     try {
-      await database.execute(
-        `INSERT INTO assets (
-        id,
-        document_id,
-        relative_path,
-        original_name,
-        mime_type,
-        size_bytes,
-        content_hash,
-        width,
-        height,
-        created_at,
-        updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        document_id = excluded.document_id,
-        relative_path = excluded.relative_path,
-        original_name = excluded.original_name,
-        mime_type = excluded.mime_type,
-        size_bytes = excluded.size_bytes,
-        content_hash = excluded.content_hash,
-        width = excluded.width,
-        height = excluded.height,
-        updated_at = excluded.updated_at`,
-        [
-          record.id,
-          record.documentId,
-          record.relativePath,
-          record.originalName,
-          record.mimeType,
-          record.sizeBytes,
-          record.contentHash,
-          record.width,
-          record.height,
-          record.createdAt,
-          record.updatedAt,
-        ],
-      )
+      await database.mutate('upsertAsset', [
+        record.id,
+        record.documentId,
+        record.relativePath,
+        record.originalName,
+        record.mimeType,
+        record.sizeBytes,
+        record.contentHash,
+        record.width,
+        record.height,
+        record.createdAt,
+        record.updatedAt,
+      ])
     } catch (error) {
       await invoke('remove_asset_file', {
         dataDirectory: settings.dataDirectory,
@@ -133,11 +107,10 @@ export class TauriAssetService implements AssetPort {
   async openAsset(assetIdOrUrl: string): Promise<void> {
     const asset = await this.findAsset(assetIdOrUrl)
     if (!asset) return
-    const path = await invoke<string>('resolve_asset_path', {
+    await invoke('open_asset_file', {
       dataDirectory: loadAppSettings().dataDirectory,
       relativePath: asset.relativePath,
     })
-    await openPath(path)
   }
 
   async deleteAsset(assetIdOrUrl: string): Promise<void> {
@@ -145,7 +118,7 @@ export class TauriAssetService implements AssetPort {
     if (!asset) return
 
     const database = await getDatabase()
-    await database.execute('DELETE FROM assets WHERE id = ?', [asset.id])
+    await database.mutate('deleteAsset', [asset.id])
     await invoke('remove_asset_file', {
       dataDirectory: loadAppSettings().dataDirectory,
       relativePath: asset.relativePath,

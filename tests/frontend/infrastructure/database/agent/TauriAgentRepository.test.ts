@@ -7,13 +7,15 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 import { TauriAgentRepository } from '@/infrastructure/database/agent/TauriAgentRepository'
 import type { AgentPatchSet, AgentTask, BlockPatch } from '@/models/agent/agent'
 import { createDefaultExecutionPolicy } from '@/models/agent/executionPolicy'
-import type { SqlClient, SqlExecuteResult } from '@/repositories/shared/SqlClient'
+import type { DatabaseMutation, SqlClient, SqlExecuteResult } from '@/repositories/shared/SqlClient'
 import type { SqlValue } from '@/repositories/shared/SqlClient'
+import { testDatabaseMutationSql } from '../testDatabaseMutations'
 
 class RecoverySqlClient implements SqlClient {
   readonly executedSql: string[] = []
 
-  async execute(sql: string): Promise<SqlExecuteResult> {
+  async mutate(mutation: DatabaseMutation): Promise<SqlExecuteResult> {
+    const sql = testDatabaseMutationSql(mutation)
     this.executedSql.push(sql)
     return { rowsAffected: 1 }
   }
@@ -87,7 +89,8 @@ class RecoverySqlClient implements SqlClient {
 class SqliteRecoveryClient implements SqlClient {
   readonly database = new DatabaseSync(':memory:')
 
-  async execute(sql: string, bindValues: SqlValue[] = []): Promise<SqlExecuteResult> {
+  async mutate(mutation: DatabaseMutation, bindValues: SqlValue[] = []): Promise<SqlExecuteResult> {
+    const sql = testDatabaseMutationSql(mutation)
     const result = this.database.prepare(sql).run(...bindValues.map(toSqliteValue))
     return { rowsAffected: Number(result.changes), lastInsertId: Number(result.lastInsertRowid) }
   }
@@ -105,7 +108,7 @@ function toSqliteValue(value: SqlValue): string | number | null {
 }
 
 class CreationSqlClient implements SqlClient {
-  async execute(): Promise<SqlExecuteResult> {
+  async mutate(): Promise<SqlExecuteResult> {
     return { rowsAffected: 1 }
   }
 

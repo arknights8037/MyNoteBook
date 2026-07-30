@@ -35,25 +35,18 @@ export class TauriWorkRepository implements WorkRepository {
     }
     const now = input.createdAt ?? Date.now()
     try {
-      await this.sqlClient.execute(
-        `INSERT INTO task_definitions (
-          id, definition_type, name, instruction, acceptance_criteria_json,
-          execution_policy_json, source_knowledge_object_id, automation_id,
-          enabled, version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 1, ?, ?)`,
-        [
-          input.id,
-          input.definitionType,
-          input.name.trim(),
-          input.instruction.trim(),
-          JSON.stringify(input.acceptanceCriteria ?? {}),
-          JSON.stringify(input.executionPolicy ?? {}),
-          input.sourceKnowledgeObjectId ?? null,
-          input.enabled === false ? 0 : 1,
-          now,
-          now,
-        ],
-      )
+      await this.sqlClient.mutate('createTaskDefinition', [
+        input.id,
+        input.definitionType,
+        input.name.trim(),
+        input.instruction.trim(),
+        JSON.stringify(input.acceptanceCriteria ?? {}),
+        JSON.stringify(input.executionPolicy ?? {}),
+        input.sourceKnowledgeObjectId ?? null,
+        input.enabled === false ? 0 : 1,
+        now,
+        now,
+      ])
       return ok({
         id: input.id,
         definitionType: input.definitionType,
@@ -99,23 +92,16 @@ export class TauriWorkRepository implements WorkRepository {
       completedAt: null,
     }
     try {
-      await this.sqlClient.execute(
-        `INSERT INTO task_runs (
-          id, task_definition_id, status, frozen_input_json, acceptance_criteria_json,
-          output_json, error, context_bundle_id, correlation_id, causation_id,
-          queued_at, started_at, completed_at
-        ) VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, NULL, NULL)`,
-        [
-          run.id,
-          run.taskDefinitionId,
-          run.status,
-          JSON.stringify(run.frozenInput),
-          JSON.stringify(run.acceptanceCriteria),
-          run.correlationId,
-          run.causationId,
-          run.queuedAt,
-        ],
-      )
+      await this.sqlClient.mutate('createTaskRun', [
+        run.id,
+        run.taskDefinitionId,
+        run.status,
+        JSON.stringify(run.frozenInput),
+        JSON.stringify(run.acceptanceCriteria),
+        run.correlationId,
+        run.causationId,
+        run.queuedAt,
+      ])
       return ok(run)
     } catch (error) {
       return err(normalizeError(error, '无法创建任务运行。'))
@@ -162,19 +148,15 @@ export class TauriWorkRepository implements WorkRepository {
       return err({ code: 'validation-error', message: transitionError })
     }
     try {
-      const result = await this.sqlClient.execute(
-        `UPDATE task_runs SET status = ?, output_json = COALESCE(?, output_json), error = ?,
-          started_at = COALESCE(?, started_at), completed_at = ? WHERE id = ? AND status = ?`,
-        [
-          input.status,
-          input.output === undefined ? null : JSON.stringify(input.output),
-          input.error ?? null,
-          input.startedAt ?? null,
-          input.completedAt ?? null,
-          input.id,
-          input.expectedStatus,
-        ],
-      )
+      const result = await this.sqlClient.mutate('updateTaskRun', [
+        input.status,
+        input.output === undefined ? null : JSON.stringify(input.output),
+        input.error ?? null,
+        input.startedAt ?? null,
+        input.completedAt ?? null,
+        input.id,
+        input.expectedStatus,
+      ])
       if (result.rowsAffected !== 1) {
         return err({ code: 'revision-conflict', message: '任务运行状态已变化。' })
       }
@@ -189,21 +171,16 @@ export class TauriWorkRepository implements WorkRepository {
       return err({ code: 'validation-error', message: 'Artifact 必须提供 URI 或内容。' })
     }
     try {
-      await this.sqlClient.execute(
-        `INSERT INTO work_artifacts
-         (id, task_run_id, artifact_type, name, uri, content_json, content_hash, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          artifact.id,
-          artifact.taskRunId,
-          artifact.artifactType,
-          artifact.name,
-          artifact.uri,
-          artifact.content === null ? null : JSON.stringify(artifact.content),
-          artifact.contentHash,
-          artifact.createdAt,
-        ],
-      )
+      await this.sqlClient.mutate('addWorkArtifact', [
+        artifact.id,
+        artifact.taskRunId,
+        artifact.artifactType,
+        artifact.name,
+        artifact.uri,
+        artifact.content === null ? null : JSON.stringify(artifact.content),
+        artifact.contentHash,
+        artifact.createdAt,
+      ])
       return ok(artifact)
     } catch (error) {
       return err(normalizeError(error, '无法保存 Artifact。'))
@@ -230,25 +207,19 @@ export class TauriWorkRepository implements WorkRepository {
       return err({ code: 'validation-error', message: 'Evidence blockId 必须带 documentId。' })
     }
     try {
-      await this.sqlClient.execute(
-        `INSERT INTO work_evidence (
-          id, task_run_id, evidence_type, status, document_id, block_id, source_revision,
-          artifact_id, claim, details_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          evidence.id,
-          evidence.taskRunId,
-          evidence.evidenceType,
-          evidence.status,
-          evidence.documentId,
-          evidence.blockId,
-          evidence.sourceRevision,
-          evidence.artifactId,
-          evidence.claim.trim(),
-          JSON.stringify(evidence.details),
-          evidence.createdAt,
-        ],
-      )
+      await this.sqlClient.mutate('addWorkEvidence', [
+        evidence.id,
+        evidence.taskRunId,
+        evidence.evidenceType,
+        evidence.status,
+        evidence.documentId,
+        evidence.blockId,
+        evidence.sourceRevision,
+        evidence.artifactId,
+        evidence.claim.trim(),
+        JSON.stringify(evidence.details),
+        evidence.createdAt,
+      ])
       return ok(evidence)
     } catch (error) {
       return err(normalizeError(error, '无法保存 Evidence。'))
@@ -315,23 +286,17 @@ export class TauriWorkRepository implements WorkRepository {
 
   async createChangeSet(changeSet: ChangeSetRecord): Promise<AppResult<ChangeSetRecord>> {
     try {
-      await this.sqlClient.execute(
-        `INSERT INTO change_sets (
-          id, task_run_id, agent_task_id, status, title, description,
-          patch_set_task_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          changeSet.id,
-          changeSet.taskRunId,
-          changeSet.agentTaskId,
-          changeSet.status,
-          changeSet.title,
-          changeSet.description,
-          changeSet.patchSetTaskId,
-          changeSet.createdAt,
-          changeSet.updatedAt,
-        ],
-      )
+      await this.sqlClient.mutate('createChangeSet', [
+        changeSet.id,
+        changeSet.taskRunId,
+        changeSet.agentTaskId,
+        changeSet.status,
+        changeSet.title,
+        changeSet.description,
+        changeSet.patchSetTaskId,
+        changeSet.createdAt,
+        changeSet.updatedAt,
+      ])
       return ok(changeSet)
     } catch (error) {
       return err(normalizeError(error, '无法创建 ChangeSet。'))

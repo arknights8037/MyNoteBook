@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::{Row, SqlitePool};
-use std::sync::atomic::{AtomicU64, Ordering};
+use sha2::{Digest, Sha256};
+use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter, State};
 use tokio::{sync::Mutex, task::JoinHandle, time::Duration};
 
@@ -15,6 +16,12 @@ const MAX_BACKGROUND_ATTEMPTS: i64 = 3;
 pub(crate) struct AgentRequestWatcherState {
     task: Mutex<Option<JoinHandle<()>>>,
     data_directory: Mutex<Option<String>>,
+    migration_paused: AtomicBool,
+}
+
+pub(crate) struct AgentRequestWatcherMigrationSnapshot {
+    pub(crate) was_running: bool,
+    pub(crate) data_directory: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -218,8 +225,11 @@ pub(crate) async fn start_agent_request_watcher(
     let requested_directory = input
         .data_directory
         .filter(|value| !value.trim().is_empty());
-    let same_directory = *state.data_directory.lock().await == requested_directory;
     let mut task = state.task.lock().await;
+    if state.migration_paused.load(Ordering::SeqCst) {
+        return Err("数据目录迁移期间不能启动 Agent 请求 watcher。".to_string());
+    }
+    let same_directory = *state.data_directory.lock().await == requested_directory;
     if same_directory && task.as_ref().is_some_and(|task| !task.is_finished()) {
         return Ok(());
     }
@@ -231,6 +241,39 @@ pub(crate) async fn start_agent_request_watcher(
         watch_agent_requests(app, requested_directory).await;
     }));
     Ok(())
+}
+
+pub(crate) async fn quiesce_for_data_migration(
+    state: &AgentRequestWatcherState,
+) -> AgentRequestWatcherMigrationSnapshot {
+    state.migration_paused.store(true, Ordering::SeqCst);
+    let existing = state.task.lock().await.take();
+    let was_running = existing.as_ref().is_some_and(|task| !task.is_finished());
+    if let Some(existing) = existing {
+        existing.abort();
+        let _ = existing.await;
+    }
+    AgentRequestWatcherMigrationSnapshot {
+        was_running,
+        data_directory: state.data_directory.lock().await.clone(),
+    }
+}
+
+pub(crate) async fn resume_after_data_migration(
+    app: &AppHandle,
+    state: &AgentRequestWatcherState,
+    snapshot: AgentRequestWatcherMigrationSnapshot,
+    data_directory: Option<String>,
+) {
+    let mut task = state.task.lock().await;
+    *state.data_directory.lock().await = data_directory.clone();
+    if snapshot.was_running {
+        let app = app.clone();
+        *task = Some(tokio::spawn(async move {
+            watch_agent_requests(app, data_directory).await;
+        }));
+    }
+    state.migration_paused.store(false, Ordering::SeqCst);
 }
 
 async fn watch_agent_requests(app: AppHandle, data_directory: Option<String>) {
@@ -792,15 +835,21 @@ pub(crate) async fn bind_background_request_task(
         return Ok(());
     }
     let request_id = required_value_string(recovery, "requestId")?;
-    sqlx::query(
-        "UPDATE agent_requests SET task_id = ?, updated_at = ? WHERE id = ? AND status = 'running'",
+    let run_id = required_value_string(recovery, "runId")?;
+    let updated = sqlx::query(
+        "UPDATE agent_requests SET task_id = ?, updated_at = ? \
+         WHERE id = ? AND status = 'running' AND run_id = ?",
     )
     .bind(task_id)
     .bind(now_millis())
     .bind(request_id)
+    .bind(run_id)
     .execute(connection)
     .await
     .map_err(database::database_error)?;
+    if updated.rows_affected() != 1 {
+        return Err("A2A 请求已不再属于当前 Run，拒绝绑定任务。".to_string());
+    }
     Ok(())
 }
 
@@ -816,7 +865,11 @@ pub(crate) async fn settle_background_run(
         return Ok(());
     }
     let request_id = required_value_string(recovery, "requestId")?;
+    let run_id = required_value_string(recovery, "runId")?;
     if let Some(error) = error {
+        if !is_current_background_run(connection, &request_id, &run_id).await? {
+            return Ok(());
+        }
         return schedule_background_failure(
             connection,
             &request_id,
@@ -846,18 +899,25 @@ pub(crate) async fn settle_background_run(
     } else {
         "completed"
     };
+    let mut transaction = connection.begin().await.map_err(database::database_error)?;
+    let current = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT status, run_id FROM agent_requests WHERE id = ? LIMIT 1",
+    )
+    .bind(&request_id)
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(database::database_error)?
+    .ok_or_else(|| "A2A 请求不存在。".to_string())?;
+    if current.0 != "running" || current.1.as_deref() != Some(run_id.as_str()) {
+        transaction
+            .rollback()
+            .await
+            .map_err(database::database_error)?;
+        return Ok(());
+    }
     if let Some(session_id) = recovery.get("cognitiveSessionId").and_then(Value::as_str) {
         if recovery.get("intent").and_then(Value::as_str) == Some("research") {
-            persist_research_candidates(
-                connection,
-                session_id,
-                recovery
-                    .get("runId")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-                &structured,
-            )
-            .await?;
+            persist_research_candidates(&mut transaction, session_id, &run_id, &structured).await?;
         }
         let next = if recovery.get("intent").and_then(Value::as_str) == Some("learning")
             && structured.get("phase").and_then(Value::as_str) == Some("waiting_user")
@@ -866,28 +926,42 @@ pub(crate) async fn settle_background_run(
         } else {
             "completed"
         };
-        update_cognitive_terminal(connection, session_id, next, structured).await?;
+        update_cognitive_terminal(&mut transaction, session_id, next, &structured).await?;
     }
     if finalization.is_none() {
         if let Some(task_id) = task_id {
-            sqlx::query("UPDATE agent_tasks SET status = 'completed', current_step = '认知结果已持久化', error = NULL, completed_at = ? WHERE id = ?")
-                .bind(now_millis()).bind(task_id).execute(connection).await.map_err(database::database_error)?;
+            let updated = sqlx::query("UPDATE agent_tasks SET status = 'completed', current_step = '认知结果已持久化', error = NULL, completed_at = ? WHERE id = ? AND run_id = ? AND status IN ('running', 'waiting_confirmation')")
+                .bind(now_millis()).bind(task_id).bind(&run_id).execute(&mut *transaction).await.map_err(database::database_error)?;
+            if updated.rows_affected() != 1 {
+                return Err("A2A 认知任务已不再属于当前 Run。".to_string());
+            }
         }
     }
-    settle_request_in_pool(
-        connection,
-        &request_id,
-        status,
-        task_id,
-        None,
-        Some(&report),
+    let completed_at = (status != "awaiting_review").then(now_millis);
+    let settled = sqlx::query(
+        "UPDATE agent_requests SET status = ?, task_id = COALESCE(?, task_id), error = NULL, \
+         result_json = ?, updated_at = ?, completed_at = ?, lease_owner = NULL, \
+         lease_expires_at = NULL, next_attempt_at = NULL \
+         WHERE id = ? AND status = 'running' AND run_id = ?",
     )
-    .await?;
-    Ok(())
+    .bind(status)
+    .bind(task_id)
+    .bind(report.to_string())
+    .bind(now_millis())
+    .bind(completed_at)
+    .bind(&request_id)
+    .bind(&run_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(database::database_error)?;
+    if settled.rows_affected() != 1 {
+        return Err("A2A 请求已不再属于当前 Run。".to_string());
+    }
+    transaction.commit().await.map_err(database::database_error)
 }
 
 async fn persist_research_candidates(
-    connection: &SqlitePool,
+    transaction: &mut Transaction<'_, Sqlite>,
     session_id: &str,
     run_id: &str,
     result: &Value,
@@ -897,7 +971,6 @@ async fn persist_research_candidates(
         .and_then(Value::as_array)
         .ok_or_else(|| "Research 结果缺少 items。".to_string())?;
     let now = now_millis();
-    let mut transaction = connection.begin().await.map_err(database::database_error)?;
     for item in items {
         let item_id = required_value_string(item, "id")?;
         let title = required_value_string(item, "title")?;
@@ -917,7 +990,10 @@ async fn persist_research_candidates(
         ) {
             return Err(format!("Research item kind {kind} 无效。"));
         }
-        let candidate_id = new_id("knowledge-candidate");
+        let candidate_id = stable_projection_id(
+            "knowledge-candidate",
+            &[session_id, run_id, item_id.as_str()],
+        );
         let sources = item
             .get("sources")
             .and_then(Value::as_array)
@@ -933,7 +1009,7 @@ async fn persist_research_candidates(
             .and_then(Value::as_str)
             .unwrap_or("未提供验证说明。");
         sqlx::query(
-            "INSERT INTO knowledge_objects (id, object_type, status, title, content, structured_data_json, generated_run_id, cognitive_mode, template_id, template_version, scope_json, document_id, block_id, source_revision, authority_level, confidence, version, created_at, updated_at) VALUES (?, ?, 'candidate', ?, ?, ?, ?, 'research', 'research-default', 1, '{}', ?, ?, ?, 'agent_candidate', ?, 1, ?, ?)",
+            "INSERT OR IGNORE INTO knowledge_objects (id, object_type, status, title, content, structured_data_json, generated_run_id, cognitive_mode, template_id, template_version, scope_json, document_id, block_id, source_revision, authority_level, confidence, version, created_at, updated_at) VALUES (?, ?, 'candidate', ?, ?, ?, ?, 'research', 'research-default', 1, '{}', ?, ?, ?, 'agent_candidate', ?, 1, ?, ?)",
         )
         .bind(&candidate_id).bind(object_type).bind(title).bind(content)
         .bind(json!({ "researchItemId": item_id, "researchKind": kind, "validationStatus": validation_status, "validationMessage": validation_message, "reviewState": "pending", "sessionId": session_id, "outputContractId": "research-result" }).to_string())
@@ -942,19 +1018,24 @@ async fn persist_research_candidates(
         .bind(primary.and_then(|source| source.get("blockId")).and_then(Value::as_str))
         .bind(primary.and_then(|source| source.get("revision")).and_then(Value::as_i64))
         .bind(item.get("confidence").and_then(Value::as_f64)).bind(now).bind(now)
-        .execute(&mut *transaction).await.map_err(database::database_error)?;
-        for source in &sources {
+        .execute(&mut **transaction).await.map_err(database::database_error)?;
+        for (source_index, source) in sources.iter().enumerate() {
             let Some(document_id) = source.get("documentId").and_then(Value::as_str) else {
                 continue;
             };
             let Some(revision) = source.get("revision").and_then(Value::as_i64) else {
                 continue;
             };
-            sqlx::query("INSERT INTO knowledge_object_sources (id, knowledge_object_id, document_id, block_id, revision, quote, start_offset, end_offset, created_at) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?)")
-                .bind(new_id("knowledge-source")).bind(&candidate_id).bind(document_id)
+            let source_index = source_index.to_string();
+            let source_id = stable_projection_id(
+                "knowledge-source",
+                &[candidate_id.as_str(), source_index.as_str()],
+            );
+            sqlx::query("INSERT OR IGNORE INTO knowledge_object_sources (id, knowledge_object_id, document_id, block_id, revision, quote, start_offset, end_offset, created_at) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?)")
+                .bind(source_id).bind(&candidate_id).bind(document_id)
                 .bind(source.get("blockId").and_then(Value::as_str)).bind(revision)
                 .bind(source.get("quote").and_then(Value::as_str)).bind(now)
-                .execute(&mut *transaction).await.map_err(database::database_error)?;
+                .execute(&mut **transaction).await.map_err(database::database_error)?;
         }
         let verdict = if validation_status == "verified" {
             "passed"
@@ -963,25 +1044,45 @@ async fn persist_research_candidates(
         } else {
             "unverifiable"
         };
-        sqlx::query("INSERT INTO knowledge_validations (id, knowledge_object_id, rule_id, verdict, severity, message, source_json, validated_at) VALUES (?, ?, 'research-output-validation', ?, ?, ?, ?, ?)")
-            .bind(new_id("knowledge-validation")).bind(&candidate_id).bind(verdict)
+        sqlx::query("INSERT OR IGNORE INTO knowledge_validations (id, knowledge_object_id, rule_id, verdict, severity, message, source_json, validated_at) VALUES (?, ?, 'research-output-validation', ?, ?, ?, ?, ?)")
+            .bind(stable_projection_id("knowledge-validation", &[candidate_id.as_str()])).bind(&candidate_id).bind(verdict)
             .bind(if validation_status == "verified" { "info" } else { "warning" })
             .bind(validation_message).bind(json!({ "itemId": item_id, "sourceCount": sources.len() }).to_string()).bind(now)
-            .execute(&mut *transaction).await.map_err(database::database_error)?;
+            .execute(&mut **transaction).await.map_err(database::database_error)?;
     }
-    transaction.commit().await.map_err(database::database_error)
+    Ok(())
 }
 
 async fn update_cognitive_terminal(
-    connection: &SqlitePool,
+    transaction: &mut Transaction<'_, Sqlite>,
     id: &str,
     status: &str,
-    state: Value,
+    state: &Value,
 ) -> Result<(), String> {
-    sqlx::query("UPDATE cognitive_sessions SET state_json = ?, status = ?, version = version + 1, updated_at = ? WHERE id = ? AND status = 'active'")
+    let updated = sqlx::query("UPDATE cognitive_sessions SET state_json = ?, status = ?, version = version + 1, updated_at = ? WHERE id = ? AND status IN ('active', 'waiting_user')")
         .bind(state.to_string()).bind(status).bind(now_millis()).bind(id)
-        .execute(connection).await.map_err(database::database_error)?;
+        .execute(&mut **transaction).await.map_err(database::database_error)?;
+    if updated.rows_affected() != 1 {
+        return Err("Cognitive Session 已不再接受当前 Run 的终态。".to_string());
+    }
     Ok(())
+}
+
+async fn is_current_background_run(
+    connection: &SqlitePool,
+    request_id: &str,
+    run_id: &str,
+) -> Result<bool, String> {
+    let current = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT status, run_id FROM agent_requests WHERE id = ? LIMIT 1",
+    )
+    .bind(request_id)
+    .fetch_optional(connection)
+    .await
+    .map_err(database::database_error)?;
+    Ok(current.is_some_and(|(status, current_run_id)| {
+        status == "running" && current_run_id.as_deref() == Some(run_id)
+    }))
 }
 
 async fn settle_request_in_pool(
@@ -1037,6 +1138,15 @@ fn new_id(prefix: &str) -> String {
         now_millis(),
         SEQUENCE.fetch_add(1, Ordering::Relaxed)
     )
+}
+
+fn stable_projection_id(namespace: &str, values: &[&str]) -> String {
+    let mut hasher = Sha256::new();
+    for value in values {
+        hasher.update((value.len() as u64).to_be_bytes());
+        hasher.update(value.as_bytes());
+    }
+    format!("{namespace}-{:x}", hasher.finalize())
 }
 
 async fn read_queue_snapshot(connection: &SqlitePool) -> Result<(i64, Option<i64>), String> {
@@ -1322,7 +1432,7 @@ mod tests {
         let (path, pool) = test_pool("research-terminal").await;
         sqlx::query("INSERT INTO documents (id, title, content_json, plain_text, revision, created_at, updated_at) VALUES ('doc-1', 'Source', '{\"type\":\"doc\",\"content\":[]}', '', 2, 1, 1)")
             .execute(pool.as_ref()).await.expect("insert document");
-        sqlx::query("INSERT INTO agent_requests (id, prompt, mode, status, cognitive_session_id, created_at, updated_at) VALUES ('request-1', 'Research', 'research', 'running', 'session-1', 1, 1)")
+        sqlx::query("INSERT INTO agent_requests (id, prompt, mode, status, run_id, cognitive_session_id, created_at, updated_at) VALUES ('request-1', 'Research', 'research', 'running', 'run-1', 'session-1', 1, 1)")
             .execute(pool.as_ref()).await.expect("insert request");
         create_background_cognitive_session(
             pool.as_ref(),
@@ -1337,14 +1447,14 @@ mod tests {
             "summary": "Found one fact", "relations": [], "unresolvedQuestions": [],
             "items": [{ "id": "item-1", "kind": "fact", "title": "Fact", "content": "Content", "confidence": 0.8, "validationStatus": "verified", "validationMessage": "Located", "sources": [{ "documentId": "doc-1", "blockId": null, "revision": 2, "quote": "Body" }] }]
         });
-        settle_background_run(
-            pool.as_ref(),
-            &json!({ "kind": "a2a", "requestId": "request-1", "runId": "run-1", "cognitiveSessionId": "session-1", "intent": "research" }),
-            None,
-            Some(&json!({ "structuredOutput": structured })),
-            None,
-            false,
-        ).await.expect("settle run");
+        let recovery = json!({ "kind": "a2a", "requestId": "request-1", "runId": "run-1", "cognitiveSessionId": "session-1", "intent": "research" });
+        let terminal = json!({ "structuredOutput": structured });
+        settle_background_run(pool.as_ref(), &recovery, None, Some(&terminal), None, false)
+            .await
+            .expect("settle run");
+        settle_background_run(pool.as_ref(), &recovery, None, Some(&terminal), None, false)
+            .await
+            .expect("repeat terminal is idempotent");
         let request_status: String =
             sqlx::query_scalar("SELECT status FROM agent_requests WHERE id = 'request-1'")
                 .fetch_one(pool.as_ref())
@@ -1367,6 +1477,74 @@ mod tests {
         assert_eq!(candidates, 1);
         assert_eq!(generated_run_id, "run-1");
         close_test_pool(path, pool).await;
+    }
+
+    #[tokio::test]
+    async fn stale_background_terminal_cannot_settle_a_new_run() {
+        let (path, pool) = test_pool("stale-background-terminal").await;
+        sqlx::query("INSERT INTO agent_requests (id, prompt, status, run_id, attempt_count, created_at, updated_at) VALUES ('request-1', 'Retry', 'running', 'run-new', 2, 1, 1)")
+            .execute(pool.as_ref()).await.expect("insert request");
+        let stale = json!({ "kind": "a2a", "requestId": "request-1", "runId": "run-old", "leaseOwner": "lease-old", "intent": "agent" });
+        settle_background_run(
+            pool.as_ref(),
+            &stale,
+            None,
+            Some(&json!({ "structuredOutput": null })),
+            None,
+            false,
+        )
+        .await
+        .expect("ignore stale success");
+        settle_background_run(
+            pool.as_ref(),
+            &stale,
+            None,
+            None,
+            Some("late provider failure"),
+            true,
+        )
+        .await
+        .expect("ignore stale failure");
+
+        let state: (String, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT status, run_id, result_json FROM agent_requests WHERE id = 'request-1'",
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("read request");
+        assert_eq!(
+            state,
+            ("running".to_string(), Some("run-new".to_string()), None)
+        );
+        close_test_pool(path, pool).await;
+    }
+
+    #[tokio::test]
+    async fn data_migration_quiesce_aborts_watcher_and_preserves_its_directory() {
+        struct DropSignal(std::sync::Arc<AtomicBool>);
+        impl Drop for DropSignal {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let state = AgentRequestWatcherState::default();
+        *state.data_directory.lock().await = Some("C:/source".to_string());
+        let stopped = std::sync::Arc::new(AtomicBool::new(false));
+        let signal = std::sync::Arc::clone(&stopped);
+        let task = tokio::spawn(async move {
+            let _signal = DropSignal(signal);
+            std::future::pending::<()>().await;
+        });
+        tokio::task::yield_now().await;
+        *state.task.lock().await = Some(task);
+
+        let snapshot = quiesce_for_data_migration(&state).await;
+        assert!(snapshot.was_running);
+        assert_eq!(snapshot.data_directory.as_deref(), Some("C:/source"));
+        assert!(stopped.load(Ordering::SeqCst));
+        assert!(state.migration_paused.load(Ordering::SeqCst));
+        assert!(state.task.lock().await.is_none());
     }
 
     async fn test_pool(label: &str) -> (std::path::PathBuf, std::sync::Arc<SqlitePool>) {

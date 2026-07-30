@@ -25,6 +25,20 @@ pub struct DingTalkRuntimeState {
     tasks: Mutex<HashMap<String, JoinHandle<()>>>,
 }
 
+pub(crate) async fn quiesce_for_data_migration(runtime: &DingTalkRuntimeState) {
+    let tasks = runtime
+        .tasks
+        .lock()
+        .await
+        .drain()
+        .map(|(_, task)| task)
+        .collect::<Vec<_>>();
+    for task in tasks {
+        task.abort();
+        let _ = task.await;
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DingTalkConnectionInput {
@@ -728,5 +742,32 @@ mod tests {
             stable_id("dingtalk-message", &["connector", "remote"]),
             stable_id("dingtalk-conversation", &["connector", "remote"])
         );
+    }
+
+    #[tokio::test]
+    async fn data_migration_quiesce_stops_all_connectors() {
+        let runtime = DingTalkRuntimeState::default();
+        let stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        struct DropSignal(std::sync::Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for DropSignal {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        let signal = std::sync::Arc::clone(&stopped);
+        runtime.tasks.lock().await.insert(
+            "connector-1".to_string(),
+            tokio::spawn(async move {
+                let _signal = DropSignal(signal);
+                std::future::pending::<()>().await;
+            }),
+        );
+        tokio::task::yield_now().await;
+
+        quiesce_for_data_migration(&runtime).await;
+
+        assert!(runtime.tasks.lock().await.is_empty());
+        assert!(stopped.load(std::sync::atomic::Ordering::SeqCst));
     }
 }

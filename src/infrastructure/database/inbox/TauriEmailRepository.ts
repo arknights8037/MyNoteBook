@@ -77,25 +77,18 @@ export class TauriEmailRepository implements EmailRepository {
 
   async createAccount(account: EmailAccount): Promise<AppResult<EmailAccount>> {
     try {
-      await this.sql.execute(
-        `INSERT INTO email_accounts (
-          id, display_name, email_address, imap_host, imap_port, username, mailbox,
-          auth_type, source_category, enabled, last_synced_at, sync_cursor_at,
-          last_remote_uid, last_error, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'password', ?, 1, NULL, NULL, 0, NULL, ?, ?)`,
-        [
-          account.id,
-          account.displayName,
-          account.emailAddress,
-          account.imapHost,
-          account.imapPort,
-          account.username,
-          account.mailbox,
-          account.sourceCategory,
-          account.createdAt,
-          account.updatedAt,
-        ],
-      )
+      await this.sql.mutate('createEmailAccount', [
+        account.id,
+        account.displayName,
+        account.emailAddress,
+        account.imapHost,
+        account.imapPort,
+        account.username,
+        account.mailbox,
+        account.sourceCategory,
+        account.createdAt,
+        account.updatedAt,
+      ])
       return this.getAccount(account.id)
     } catch (error) {
       return err(normalizeError(error, '无法保存邮箱账户。'))
@@ -104,7 +97,7 @@ export class TauriEmailRepository implements EmailRepository {
 
   async deleteAccount(id: string): Promise<AppResult<void>> {
     try {
-      const result = await this.sql.execute('DELETE FROM email_accounts WHERE id = ?', [id])
+      const result = await this.sql.mutate('deleteEmailAccount', [id])
       return result.rowsAffected === 1
         ? ok(undefined)
         : err({ code: 'not-found', message: '邮箱账户不存在。' })
@@ -124,20 +117,14 @@ export class TauriEmailRepository implements EmailRepository {
     },
   ): Promise<AppResult<EmailAccount>> {
     try {
-      await this.sql.execute(
-        `UPDATE email_accounts SET last_synced_at = ?,
-         sync_cursor_at = COALESCE(?, sync_cursor_at),
-         last_remote_uid = COALESCE(?, last_remote_uid),
-         last_error = ?, updated_at = ? WHERE id = ?`,
-        [
-          state.lastSyncedAt,
-          state.syncCursorAt ?? null,
-          state.lastRemoteUid ?? null,
-          state.lastError,
-          state.updatedAt,
-          id,
-        ],
-      )
+      await this.sql.mutate('updateEmailSyncState', [
+        state.lastSyncedAt,
+        state.syncCursorAt ?? null,
+        state.lastRemoteUid ?? null,
+        state.lastError,
+        state.updatedAt,
+        id,
+      ])
       return this.getAccount(id)
     } catch (error) {
       return err(normalizeError(error, '无法更新邮箱同步状态。'))
@@ -150,10 +137,7 @@ export class TauriEmailRepository implements EmailRepository {
     updatedAt: number,
   ): Promise<AppResult<EmailAccount>> {
     try {
-      const result = await this.sql.execute(
-        'UPDATE email_accounts SET source_category = ?, updated_at = ? WHERE id = ?',
-        [sourceCategory, updatedAt, id],
-      )
+      const result = await this.sql.mutate('updateEmailCategory', [sourceCategory, updatedAt, id])
       if (result.rowsAffected !== 1) return err({ code: 'not-found', message: '邮箱账户不存在。' })
       return this.getAccount(id)
     } catch (error) {
@@ -168,41 +152,23 @@ export class TauriEmailRepository implements EmailRepository {
   ): Promise<AppResult<number>> {
     try {
       for (const message of messages) {
-        await this.sql.execute(
-          `INSERT INTO email_messages (
-            id, account_id, mailbox, remote_uid, message_id, subject, from_name, from_address,
-            to_json, received_at, preview, body_text, attachment_count, server_is_read, synced_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(account_id, mailbox, remote_uid) DO UPDATE SET
-            message_id = excluded.message_id,
-            subject = excluded.subject,
-            from_name = excluded.from_name,
-            from_address = excluded.from_address,
-            to_json = excluded.to_json,
-            received_at = excluded.received_at,
-            preview = excluded.preview,
-            body_text = excluded.body_text,
-            attachment_count = excluded.attachment_count,
-            server_is_read = excluded.server_is_read,
-            synced_at = excluded.synced_at`,
-          [
-            `${account.id}:${account.mailbox}:${message.remoteUid}`,
-            account.id,
-            account.mailbox,
-            message.remoteUid,
-            message.messageId,
-            message.subject,
-            message.fromName,
-            message.fromAddress,
-            JSON.stringify(message.toAddresses),
-            message.receivedAt,
-            message.preview,
-            message.bodyText,
-            message.attachmentCount,
-            message.serverIsRead ? 1 : 0,
-            syncedAt,
-          ],
-        )
+        await this.sql.mutate('upsertEmailMessage', [
+          `${account.id}:${account.mailbox}:${message.remoteUid}`,
+          account.id,
+          account.mailbox,
+          message.remoteUid,
+          message.messageId,
+          message.subject,
+          message.fromName,
+          message.fromAddress,
+          JSON.stringify(message.toAddresses),
+          message.receivedAt,
+          message.preview,
+          message.bodyText,
+          message.attachmentCount,
+          message.serverIsRead ? 1 : 0,
+          syncedAt,
+        ])
       }
       return ok(messages.length)
     } catch (error) {
@@ -245,10 +211,7 @@ export class TauriEmailRepository implements EmailRepository {
     status: EmailProcessingStatus,
   ): Promise<AppResult<EmailMessage>> {
     try {
-      const result = await this.sql.execute(
-        'UPDATE email_messages SET processing_status = ? WHERE id = ?',
-        [status, id],
-      )
+      const result = await this.sql.mutate('setEmailMessageStatus', [status, id])
       if (result.rowsAffected !== 1) return err({ code: 'not-found', message: '邮件不存在。' })
       const rows = await this.sql.select<EmailMessageRow>(
         'SELECT * FROM email_messages WHERE id = ? LIMIT 1',

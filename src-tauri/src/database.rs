@@ -1,5 +1,9 @@
 use serde::Serialize;
-use sqlx::{migrate::Migrator, sqlite::SqlitePoolOptions, Row, SqlitePool};
+use sqlx::{
+    migrate::Migrator,
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    Row, SqlitePool,
+};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -7,13 +11,14 @@ use std::{
     sync::{Arc, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex;
 
-pub const DATABASE_URL: &str = "sqlite:editor.db";
 pub const DATABASE_FILENAME: &str = "editor.db";
 pub(crate) static DATABASE_MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 static DATABASE_POOLS: OnceLock<Mutex<HashMap<PathBuf, Arc<SqlitePool>>>> = OnceLock::new();
+static READ_ONLY_DATABASE_POOLS: OnceLock<Mutex<HashMap<PathBuf, Arc<SqlitePool>>>> =
+    OnceLock::new();
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,10 +31,15 @@ pub struct DatabasePreparation {
 #[tauri::command]
 pub async fn prepare_database(
     app: AppHandle,
+    timer_state: State<'_, crate::workflow_timers::DurableTimerSchedulerState>,
     data_directory: Option<String>,
 ) -> Result<DatabasePreparation, String> {
-    let directory = configured_data_directory(&app, data_directory).map_err(database_error)?;
-    prepare_database_path(&directory, &DATABASE_MIGRATOR).await
+    let data_directory = data_directory.filter(|value| !value.trim().is_empty());
+    let directory =
+        configured_data_directory(&app, data_directory.clone()).map_err(database_error)?;
+    let preparation = prepare_database_path(&directory, &DATABASE_MIGRATOR).await?;
+    crate::workflow_timers::ensure_scheduler(&app, timer_state.inner(), data_directory).await?;
+    Ok(preparation)
 }
 
 pub(crate) async fn prepare_database_path(
@@ -88,6 +98,16 @@ pub async fn open_database(
     get_pool_for_path(&path, false).await
 }
 
+pub async fn open_read_only_database(
+    app: &AppHandle,
+    data_directory: Option<String>,
+) -> Result<Arc<SqlitePool>, String> {
+    let path = configured_data_directory(app, data_directory)
+        .map_err(database_error)?
+        .join(DATABASE_FILENAME);
+    get_read_only_pool_for_path(&path).await
+}
+
 pub async fn get_pool_for_path(
     path: &Path,
     create_if_missing: bool,
@@ -98,7 +118,7 @@ pub async fn get_pool_for_path(
         return Ok(pool);
     }
 
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
+    let options = SqliteConnectOptions::new()
         .filename(&key)
         .create_if_missing(create_if_missing)
         .foreign_keys(true)
@@ -119,12 +139,49 @@ pub async fn get_pool_for_path(
     Ok(pool)
 }
 
+pub async fn get_read_only_pool_for_path(path: &Path) -> Result<Arc<SqlitePool>, String> {
+    let key = path.to_path_buf();
+    let mut pools = read_only_pools().lock().await;
+    if let Some(pool) = pools.get(&key).cloned() {
+        return Ok(pool);
+    }
+
+    let options = SqliteConnectOptions::new()
+        .filename(&key)
+        .read_only(true)
+        .pragma("query_only", "ON")
+        .foreign_keys(true)
+        .busy_timeout(Duration::from_secs(5));
+    let pool = Arc::new(
+        SqlitePoolOptions::new()
+            .max_connections(4)
+            .min_connections(0)
+            .acquire_timeout(Duration::from_secs(5))
+            .idle_timeout(Duration::from_secs(120))
+            .connect_with(options)
+            .await
+            .map_err(database_error)?,
+    );
+    pools.insert(key, Arc::clone(&pool));
+    Ok(pool)
+}
+
 pub async fn close_pool(path: &Path) -> Result<(), String> {
     let pool = pools().lock().await.remove(path);
     if let Some(pool) = pool {
         pool.close().await;
     }
+    close_read_only_pool(path).await;
     Ok(())
+}
+
+pub async fn close_read_only_pool(path: &Path) -> bool {
+    let pool = read_only_pools().lock().await.remove(path);
+    if let Some(pool) = pool {
+        pool.close().await;
+        return true;
+    }
+    false
 }
 
 pub fn default_data_directory(app: &AppHandle) -> Result<PathBuf, tauri::Error> {
@@ -147,6 +204,10 @@ pub fn database_error(error: impl std::fmt::Display) -> String {
 
 fn pools() -> &'static Mutex<HashMap<PathBuf, Arc<SqlitePool>>> {
     DATABASE_POOLS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn read_only_pools() -> &'static Mutex<HashMap<PathBuf, Arc<SqlitePool>>> {
+    READ_ONLY_DATABASE_POOLS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 async fn detect_legacy_baseline(pool: &SqlitePool) -> Result<Option<i64>, String> {
@@ -811,7 +872,12 @@ mod tests {
             .fetch_all(upgraded.as_ref())
             .await
             .expect("foreign key check");
-        assert_eq!(current_version, 15);
+        let expected_version = DATABASE_MIGRATOR
+            .iter()
+            .map(|migration| migration.version)
+            .max()
+            .expect("current migration version");
+        assert_eq!(current_version, expected_version);
         assert_eq!(document_count_after, document_count_before);
         assert_eq!(integrity, "ok");
         assert!(foreign_key_errors.is_empty());
@@ -1257,5 +1323,74 @@ mod tests {
         drop(pool);
         close_pool(&path).await.expect("close database");
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn phase_four_upgrade_preserves_existing_data_and_adds_durable_timers() {
+        let root = std::env::temp_dir().join(format!(
+            "my-notebook-phase-four-upgrade-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("create upgrade directory");
+        let path = root.join(DATABASE_FILENAME);
+        let pool = get_pool_for_path(&path, true)
+            .await
+            .expect("open pre-upgrade database");
+        DATABASE_MIGRATOR
+            .run(pool.as_ref())
+            .await
+            .expect("create current schema");
+        sqlx::query(
+            "INSERT INTO documents (id, title, content_json, created_at, updated_at) \
+             VALUES ('phase-four-existing', 'Existing', '{\"type\":\"doc\",\"content\":[]}', 1, 1)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("insert existing data");
+        sqlx::raw_sql(
+            "DROP TABLE workflow_timers; \
+             DROP TABLE workflow_wait_conditions; \
+             DELETE FROM _sqlx_migrations WHERE version = 39;",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("simulate version 38 database");
+        drop(pool);
+        close_pool(&path).await.expect("close pre-upgrade database");
+
+        let preparation = prepare_database_path(&root, &DATABASE_MIGRATOR)
+            .await
+            .expect("upgrade to phase four schema");
+        assert!(preparation.backup_path.is_some());
+        let upgraded = get_pool_for_path(&path, false)
+            .await
+            .expect("open upgraded database");
+        let version: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations WHERE success = TRUE",
+        )
+        .fetch_one(upgraded.as_ref())
+        .await
+        .expect("migration version");
+        let existing: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE id = 'phase-four-existing'")
+                .fetch_one(upgraded.as_ref())
+                .await
+                .expect("existing document");
+        assert_eq!(version, 39);
+        assert_eq!(existing, 1);
+        assert!(table_exists(upgraded.as_ref(), "workflow_wait_conditions")
+            .await
+            .expect("wait condition table"));
+        assert!(table_exists(upgraded.as_ref(), "workflow_timers")
+            .await
+            .expect("timer table"));
+
+        drop(upgraded);
+        close_pool(&path).await.expect("close upgraded database");
+        retry_file_operation(|| fs::remove_dir_all(&root)).expect("cleanup upgrade directory");
     }
 }

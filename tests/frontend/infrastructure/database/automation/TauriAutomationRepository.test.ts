@@ -4,12 +4,19 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { TauriAuditRepository } from '@/infrastructure/database/audit/TauriAuditRepository'
 import { TauriAutomationRepository } from '@/infrastructure/database/automation/TauriAutomationRepository'
 import type { AutomationRun } from '@/models/automation/automation'
-import type { SqlClient, SqlExecuteResult, SqlValue } from '@/repositories/shared/SqlClient'
+import type {
+  DatabaseMutation,
+  SqlClient,
+  SqlExecuteResult,
+  SqlValue,
+} from '@/repositories/shared/SqlClient'
+import { testDatabaseMutationSql } from '../testDatabaseMutations'
 
 class SqliteClient implements SqlClient {
   readonly database = new DatabaseSync(':memory:')
 
-  async execute(sql: string, bindValues: SqlValue[] = []): Promise<SqlExecuteResult> {
+  async mutate(mutation: DatabaseMutation, bindValues: SqlValue[] = []): Promise<SqlExecuteResult> {
+    const sql = testDatabaseMutationSql(mutation)
     const result = this.database.prepare(sql).run(...bindValues.map(toSqliteValue))
     return { rowsAffected: Number(result.changes), lastInsertId: Number(result.lastInsertRowid) }
   }

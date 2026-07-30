@@ -2,7 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TauriDocumentRepository } from '@/infrastructure/database/documents/TauriDocumentRepository'
 import { DOCUMENT_SCHEMA_VERSION, type DocumentRecord } from '@/models/documents/document'
-import type { SqlClient, SqlExecuteResult, SqlValue } from '@/repositories/shared/SqlClient'
+import type {
+  DatabaseMutation,
+  SqlClient,
+  SqlExecuteResult,
+  SqlValue,
+} from '@/repositories/shared/SqlClient'
+import { testDatabaseMutationSql } from '../testDatabaseMutations'
 
 class MemorySqlClient implements SqlClient {
   readonly documents = new Map<string, DocumentRecord>()
@@ -11,6 +17,10 @@ class MemorySqlClient implements SqlClient {
   batchTagQueryCount = 0
   documentTagDeleteCount = 0
   readonly selectedSql: string[] = []
+
+  async mutate(mutation: DatabaseMutation, bindValues: SqlValue[] = []): Promise<SqlExecuteResult> {
+    return this.execute(testDatabaseMutationSql(mutation), bindValues)
+  }
 
   async persistCore(document: DocumentRecord, expectedRevision: number | null): Promise<void> {
     const existing = this.documents.get(document.id)

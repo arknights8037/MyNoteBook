@@ -4,6 +4,8 @@
 >
 > 状态说明：本文作为当前架构快照保留，不是目标架构规范。后续既定方向、PI 决策门和迁移阶段以 [后续开发路线图](roadmap.md) 为准。
 >
+> 历史状态提示：下文“当前”均指 2026-07-29 的评审基线。Phase 2–4 后的 sidecar、托盘后台、Durable Timer 和 Rust SQLite 唯一写入边界请以 [系统架构](architecture.md) 为准，本文不随实施结果逐段改写。
+>
 > 脱敏说明：没有读取或收录用户数据目录中的 `editor.db`、`mcp-servers.json`、凭据文件、邮件正文或真实运行日志。仓库扫描未发现真实 API Key、Token、密码或私有服务地址；测试中的 `current-key` 是固定假值。公开 Provider 默认地址保留。
 
 ## 0. 先给结论

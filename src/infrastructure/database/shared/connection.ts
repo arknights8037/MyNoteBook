@@ -1,52 +1,56 @@
-import Database from '@tauri-apps/plugin-sql'
 import { invoke } from '@tauri-apps/api/core'
 
-import { getDatabaseUrl } from '@/infrastructure/database/shared/constants'
 import { loadAppSettings } from '@/models/settings/settings'
-import type { SqlClient } from '@/repositories/shared/SqlClient'
+import type {
+  DatabaseMutation,
+  SqlClient,
+  SqlExecuteResult,
+  SqlValue,
+} from '@/repositories/shared/SqlClient'
 
 let databasePromise: Promise<SqlClient> | null = null
-let activeDatabaseUrl: string | null = null
+let activeDataDirectory: string | null = null
 
 export function getDatabase(): Promise<SqlClient> {
   const dataDirectory = loadAppSettings().dataDirectory
-  const databaseUrl = getDatabaseUrl(dataDirectory)
-  if (activeDatabaseUrl !== databaseUrl) {
-    activeDatabaseUrl = databaseUrl
+  if (activeDataDirectory !== dataDirectory) {
+    activeDataDirectory = dataDirectory
     databasePromise = null
   }
 
-  // The Rust SQL plugin owns all schema migrations. Do not run CREATE/ALTER statements here:
-  // doing so bypasses SQLx's migration checksum and made existing databases appear to need a
-  // migration on every startup.
+  // Rust owns schema migration and both read/write database connections. The WebView only sends
+  // scalar bind values and receives serialized rows; it never receives a SQLite handle.
   databasePromise ??= invoke('prepare_database', {
     dataDirectory,
-  })
-    .then(() => Database.load(databaseUrl))
-    .then(async (database) => {
-      await database.execute('PRAGMA foreign_keys = ON')
-      await database.execute('PRAGMA journal_mode = WAL')
-      await database.execute('PRAGMA busy_timeout = 5000')
-      await database.execute('PRAGMA synchronous = NORMAL')
-      await database.execute('PRAGMA temp_store = MEMORY')
-      await invoke('resume_dingtalk_connectors', { dataDirectory }).catch((error) => {
-        console.warn('Unable to resume DingTalk connectors', error)
-      })
-      return database
+  }).then(async () => {
+    await invoke('resume_dingtalk_connectors', { dataDirectory }).catch((error) => {
+      console.warn('Unable to resume DingTalk connectors', error)
     })
+    return {
+      mutate: (mutation: DatabaseMutation, values: SqlValue[] = []) =>
+        invoke<SqlExecuteResult>('execute_database_mutation', {
+          input: { dataDirectory, mutation, values },
+        }),
+      select: <T extends Record<string, unknown>>(sql: string, values: SqlValue[] = []) =>
+        invoke<T[]>('execute_database_query', {
+          input: { dataDirectory, query: sql, values },
+        }),
+      close: () => invoke<boolean>('close_database_read_pool', { dataDirectory }),
+    } satisfies SqlClient
+  })
   return databasePromise
 }
 
 export async function closeDatabase(): Promise<void> {
   const database = await databasePromise?.catch(() => null)
   if (database?.close) {
-    await database.close(activeDatabaseUrl ?? undefined)
+    await database.close()
   }
   databasePromise = null
-  activeDatabaseUrl = null
+  activeDataDirectory = null
 }
 
 export function resetDatabaseConnectionForTests(): void {
   databasePromise = null
-  activeDatabaseUrl = null
+  activeDataDirectory = null
 }

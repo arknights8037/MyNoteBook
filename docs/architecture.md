@@ -1,12 +1,12 @@
 # 当前架构与模块边界
 
-本文是 MyNoteBook 当前架构的事实入口，已按 2026-07-30 代码与 migration `0001`–`0038` 复核。它描述已经存在的实现、代码所有权和必须保持的依赖方向。产品定位、工作循环与品牌原则见 [产品定位与愿景](product-positioning.md)；认知系统契约见 [认知系统集成](cognitive-system-integration.md)，未完成事项和目标边界见 [后续开发路线图](roadmap.md)。
+本文是 MyNoteBook 当前架构的事实入口，已按 2026-07-30 代码与 migration `0001`–`0039` 复核。它描述已经存在的实现、代码所有权和必须保持的依赖方向。产品定位、工作循环与品牌原则见 [产品定位与愿景](product-positioning.md)；认知系统契约见 [认知系统集成](cognitive-system-integration.md)，未完成事项和目标边界见 [后续开发路线图](roadmap.md)。
 
 ## 1. 产品与技术边界
 
 MyNoteBook 的产品类别是本地优先的 AI 桌面工作中枢。它通过收集、理解、组织、委派、表达和沉淀的持续循环，为知识工作保留可继续的上下文。当前技术实现由 Vue 3 + Tiptap 前端、Tauri/Rust 桌面壳和 SQLite 本地存储组成，是单机桌面应用，不是 React 应用，也不是由多个服务组成的分布式系统。
 
-生产 Agent Runtime 使用真实 AI SDK Node sidecar、Rust Supervisor/dispatcher、Tauri Runtime Adapter 和自包含 SEA `externalBin`。`useAgentRun` 仅冻结交互输入、订阅事件、授权/取消与 UI projection；它不再为 sidecar 路径组装 Task、Context Bundle、ExecutionPolicy、Tool Manifest 或 `AgentRunRequestV1`。关闭主窗口会隐藏到托盘，Rust watcher/sidecar 在无窗口时继续运行；显式退出仍会停止进程，当前不是系统 daemon。TypeScript repositories 与 Rust SQLx 仍共同访问 SQLite。
+生产 Agent Runtime 使用真实 AI SDK Node sidecar、Rust Supervisor/dispatcher、Tauri Runtime Adapter 和自包含 SEA `externalBin`。`useAgentRun` 仅冻结交互输入、订阅事件、授权/取消与 UI projection；它不再为 sidecar 路径组装 Task、Context Bundle、ExecutionPolicy、Tool Manifest 或 `AgentRunRequestV1`。关闭主窗口会隐藏到托盘，Rust watcher/sidecar 与 Durable Timer 在无窗口时继续运行；显式退出仍会停止进程，当前不是系统 daemon。Rust 是 SQLite 唯一写入者，WebView 不持有 SQLite handle 或 SQL capability。
 
 产品愿景不能改变当前事实边界：尚未实现的信息来源、后台能力和外部应用接入必须明确标记为未来方向；Agent、View 和模型输出不能被宣传或实现为绕过用户判断的第二事实源。
 
@@ -83,12 +83,15 @@ Knowledge Object 可锚定 document/block/revision。Context Compiler 已读取�
 
 - `lib.rs`：应用组合、插件初始化和 command 注册，不实现领域规则。
 - `database.rs`：数据库路径、连接池、迁移、旧库基线和可靠性设置。
+- `database_mutations.rs`：WebView repository 写入使用的封闭 mutation catalog、参数校验与固定 SQL。
+- `database_queries.rs`：WebView 参数化读取的只读 SQLx pool、行序列化与连接关闭边界。
 - `document_core.rs`：可信文档校验、投影生成、持久化和修复。
 - `agent_repository.rs`：Agent task、Context Bundle、Patch、事务与审计持久化。
 - `agent_tools.rs`：数据库工具、只读命令和 Rust 线性时间正则执行。
 - `agent_cancellation.rs`：按 tool call ID 取消正在运行的原生或 MCP future。
 - `agent_worker_supervisor.rs`：Phase 3 Worker 子进程身份、NDJSON 通道、heartbeat、重启、活动/待授权/待领取终态的脱敏快照、标准 proposal 的原子持久化、崩溃终态、Provider 流式代理，以及全部内置 Domain Tool/MCP 的受控分发；默认生产 Agent 由它监督。
-- `agent_request_watcher.rs`：后台 Runtime Profile、A2A lease 原子领取与自动调度、审批/修订状态机、请求/Cognitive 终态、Research candidate 持久化、指数退避、Dead Letter 和启动恢复扫描。
+- `agent_request_watcher.rs`：后台 Runtime Profile、A2A lease 原子领取与自动调度、审批/修订状态机、按 `run_id` fencing 的请求/Cognitive 终态、Research candidate 原子持久化、指数退避、Dead Letter 和启动恢复扫描。
+- `workflow_timers.rs`：绝对 UTC Durable Timer、等待条件、lease/retry/Dead Letter，以及 Domain Event/Outbox 原子触发。
 - `ai_models.rs` / `ai_proxy.rs`：Provider 模型列表、请求代理、流式响应和敏感信息边界。
 - `work.rs`：TaskRun、Verifier、ChangeSet 和 Approval 的原子状态变更。
 - `views.rs`：View snapshot/dependency 发布及 override 保护。
@@ -98,14 +101,14 @@ Knowledge Object 可锚定 document/block/revision。Context Compiler 已读取�
 - `skills.rs`：Skill 目录、启停、受限文件访问和版本信息。
 - `secret_store.rs`：API Key 的 AES-256-GCM 密文与系统凭据库数据密钥。
 - `sensitive_data.rs`：工具、Provider、日志和审计内容的凭据检测与脱敏。
-- `storage.rs`：数据目录解析、受管文件迁移、校验、备份和失败恢复。
+- `storage.rs`：数据目录解析、后台 runtime quiesce、受管文件迁移、校验、备份和失败恢复。
 - `bin/mynotebook-mcp.rs`：独立 stdio MCP Server；默认只读，能力令牌开启项目目录、A2A 分支和受控任务/审批工具。
 
 Rust command 应立即委托给对应模块。数据库访问必须复用 `database.rs` 管理的路径、迁移和连接设置。
 
 ### 目标边界摘要（部分实现）
 
-Agent Runtime、凭据、MCP、A2A Workflow 和规范 Patch 终态已收敛到 Rust Core 与其托管的 Node sidecar；Node 只通过受控 RPC 调用 Rust 领域工具，禁止直接访问 SQLite。后续继续把存量 WebView repository 写操作迁入 Rust，并收敛连接器、定时器和外部副作用。Phase 2 已决定保留 AI SDK 作为唯一生产 Agent Loop；PI 仅保留为已验证的候选 adapter，不接管权限、Workflow、MCP、Skill、Secret 或 Patch transaction。
+Agent Runtime、凭据、MCP、A2A Workflow、Durable Timer 和规范 Patch 终态已收敛到 Rust Core 与其托管的 Node sidecar；Node 只通过受控 RPC 调用 Rust 领域工具，禁止直接访问 SQLite。WebView repository mutation 已全部迁入 Rust，读取也只经过 Rust 的只读连接；后续继续收敛连接器和外部副作用。Phase 2 已决定保留 AI SDK 作为唯一生产 Agent Loop；PI 仅保留为已验证的候选 adapter，不接管权限、Workflow、MCP、Skill、Secret 或 Patch transaction。
 
 ## 4. 前端模块所有权
 
@@ -179,24 +182,23 @@ Agent Runtime、凭据、MCP、A2A Workflow 和规范 Patch 终态已收敛到 R
 - Knowledge Object 已扩展研究候选所需类型、正文、结构化数据、认知 provenance、多来源、Validation 和 rejected 状态；候选 UI 会在接受前重新验证来源 revision 和稳定 block，并只将显式接受项转为 `approved`。
 - Run lifecycle、Plan、运行级事件和 tool timeline 已绑定 assistant 消息并持久化；规范工具审计仍保存在独立数据库表中。
 - 默认 Agent Runtime 的规划、模型循环、工具调度、MCP manifest 枚举与标准 Patch proposal 编译已移入 sidecar/Rust；Rust 会先持久化这些 proposal，再允许 Vue 显示 Diff。授权 UI 仍由 Vue 投影；普通 Run 仍没有 durable checkpoint/resume。
-- Cognitive Session CRUD/终态、A2A 自动领取与 sidecar 调度、审批/拒绝、修订和请求终态均由 Rust 写入。Research 结构化结果会生成 candidate Knowledge Object、source 与 validation；WebView 只保留交互式投影和审阅入口。
-- A2A `running` 请求保存 lease owner/expiry 和 attempt；Worker 事件续租，可重试失败使用有上限的指数退避，耗尽后进入 Dead Letter。Rust watcher 启动时依据 Supervisor 活动 Run 快照回收孤儿请求，并终止旧 task/session 后以新 run 重排；这不是模型步骤级 checkpoint/resume。
+- Cognitive Session CRUD/终态、A2A 自动领取与 sidecar 调度、审批/拒绝、修订和请求终态均由 Rust 写入。Research candidate、source、validation、Cognitive Session、AgentTask 与请求终态在同一个事务中提交，并使用稳定 projection ID；WebView 只保留交互式投影和审阅入口。
+- A2A `running` 请求保存 lease owner/expiry、attempt 和独立 `run_id`；Worker 事件续租，迟到终态必须通过当前 `run_id` fencing，可重试失败使用有上限的指数退避，耗尽后进入 Dead Letter。Rust watcher 启动时依据 Supervisor 活动 Run 快照回收孤儿请求，并终止旧 task/session 后以新 run 重排；这是可审计的 at-least-once 业务恢复，不是模型步骤级 checkpoint/resume 或外部副作用 exactly-once。
 - 新 Agent 任务分别保存 `AgentTask.id`（迁移期 work item）、独立 `run_id`、可空 `workflow_id`、conversation/cognitive `session_id` 和 `document_id`；历史记录使用确定性 `legacy-run-*` 映射，`task_runs.id` 保留原有治理语义。
 - `tokenBudget` 当前主要约束单次输出参数，没有基于累计 input/output usage、成本、模型轮次和并行工具数的统一预算器。
-- Rust SQLx 与 TypeScript `plugin-sql` 仍是双数据库访问路径；Rust 成为唯一写入者是既定迁移方向，不是当前事实。
+- Rust SQLx 是唯一数据库连接所有者和唯一写入者；TypeScript repository 只提交固定 mutation ID 或参数化只读 query，不拥有连接池。
 - Review 已完成真实 DeepSeek/Tauri smoke；Research、Learning 和 Windows 发布升级的剩余真实环境验收单独记录在路线图，不用历史测试总数代替当前结论。
 - Provider 工具名称、Zod/JSON Schema、风险、三类授权、调用上限、tags 和展示元数据由 Domain Tool Catalog 生成；Rust 原生工具仍保留独立安全校验，不能被前端 schema 替代。
 - 自动化当前只管理定义、待运行队列与历史；后台模型执行 worker 尚未实现。
 
 未完成的设计债与验收顺序以 [后续开发路线图](roadmap.md) 为准。
 
-### 当前桌面权限盘点
+### 当前桌面权限边界
 
-Phase 0 只记录权限迁移清单，不提前撤销仍被现有 UI 使用的能力：
-
-| 能力   | 当前事实                                                                                  | 后续所有者/收敛点                                                                   |
-| ------ | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| CSP    | `tauri.conf.json` 当前为 `null`                                                           | Phase 4 按实际 UI、Provider 与资源加载需要设置非空最小策略                          |
-| SQL    | 主窗口仍有 `sql:allow-execute/load/select/close`；存量 TypeScript repositories 仍直接写库 | Phase 4 将写 command 迁入 Rust 后撤销 execute；架构测试禁止新增 WebView writer 文件 |
-| fs     | 主窗口使用 `fs:default` 支持附件、导入导出和 Skill 文件流程                               | 按已使用命令拆分最小权限                                                            |
-| opener | 主窗口使用 `opener:default` 打开外部来源和本地结果                                        | 保留显式用户动作，后续收紧 URL/路径范围                                             |
+| 能力    | 当前事实                                                                                                       |
+| ------- | -------------------------------------------------------------------------------------------------------------- |
+| CSP     | 生产 CSP 非空；WebView 只连接同源与 Tauri IPC，开发策略仅额外开放 `127.0.0.1:1420` 和对应 HMR WebSocket。      |
+| SQL     | 主窗口没有任何 SQL capability；`plugin-sql` 已删除，Rust command 持有固定 mutation catalog 与只读 query pool。 |
+| fs      | 不再使用 `fs:default` 或静态目录 scope；系统文件对话框按用户选择动态授权单个文本文件。                         |
+| opener  | WebView 只可在显式用户动作中打开 HTTP(S) URL；附件和 Skills 路径由 Rust 校验并从后端打开。                     |
+| network | WebView 未授予 HTTP client capability；Provider、MCP 与连接器网络均由 Rust/sidecar 受控路径拥有。              |

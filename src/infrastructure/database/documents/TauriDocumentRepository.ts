@@ -334,11 +334,7 @@ export class TauriDocumentRepository implements DocumentRepository {
         'SELECT relative_path FROM assets WHERE document_id = ?',
         [id],
       )
-      const result = await this.sqlClient.execute(
-        `DELETE FROM documents
-         WHERE id = ? AND revision = ? AND is_deleted = 1`,
-        [id, expectedRevision],
-      )
+      const result = await this.sqlClient.mutate('hardDeleteDocument', [id, expectedRevision])
 
       if (result.rowsAffected !== 1) {
         return err({

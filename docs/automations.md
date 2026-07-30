@@ -25,11 +25,11 @@ automation_tasks
 
 当前实现分布在 `src/models/automation`、`src/services/automation`、`src/repositories/automation`、`src/infrastructure/database/automation` 和自动化页面组件；migration `0008` 拥有表、触发器与唯一索引。
 
-## 未来执行与等待边界（尚未实现）
+## 执行与等待边界
 
-Rust Core 将拥有调度指针、lease、heartbeat、retry、dead letter 和 durable timer，并通过 Runtime Port 提交、取消和订阅有界 Agent Run。Node Worker 不读取自动化表或 SQLite，只处理 Rust 通过 RPC 提供的 Run 请求与领域工具。
+Rust Core 已拥有通用 Durable Timer/等待条件、lease、retry、Dead Letter 和 Outbox 原子触发；Node Worker 不读取自动化表或 SQLite，只处理 Rust 通过 RPC 提供的 Run 请求与领域工具。当前自动化模块仍未把 `automation_tasks` 调度指针接到该 timer primitive，也没有后台模型执行器，因此页面中的计划任务仍只入队。把自动化与 RSS 事件接入可恢复 Workflow 属于 Phase 5。
 
-Agent Run 不跨长时间等待占用 Worker：当流程等待外部事件、定时器、用户输入、审批或重试窗口时，当前 Run 结束；Workflow 持久化等待条件。条件满足后，由 Rust 以新的 `run_id` 启动后续 Run，并用 `workflow_id` 与 `causation_id` 关联前后执行。`resumeRun` 只有在未来具备 durable checkpoint 后才可能引入，Runtime v1 不承诺该能力。
+Agent Run 不应跨长时间等待占用 Worker：目标语义是当前 Run 结束，由 Workflow 持久化外部事件、定时器、用户输入、审批或重试条件。migration `0039` 当前只负责持久化条件，并在 Timer 到期时原子写入 Domain Event/Outbox；消费该事件、创建新的 `run_id` 并用 `workflow_id` / `causation_id` 关联后续执行仍属于 Phase 5。`resumeRun` 只有在未来具备 durable checkpoint 后才可能引入，Runtime v1 不承诺该能力。
 
 详细阶段、契约和退出条件见 [后续开发路线图](roadmap.md)。
 

@@ -1,6 +1,6 @@
 # 后续开发路线图
 
-本文是 MyNoteBook 未完成工程工作的权威排序，已按 2026-07-30 代码与 migration `0001`–`0038` 复核。当前架构事实见 [系统架构](architecture.md)，生产 Agent 行为见 [Agent Runtime](agent-runtime.md)，PI 评审输入见 [PI 接入资料](pi-integration-high-value.md)。
+本文是 MyNoteBook 未完成工程工作的权威排序，已按 2026-07-30 代码与 migration `0001`–`0039` 复核。当前架构事实见 [系统架构](architecture.md)，生产 Agent 行为见 [Agent Runtime](agent-runtime.md)，PI 评审输入见 [PI 接入资料](pi-integration-high-value.md)。
 
 路线图按依赖、交付物和退出条件推进，不承诺未经验证的日历日期。以下标签必须严格区分：
 
@@ -19,6 +19,8 @@
 - Knowledge Object、Task/Work、Approval、Domain Event、Transactional Outbox 和外部 Delegation 基础。
 - Rust MCP Client/Server、动态 Skill、API Key secret store、IMAP、RSS 和钉钉连接器。
 - Slidev、UML、Table、Mind Map、Dashboard 与独立信息首页。
+- 托盘常驻、A2A 无窗口执行、持久 lease/retry/Dead Letter，以及通用 Durable Timer/等待条件。
+- Rust 唯一 SQLite 写入所有权、WebView 固定 mutation command、只读查询 command 与最小桌面权限。
 
 当前真正限制异步任务、自动化和外部事件发展的不是 Agent 工具不足，而是：
 
@@ -35,11 +37,13 @@ Vue / WebView
 ├── Ask / Edit / Agent / Auto 交互入口
 ├── Runtime Client / Tauri Adapter
 ├── 运行事件、授权和 Diff 审阅投影
-└── TypeScript repositories ─────┐
-                                  ├── SQLite editor.db
-Tauri / Rust                     │
-├── migration / WAL / backup ────┘
+└── Repository ports
+        ↓ 固定 mutation / 只读 query command
+Tauri / Rust
+├── SQLite migration / pool / WAL / backup
+├── SQLite 唯一写入者
 ├── Agent Worker Supervisor / A2A Workflow
+├── Durable Timer / Wait Condition / Outbox
 ├── Provider proxy / Tool / MCP / Secret
 ├── canonical document transaction
 └── 托盘常驻与后台 watcher
@@ -50,7 +54,7 @@ Node sidecar
 └── Patch / Cognitive 终态编译
 ```
 
-当前 Rust SQLx 与 WebView `plugin-sql` 都会访问 SQLite，因此 Rust 尚不是严格的单一数据库进程所有者。Node sidecar 和托盘已经投入生产；独立 daemon 尚未实现。
+WebView 已不持有 SQLite handle 或 SQL capability：repository 写操作映射到 Rust 的封闭 mutation catalog，参数化读取通过启用 SQLite 只读保护的 Rust query command 完成。Node sidecar 和托盘已经投入生产；独立 daemon 尚未实现。
 
 ### 2.2 既定方向
 
@@ -73,7 +77,7 @@ Rust Core
 
 必须保持以下决策：
 
-1. Rust Core 逐步成为 SQLite、连接器、凭据、Workflow 状态和副作用的唯一所有者。
+1. Rust Core 已是 SQLite 的唯一写入者，并继续收敛连接器、Workflow 状态和外部副作用所有权。
 2. Node Worker 永不直接连接 SQLite，只能通过 Rust 提供的受控 RPC 调用领域能力。
 3. 从 Phase 0 起禁止新增 WebView 直接写库路径；存量写路径按阶段迁移。
 4. 当前 AI SDK Runtime 在决策门完成前仍是唯一生产 Agent Loop。
@@ -226,9 +230,9 @@ AgentRunRequest
 - composition 默认选择 `rust_worker`；只有显式设置 `VITE_AGENT_RUNTIME_OWNER=webview` 才启用兼容路径。Ask/Edit 的 Markdown completion 路径保持不变。
 - A2A 队列检查、原子领取、sidecar 启动、审批/拒绝、修订和终态结算均由 Rust watcher/仓储负责；WebView 只订阅变化事件和投影审阅状态，不再启动 A2A Run。
 
-Phase 3 的退出条件已经满足。真实 Provider/Tauri 凭据 smoke、发布升级验收和删除 WebView compatibility path 分别进入后续质量轨道与数据库所有权迁移，不再阻塞 Runtime 进程边界验收。
+Phase 3 的退出条件已经满足。真实 Provider/Tauri 凭据 smoke 和删除 WebView compatibility path 继续留在后续质量轨道；数据库所有权与升级恢复已经在 Phase 4 完成，不再是 Phase 3 的阻塞项。
 
-Phase 4 的数据库所有权收敛持续推进：migration `0037` 保存无密钥后台 Runtime Profile，并为 A2A request 绑定 `run_id` / `cognitive_session_id`；migration `0038` 增加领取 lease、尝试次数、下次重试、死信时间和失败分类。A2A 自动调度、审批/修订 Workflow、Cognitive 最终业务投影与 Research candidate 落库已迁至 Rust/sidecar。主窗口关闭后隐藏到托盘，Rust watcher 与已开始 Run 可继续执行；需要人工授权或 Patch 审阅时保持等待态，不绕过确认。
+Phase 4 的代码与自动化退出条件已完成：migration `0037` 保存无密钥后台 Runtime Profile，`0038` 增加 A2A lease/retry/Dead Letter，`0039` 增加 Durable Timer 与统一等待条件。A2A 自动调度、审批/修订 Workflow、Cognitive 最终业务投影与 Research candidate 落库已迁至 Rust/sidecar；Rust 现为 SQLite 唯一写入者，主窗口关闭后 watcher、timer 与已开始 Run 可继续执行。Windows 全新安装、安装包升级和签名环境仍按 11.1 的发布质量轨道验收，不混同为本阶段已自动化的 schema 升级测试。
 
 ### 目标
 
@@ -266,17 +270,21 @@ Phase 2 完成决策门；Worker 内部可使用最终选择的 adapter。
 
 - 关闭窗口默认隐藏到托盘；显式“退出应用”才停止 Rust Core 和 Worker。
 - Worker lease、启动恢复扫描、heartbeat、指数退避、Dead Letter、Durable Timer 和等待条件。
-- 逐步将 WebView repository 写操作迁移为 Rust command；迁移期间禁止新增直接写路径。
-- 写路径迁移完成后撤销主窗口 SQL execute 权限；只读查询是否保留由后续审计决定。
+- 将全部 WebView repository 写操作迁移为 Rust 固定 mutation command，并以架构测试禁止回归。
+- 移除 `plugin-sql` 和主窗口全部 SQL capability；读取通过 Rust 管理的只读 SQLx pool 返回序列化结果。
 - 为生产资源配置非空 CSP，并按实际 UI/模型连接需要最小化 fs/opener/network 能力。
 
-### 实施状态（进行中）
+### 实施状态（代码与自动化验收已完成）
 
 - 托盘常驻、主窗口关闭转隐藏、托盘重新打开/显式退出已完成。
 - A2A 自动调度、审批/拒绝、修订 continuation、无窗口终态结算已完成；批准仍复用既有 Rust Patch revision/覆盖/事务校验。
-- Cognitive Session 终态和 Research candidate/source/validation 已由 Rust 持久化；Review/Learning 结构化结果随 A2A result 保存。
-- A2A 请求已使用持久 lease 原子领取；Worker 事件续租，显式可重试错误按指数退避最多尝试三次，随后进入可诊断 Dead Letter。启动扫描会保留 Supervisor 仍持有的 Run，并回收、重排无活动所有者的 `running` 请求；旧 task/session 会写入中断/取消终态。软件 MCP 的 `get_agent_request` 返回尝试、重试和死信元数据。
-- 上述恢复以一次完整 Run 为粒度，不提供模型 tool step checkpoint。通用 Durable Timer、休眠/时区变化与安装升级恢复验收、全部 WebView SQL writer 清除、CSP 与权限收敛仍未完成，因此 Phase 4 整体尚未完成。
+- Cognitive Session 终态和 Research candidate/source/validation 已由 Rust 持久化；candidate 使用稳定 projection ID，并与 Cognitive Session、AgentTask、A2A result 在同一个事务提交。Review/Learning 结构化结果随 A2A result 保存。
+- A2A 请求已使用持久 lease 原子领取和 `run_id` fencing；Worker 事件续租，迟到旧 Run 不能结算新尝试，显式可重试错误按指数退避最多尝试三次，随后进入可诊断 Dead Letter。启动扫描会保留 Supervisor 仍持有的 Run，并回收、重排无活动所有者的 `running` 请求；旧 task/session 会写入中断/取消终态。软件 MCP 的 `get_agent_request` 返回尝试、重试和死信元数据。
+- migration `0039` 增加 timer/event/human/approval 等待条件与 Durable Timer。Timer 使用绝对 UTC 到期时间、原子 lease、去重键、指数退避和 Dead Letter；触发时在同一事务写 Domain Event/Outbox 并满足等待条件。`0038 -> 0039` 数据保留升级、数据库关闭/重开、过期 lease、休眠或墙钟跳变、取消竞争与重复领取均有自动化测试。
+- WebView 的存量 repository mutation 已迁到 Rust 封闭 catalog；生产 TypeScript 中不存在 SQLite `.execute()`，`plugin-sql` 及其 Tauri/JS 依赖、预载配置和 SQL capability 已删除。读取命令只接受单条 `SELECT/WITH`，并使用 `read_only + query_only` 的独立 SQLx pool。
+- 生产 CSP 已非空，Provider 网络继续只由 Rust 代理；文本文件只在系统文件对话框动态授权后读写，外部 URL 仅允许 HTTP(S)，附件与 Skills 本地路径由 Rust 校验后打开，WebView 不再拥有静态文件范围或本地 path opener。
+- 自定义数据目录迁移会先阻止新 Run，暂停并等待 watcher/timer/钉钉 connector，拒绝活动 Run，关闭空闲 sidecar 与全部 pool；成功后绑定目标目录，失败时恢复原目录，避免后台任务在复制期间重开旧数据库。
+- 上述恢复以一次完整 Run 为粒度，不提供模型 tool step checkpoint。A2A lease 防止并发重复领取；异常退出后的孤儿请求按 at-least-once 语义创建新 Run 并有界重试，因此模型调用和尚未进入受控事务/Outbox 的外部副作用不宣称 exactly-once。跨 Run 的外部动作幂等与 fencing 属于 Phase 5 Action Gateway。
 
 ### 依赖
 
@@ -285,7 +293,7 @@ Phase 3 进程监督稳定。
 ### 退出条件
 
 - 窗口隐藏时人工请求、定时器和已开始的 Run 可继续。
-- 应用升级、休眠、时区变化和异常退出后不会重复领取同一任务。
+- 数据库 schema 升级、休眠和时区变化后，Timer 不重复提交同一 Domain Event/Outbox；A2A 请求不被并发领取，异常退出后的重放具有 attempt、退避和 Dead Letter 审计。
 - Rust 成为 SQLite 唯一写入者，WebView 无 SQL execute 权限。
 
 ### 本阶段不做

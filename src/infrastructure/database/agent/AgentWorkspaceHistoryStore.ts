@@ -30,14 +30,7 @@ export class SqliteAgentWorkspaceHistoryStore implements AgentWorkspaceHistorySt
     const normalized = normalizeAgentWorkspaceHistory(state)
     await (
       await this.getClient()
-    ).execute(
-      `INSERT INTO agent_workspace_state (id, state_json, updated_at)
-       VALUES ('current', ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         state_json = excluded.state_json,
-         updated_at = excluded.updated_at`,
-      [JSON.stringify({ version: 3, ...normalized }), Date.now()],
-    )
+    ).mutate('saveAgentWorkspaceState', [JSON.stringify({ version: 3, ...normalized }), Date.now()])
   }
 }
 

@@ -55,4 +55,15 @@ describe('SkillService', () => {
       }),
     })
   })
+
+  it('opens the controlled Skills directory through a Rust command', async () => {
+    invoke.mockResolvedValue(undefined)
+    const { openSkillsDirectory } = await import('@/services/integrations/SkillService')
+
+    await openSkillsDirectory()
+
+    expect(invoke).toHaveBeenCalledWith('open_skills_directory', {
+      input: { dataDirectory: null },
+    })
+  })
 })

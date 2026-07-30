@@ -65,20 +65,14 @@ export class TauriImRepository implements ImRepository {
 
   async createConnector(connector: ImConnector): Promise<AppResult<ImConnector>> {
     try {
-      await this.sql.execute(
-        `INSERT INTO im_connectors (
-          id, provider, display_name, source_category, client_id, enabled, runtime_status,
-          last_connected_at, last_event_at, last_error, created_at, updated_at
-        ) VALUES (?, 'dingtalk', ?, ?, ?, 1, 'stopped', NULL, NULL, NULL, ?, ?)`,
-        [
-          connector.id,
-          connector.displayName,
-          connector.sourceCategory,
-          connector.clientId,
-          connector.createdAt,
-          connector.updatedAt,
-        ],
-      )
+      await this.sql.mutate('createImConnector', [
+        connector.id,
+        connector.displayName,
+        connector.sourceCategory,
+        connector.clientId,
+        connector.createdAt,
+        connector.updatedAt,
+      ])
       return this.getConnector(connector.id)
     } catch (error) {
       return err(normalizeError(error, '无法保存钉钉连接器，请检查 Client ID 是否重复。'))
@@ -87,7 +81,7 @@ export class TauriImRepository implements ImRepository {
 
   async deleteConnector(id: string): Promise<AppResult<void>> {
     try {
-      const result = await this.sql.execute('DELETE FROM im_connectors WHERE id = ?', [id])
+      const result = await this.sql.mutate('deleteImConnector', [id])
       return result.rowsAffected === 1
         ? ok(undefined)
         : err({ code: 'not-found', message: '消息连接器不存在。' })
@@ -102,10 +96,7 @@ export class TauriImRepository implements ImRepository {
     updatedAt: number,
   ): Promise<AppResult<ImConnector>> {
     try {
-      const result = await this.sql.execute(
-        'UPDATE im_connectors SET source_category = ?, updated_at = ? WHERE id = ?',
-        [sourceCategory, updatedAt, id],
-      )
+      const result = await this.sql.mutate('updateImCategory', [sourceCategory, updatedAt, id])
       if (result.rowsAffected !== 1)
         return err({ code: 'not-found', message: '消息连接器不存在。' })
       return this.getConnector(id)
@@ -120,11 +111,12 @@ export class TauriImRepository implements ImRepository {
     updatedAt: number,
   ): Promise<AppResult<ImConnector>> {
     try {
-      const result = await this.sql.execute(
-        `UPDATE im_connectors SET enabled = ?, runtime_status = ?, last_error = NULL,
-         updated_at = ? WHERE id = ?`,
-        [enabled ? 1 : 0, enabled ? 'connecting' : 'stopped', updatedAt, id],
-      )
+      const result = await this.sql.mutate('setImConnectorEnabled', [
+        enabled ? 1 : 0,
+        enabled ? 'connecting' : 'stopped',
+        updatedAt,
+        id,
+      ])
       if (result.rowsAffected !== 1)
         return err({ code: 'not-found', message: '消息连接器不存在。' })
       return this.getConnector(id)
@@ -163,10 +155,7 @@ export class TauriImRepository implements ImRepository {
 
   async setMessageStatus(id: string, status: ImProcessingStatus): Promise<AppResult<ImMessage>> {
     try {
-      const result = await this.sql.execute(
-        'UPDATE im_messages SET processing_status = ? WHERE id = ?',
-        [status, id],
-      )
+      const result = await this.sql.mutate('setImMessageStatus', [status, id])
       if (result.rowsAffected !== 1) return err({ code: 'not-found', message: '消息不存在。' })
       const rows = await this.sql.select<ImMessageRow>(
         `SELECT m.*, c.conversation_type, c.title AS conversation_title

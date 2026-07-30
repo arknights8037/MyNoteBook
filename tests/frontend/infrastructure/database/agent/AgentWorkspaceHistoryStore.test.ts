@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import { createEmptyAgentWorkspaceHistory } from '@/models/ai/aiChatHistory'
-import type { SqlClient, SqlExecuteResult, SqlValue } from '@/repositories/shared/SqlClient'
+import type {
+  DatabaseMutation,
+  SqlClient,
+  SqlExecuteResult,
+  SqlValue,
+} from '@/repositories/shared/SqlClient'
 
 import { SqliteAgentWorkspaceHistoryStore } from '@/infrastructure/database/agent/AgentWorkspaceHistoryStore'
 
@@ -46,7 +51,10 @@ describe('SqliteAgentWorkspaceHistoryStore', () => {
 class MemoryWorkspaceClient implements SqlClient {
   private stateJson: string | null = null
 
-  async execute(_sql: string, bindValues: SqlValue[] = []): Promise<SqlExecuteResult> {
+  async mutate(
+    _mutation: DatabaseMutation,
+    bindValues: SqlValue[] = [],
+  ): Promise<SqlExecuteResult> {
     this.stateJson = String(bindValues[0] ?? '')
     return { rowsAffected: 1, lastInsertId: 0 }
   }

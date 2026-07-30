@@ -4,37 +4,40 @@
 
 SQLite schema 只由 `src-tauri/migrations/` 中的 SQLx 迁移管理。应用启动时 Rust 端按版本执行迁移，并把 checksum 写入 `_sqlx_migrations`。
 
-截至 2026-07-30，当前迁移链为 `0001`–`0038`。最新迁移已包含 Runtime Port 身份/审批契约、后台 Agent Runtime Profile，以及 A2A 请求 lease、重试与 Dead Letter 字段。
+截至 2026-07-30，当前迁移链为 `0001`–`0039`。最新迁移已包含 Runtime Port 身份/审批契约、后台 Agent Runtime Profile、A2A 请求 lease/retry/Dead Letter，以及 Durable Timer 与统一等待条件。
 
 前端不再执行 `CREATE TABLE`、`ALTER TABLE` 或补列逻辑。这样避免了两个运行时同时管理 schema，防止“每次打开都提示迁移”或已应用迁移 checksum 不匹配。
+
+Rust 是 SQLite 唯一连接所有者与唯一写入者。WebView repository 写操作只提交封闭的 mutation ID 和标量参数，由 `database_mutations.rs` 选择固定 SQL；不能提交任意写语句。参数化读取由 `database_queries.rs` 在独立只读 SQLx pool 中执行并序列化结果，只接受单条 `SELECT/WITH`，同时启用 `read_only` 与 `query_only`；主窗口没有 SQL capability，项目也不再依赖 `plugin-sql`。
 
 **规则：已发布迁移不可修改、不可删除、不可重排。** Schema 变更必须新建下一个编号迁移。例如 `0006_add_x.sql`。历史迁移是已有用户数据的版本链，不是运行时兼容代码。
 
 ## 当前持久化内容
 
-| 域               | 表/文件                                                                                                                               |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| 文档与层级       | `documents`；只读块投影 `blocks`                                                                                                      |
-| 标签             | `tags`、`document_tags`                                                                                                               |
-| 附件元数据       | `assets`；二进制文件位于数据库同级 `assets/`                                                                                          |
-| 本地集成文件     | `skills/`、`mcp-servers.json`、`mcp-server-exposure.json`；与数据库使用同一个可迁移数据目录                                           |
-| 全文检索         | FTS5 `document_search` 与同步触发器                                                                                                   |
-| Agent 任务与审计 | `agent_*` 表保存 task、tool call、Patch、confirmation、transaction 和 request；`agent_workspace_state` 保存版本化项目/任务消息快照    |
-| 消息连接器       | `im_connectors` 保存非敏感连接配置和运行状态；`im_conversations`、`im_messages` 保存标准化钉钉会话与消息；Client Secret 不进入 SQLite |
-| 独立信息首页     | `information_home` 保存单例模块布局与自动摘要设置；`information_home_summaries` 保存只读 Agent 摘要历史，不属于 `workspace_views`     |
+| 域               | 表/文件                                                                                                                                                                      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 文档与层级       | `documents`；只读块投影 `blocks`                                                                                                                                             |
+| 标签             | `tags`、`document_tags`                                                                                                                                                      |
+| 附件元数据       | `assets`；二进制文件位于数据库同级 `assets/`                                                                                                                                 |
+| 本地集成文件     | `skills/`、`mcp-servers.json`、`mcp-server-exposure.json`；与数据库使用同一个可迁移数据目录                                                                                  |
+| 全文检索         | FTS5 `document_search` 与同步触发器                                                                                                                                          |
+| Agent 任务与审计 | `agent_*` 表保存 task、tool call、Patch、confirmation、transaction 和 request；`agent_workspace_state` 保存版本化项目/任务消息快照                                           |
+| 消息连接器       | `im_connectors` 保存非敏感连接配置和运行状态；`im_conversations`、`im_messages` 保存标准化钉钉会话与消息；Client Secret 不进入 SQLite                                        |
+| 独立信息首页     | `information_home` 保存单例模块布局与自动摘要设置；`information_home_summaries` 保存只读 Agent 摘要历史，不属于 `workspace_views`                                            |
 | Agent 通信与路由 | `agent_requests` 保存 mode、result、revision、decision、project/branch routing、run/session binding、lease、attempt/retry 和 Dead Letter；`agent_branches` 保存 A2A 分支目录 |
-| 自动化与运行队列 | `automation_tasks`、`automation_runs`                                                                                                 |
-| 上下文追溯       | `context_bundles`；Agent ExecutionPolicy、Provider 参数、Skill 版本与关联 ID                                                          |
-| 结构化知识       | `knowledge_objects`、`knowledge_object_relations`                                                                                     |
-| 认知会话与验证   | `cognitive_sessions`、`knowledge_object_sources`、`knowledge_validations`                                                             |
-| Mind Map         | `mind_maps`、`mind_map_revisions`；版本化 canonical JSON 与树形位置                                                                   |
-| 结构化工作区     | `workspace_views`、`workspace_view_revisions`；Slidev/UML/Table payload、树形位置与 `pinned_at`                                       |
-| 统一 Work        | `task_definitions`、`task_runs`；兼容既有 Automation/Agent 表                                                                         |
-| 交付与治理       | `work_artifacts`、`work_evidence`、`result_verifications`、`change_sets`、`approvals`；验证结果可保存 Confirmation Envelope 与 hash   |
-| 可重建 View      | `view_definitions`、`view_snapshots`、`view_dependencies`                                                                             |
-| 外部委派         | `delegations`、`external_submissions`、`idempotency_records`                                                                          |
-| 事件投递         | `domain_events`、`outbox_messages`                                                                                                    |
-| API Key          | AES-256-GCM 密文文件；随机数据密钥由系统凭据库保护，不进入 SQLite 或 localStorage                                                     |
+| 自动化与运行队列 | `automation_tasks`、`automation_runs`                                                                                                                                        |
+| 上下文追溯       | `context_bundles`；Agent ExecutionPolicy、Provider 参数、Skill 版本与关联 ID                                                                                                 |
+| 结构化知识       | `knowledge_objects`、`knowledge_object_relations`                                                                                                                            |
+| 认知会话与验证   | `cognitive_sessions`、`knowledge_object_sources`、`knowledge_validations`                                                                                                    |
+| Mind Map         | `mind_maps`、`mind_map_revisions`；版本化 canonical JSON 与树形位置                                                                                                          |
+| 结构化工作区     | `workspace_views`、`workspace_view_revisions`；Slidev/UML/Table payload、树形位置与 `pinned_at`                                                                              |
+| 统一 Work        | `task_definitions`、`task_runs`；兼容既有 Automation/Agent 表                                                                                                                |
+| 交付与治理       | `work_artifacts`、`work_evidence`、`result_verifications`、`change_sets`、`approvals`；验证结果可保存 Confirmation Envelope 与 hash                                          |
+| 可重建 View      | `view_definitions`、`view_snapshots`、`view_dependencies`                                                                                                                    |
+| 外部委派         | `delegations`、`external_submissions`、`idempotency_records`                                                                                                                 |
+| 事件投递         | `domain_events`、`outbox_messages`                                                                                                                                           |
+| Workflow 等待    | `workflow_wait_conditions`、`workflow_timers` 保存 timer/event/human/approval 条件、lease、重试与 Dead Letter                                                                |
+| API Key          | AES-256-GCM 密文文件；随机数据密钥由系统凭据库保护，不进入 SQLite 或 localStorage                                                                                            |
 
 API Key 首次使用时从系统凭据库取得数据密钥并完成一次 AES-GCM 解密，随后缓存在应用进程内存中。Agent 请求不会重复执行 KDF、系统凭据读取或 AES 解密。写入时使用新的随机 nonce，GCM 认证标签同时校验密文完整性。
 
@@ -87,9 +90,9 @@ Migration `0011` 为 Generated View 增加 generation/override/provenance 字段
 - `PRAGMA synchronous = NORMAL`
 - `PRAGMA temp_store = MEMORY`
 
-前端 SQL 连接按数据库 URL 复用；Rust Agent 使用每个数据目录最多 4 个连接的小型池，避免每次工具调用重新建立 SQLite 连接。WAL 模式提高并发读写的可靠性。
+Rust 为每个数据目录复用小型读写池，并为 WebView 查询维护独立只读池；WebView 不持有连接。WAL 模式提高并发读写的可靠性，只读池由 SQLite 连接级保护拒绝写语句。
 
-移动数据目录前会关闭对应连接池。迁移先在目标目录内统一暂存 `editor.db`、WAL/SHM、`assets/`、`skills/`、`mcp-servers.json`、`mcp-server-exposure.json`，以及 `work_artifacts.uri` 引用且位于旧数据目录内的本地文件；暂存数据库通过完整性、外键和附件文件校验后才会启用。目标目录已有的受管内容会整体移入 `.my-notebook-backup-<timestamp>/`，任一步启用失败都会恢复该备份，避免数据库与附件处于不同版本。
+移动数据目录前，Rust 会持有 Agent start gate，暂停并等待 A2A watcher、Durable Timer 和钉钉 connector，拒绝仍有活动 Run 的迁移，完整关闭空闲 sidecar，再关闭对应读写池和只读池。迁移先在目标目录内统一暂存 `editor.db`、WAL/SHM、`assets/`、`skills/`、`mcp-servers.json`、`mcp-server-exposure.json`，以及 `work_artifacts.uri` 引用且位于旧数据目录内的本地文件；暂存数据库通过完整性、外键和附件文件校验后才会启用。目标目录已有的受管内容会整体移入 `.my-notebook-backup-<timestamp>/`，任一步启用失败都会恢复该备份，避免数据库与附件处于不同版本。成功后 watcher、timer 与 Worker 绑定目标目录；失败时恢复原目录，connector 由随后一次数据库准备重新启动。
 
 迁移会把历史遗留的绝对 `assets.relative_path` 规范化为安全的 `assets/...` 相对路径，并只重写 `work_artifacts.uri` 中位于旧数据目录内的普通本地路径或 `file:` URI。HTTP、MCP 等外部 URI、`documents.source_url` 以及 MCP 命令的 `cwd/command/args` 不会被改写。API Key 密文位于独立的系统本地数据目录，也不随知识库数据位置迁移。
 

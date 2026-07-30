@@ -7,6 +7,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 use tauri::AppHandle;
+use tauri_plugin_opener::OpenerExt;
 
 use crate::database::configured_data_directory;
 
@@ -281,13 +282,12 @@ pub fn remove_installed_skill(app: AppHandle, input: RemoveSkillInput) -> Result
 }
 
 #[tauri::command]
-pub fn get_skills_directory(
-    app: AppHandle,
-    input: SkillDataDirectoryInput,
-) -> Result<String, String> {
+pub fn open_skills_directory(app: AppHandle, input: SkillDataDirectoryInput) -> Result<(), String> {
     let root = skills_root(&app, input.data_directory)?;
     fs::create_dir_all(&root).map_err(|error| format!("无法创建技能目录：{error}"))?;
-    Ok(root.to_string_lossy().into_owned())
+    app.opener()
+        .open_path(root.to_string_lossy().into_owned(), None::<String>)
+        .map_err(|error| format!("无法打开技能目录：{error}"))
 }
 
 fn skills_root(app: &AppHandle, data_directory: Option<String>) -> Result<PathBuf, String> {

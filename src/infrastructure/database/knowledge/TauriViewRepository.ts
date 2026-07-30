@@ -45,30 +45,22 @@ export class TauriViewRepository implements ViewRepository {
     }
     const now = input.createdAt ?? Date.now()
     try {
-      await this.sqlClient.execute(
-        `INSERT INTO view_definitions (
-          id, name, view_type, scope_query_json, projection_schema_json, render_spec_json,
-          refresh_policy, writeback_policy, target_document_id, stale, version,
-          generation_prompt, generation_provider, generation_model, generation_skill_versions_json,
-          last_refreshed_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, ?, 1, 1, ?, ?, ?, ?, NULL, ?, ?)`,
-        [
-          input.id,
-          input.name.trim(),
-          input.viewType,
-          JSON.stringify(input.scopeQuery),
-          input.projectionSchema ? JSON.stringify(input.projectionSchema) : null,
-          JSON.stringify(input.renderSpec ?? {}),
-          input.writebackPolicy,
-          input.targetDocumentId ?? null,
-          input.generation?.prompt ?? null,
-          input.generation?.provider ?? null,
-          input.generation?.model ?? null,
-          JSON.stringify(input.generation?.skillVersions ?? []),
-          now,
-          now,
-        ],
-      )
+      await this.sqlClient.mutate('createViewDefinition', [
+        input.id,
+        input.name.trim(),
+        input.viewType,
+        JSON.stringify(input.scopeQuery),
+        input.projectionSchema ? JSON.stringify(input.projectionSchema) : null,
+        JSON.stringify(input.renderSpec ?? {}),
+        input.writebackPolicy,
+        input.targetDocumentId ?? null,
+        input.generation?.prompt ?? null,
+        input.generation?.provider ?? null,
+        input.generation?.model ?? null,
+        JSON.stringify(input.generation?.skillVersions ?? []),
+        now,
+        now,
+      ])
       return this.getDefinition(input.id)
     } catch (error) {
       return err(normalizeError(error, '无法创建 View Definition。'))

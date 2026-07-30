@@ -77,26 +77,20 @@ export class TauriRssRepository implements RssRepository {
 
   async createSource(source: RssSource): Promise<AppResult<RssSource>> {
     try {
-      await this.sql.execute(
-        `INSERT INTO rss_sources (
-          id, display_name, feed_url, site_url, description, etag, last_modified,
-          source_category, enabled, last_synced_at, sync_cursor_at, last_error, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL, ?, ?)`,
-        [
-          source.id,
-          source.displayName,
-          source.feedUrl,
-          source.siteUrl,
-          source.description,
-          source.etag,
-          source.lastModified,
-          source.sourceCategory,
-          source.lastSyncedAt,
-          source.syncCursorAt,
-          source.createdAt,
-          source.updatedAt,
-        ],
-      )
+      await this.sql.mutate('createRssSource', [
+        source.id,
+        source.displayName,
+        source.feedUrl,
+        source.siteUrl,
+        source.description,
+        source.etag,
+        source.lastModified,
+        source.sourceCategory,
+        source.lastSyncedAt,
+        source.syncCursorAt,
+        source.createdAt,
+        source.updatedAt,
+      ])
       return this.getSource(source.id)
     } catch (error) {
       return err(normalizeError(error, '无法保存 RSS 订阅源；请检查地址是否已经添加。'))
@@ -105,7 +99,7 @@ export class TauriRssRepository implements RssRepository {
 
   async deleteSource(id: string): Promise<AppResult<void>> {
     try {
-      const result = await this.sql.execute('DELETE FROM rss_sources WHERE id = ?', [id])
+      const result = await this.sql.mutate('deleteRssSource', [id])
       return result.rowsAffected === 1
         ? ok(undefined)
         : err({ code: 'not-found', message: 'RSS 订阅源不存在。' })
@@ -128,24 +122,17 @@ export class TauriRssRepository implements RssRepository {
     },
   ): Promise<AppResult<RssSource>> {
     try {
-      await this.sql.execute(
-        `UPDATE rss_sources SET
-          site_url = COALESCE(?, site_url), description = COALESCE(?, description),
-          etag = COALESCE(?, etag), last_modified = COALESCE(?, last_modified),
-          last_synced_at = ?, sync_cursor_at = COALESCE(?, sync_cursor_at),
-          last_error = ?, updated_at = ? WHERE id = ?`,
-        [
-          state.siteUrl ?? null,
-          state.description ?? null,
-          state.etag ?? null,
-          state.lastModified ?? null,
-          state.lastSyncedAt,
-          state.syncCursorAt ?? null,
-          state.lastError,
-          state.updatedAt,
-          id,
-        ],
-      )
+      await this.sql.mutate('updateRssSyncState', [
+        state.siteUrl ?? null,
+        state.description ?? null,
+        state.etag ?? null,
+        state.lastModified ?? null,
+        state.lastSyncedAt,
+        state.syncCursorAt ?? null,
+        state.lastError,
+        state.updatedAt,
+        id,
+      ])
       return this.getSource(id)
     } catch (error) {
       return err(normalizeError(error, '无法更新 RSS 同步状态。'))
@@ -158,10 +145,7 @@ export class TauriRssRepository implements RssRepository {
     updatedAt: number,
   ): Promise<AppResult<RssSource>> {
     try {
-      const result = await this.sql.execute(
-        'UPDATE rss_sources SET source_category = ?, updated_at = ? WHERE id = ?',
-        [sourceCategory, updatedAt, id],
-      )
+      const result = await this.sql.mutate('updateRssCategory', [sourceCategory, updatedAt, id])
       if (result.rowsAffected !== 1)
         return err({ code: 'not-found', message: 'RSS 订阅源不存在。' })
       return this.getSource(id)
@@ -177,46 +161,23 @@ export class TauriRssRepository implements RssRepository {
   ): Promise<AppResult<number>> {
     try {
       for (const entry of entries) {
-        await this.sql.execute(
-          `INSERT INTO rss_entries (
-            id, source_id, remote_id, article_url, title, author, published_at, updated_at,
-            preview, body_text, content_source, article_fetched_at, article_fetch_error,
-            categories_json, synced_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(source_id, remote_id) DO UPDATE SET
-            article_url = excluded.article_url, title = excluded.title, author = excluded.author,
-            published_at = excluded.published_at, updated_at = excluded.updated_at,
-            preview = excluded.preview,
-            body_text = CASE
-              WHEN excluded.content_source = 'article' OR rss_entries.content_source != 'article'
-                THEN excluded.body_text ELSE rss_entries.body_text END,
-            content_source = CASE
-              WHEN excluded.content_source = 'article' OR rss_entries.content_source != 'article'
-                THEN excluded.content_source ELSE rss_entries.content_source END,
-            article_fetched_at = COALESCE(excluded.article_fetched_at, rss_entries.article_fetched_at),
-            article_fetch_error = CASE
-              WHEN excluded.content_source = 'article' THEN NULL
-              WHEN rss_entries.content_source = 'article' THEN rss_entries.article_fetch_error
-              ELSE excluded.article_fetch_error END,
-            categories_json = excluded.categories_json, synced_at = excluded.synced_at`,
-          [
-            `${source.id}:${entry.remoteId}`,
-            source.id,
-            entry.remoteId,
-            entry.articleUrl,
-            entry.title,
-            entry.author,
-            entry.publishedAt,
-            entry.updatedAt,
-            entry.preview,
-            entry.bodyText,
-            entry.contentSource,
-            entry.articleFetchedAt,
-            entry.articleFetchError,
-            JSON.stringify(entry.categories),
-            syncedAt,
-          ],
-        )
+        await this.sql.mutate('upsertRssEntry', [
+          `${source.id}:${entry.remoteId}`,
+          source.id,
+          entry.remoteId,
+          entry.articleUrl,
+          entry.title,
+          entry.author,
+          entry.publishedAt,
+          entry.updatedAt,
+          entry.preview,
+          entry.bodyText,
+          entry.contentSource,
+          entry.articleFetchedAt,
+          entry.articleFetchError,
+          JSON.stringify(entry.categories),
+          syncedAt,
+        ])
       }
       return ok(entries.length)
     } catch (error) {
@@ -252,10 +213,7 @@ export class TauriRssRepository implements RssRepository {
 
   async setEntryStatus(id: string, status: RssProcessingStatus): Promise<AppResult<RssEntry>> {
     try {
-      const result = await this.sql.execute(
-        'UPDATE rss_entries SET processing_status = ? WHERE id = ?',
-        [status, id],
-      )
+      const result = await this.sql.mutate('setRssEntryStatus', [status, id])
       if (result.rowsAffected !== 1) return err({ code: 'not-found', message: 'RSS 条目不存在。' })
       const rows = await this.sql.select<RssEntryRow>(
         'SELECT * FROM rss_entries WHERE id = ? LIMIT 1',
@@ -274,11 +232,11 @@ export class TauriRssRepository implements RssRepository {
     article: RssArticleFetchResult,
   ): Promise<AppResult<RssEntry>> {
     try {
-      const result = await this.sql.execute(
-        `UPDATE rss_entries SET body_text = ?, content_source = 'article',
-         article_fetched_at = ?, article_fetch_error = NULL WHERE id = ?`,
-        [article.bodyText, article.extractedAt, id],
-      )
+      const result = await this.sql.mutate('updateRssArticleContent', [
+        article.bodyText,
+        article.extractedAt,
+        id,
+      ])
       if (result.rowsAffected !== 1) return err({ code: 'not-found', message: 'RSS 条目不存在。' })
       const rows = await this.sql.select<RssEntryRow>(
         'SELECT * FROM rss_entries WHERE id = ? LIMIT 1',

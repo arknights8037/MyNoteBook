@@ -40,19 +40,16 @@ export class TauriWorkspaceViewRepository implements WorkspaceViewRepository {
     if (invalid) return err({ code: 'validation-error', message: invalid })
     const now = input.createdAt ?? Date.now()
     try {
-      await this.sql.execute(
-        'INSERT INTO workspace_views (id, parent_id, sort_order, view_type, title, payload_json, schema_version, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?)',
-        [
-          input.id,
-          input.parentId ?? null,
-          input.sortOrder ?? 0,
-          input.viewType,
-          input.title.trim(),
-          JSON.stringify(input.payload),
-          now,
-          now,
-        ],
-      )
+      await this.sql.mutate('createWorkspaceView', [
+        input.id,
+        input.parentId ?? null,
+        input.sortOrder ?? 0,
+        input.viewType,
+        input.title.trim(),
+        JSON.stringify(input.payload),
+        now,
+        now,
+      ])
       return this.get(input.id)
     } catch (error) {
       return err(normalizeError(error, '无法创建工作空间视图。'))
@@ -103,16 +100,13 @@ export class TauriWorkspaceViewRepository implements WorkspaceViewRepository {
     const invalid = validate(input.title, current.value.viewType, input.payload)
     if (invalid) return err({ code: 'validation-error', message: invalid })
     try {
-      const result = await this.sql.execute(
-        'UPDATE workspace_views SET title = ?, payload_json = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?',
-        [
-          input.title.trim(),
-          JSON.stringify(input.payload),
-          input.updatedAt ?? Date.now(),
-          input.id,
-          input.expectedVersion,
-        ],
-      )
+      const result = await this.sql.mutate('updateWorkspaceView', [
+        input.title.trim(),
+        JSON.stringify(input.payload),
+        input.updatedAt ?? Date.now(),
+        input.id,
+        input.expectedVersion,
+      ])
       if (result.rowsAffected !== 1)
         return err({ code: 'revision-conflict', message: '视图已更新，请重新打开。' })
       return this.get(input.id)
@@ -130,16 +124,13 @@ export class TauriWorkspaceViewRepository implements WorkspaceViewRepository {
     if (input.id === input.parentId)
       return err({ code: 'validation-error', message: '视图不能成为自己的子页面。' })
     try {
-      const result = await this.sql.execute(
-        'UPDATE workspace_views SET parent_id = ?, sort_order = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?',
-        [
-          input.parentId,
-          input.sortOrder ?? 0,
-          input.updatedAt ?? Date.now(),
-          input.id,
-          input.expectedVersion,
-        ],
-      )
+      const result = await this.sql.mutate('moveWorkspaceView', [
+        input.parentId,
+        input.sortOrder ?? 0,
+        input.updatedAt ?? Date.now(),
+        input.id,
+        input.expectedVersion,
+      ])
       if (result.rowsAffected !== 1)
         return err({ code: 'revision-conflict', message: '视图已更新，请重新打开。' })
       return this.get(input.id)
@@ -152,10 +143,7 @@ export class TauriWorkspaceViewRepository implements WorkspaceViewRepository {
     pinnedAt: number | null
   }): Promise<AppResult<StructuredWorkspaceView>> {
     try {
-      const result = await this.sql.execute(
-        'UPDATE workspace_views SET pinned_at = ? WHERE id = ?',
-        [input.pinnedAt, input.id],
-      )
+      const result = await this.sql.mutate('setWorkspaceViewPinned', [input.pinnedAt, input.id])
       if (result.rowsAffected !== 1) return err({ code: 'not-found', message: '视图不存在。' })
       return this.get(input.id)
     } catch (error) {
@@ -164,7 +152,7 @@ export class TauriWorkspaceViewRepository implements WorkspaceViewRepository {
   }
   async delete(id: string): Promise<AppResult<void>> {
     try {
-      const result = await this.sql.execute('DELETE FROM workspace_views WHERE id = ?', [id])
+      const result = await this.sql.mutate('deleteWorkspaceView', [id])
       return result.rowsAffected === 1
         ? ok(undefined)
         : err({ code: 'not-found', message: '视图不存在。' })
@@ -185,10 +173,7 @@ function validate(
 }
 function map(row: Row): AppResult<StructuredWorkspaceView> {
   try {
-    const rawPayload = parseJsonStrict<unknown>(
-      row.payload_json,
-      '工作空间视图数据',
-    )
+    const rawPayload = parseJsonStrict<unknown>(row.payload_json, '工作空间视图数据')
     const payload = normalizeWorkspaceViewPayload(row.view_type, rawPayload)
     const invalid = validate(row.title, row.view_type, payload)
     return invalid

@@ -52,19 +52,13 @@ export class TauriInformationHomeRepository implements InformationHomeRepository
 
   async create(home: InformationHome): Promise<AppResult<InformationHome>> {
     try {
-      await this.sql.execute(
-        `INSERT OR IGNORE INTO information_home (
-          id, payload_json, schema_version, version, auto_summary_enabled,
-          summary_interval_minutes, created_at, updated_at
-        ) VALUES ('default', ?, 1, 1, ?, ?, ?, ?)`,
-        [
-          JSON.stringify(home.payload),
-          home.autoSummaryEnabled ? 1 : 0,
-          home.summaryIntervalMinutes,
-          home.createdAt,
-          home.updatedAt,
-        ],
-      )
+      await this.sql.mutate('createInformationHome', [
+        JSON.stringify(home.payload),
+        home.autoSummaryEnabled ? 1 : 0,
+        home.summaryIntervalMinutes,
+        home.createdAt,
+        home.updatedAt,
+      ])
       return this.get()
     } catch (error) {
       return err(normalizeError(error, '无法初始化首页。'))
@@ -77,11 +71,11 @@ export class TauriInformationHomeRepository implements InformationHomeRepository
     updatedAt: number,
   ): Promise<AppResult<InformationHome>> {
     try {
-      const result = await this.sql.execute(
-        `UPDATE information_home SET payload_json = ?, version = version + 1, updated_at = ?
-         WHERE id = 'default' AND version = ?`,
-        [JSON.stringify(payload), updatedAt, expectedVersion],
-      )
+      const result = await this.sql.mutate('updateInformationHomePayload', [
+        JSON.stringify(payload),
+        updatedAt,
+        expectedVersion,
+      ])
       if (result.rowsAffected !== 1)
         return err({ code: 'conflict', message: '首页布局已在其他窗口更新，请刷新后重试。' })
       return this.get()
@@ -96,11 +90,11 @@ export class TauriInformationHomeRepository implements InformationHomeRepository
     updatedAt: number,
   ): Promise<AppResult<InformationHome>> {
     try {
-      const result = await this.sql.execute(
-        `UPDATE information_home SET auto_summary_enabled = ?, summary_interval_minutes = ?,
-         version = version + 1, updated_at = ? WHERE id = 'default'`,
-        [enabled ? 1 : 0, intervalMinutes, updatedAt],
-      )
+      const result = await this.sql.mutate('updateInformationHomeSettings', [
+        enabled ? 1 : 0,
+        intervalMinutes,
+        updatedAt,
+      ])
       if (result.rowsAffected !== 1) return err({ code: 'not-found', message: '首页尚未初始化。' })
       return this.get()
     } catch (error) {
@@ -123,23 +117,17 @@ export class TauriInformationHomeRepository implements InformationHomeRepository
 
   async createSummary(summary: InformationHomeSummary): Promise<AppResult<InformationHomeSummary>> {
     try {
-      await this.sql.execute(
-        `INSERT INTO information_home_summaries (
-          id, home_id, source_cursor_at, trigger_source, status, content,
-          provider, model, error, generated_at
-        ) VALUES (?, 'default', ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          summary.id,
-          summary.sourceCursorAt,
-          summary.triggerSource,
-          summary.status,
-          summary.content,
-          summary.provider,
-          summary.model,
-          summary.error,
-          summary.generatedAt,
-        ],
-      )
+      await this.sql.mutate('createInformationHomeSummary', [
+        summary.id,
+        summary.sourceCursorAt,
+        summary.triggerSource,
+        summary.status,
+        summary.content,
+        summary.provider,
+        summary.model,
+        summary.error,
+        summary.generatedAt,
+      ])
       return ok(summary)
     } catch (error) {
       return err(normalizeError(error, '无法保存 Agent 摘要结果。'))

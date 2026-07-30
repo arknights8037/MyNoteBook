@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { BookOpenCheck, Database, ListChecks, ShieldCheck } from '@lucide/vue'
+import { open, save } from '@tauri-apps/plugin-dialog'
 import { computed, onMounted, ref } from 'vue'
 
 import { loadAiSettings } from '@/models/ai/ai'
@@ -126,24 +127,33 @@ function delegateRun(run: TaskRun): Promise<void> {
   })
 }
 
-function exportCliEnvelope(): Promise<void> {
+async function exportCliEnvelope(): Promise<void> {
   const grant = activeGrant.value
   const run = activeDelegationRun.value
-  const path = cliExportPath.value.trim()
-  if (!grant || !run || !path) {
-    return Promise.resolve()
-  }
-  return execute(async () => (await control()).exportCliEnvelope(path, grant, run))
+  if (!grant || !run) return
+  const path = await save({
+    title: '导出 CLI Envelope',
+    defaultPath: cliExportPath.value.trim() || 'mynotebook-delegation.json',
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  })
+  if (!path) return
+  cliExportPath.value = path
+  await execute(async () => (await control()).exportCliEnvelope(path, grant, run))
 }
 
-function importCliSubmission(): Promise<void> {
-  if (!cliSubmissionPath.value.trim() || !cliCapabilityToken.value.trim()) return Promise.resolve()
-  return execute(
-    async () =>
-      (await control()).importCliSubmission(
-        cliSubmissionPath.value.trim(),
-        cliCapabilityToken.value.trim(),
-      ),
+async function importCliSubmission(): Promise<void> {
+  if (!cliCapabilityToken.value.trim()) return
+  const selected = await open({
+    title: '导入 CLI Submission',
+    multiple: false,
+    directory: false,
+    defaultPath: cliSubmissionPath.value.trim() || undefined,
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  })
+  if (typeof selected !== 'string') return
+  cliSubmissionPath.value = selected
+  await execute(
+    async () => (await control()).importCliSubmission(selected, cliCapabilityToken.value.trim()),
     true,
   )
 }

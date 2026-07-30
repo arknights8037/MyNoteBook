@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { open } from '@tauri-apps/plugin-dialog'
-import { openPath } from '@tauri-apps/plugin-opener'
 import {
   AlertTriangle,
   Blocks,
@@ -29,9 +28,9 @@ import type { InstalledSkill, SkillFileEntry } from '@/models/integrations/skill
 import { listBuiltinPlugins } from '@/plugins/pluginRegistry'
 import {
   createSkill,
-  getSkillsDirectory,
   importSkillDirectory,
   listInstalledSkills,
+  openSkillsDirectory,
   readSkillFile,
   removeInstalledSkill,
   setSkillEnabled,
@@ -313,7 +312,7 @@ async function removeSkill(skill: InstalledSkill): Promise<void> {
 
 async function openSkillsFolder(): Promise<void> {
   try {
-    await openPath(await getSkillsDirectory())
+    await openSkillsDirectory()
   } catch (openError) {
     error.value = errorMessage(openError)
   }

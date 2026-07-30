@@ -5,14 +5,22 @@ import { describe, expect, it } from 'vitest'
 
 import { TauriEmailRepository } from '@/infrastructure/database/inbox/TauriEmailRepository'
 import type { EmailAccount } from '@/models/inbox/email'
-import type { SqlClient, SqlExecuteResult, SqlValue } from '@/repositories/shared/SqlClient'
+import type {
+  DatabaseMutation,
+  SqlClient,
+  SqlExecuteResult,
+  SqlValue,
+} from '@/repositories/shared/SqlClient'
+import { testDatabaseMutationSql } from '../testDatabaseMutations'
 
 class Client implements SqlClient {
   database = new DatabaseSync(':memory:')
   rawExecuteValues: SqlValue[][] = []
-  async execute(sql: string, values: SqlValue[] = []): Promise<SqlExecuteResult> {
+  async mutate(mutation: DatabaseMutation, values: SqlValue[] = []): Promise<SqlExecuteResult> {
     this.rawExecuteValues.push(values)
-    const result = this.database.prepare(sql).run(...values.map(normalizeValue))
+    const result = this.database
+      .prepare(testDatabaseMutationSql(mutation))
+      .run(...values.map(normalizeValue))
     return { rowsAffected: Number(result.changes) }
   }
   async select<T extends Record<string, unknown>>(

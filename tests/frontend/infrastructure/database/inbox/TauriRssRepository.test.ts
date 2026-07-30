@@ -5,12 +5,20 @@ import { describe, expect, it } from 'vitest'
 
 import { TauriRssRepository } from '@/infrastructure/database/inbox/TauriRssRepository'
 import type { RssSource } from '@/models/inbox/rss'
-import type { SqlClient, SqlExecuteResult, SqlValue } from '@/repositories/shared/SqlClient'
+import type {
+  DatabaseMutation,
+  SqlClient,
+  SqlExecuteResult,
+  SqlValue,
+} from '@/repositories/shared/SqlClient'
+import { testDatabaseMutationSql } from '../testDatabaseMutations'
 
 class Client implements SqlClient {
   database = new DatabaseSync(':memory:')
-  async execute(sql: string, values: SqlValue[] = []): Promise<SqlExecuteResult> {
-    const result = this.database.prepare(sql).run(...values.map(normalizeValue))
+  async mutate(mutation: DatabaseMutation, values: SqlValue[] = []): Promise<SqlExecuteResult> {
+    const result = this.database
+      .prepare(testDatabaseMutationSql(mutation))
+      .run(...values.map(normalizeValue))
     return { rowsAffected: Number(result.changes) }
   }
   async select<T extends Record<string, unknown>>(

@@ -98,29 +98,59 @@ describe('Runtime architecture boundaries', () => {
     expect(source).not.toMatch(/AGENT_TOOL_REGISTRY|buildDomainToolManifest|getAgentToolJsonSchema/)
   })
 
-  it('does not add a new WebView SQL writer outside the reviewed baseline', () => {
-    const actual = listSourceFiles(resolve(root, 'src/infrastructure/database'))
-      .filter((file) => readFileSync(file, 'utf8').includes('.execute('))
+  it('keeps all production SQLite writes out of the WebView', () => {
+    const actual = listSourceFiles(resolve(root, 'src'))
+      .filter((file) => readFileSync(file, 'utf8').match(/\.execute\s*\(/))
       .map((file) => relative(root, resolve(root, file)).replaceAll('\\', '/'))
       .sort()
-    expect(actual).toEqual(
-      [
-        'src/infrastructure/database/agent/AgentWorkspaceHistoryStore.ts',
-        'src/infrastructure/database/agent/TauriAgentRepository.ts',
-        'src/infrastructure/database/automation/TauriAutomationRepository.ts',
-        'src/infrastructure/database/documents/TauriDocumentRepository.ts',
-        'src/infrastructure/database/home/TauriInformationHomeRepository.ts',
-        'src/infrastructure/database/inbox/TauriEmailRepository.ts',
-        'src/infrastructure/database/inbox/TauriImRepository.ts',
-        'src/infrastructure/database/inbox/TauriRssRepository.ts',
-        'src/infrastructure/database/knowledge/TauriKnowledgeRepository.ts',
-        'src/infrastructure/database/knowledge/TauriViewRepository.ts',
-        'src/infrastructure/database/knowledge/TauriWorkRepository.ts',
-        'src/infrastructure/database/shared/connection.ts',
-        'src/infrastructure/database/workspace/TauriMindMapRepository.ts',
-        'src/infrastructure/database/workspace/TauriWorkspaceViewRepository.ts',
-      ].sort(),
+    expect(actual).toEqual([])
+
+    const connection = readFileSync(
+      resolve(root, 'src/infrastructure/database/shared/connection.ts'),
+      'utf8',
     )
+    const rustCatalog = readFileSync(resolve(root, 'src-tauri/src/database_mutations.rs'), 'utf8')
+    const rustQueries = readFileSync(resolve(root, 'src-tauri/src/database_queries.rs'), 'utf8')
+    const rustDatabase = readFileSync(resolve(root, 'src-tauri/src/database.rs'), 'utf8')
+    const capability = readFileSync(resolve(root, 'src-tauri/capabilities/default.json'), 'utf8')
+    expect(connection).toContain("invoke<SqlExecuteResult>('execute_database_mutation'")
+    expect(connection).toContain("invoke<T[]>('execute_database_query'")
+    expect(connection).not.toContain('database.execute')
+    expect(connection).not.toContain('@tauri-apps/plugin-sql')
+    expect(rustCatalog).toContain('pub enum DatabaseMutation')
+    expect(rustCatalog).not.toContain('pub statement: String')
+    expect(rustQueries).toContain('execute_database_query')
+    expect(rustDatabase).toContain('.read_only(true)')
+    expect(capability).not.toMatch(/"sql:/)
+  })
+
+  it('keeps TypeScript mutation IDs, production calls, and the Rust catalog in lockstep', () => {
+    const typeSource = readFileSync(resolve(root, 'src/repositories/shared/SqlClient.ts'), 'utf8')
+    const typeBlock = typeSource.match(
+      /export type DatabaseMutation =([\s\S]*?)export interface SqlClient/,
+    )?.[1]
+    expect(typeBlock).toBeTruthy()
+    const declared = [...typeBlock!.matchAll(/'([^']+)'/g)].map((match) => match[1]!).sort()
+
+    const rustSource = readFileSync(resolve(root, 'src-tauri/src/database_mutations.rs'), 'utf8')
+    const rustBlock = rustSource.match(/pub enum DatabaseMutation \{([\s\S]*?)\n\}/)?.[1]
+    expect(rustBlock).toBeTruthy()
+    const rustIds = [...rustBlock!.matchAll(/^\s+([A-Z][A-Za-z0-9]+),$/gm)]
+      .map((match) => lowerFirst(match[1]!))
+      .sort()
+
+    const used = [
+      ...new Set(
+        listSourceFiles(resolve(root, 'src')).flatMap((file) =>
+          [...readFileSync(file, 'utf8').matchAll(/\.mutate\(\s*['"]([^'"]+)['"]/g)].map(
+            (match) => match[1]!,
+          ),
+        ),
+      ),
+    ].sort()
+
+    expect(rustIds).toEqual(declared)
+    expect(used).toEqual(declared)
   })
 
   it('routes every non-proposal built-in tool through the worker or Rust dispatcher', () => {
@@ -176,4 +206,8 @@ function listSourceFiles(directory: string): string[] {
     if (entry.isDirectory()) return listSourceFiles(path)
     return entry.isFile() && /\.(?:ts|vue)$/.test(entry.name) ? [path] : []
   })
+}
+
+function lowerFirst(value: string): string {
+  return `${value.charAt(0).toLowerCase()}${value.slice(1)}`
 }

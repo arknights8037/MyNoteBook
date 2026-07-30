@@ -13,14 +13,13 @@
     "core:window:allow-start-dragging",
     "core:window:allow-toggle-maximize",
     "dialog:default",
-    "fs:default",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
     "log:default",
-    "opener:default",
-    "sql:default",
-    "sql:allow-close",
-    "sql:allow-execute",
-    "sql:allow-load",
-    "sql:allow-select",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*" }, { "url": "http://*" }]
+    },
     "window-state:default"
   ]
 }

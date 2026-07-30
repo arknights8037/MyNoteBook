@@ -9,7 +9,8 @@ use std::{
     path::{Component, Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
-use tauri::AppHandle;
+use tauri::{AppHandle, State};
+use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
 use crate::database::{
@@ -60,16 +61,23 @@ pub fn get_default_data_directory(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub async fn migrate_data_directory(
     app: AppHandle,
+    watcher_state: State<'_, crate::agent_request_watcher::AgentRequestWatcherState>,
+    timer_state: State<'_, crate::workflow_timers::DurableTimerSchedulerState>,
+    worker_state: State<'_, crate::agent_worker_supervisor::AgentWorkerSupervisorState>,
+    dingtalk_state: State<'_, crate::dingtalk::DingTalkRuntimeState>,
     current_directory: Option<String>,
     destination_directory: Option<String>,
 ) -> Result<DataDirectoryChange, String> {
     let default_directory = default_data_directory(&app).map_err(|error| error.to_string())?;
-    let requested_source_directory = current_directory
-        .filter(|path| !path.trim().is_empty())
+    let current_directory_setting = current_directory.filter(|path| !path.trim().is_empty());
+    let destination_directory_setting =
+        destination_directory.filter(|path| !path.trim().is_empty());
+    let requested_source_directory = current_directory_setting
+        .as_ref()
         .map(PathBuf::from)
         .unwrap_or_else(|| default_directory.clone());
-    let requested_destination_directory = destination_directory
-        .filter(|path| !path.trim().is_empty())
+    let requested_destination_directory = destination_directory_setting
+        .as_ref()
         .map(PathBuf::from)
         .unwrap_or(default_directory);
     fs::create_dir_all(&requested_destination_directory)
@@ -98,15 +106,117 @@ pub async fn migrate_data_directory(
         return Err(format!("找不到当前数据库：{}", source_path.display()));
     }
 
-    for path in [
-        requested_source_directory.join(DATABASE_FILENAME),
-        source_path.clone(),
-        requested_destination_directory.join(DATABASE_FILENAME),
-        destination_path,
-    ] {
-        close_pool(&path).await?;
+    let target_runtime_directory = destination_directory_setting
+        .as_ref()
+        .map(|_| destination_directory_path(&destination_directory));
+    let worker_guard =
+        crate::agent_worker_supervisor::pause_for_data_migration(worker_state.inner()).await;
+    crate::dingtalk::quiesce_for_data_migration(dingtalk_state.inner()).await;
+    let watcher_snapshot =
+        crate::agent_request_watcher::quiesce_for_data_migration(watcher_state.inner()).await;
+    let timer_snapshot =
+        crate::workflow_timers::quiesce_for_data_migration(timer_state.inner()).await;
+    let mut worker_snapshot = None;
+    let migration_result = async {
+        let active_runs = crate::agent_worker_supervisor::active_run_ids(&app).await;
+        if !active_runs.is_empty() {
+            return Err(format!(
+                "仍有 {} 个活动 Agent Run，完成或取消后才能迁移数据目录。",
+                active_runs.len()
+            ));
+        }
+        worker_snapshot = Some(
+            crate::agent_worker_supervisor::snapshot_for_data_migration(worker_state.inner()).await,
+        );
+        crate::agent_worker_supervisor::quiesce_idle_worker_for_data_migration(
+            worker_state.inner(),
+        )
+        .await?;
+        for path in [
+            requested_source_directory.join(DATABASE_FILENAME),
+            source_path.clone(),
+            requested_destination_directory.join(DATABASE_FILENAME),
+            destination_path,
+        ] {
+            close_pool(&path).await?;
+        }
+        migrate_data_directory_paths(&source_directory, &destination_directory).await
     }
-    migrate_data_directory_paths(&source_directory, &destination_directory).await
+    .await;
+
+    let migration_succeeded = migration_result.is_ok();
+    let watcher_directory = runtime_directory_after_migration(
+        migration_succeeded,
+        &target_runtime_directory,
+        &watcher_snapshot.data_directory,
+    );
+    let timer_directory = runtime_directory_after_migration(
+        migration_succeeded,
+        &target_runtime_directory,
+        &timer_snapshot.data_directory,
+    );
+    let worker_resume_result = if let Some(snapshot) = worker_snapshot {
+        let worker_directory = runtime_directory_after_migration(
+            migration_succeeded,
+            &target_runtime_directory,
+            &snapshot.data_directory,
+        );
+        crate::agent_worker_supervisor::resume_after_data_migration(
+            &app,
+            worker_state.inner(),
+            snapshot,
+            worker_directory,
+        )
+        .await
+    } else {
+        Ok(())
+    };
+    crate::agent_request_watcher::resume_after_data_migration(
+        &app,
+        watcher_state.inner(),
+        watcher_snapshot,
+        watcher_directory,
+    )
+    .await;
+    crate::workflow_timers::resume_after_data_migration(
+        &app,
+        timer_state.inner(),
+        timer_snapshot,
+        timer_directory,
+    )
+    .await;
+    drop(worker_guard);
+
+    match migration_result {
+        Ok(change) => {
+            if let Err(error) = worker_resume_result {
+                eprintln!("数据目录已迁移，Agent Worker 将在下次请求时重启：{error}");
+            }
+            Ok(change)
+        }
+        Err(error) => match worker_resume_result {
+            Ok(()) => Err(error),
+            Err(resume_error) => Err(format!(
+                "{error}；恢复原数据目录的 Agent Worker 失败：{resume_error}"
+            )),
+        },
+    }
+}
+
+fn destination_directory_path(directory: &Path) -> String {
+    directory.to_string_lossy().into_owned()
+}
+
+fn runtime_directory_after_migration(
+    migration_succeeded: bool,
+    destination: &Option<String>,
+    source: &Option<String>,
+) -> Option<String> {
+    if migration_succeeded {
+        destination.clone()
+    } else {
+        source.clone()
+    }
 }
 
 async fn migrate_data_directory_paths(
@@ -705,13 +815,18 @@ pub fn get_asset_data_url(
 }
 
 #[tauri::command]
-pub fn resolve_asset_path(
+pub fn open_asset_file(
     app: AppHandle,
     data_directory: Option<String>,
     relative_path: String,
-) -> Result<String, String> {
-    resolve_relative_asset_path(&app, data_directory, &relative_path)
-        .map(|path| path.to_string_lossy().into_owned())
+) -> Result<(), String> {
+    let path = resolve_relative_asset_path(&app, data_directory, &relative_path)?;
+    if !path.is_file() {
+        return Err("附件文件不存在。".to_string());
+    }
+    app.opener()
+        .open_path(path.to_string_lossy().into_owned(), None::<String>)
+        .map_err(|error| format!("无法打开附件：{error}"))
 }
 
 #[tauri::command]
@@ -727,20 +842,17 @@ pub fn remove_asset_file(
     Ok(())
 }
 
-#[tauri::command]
-pub fn write_text_file(path: String, content: String) -> Result<(), String> {
-    let path = PathBuf::from(path);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("无法创建导出目录：{error}"))?;
-    }
-    fs::write(&path, content).map_err(|error| format!("导出文件失败：{error}"))
-}
-
 fn resolve_relative_asset_path(
     app: &AppHandle,
     data_directory: Option<String>,
     relative_path: &str,
 ) -> Result<PathBuf, String> {
+    let relative = validate_asset_relative_path(relative_path)?;
+    let base = configured_data_directory(app, data_directory).map_err(|error| error.to_string())?;
+    Ok(base.join(relative))
+}
+
+fn validate_asset_relative_path(relative_path: &str) -> Result<PathBuf, String> {
     let relative = PathBuf::from(relative_path);
     if relative.components().any(|component| {
         matches!(
@@ -756,8 +868,7 @@ fn resolve_relative_asset_path(
     ) {
         return Err("附件路径必须位于 assets 目录。".to_string());
     }
-    let base = configured_data_directory(app, data_directory).map_err(|error| error.to_string())?;
-    Ok(base.join(relative))
+    Ok(relative)
 }
 
 fn decode_data_url(data_url: &str) -> Result<(String, Vec<u8>), String> {
@@ -924,6 +1035,18 @@ fn normalize_windows_font_name(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn asset_relative_paths_cannot_escape_the_managed_directory() {
+        assert_eq!(
+            validate_asset_relative_path("assets/nested/photo.png").unwrap(),
+            PathBuf::from("assets/nested/photo.png")
+        );
+        assert!(validate_asset_relative_path("../secret.txt").is_err());
+        assert!(validate_asset_relative_path("assets/../secret.txt").is_err());
+        assert!(validate_asset_relative_path("/absolute/secret.txt").is_err());
+        assert!(validate_asset_relative_path("other/secret.txt").is_err());
+    }
 
     fn test_directory(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -1136,5 +1259,19 @@ mod tests {
         .expect("outside")
         .is_none());
         cleanup_test_directory(&root);
+    }
+
+    #[test]
+    fn runtime_services_follow_destination_only_after_success() {
+        let source = Some("C:/source".to_string());
+        let destination = Some("D:/destination".to_string());
+        assert_eq!(
+            runtime_directory_after_migration(true, &destination, &source),
+            destination
+        );
+        assert_eq!(
+            runtime_directory_after_migration(false, &destination, &source),
+            source
+        );
     }
 }

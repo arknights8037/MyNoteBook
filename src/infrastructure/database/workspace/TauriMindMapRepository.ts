@@ -33,23 +33,17 @@ export class TauriMindMapRepository implements MindMapRepository {
     if (validation) return err({ code: 'validation-error', message: validation })
     const now = input.createdAt ?? Date.now()
     try {
-      await this.sql.execute(
-        `INSERT INTO mind_maps (
-          id, parent_id, sort_order, title, content_json, schema_version, version,
-          last_actor_type, last_actor_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?)`,
-        [
-          input.id,
-          input.parentId ?? null,
-          input.sortOrder ?? 0,
-          input.title.trim(),
-          JSON.stringify(input.content),
-          input.actorType,
-          input.actorId ?? null,
-          now,
-          now,
-        ],
-      )
+      await this.sql.mutate('createMindMap', [
+        input.id,
+        input.parentId ?? null,
+        input.sortOrder ?? 0,
+        input.title.trim(),
+        JSON.stringify(input.content),
+        input.actorType,
+        input.actorId ?? null,
+        now,
+        now,
+      ])
       return this.get(input.id)
     } catch (error) {
       return err(normalizeError(error, '无法创建思维导图。'))
@@ -109,21 +103,15 @@ export class TauriMindMapRepository implements MindMapRepository {
       return err({ code: 'validation-error', message: '思维导图不能成为自己的子页面。' })
     }
     try {
-      const result = await this.sql.execute(
-        `UPDATE mind_maps
-         SET parent_id = ?, sort_order = ?, version = version + 1,
-             last_actor_type = ?, last_actor_id = ?, updated_at = ?
-         WHERE id = ? AND version = ?`,
-        [
-          input.parentId,
-          input.sortOrder ?? 0,
-          input.actorType,
-          input.actorId ?? null,
-          input.updatedAt ?? Date.now(),
-          input.id,
-          input.expectedVersion,
-        ],
-      )
+      const result = await this.sql.mutate('moveMindMap', [
+        input.parentId,
+        input.sortOrder ?? 0,
+        input.actorType,
+        input.actorId ?? null,
+        input.updatedAt ?? Date.now(),
+        input.id,
+        input.expectedVersion,
+      ])
       if (result.rowsAffected !== 1) {
         return err({ code: 'revision-conflict', message: '思维导图已被其他操作更新，请重新加载。' })
       }
@@ -145,21 +133,15 @@ export class TauriMindMapRepository implements MindMapRepository {
     const validation = validateInput(input.title, input.content)
     if (validation) return err({ code: 'validation-error', message: validation })
     try {
-      const result = await this.sql.execute(
-        `UPDATE mind_maps
-         SET title = ?, content_json = ?, version = version + 1,
-             last_actor_type = ?, last_actor_id = ?, updated_at = ?
-         WHERE id = ? AND version = ?`,
-        [
-          input.title.trim(),
-          JSON.stringify(input.content),
-          input.actorType,
-          input.actorId ?? null,
-          input.updatedAt ?? Date.now(),
-          input.id,
-          input.expectedVersion,
-        ],
-      )
+      const result = await this.sql.mutate('updateMindMap', [
+        input.title.trim(),
+        JSON.stringify(input.content),
+        input.actorType,
+        input.actorId ?? null,
+        input.updatedAt ?? Date.now(),
+        input.id,
+        input.expectedVersion,
+      ])
       if (result.rowsAffected !== 1) {
         return err({ code: 'revision-conflict', message: '思维导图已被其他操作更新，请重新加载。' })
       }
@@ -171,7 +153,7 @@ export class TauriMindMapRepository implements MindMapRepository {
 
   async delete(id: string): Promise<AppResult<void>> {
     try {
-      const result = await this.sql.execute('DELETE FROM mind_maps WHERE id = ?', [id])
+      const result = await this.sql.mutate('deleteMindMap', [id])
       return result.rowsAffected === 1
         ? ok(undefined)
         : err({ code: 'not-found', message: '思维导图不存在。' })

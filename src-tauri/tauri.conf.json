@@ -25,7 +25,42 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": ["'self'"],
+        "script-src": ["'self'", "'wasm-unsafe-eval'"],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "img-src": ["'self'", "data:", "blob:"],
+        "font-src": ["'self'", "data:"],
+        "connect-src": ["'self'", "ipc:", "http://ipc.localhost"],
+        "worker-src": ["'self'", "blob:"],
+        "frame-src": ["'self'"],
+        "media-src": ["'self'", "data:", "blob:"],
+        "object-src": ["'none'"],
+        "base-uri": ["'none'"],
+        "form-action": ["'none'"],
+        "frame-ancestors": ["'none'"]
+      },
+      "devCsp": {
+        "default-src": ["'self'", "http://127.0.0.1:1420"],
+        "script-src": ["'self'", "'unsafe-eval'", "'wasm-unsafe-eval'", "http://127.0.0.1:1420"],
+        "style-src": ["'self'", "'unsafe-inline'", "http://127.0.0.1:1420"],
+        "img-src": ["'self'", "data:", "blob:"],
+        "font-src": ["'self'", "data:"],
+        "connect-src": [
+          "'self'",
+          "ipc:",
+          "http://ipc.localhost",
+          "http://127.0.0.1:1420",
+          "ws://127.0.0.1:1420"
+        ],
+        "worker-src": ["'self'", "blob:", "http://127.0.0.1:1420"],
+        "frame-src": ["'self'"],
+        "media-src": ["'self'", "data:", "blob:"],
+        "object-src": ["'none'"],
+        "base-uri": ["'none'"],
+        "form-action": ["'none'"],
+        "frame-ancestors": ["'none'"]
+      }
     }
   },
   "bundle": {
@@ -39,10 +74,5 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
-  },
-  "plugins": {
-    "sql": {
-      "preload": ["sqlite:editor.db"]
-    }
   }
 }

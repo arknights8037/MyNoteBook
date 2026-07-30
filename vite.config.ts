@@ -22,7 +22,6 @@ export default defineConfig({
       '@tauri-apps/api/core',
       '@tauri-apps/api/window',
       '@tauri-apps/plugin-dialog',
-      '@tauri-apps/plugin-sql',
       'reka-ui',
       'vue',
     ],

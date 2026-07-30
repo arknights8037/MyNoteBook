@@ -108,35 +108,28 @@ export class TauriAgentRepository implements AgentRepository {
 
   async createTask(task: AgentTask): Promise<AppResult<AgentTask>> {
     try {
-      await this.sqlClient.execute(
-        `INSERT INTO agent_tasks (
-          id, run_id, workflow_id, session_id, document_id, status, user_instruction, context_scope, model,
-          current_step, error, created_at, completed_at, correlation_id, causation_id,
-          execution_policy_json, context_bundle_id, provider, project_id, conversation_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          task.id,
-          task.runId,
-          task.workflowId,
-          task.sessionId,
-          task.documentId,
-          task.status,
-          task.userInstruction,
-          task.contextScope,
-          task.model,
-          task.currentStep,
-          task.error,
-          task.createdAt,
-          task.completedAt,
-          task.correlationId,
-          task.causationId,
-          JSON.stringify(task.executionPolicy),
-          task.contextBundleId,
-          task.provider,
-          task.projectId,
-          task.conversationId,
-        ],
-      )
+      await this.sqlClient.mutate('createAgentTask', [
+        task.id,
+        task.runId,
+        task.workflowId,
+        task.sessionId,
+        task.documentId,
+        task.status,
+        task.userInstruction,
+        task.contextScope,
+        task.model,
+        task.currentStep,
+        task.error,
+        task.createdAt,
+        task.completedAt,
+        task.correlationId,
+        task.causationId,
+        JSON.stringify(task.executionPolicy),
+        task.contextBundleId,
+        task.provider,
+        task.projectId,
+        task.conversationId,
+      ])
       return ok(task)
     } catch (error) {
       return err(normalizeError(error, '无法创建 Agent 任务。'))
@@ -156,13 +149,7 @@ export class TauriAgentRepository implements AgentRepository {
             cleanedAt: interruptedAt,
           },
         })
-        await this.sqlClient.execute(
-          `UPDATE agent_tasks
-           SET status = 'failed', current_step = '任务因应用中断而停止',
-               error = '应用在任务完成前关闭。', completed_at = ?
-           WHERE status IN ('pending', 'running')`,
-          [interruptedAt],
-        )
+        await this.sqlClient.mutate('markInterruptedAgentTasks', [interruptedAt])
       }
       const taskRows = await this.sqlClient.select<AgentTaskRow>(
         `SELECT id, run_id, workflow_id, session_id, document_id, project_id, conversation_id, status, user_instruction, context_scope, model,
@@ -252,12 +239,13 @@ export class TauriAgentRepository implements AgentRepository {
 
   async updateTask(task: AgentTask): Promise<AppResult<AgentTask>> {
     try {
-      const result = await this.sqlClient.execute(
-        `UPDATE agent_tasks
-         SET status = ?, current_step = ?, error = ?, completed_at = ?
-         WHERE id = ?`,
-        [task.status, task.currentStep, task.error, task.completedAt, task.id],
-      )
+      const result = await this.sqlClient.mutate('updateAgentTask', [
+        task.status,
+        task.currentStep,
+        task.error,
+        task.completedAt,
+        task.id,
+      ])
       return result.rowsAffected === 1
         ? ok(task)
         : err({ code: 'not-found', message: 'Agent 任务不存在。' })
@@ -268,34 +256,22 @@ export class TauriAgentRepository implements AgentRepository {
 
   async recordToolCall(call: AgentToolCall): Promise<AppResult<AgentToolCall>> {
     try {
-      await this.sqlClient.execute(
-        `INSERT INTO agent_tool_calls (
-          id, task_id, run_id, turn_id, provider_tool_call_id, tool_name,
-          arguments_json, result_json, status, started_at, completed_at, error,
-          correlation_id, causation_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          result_json = excluded.result_json,
-          status = excluded.status,
-          completed_at = excluded.completed_at,
-          error = excluded.error`,
-        [
-          call.id,
-          call.taskId,
-          call.runId,
-          call.turnId,
-          call.providerToolCallId,
-          call.toolName,
-          call.argumentsJson,
-          call.resultJson,
-          call.status,
-          call.startedAt,
-          call.completedAt,
-          call.error,
-          call.runId,
-          call.turnId ?? call.runId,
-        ],
-      )
+      await this.sqlClient.mutate('upsertAgentToolCall', [
+        call.id,
+        call.taskId,
+        call.runId,
+        call.turnId,
+        call.providerToolCallId,
+        call.toolName,
+        call.argumentsJson,
+        call.resultJson,
+        call.status,
+        call.startedAt,
+        call.completedAt,
+        call.error,
+        call.runId,
+        call.turnId ?? call.runId,
+      ])
       return ok(call)
     } catch (error) {
       return err(normalizeError(error, '无法保存 Agent 工具调用记录。'))

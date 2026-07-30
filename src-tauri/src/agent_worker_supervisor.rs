@@ -7,7 +7,7 @@ use std::{
     env,
     path::PathBuf,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -78,8 +78,29 @@ impl Default for AgentWorkerSnapshot {
 #[derive(Default)]
 pub(crate) struct AgentWorkerSupervisorState {
     control: Mutex<Option<mpsc::Sender<SupervisorCommand>>>,
+    runtime_data_directory: Mutex<Option<String>>,
+    data_migration_gate: Mutex<()>,
+    data_migration_paused: AtomicBool,
     snapshot: RwLock<AgentWorkerSnapshot>,
     terminal_messages: RwLock<HashMap<String, BufferedTerminal>>,
+}
+
+pub(crate) struct AgentWorkerMigrationSnapshot {
+    pub(crate) was_running: bool,
+    pub(crate) data_directory: Option<String>,
+}
+
+pub(crate) struct AgentWorkerMigrationGuard<'a> {
+    state: &'a AgentWorkerSupervisorState,
+    _gate: tokio::sync::MutexGuard<'a, ()>,
+}
+
+impl Drop for AgentWorkerMigrationGuard<'_> {
+    fn drop(&mut self) {
+        self.state
+            .data_migration_paused
+            .store(false, Ordering::SeqCst);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -168,6 +189,7 @@ pub(crate) async fn start_agent_worker(
     state: State<'_, AgentWorkerSupervisorState>,
     input: StartAgentWorkerInput,
 ) -> Result<AgentWorkerSnapshot, String> {
+    let _start_guard = lock_agent_start(&state).await?;
     ensure_supervisor(&app, &state, input.data_directory).await?;
     Ok(state.snapshot.read().await.clone())
 }
@@ -233,6 +255,7 @@ pub(crate) async fn start_agent_runtime_run(
     state: State<'_, AgentWorkerSupervisorState>,
     input: StartAgentRuntimeRunInput,
 ) -> Result<(), String> {
+    let _start_guard = lock_agent_start(&state).await?;
     let sender = ensure_supervisor(&app, &state, input.data_directory.clone()).await?;
     request_supervisor(&sender, |response| SupervisorCommand::StartRun {
         request: input.request,
@@ -248,6 +271,7 @@ pub(crate) async fn start_agent_sidecar_orchestration(
     state: State<'_, AgentWorkerSupervisorState>,
     input: StartAgentSidecarOrchestrationInput,
 ) -> Result<(), String> {
+    let _start_guard = lock_agent_start(&state).await?;
     let sender = ensure_supervisor(&app, &state, input.data_directory.clone()).await?;
     let submission =
         enrich_sidecar_submission_with_mcp(&app, input.data_directory.clone(), input.submission)
@@ -267,6 +291,7 @@ pub(crate) async fn start_background_orchestration(
     recovery_context: Value,
 ) -> Result<(), String> {
     let state = app.state::<AgentWorkerSupervisorState>();
+    let _start_guard = lock_agent_start(&state).await?;
     let sender = ensure_supervisor(app, &state, data_directory.clone()).await?;
     let submission = enrich_sidecar_submission_with_mcp(app, data_directory, submission).await?;
     request_supervisor(&sender, |response| SupervisorCommand::StartOrchestration {
@@ -384,6 +409,82 @@ pub(crate) async fn shutdown_agent_worker(
     .await
 }
 
+async fn lock_agent_start(
+    state: &AgentWorkerSupervisorState,
+) -> Result<tokio::sync::MutexGuard<'_, ()>, String> {
+    let guard = state.data_migration_gate.lock().await;
+    if state.data_migration_paused.load(Ordering::SeqCst) {
+        return Err("数据目录迁移期间不能启动 Agent Run。".to_string());
+    }
+    Ok(guard)
+}
+
+pub(crate) async fn pause_for_data_migration(
+    state: &AgentWorkerSupervisorState,
+) -> AgentWorkerMigrationGuard<'_> {
+    let gate = state.data_migration_gate.lock().await;
+    state.data_migration_paused.store(true, Ordering::SeqCst);
+    AgentWorkerMigrationGuard { state, _gate: gate }
+}
+
+pub(crate) async fn snapshot_for_data_migration(
+    state: &AgentWorkerSupervisorState,
+) -> AgentWorkerMigrationSnapshot {
+    let was_running = state.control.lock().await.is_some();
+    let data_directory = state.runtime_data_directory.lock().await.clone();
+    AgentWorkerMigrationSnapshot {
+        was_running,
+        data_directory,
+    }
+}
+
+pub(crate) async fn quiesce_idle_worker_for_data_migration(
+    state: &AgentWorkerSupervisorState,
+) -> Result<(), String> {
+    if !state.snapshot.read().await.active_run_ids.is_empty() {
+        return Err("仍有活动 Agent Run，不能迁移数据目录。".to_string());
+    }
+    let sender = state.control.lock().await.as_ref().cloned();
+    if let Some(sender) = sender {
+        timeout(
+            Duration::from_secs(5),
+            request_supervisor(&sender, |response| SupervisorCommand::Shutdown {
+                reason: "Quiescing Agent Worker for data-directory migration.".to_string(),
+                response,
+            }),
+        )
+        .await
+        .map_err(|_| "等待 Agent Worker 停止超时，数据目录未迁移。".to_string())??;
+        timeout(Duration::from_secs(5), async {
+            loop {
+                let control_stopped = state.control.lock().await.is_none();
+                let snapshot_stopped =
+                    state.snapshot.read().await.status == AgentWorkerStatus::Stopped;
+                if control_stopped && snapshot_stopped {
+                    break;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .map_err(|_| "Agent Worker 未完成停止，数据目录未迁移。".to_string())?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn resume_after_data_migration(
+    app: &AppHandle,
+    state: &AgentWorkerSupervisorState,
+    snapshot: AgentWorkerMigrationSnapshot,
+    data_directory: Option<String>,
+) -> Result<(), String> {
+    *state.runtime_data_directory.lock().await = data_directory.clone();
+    if snapshot.was_running {
+        ensure_supervisor(app, state, data_directory).await?;
+    }
+    Ok(())
+}
+
 async fn ensure_supervisor(
     app: &AppHandle,
     state: &AgentWorkerSupervisorState,
@@ -396,6 +497,7 @@ async fn ensure_supervisor(
     let program = resolve_worker_program(app)?;
     let (sender, receiver) = mpsc::channel(64);
     *control = Some(sender.clone());
+    *state.runtime_data_directory.lock().await = data_directory.clone();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         run_supervisor(app.clone(), program, data_directory, receiver).await;
@@ -564,9 +666,13 @@ async fn run_supervisor(
                 command = receiver.recv() => {
                     match command {
                         Some(command) => {
+                            let command_io = SupervisorCommandIo {
+                                app: &app,
+                                stdin: &stdin,
+                            };
                             let outcome = handle_command(
+                                &command_io,
                                 command,
-                                &stdin,
                                 &mut active_run_ids,
                                 &mut claimed_run_ids,
                                 &mut run_requests,
@@ -753,15 +859,22 @@ struct PendingAuthorization {
     request: Value,
 }
 
+struct SupervisorCommandIo<'a> {
+    app: &'a AppHandle,
+    stdin: &'a Arc<Mutex<ChildStdin>>,
+}
+
 async fn handle_command(
+    io: &SupervisorCommandIo<'_>,
     command: SupervisorCommand,
-    stdin: &Arc<Mutex<ChildStdin>>,
     active_run_ids: &mut HashSet<String>,
     claimed_run_ids: &mut HashSet<String>,
     run_requests: &mut HashMap<String, Value>,
     run_recovery_contexts: &mut HashMap<String, Value>,
     pending_authorizations: &mut HashMap<String, PendingAuthorization>,
 ) -> CommandOutcome {
+    let app = io.app;
+    let stdin = io.stdin;
     let mut shutdown = false;
     let mut reason = String::new();
     match command {
@@ -796,6 +909,11 @@ async fn handle_command(
                                 run_recovery_contexts.insert(run_id.clone(), recovery_context);
                             }
                             active_run_ids.insert(run_id);
+                            update_snapshot(app, |snapshot| {
+                                snapshot.active_run_ids = sorted_run_ids(active_run_ids);
+                                snapshot.active_runs = sorted_active_runs(run_requests);
+                            })
+                            .await;
                             Ok(())
                         }
                         Err(error) => Err(error),
@@ -836,6 +954,11 @@ async fn handle_command(
                                 run_recovery_contexts.insert(run_id.clone(), recovery_context);
                             }
                             active_run_ids.insert(run_id);
+                            update_snapshot(app, |snapshot| {
+                                snapshot.active_run_ids = sorted_run_ids(active_run_ids);
+                                snapshot.active_runs = sorted_active_runs(run_requests);
+                            })
+                            .await;
                             Ok(())
                         }
                         Err(error) => Err(error),
@@ -3135,5 +3258,30 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(path.with_extension("db-wal"));
         let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[tokio::test]
+    async fn data_migration_gate_blocks_new_runs_and_rejects_active_worker() {
+        let state = Arc::new(AgentWorkerSupervisorState::default());
+        state
+            .snapshot
+            .write()
+            .await
+            .active_run_ids
+            .push("run-active".to_string());
+        let migration_guard = pause_for_data_migration(state.as_ref()).await;
+        let waiting_state = Arc::clone(&state);
+        let waiting_start =
+            tokio::spawn(async move { lock_agent_start(waiting_state.as_ref()).await.is_ok() });
+        tokio::task::yield_now().await;
+        assert!(!waiting_start.is_finished());
+        let error = quiesce_idle_worker_for_data_migration(state.as_ref())
+            .await
+            .expect_err("active run blocks migration");
+        assert!(error.contains("活动 Agent Run"));
+
+        drop(migration_guard);
+        assert!(waiting_start.await.expect("waiting start task"));
+        assert!(!state.data_migration_paused.load(Ordering::SeqCst));
     }
 }

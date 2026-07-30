@@ -86,25 +86,19 @@ export class TauriAutomationRepository implements AutomationRepository {
       return err({ code: 'validation-error', message: '自动化名称和任务指令不能为空。' })
     }
     try {
-      await this.sqlClient.execute(
-        `INSERT INTO automation_tasks (
-          id, name, instruction, trigger_type, trigger_config_json, document_id,
-          enabled, next_run_at, last_run_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          task.id,
-          task.name,
-          task.instruction,
-          task.triggerType,
-          JSON.stringify(task.triggerConfig),
-          task.documentId,
-          task.enabled ? 1 : 0,
-          task.nextRunAt,
-          task.lastRunAt,
-          task.createdAt,
-          task.updatedAt,
-        ],
-      )
+      await this.sqlClient.mutate('createAutomationTask', [
+        task.id,
+        task.name,
+        task.instruction,
+        task.triggerType,
+        JSON.stringify(task.triggerConfig),
+        task.documentId,
+        task.enabled ? 1 : 0,
+        task.nextRunAt,
+        task.lastRunAt,
+        task.createdAt,
+        task.updatedAt,
+      ])
       return ok(task)
     } catch (error) {
       return err(normalizeError(error, '无法创建自动化任务。'))
@@ -118,10 +112,12 @@ export class TauriAutomationRepository implements AutomationRepository {
     updatedAt: number,
   ): Promise<AppResult<AutomationTask>> {
     try {
-      const result = await this.sqlClient.execute(
-        `UPDATE automation_tasks SET enabled = ?, next_run_at = ?, updated_at = ? WHERE id = ?`,
-        [enabled ? 1 : 0, nextRunAt, updatedAt, id],
-      )
+      const result = await this.sqlClient.mutate('setAutomationTaskEnabled', [
+        enabled ? 1 : 0,
+        nextRunAt,
+        updatedAt,
+        id,
+      ])
       if (result.rowsAffected !== 1) {
         return err({ code: 'not-found', message: '自动化任务不存在。' })
       }
@@ -133,7 +129,7 @@ export class TauriAutomationRepository implements AutomationRepository {
 
   async deleteTask(id: string): Promise<AppResult<string>> {
     try {
-      const result = await this.sqlClient.execute(`DELETE FROM automation_tasks WHERE id = ?`, [id])
+      const result = await this.sqlClient.mutate('deleteAutomationTask', [id])
       return result.rowsAffected === 1
         ? ok(id)
         : err({ code: 'not-found', message: '自动化任务不存在。' })
@@ -147,28 +143,21 @@ export class TauriAutomationRepository implements AutomationRepository {
     scheduleNextRunAt: number | null,
   ): Promise<AppResult<AutomationRun>> {
     try {
-      await this.sqlClient.execute(
-        `INSERT INTO automation_runs (
-          id, automation_id, trigger_source, status, input_json, output_json,
-          error, schedule_next_run_at, queued_at, started_at, completed_at,
-          correlation_id, causation_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          run.id,
-          run.automationId,
-          run.triggerSource,
-          run.status,
-          run.inputJson,
-          run.outputJson,
-          run.error,
-          scheduleNextRunAt,
-          run.queuedAt,
-          run.startedAt,
-          run.completedAt,
-          run.id,
-          run.automationId,
-        ],
-      )
+      await this.sqlClient.mutate('enqueueAutomationRun', [
+        run.id,
+        run.automationId,
+        run.triggerSource,
+        run.status,
+        run.inputJson,
+        run.outputJson,
+        run.error,
+        scheduleNextRunAt,
+        run.queuedAt,
+        run.startedAt,
+        run.completedAt,
+        run.id,
+        run.automationId,
+      ])
       return ok(run)
     } catch (error) {
       return err(normalizeError(error, '无法加入自动化运行队列。'))
@@ -199,20 +188,14 @@ export class TauriAutomationRepository implements AutomationRepository {
     error?: string | null
   }): Promise<AppResult<AutomationRun>> {
     try {
-      const result = await this.sqlClient.execute(
-        `UPDATE automation_runs
-         SET status = ?, started_at = COALESCE(?, started_at), completed_at = ?,
-             output_json = ?, error = ?
-         WHERE id = ?`,
-        [
-          input.status,
-          input.startedAt ?? null,
-          input.completedAt ?? null,
-          input.outputJson ?? null,
-          input.error ?? null,
-          input.id,
-        ],
-      )
+      const result = await this.sqlClient.mutate('updateAutomationRun', [
+        input.status,
+        input.startedAt ?? null,
+        input.completedAt ?? null,
+        input.outputJson ?? null,
+        input.error ?? null,
+        input.id,
+      ])
       if (result.rowsAffected !== 1) {
         return err({ code: 'not-found', message: '自动化运行记录不存在。' })
       }
