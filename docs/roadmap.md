@@ -22,7 +22,7 @@
 
 当前真正限制异步任务、自动化和外部事件发展的不是 Agent 工具不足，而是：
 
-> 默认 Agent 的任务规划、模型循环、工具调度和标准 Patch 终态编译已位于 Rust 托管 sidecar；Vue 只提交冻结交互快照并投影事件/审阅 UI。Cognitive 与 A2A 状态机仍是后续迁移重点。
+> 默认 Agent 的任务规划、模型循环、工具调度和标准 Patch 终态编译已位于 Rust 托管 sidecar；Vue 只提交冻结交互快照并投影事件/审阅 UI。Cognitive 与 A2A 的剩余 Workflow 状态机仍是后续迁移重点。
 
 `useAgentRun.ts` 通过 Runtime Client/Port 提交冻结交互快照并投影运行、授权和 Diff 审阅状态；它不再为标准 Agent 组装 Runtime request、解析模型 Patch 或写入任务/Patch 终态。A2A 队列由 Rust watcher 轮询并向窗口发送变化事件，Vue 不再持有该 `setInterval`。窗口/应用退出后 sidecar Run 可以继续执行；Cognitive/A2A 的无窗口终态持久化仍未完成。后续不得继续围绕前端热路径叠加邮件、IM、定时器或长期 Workflow。
 
@@ -224,7 +224,7 @@ AgentRunRequest
 
 Phase 3 的退出条件已经满足。真实 Provider/Tauri 凭据 smoke、A2A 队列决策、Cognitive 最终投影、无窗口业务终态持久化和删除 WebView compatibility path 分别进入 Phase 4/5 的数据库所有权与 Workflow 迁移，不应再阻塞 Runtime 进程边界验收。
 
-Phase 4 的数据库所有权收敛已开始：Cognitive Session 的 create/get/list/update 已迁至 Rust command，现有 WebView repository 不再拥有该表的 SQL 写入口。
+Phase 4 的数据库所有权收敛已开始：Cognitive Session 的 create/get/list/update，以及 A2A 请求的原子领取和 awaiting-review/completed/failed 结算，均已迁至 Rust command；现有 WebView repositories 不再拥有这些路径的 SQL 写入口。A2A 自动调度、审批/修订 Workflow 与无窗口终态处理仍未完成。
 
 ### 目标
 

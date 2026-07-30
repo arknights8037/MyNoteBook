@@ -417,6 +417,8 @@ pub fn run() {
             agent_worker_supervisor::steer_agent_runtime_run,
             agent_worker_supervisor::shutdown_agent_worker,
             agent_request_watcher::start_agent_request_watcher,
+            agent_request_watcher::claim_agent_request,
+            agent_request_watcher::settle_agent_request,
             work::commit_result_verification,
             work::decide_change_set,
             work::record_authorization,

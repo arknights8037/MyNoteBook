@@ -2209,7 +2209,7 @@ async fn persist_sidecar_finalization(
         .get("sources")
         .and_then(Value::as_array)
         .ok_or_else(|| "sidecar finalization 缺少 sources。".to_string())?;
-    if (status == "waiting_confirmation") != !patches.is_empty() {
+    if (status == "waiting_confirmation") == patches.is_empty() {
         return Err("sidecar finalization 的任务状态与 Patch 不一致。".to_string());
     }
 

@@ -88,7 +88,6 @@ describe('Runtime architecture boundaries', () => {
     expect(actual).toEqual(
       [
         'src/infrastructure/database/agent/AgentWorkspaceHistoryStore.ts',
-        'src/infrastructure/database/agent/TauriAgentCommunicationRepository.ts',
         'src/infrastructure/database/agent/TauriAgentRepository.ts',
         'src/infrastructure/database/automation/TauriAutomationRepository.ts',
         'src/infrastructure/database/documents/TauriDocumentRepository.ts',

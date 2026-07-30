@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SqlClient } from '@/repositories/shared/SqlClient'
 import { TauriAgentCommunicationRepository } from '@/infrastructure/database/agent/TauriAgentCommunicationRepository'
 
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke }))
+
 const NOW = 4_000_000
 const execute = vi.fn()
 const select = vi.fn()
@@ -9,6 +12,8 @@ const client: SqlClient = { execute, select }
 
 describe('TauriAgentCommunicationRepository', () => {
   beforeEach(() => {
+    invoke.mockReset()
+    invoke.mockResolvedValue(undefined)
     execute.mockReset()
     execute.mockResolvedValue({ rowsAffected: 1 })
     select.mockReset()
@@ -30,10 +35,16 @@ describe('TauriAgentCommunicationRepository', () => {
       result,
     )
 
-    expect(execute).toHaveBeenCalledWith(
-      expect.stringContaining('result_json = COALESCE'),
-      ['awaiting_review', 'task-1', null, JSON.stringify(result), NOW, null, 'request-1'],
-    )
+    expect(invoke).toHaveBeenCalledWith('settle_agent_request', {
+      input: expect.objectContaining({
+        id: 'request-1',
+        status: 'awaiting_review',
+        taskId: 'task-1',
+        error: null,
+        result,
+        completedAt: null,
+      }),
+    })
   })
 
   it('preserves an existing result when approval later marks the request completed', async () => {
@@ -42,31 +53,29 @@ describe('TauriAgentCommunicationRepository', () => {
       'task-1',
     )
 
-    expect(execute).toHaveBeenCalledWith(expect.stringContaining('result_json = COALESCE'), [
-      'completed',
-      'task-1',
-      null,
-      null,
-      NOW,
-      NOW,
-      'request-1',
-    ])
+    expect(invoke).toHaveBeenCalledWith('settle_agent_request', {
+      input: expect.objectContaining({
+        id: 'request-1',
+        status: 'completed',
+        taskId: 'task-1',
+        result: null,
+        completedAt: NOW,
+      }),
+    })
   })
 
   it('only reclaims a running request after the maximum Runtime window', async () => {
-    select.mockResolvedValue([
-      {
-        id: 'request-stale',
-        prompt: '检查依据',
-        mode: 'review',
-        status: 'running',
-        task_id: null,
-        project_id: 'project-1',
-        branch_id: 'branch-1',
-        branch_title: '接口审阅',
-        parent_conversation_id: 'conversation-1',
-      },
-    ])
+    invoke.mockResolvedValue({
+      id: 'request-stale',
+      prompt: '检查依据',
+      mode: 'review',
+      status: 'running',
+      taskId: null,
+      projectId: 'project-1',
+      branchId: 'branch-1',
+      branchTitle: '接口审阅',
+      parentConversationId: 'conversation-1',
+    })
 
     const request = await new TauriAgentCommunicationRepository(client, () => NOW).claimNext()
 
@@ -80,21 +89,14 @@ describe('TauriAgentCommunicationRepository', () => {
       branchTitle: '接口审阅',
       parentConversationId: 'conversation-1',
     })
-    expect(select).toHaveBeenCalledWith(expect.stringContaining('updated_at < ?'), [
-      NOW - 50 * 60 * 1_000,
-    ])
-    expect(execute).toHaveBeenCalledWith(expect.stringContaining('task_id IS NULL'), [
-      NOW,
-      'request-stale',
-      NOW - 50 * 60 * 1_000,
-    ])
+    expect(invoke).toHaveBeenCalledWith('claim_agent_request', {
+      input: expect.objectContaining({ previousTaskId: null }),
+    })
+    expect(execute).not.toHaveBeenCalled()
   })
 
   it('returns null when another worker wins the conditional claim', async () => {
-    select.mockResolvedValue([
-      { id: 'request-1', prompt: '同步知识', status: 'queued', task_id: null },
-    ])
-    execute.mockResolvedValue({ rowsAffected: 0 })
+    invoke.mockResolvedValue(null)
 
     await expect(
       new TauriAgentCommunicationRepository(client, () => NOW).claimNext(),
@@ -138,18 +140,16 @@ describe('TauriAgentCommunicationRepository', () => {
       patchCount: 2,
       targetDocumentIds: ['doc-1'],
     }
-    select.mockResolvedValue([
-      {
-        id: 'request-revision',
-        prompt: '同步知识',
-        status: 'queued',
-        task_id: null,
-        previous_task_id: 'task-previous',
-        revision_feedback: '修正表名，其他内容保持不变',
-        revision_count: 1,
-        result_json: JSON.stringify(previousResult),
-      },
-    ])
+    invoke.mockResolvedValue({
+      id: 'request-revision',
+      prompt: '同步知识',
+      status: 'running',
+      taskId: null,
+      previousTaskId: 'task-previous',
+      revisionFeedback: '修正表名，其他内容保持不变',
+      revisionCount: 1,
+      result: previousResult,
+    })
 
     const request = await new TauriAgentCommunicationRepository(
       client,
@@ -163,12 +163,9 @@ describe('TauriAgentCommunicationRepository', () => {
       revisionCount: 1,
       result: previousResult,
     })
-    expect(execute).toHaveBeenCalledWith(expect.stringContaining('previous_task_id = ?'), [
-      NOW,
-      'request-revision',
-      'task-previous',
-      NOW - 50 * 60 * 1_000,
-    ])
+    expect(invoke).toHaveBeenCalledWith('claim_agent_request', {
+      input: expect.objectContaining({ previousTaskId: 'task-previous' }),
+    })
   })
 
   it('finds a failed request and clamps completed history limits', async () => {
