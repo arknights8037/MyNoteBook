@@ -10,7 +10,7 @@ Phase 3 的生产链路为：`UI interaction snapshot -> TauriAgentRuntimeAdapte
 
 标准 Agent/Create/Plan Run 在侧车中将模型输出编译为可审计的 proposal projection；Rust 在转发 `run.result` 前原子写入 Patch、来源和任务状态，随后 Vue 只投影已持久化结果到既有 Diff 审阅 UI。Rust 还在提交前枚举 MCP 工具并冻结 trusted/read 授权矩阵。Rust snapshot 额外保存活动 Run 的脱敏身份投影、待授权请求和待领取终态投影。Cognitive 与 A2A 的跨窗口业务投影、审批/修订、Research candidate 和请求终态也已由 Rust/sidecar 持久化。
 
-Phase 4 的后台可靠性边界也已落地：主窗口关闭时应用隐藏到托盘，Rust Core 继续监督 Worker、A2A lease 和 Durable Timer。Timer/等待条件保存于 SQLite，使用绝对 UTC 到期时间、去重键、lease、退避和 Dead Letter；到期时 Domain Event、Outbox 与等待条件终态在同一事务提交。WebView 不持有 SQLite 或 Provider 网络能力。
+Phase 4 的后台可靠性边界也已落地：主窗口关闭时应用隐藏到托盘，Rust Core 继续监督 Worker、A2A lease 和 Durable Timer。Timer/等待条件保存于 SQLite，使用绝对 UTC 到期时间、去重键、lease、退避和 Dead Letter；到期时 Domain Event、Outbox 与等待条件终态在同一事务提交。知识中心的任务验收页提供后台运行控制投影，显示 Worker heartbeat/restart、活动 Run、待授权/待领取终态和 A2A retry/Dead Letter；这些数据来自 Rust snapshot、只读查询和事件通知，WebView 不持有 SQLite、Provider 网络或后台编排能力。
 
 ```text
 交互输入 / Slash Command
@@ -244,6 +244,8 @@ command 先由本地 `AgentCommandService` 展开为 Patch。每个 Patch 保存
 ## 11. 运行状态与已知限制
 
 界面把 Agent loop 摘要嵌入当前 assistant 消息，以同一时间线交错显示模型 step、工具、Observation 后的重新判断、自动重试、授权等待和终态。模型 step 只显示可验证的行动摘要，不暴露隐藏思维链；工具参数摘要、结果预览和耗时可查看。完整详情可切换到脱离消息宽度的宽视图，运行中仍可停止。
+
+知识中心的“任务验收”页提供独立的后台运行控制区。它展示 Worker 状态、最后 heartbeat、Supervisor 重启次数、活动 Run、待授权和待领取终态数量，并列出最近 A2A 请求的 mode、request/run ID、attempt、下一次重试、failure kind 与 Dead Letter 时间。该界面只读且按 Rust 状态/队列事件刷新；`lease_owner` 不进入前端模型，用户审批仍走既有授权或 Patch 审阅入口。
 
 C1.5-R 维护后，`ToolLoopAgent` 使用流式执行。Provider 明确返回的 reasoning delta 会在任务运行期间写入当前 assistant 消息的“思考中”区域，不再等终态一次性补齐；这只是 Provider 输出通道，不等同于应用内部隐藏推理。Runtime 会缓冲并屏蔽以 JSON 对象、数组或 fenced JSON 开头的协议内容，防止结构化提案被误显示成过程说明。
 

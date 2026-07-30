@@ -21,12 +21,13 @@
 - Slidev、UML、Table、Mind Map、Dashboard 与独立信息首页。
 - 托盘常驻、A2A 无窗口执行、持久 lease/retry/Dead Letter，以及通用 Durable Timer/等待条件。
 - Rust 唯一 SQLite 写入所有权、WebView 固定 mutation command、只读查询 command 与最小桌面权限。
+- 知识中心任务验收页的后台运行控制投影，覆盖 Worker heartbeat/restart、活动 Run、待授权/待领取终态，以及 A2A attempt/retry/Dead Letter。
 
 当前真正限制异步任务、自动化和外部事件发展的不是 Agent 工具不足，而是：
 
 > 默认 Agent 的任务规划、模型循环、工具调度和标准 Patch 终态编译已位于 Rust 托管 sidecar；A2A 自动调度、审批/修订和 Cognitive 终态投影也由 Rust 持有。Vue 只提交交互式快照并投影事件/审阅 UI。
 
-`useAgentRun.ts` 通过 Runtime Client/Port 提交交互式冻结快照并投影运行、授权和 Diff 审阅状态；它不再为标准 Agent 组装 Runtime request、解析模型 Patch 或写入任务/Patch 终态。A2A 队列由 Rust watcher 轮询、领取并启动 sidecar，Vue 不再持有 polling 或 A2A 编排。主窗口关闭后应用隐藏到托盘，Run 与业务终态可继续；显式退出整个应用仍会停止进程。后续不得继续围绕前端热路径叠加邮件、IM、定时器或长期 Workflow。
+`useAgentRun.ts` 通过 Runtime Client/Port 提交交互式冻结快照并投影运行、授权和 Diff 审阅状态；它不再为标准 Agent 组装 Runtime request、解析模型 Patch 或写入任务/Patch 终态。A2A 队列由 Rust watcher 轮询、领取并启动 sidecar，Vue 不再持有 polling 或 A2A 编排。任务验收页通过 Rust snapshot command、只读查询和 Tauri event 展示后台运行状态，不接管 lease、重试或终态结算。主窗口关闭后应用隐藏到托盘，Run 与业务终态可继续；显式退出整个应用仍会停止进程。后续不得继续围绕前端热路径叠加邮件、IM、定时器或长期 Workflow。
 
 ## 2. 当前边界与目标边界
 
@@ -223,7 +224,7 @@ AgentRunRequest
 
 - 共享 contracts 已冻结 Worker v1 envelope，覆盖实例身份、Run、Tool、工具审计、凭据解析、Authorization、heartbeat 和 shutdown。
 - `@mynotebook/agent-runtime-worker` 已提供 Node Worker Host、真实 `AiSdkWorkerRuntime` 与 `SidecarRunPlanner`；前端只提交冻结的交互快照，Task、Context Bundle、ExecutionPolicy、Tool Manifest、Cognitive Output Contract 与 AI SDK 模型循环均在 sidecar 生成/执行。Rust 在发送给 sidecar 前枚举 MCP 目录并冻结授权矩阵，WebView 不再管理生产 Runtime 的 MCP 生命周期。
-- Rust `AgentWorkerSupervisor` 已提供自包含 Worker 路径解析、stdin/stdout NDJSON、实例校验、heartbeat 超时、受控重启、活动 Run 跟踪、崩溃 `interrupted` 终态、Tauri commands 和窗口重建状态快照。Snapshot 只暴露 Run/work item/session/objective 等投影与待授权请求，不泄露 compiled context；新窗口会重建运行/等待视图并继续转发取消或授权。
+- Rust `AgentWorkerSupervisor` 已提供自包含 Worker 路径解析、stdin/stdout NDJSON、实例校验、heartbeat 超时、受控重启、活动 Run 跟踪、崩溃 `interrupted` 终态、Tauri commands 和窗口重建状态快照。Snapshot 只暴露 Run/work item/session/objective、待授权请求和待领取终态等投影，不泄露 compiled context；新窗口会重建运行/等待视图并继续转发取消或授权。知识中心的后台运行控制面板订阅同一脱敏 snapshot event，显示 heartbeat、重启计数和活动/等待数量。
 - 标准 Agent/Create/Plan Run 在 sidecar 内编译 proposal projection，Rust 会在 `run.result` 前原子写入 Patch、来源和任务状态；Vue 仅投影持久化后的结果到既有 Diff 审阅 UI。Cognitive/A2A Run 的 Session、请求结果和 Research candidates 也由 Rust 持久化，窗口恢复只读取投影。
 - Rust dispatcher 已接管 Provider 网络与凭据注入、工具审计、全部 25 个内置工具和 MCP 调用：AI SDK 的自定义 `fetch` 通过 NDJSON 把请求交给 Rust `reqwest`，响应分片流回 Worker，取消会终止 Rust future；文档、检索、Mind Map、Skill 读取、本机检查走受控读取；自动化、Skill 和 MCP 资源只创建停用草稿；文档写工具仍由 Worker 捕获为 Patch 提案。Node 不访问 SQLite、MCP 配置或密钥值。
 - Node SEA + esbuild 构建可生成按 Tauri target-triple 命名的自包含 sidecar，构建时会执行真实进程协议 smoke；`externalBin` 桌面构建已通过，不要求最终用户安装 Node。
@@ -280,6 +281,7 @@ Phase 2 完成决策门；Worker 内部可使用最终选择的 adapter。
 - A2A 自动调度、审批/拒绝、修订 continuation、无窗口终态结算已完成；批准仍复用既有 Rust Patch revision/覆盖/事务校验。
 - Cognitive Session 终态和 Research candidate/source/validation 已由 Rust 持久化；candidate 使用稳定 projection ID，并与 Cognitive Session、AgentTask、A2A result 在同一个事务提交。Review/Learning 结构化结果随 A2A result 保存。
 - A2A 请求已使用持久 lease 原子领取和 `run_id` fencing；Worker 事件续租，迟到旧 Run 不能结算新尝试，显式可重试错误按指数退避最多尝试三次，随后进入可诊断 Dead Letter。启动扫描会保留 Supervisor 仍持有的 Run，并回收、重排无活动所有者的 `running` 请求；旧 task/session 会写入中断/取消终态。软件 MCP 的 `get_agent_request` 返回尝试、重试和死信元数据。
+- 前端已将上述可靠性字段纳入版本化请求模型和只读列表查询；任务验收页按队列事件刷新最近 A2A 请求，展示 `run_id`、尝试次数、下次重试、失败类型和死信时间，但不暴露 `lease_owner`，也不提供绕过 Rust 状态机的重试或结算按钮。
 - migration `0039` 增加 timer/event/human/approval 等待条件与 Durable Timer。Timer 使用绝对 UTC 到期时间、原子 lease、去重键、指数退避和 Dead Letter；触发时在同一事务写 Domain Event/Outbox 并满足等待条件。`0038 -> 0039` 数据保留升级、数据库关闭/重开、过期 lease、休眠或墙钟跳变、取消竞争与重复领取均有自动化测试。
 - WebView 的存量 repository mutation 已迁到 Rust 封闭 catalog；生产 TypeScript 中不存在 SQLite `.execute()`，`plugin-sql` 及其 Tauri/JS 依赖、预载配置和 SQL capability 已删除。读取命令只接受单条 `SELECT/WITH`，并使用 `read_only + query_only` 的独立 SQLx pool。
 - 生产 CSP 已非空，Provider 网络继续只由 Rust 代理；文本文件只在系统文件对话框动态授权后读写，外部 URL 仅允许 HTTP(S)，附件与 Skills 本地路径由 Rust 校验后打开，WebView 不再拥有静态文件范围或本地 path opener。

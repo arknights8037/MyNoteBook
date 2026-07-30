@@ -119,6 +119,7 @@ Agent Runtime、凭据、MCP、A2A Workflow、Durable Timer 和规范 Patch 终�
 - `src/services`：应用用例与框架无关的领域编排。
 - `src/repositories`：持久化端口；`src/infrastructure` 提供 Tauri/SQLite 实现。
 - `src/infrastructure/runtime`：Rust-owned Worker 的生产 Tauri Runtime Port、后台 Profile 同步与事件订阅适配。
+- `src/features/knowledge-control/components/AgentRuntimeOperationsPanel.vue`：后台运行的只读运维投影；组合 Worker snapshot event 与 A2A 只读查询，显示 heartbeat/restart、活动 Run、待授权/终态、重试和 Dead Letter，不拥有编排或写入能力。
 - `src/models`：领域类型、版本化协议、默认值和纯校验。
 - `src/editor`：Tiptap/ProseMirror 集成和编辑器纯算法。
 - `src/ui`：不包含产品工作流的通用展示原语。
@@ -184,6 +185,7 @@ Agent Runtime、凭据、MCP、A2A Workflow、Durable Timer 和规范 Patch 终�
 - 默认 Agent Runtime 的规划、模型循环、工具调度、MCP manifest 枚举与标准 Patch proposal 编译已移入 sidecar/Rust；Rust 会先持久化这些 proposal，再允许 Vue 显示 Diff。授权 UI 仍由 Vue 投影；普通 Run 仍没有 durable checkpoint/resume。
 - Cognitive Session CRUD/终态、A2A 自动领取与 sidecar 调度、审批/拒绝、修订和请求终态均由 Rust 写入。Research candidate、source、validation、Cognitive Session、AgentTask 与请求终态在同一个事务中提交，并使用稳定 projection ID；WebView 只保留交互式投影和审阅入口。
 - A2A `running` 请求保存 lease owner/expiry、attempt 和独立 `run_id`；Worker 事件续租，迟到终态必须通过当前 `run_id` fencing，可重试失败使用有上限的指数退避，耗尽后进入 Dead Letter。Rust watcher 启动时依据 Supervisor 活动 Run 快照回收孤儿请求，并终止旧 task/session 后以新 run 重排；这是可审计的 at-least-once 业务恢复，不是模型步骤级 checkpoint/resume 或外部副作用 exactly-once。
+- 前端 A2A repository 已映射 `run_id`、cognitive session、attempt、next attempt、Dead Letter、failure kind 和时间字段，并提供最近请求的参数化只读查询。知识中心只订阅 `agent-runtime://worker-status` 与 `agent-communication://queue-changed` 后刷新投影；内部 lease owner 不进入 UI contract。
 - 新 Agent 任务分别保存 `AgentTask.id`（迁移期 work item）、独立 `run_id`、可空 `workflow_id`、conversation/cognitive `session_id` 和 `document_id`；历史记录使用确定性 `legacy-run-*` 映射，`task_runs.id` 保留原有治理语义。
 - `tokenBudget` 当前主要约束单次输出参数，没有基于累计 input/output usage、成本、模型轮次和并行工具数的统一预算器。
 - Rust SQLx 是唯一数据库连接所有者和唯一写入者；TypeScript repository 只提交固定 mutation ID 或参数化只读 query，不拥有连接池。
