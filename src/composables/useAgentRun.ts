@@ -497,7 +497,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
         runtimeContextBundle = contextBundle
       }
       const mcpRuntimeTools =
-        mode === 'agent' && options.services?.mcpClient
+        !sidecarOwned && mode === 'agent' && options.services?.mcpClient
           ? await options.services.mcpClient
               .listTools()
               .then(async (tools) => {

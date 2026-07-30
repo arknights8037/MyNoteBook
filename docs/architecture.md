@@ -177,7 +177,7 @@ Rust command 应立即委托给对应模块。数据库访问必须复用 `datab
 - Tool Tags 已在运行前编译成 `ExecutionPolicy.allowedTools`，Runtime 热路径仍只检查稳定工具名；Mode/Template/Skill 不能扩大基础策略。
 - Knowledge Object 已扩展研究候选所需类型、正文、结构化数据、认知 provenance、多来源、Validation 和 rejected 状态；候选 UI 会在接受前重新验证来源 revision 和稳定 block，并只将显式接受项转为 `approved`。
 - Run lifecycle、Plan、运行级事件和 tool timeline 已绑定 assistant 消息并持久化；规范工具审计仍保存在独立数据库表中。
-- 默认 Agent Runtime 的规划、模型循环、工具调度与标准 Patch proposal 编译已移入 sidecar；Rust 会先持久化这些 proposal，再允许 Vue 显示 Diff。授权 UI 仍由 Vue 投影，A2A 与 Cognitive 的队列决策和终态状态机仍依附 WebView 恢复路径。普通 Run 仍没有 durable checkpoint/resume。
+- 默认 Agent Runtime 的规划、模型循环、工具调度、MCP manifest 枚举与标准 Patch proposal 编译已移入 sidecar/Rust；Rust 会先持久化这些 proposal，再允许 Vue 显示 Diff。授权 UI 仍由 Vue 投影。A2A 与 Cognitive 的跨窗口业务状态机属于后续 Workflow/数据库所有权迁移；普通 Run 仍没有 durable checkpoint/resume。
 - 新 Agent 任务分别保存 `AgentTask.id`（迁移期 work item）、独立 `run_id`、可空 `workflow_id`、conversation/cognitive `session_id` 和 `document_id`；历史记录使用确定性 `legacy-run-*` 映射，`task_runs.id` 保留原有治理语义。
 - `tokenBudget` 当前主要约束单次输出参数，没有基于累计 input/output usage、成本、模型轮次和并行工具数的统一预算器。
 - Rust SQLx 与 TypeScript `plugin-sql` 仍是双数据库访问路径；Rust 成为唯一写入者是既定迁移方向，不是当前事实。

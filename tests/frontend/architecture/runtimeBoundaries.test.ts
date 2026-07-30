@@ -68,6 +68,7 @@ describe('Runtime architecture boundaries', () => {
     expect(run).toContain('adapter.startSubmission')
     expect(run).toContain('AgentSidecarSubmissionV1')
     expect(run).toContain('projectPersistedSidecarFinalization')
+    expect(run).toContain("!sidecarOwned && mode === 'agent' && options.services?.mcpClient")
   })
 
   it('makes the PI worker consume the frozen manifest without defining another registry', () => {

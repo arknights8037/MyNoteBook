@@ -224,7 +224,7 @@ pub(crate) async fn start_agent_runtime_run(
     state: State<'_, AgentWorkerSupervisorState>,
     input: StartAgentRuntimeRunInput,
 ) -> Result<(), String> {
-    let sender = ensure_supervisor(&app, &state, input.data_directory).await?;
+    let sender = ensure_supervisor(&app, &state, input.data_directory.clone()).await?;
     request_supervisor(&sender, |response| SupervisorCommand::StartRun {
         request: input.request,
         recovery_context: input.recovery_context,
@@ -239,13 +239,81 @@ pub(crate) async fn start_agent_sidecar_orchestration(
     state: State<'_, AgentWorkerSupervisorState>,
     input: StartAgentSidecarOrchestrationInput,
 ) -> Result<(), String> {
-    let sender = ensure_supervisor(&app, &state, input.data_directory).await?;
+    let sender = ensure_supervisor(&app, &state, input.data_directory.clone()).await?;
+    let submission =
+        enrich_sidecar_submission_with_mcp(&app, input.data_directory.clone(), input.submission)
+            .await?;
     request_supervisor(&sender, |response| SupervisorCommand::StartOrchestration {
-        submission: input.submission,
+        submission,
         recovery_context: input.recovery_context,
         response,
     })
     .await
+}
+
+async fn enrich_sidecar_submission_with_mcp(
+    app: &AppHandle,
+    data_directory: Option<String>,
+    mut submission: Value,
+) -> Result<Value, String> {
+    let directory = effective_data_directory(app, data_directory)?;
+    let tools = crate::mcp::list_mcp_tools(crate::mcp::ListMcpToolsInput {
+        data_directory: directory,
+        server_id: None,
+    })
+    .await?;
+    let external_tools = tools
+        .into_iter()
+        .map(|tool| {
+            let runtime_name = format!(
+                "mcp__{}__{}",
+                safe_sidecar_tool_name(&tool.server_id),
+                safe_sidecar_tool_name(&tool.name)
+            );
+            let trusted_read = tool.server_trusted && tool.read_only;
+            json!({
+                "serverId": tool.server_id,
+                "serverName": tool.server_name,
+                "name": tool.name,
+                "runtimeName": runtime_name,
+                "description": tool.description,
+                "inputSchema": tool.input_schema,
+                "readOnly": tool.read_only,
+                "serverTrusted": tool.server_trusted,
+                "executionAuthorization": if trusted_read { "not_required" } else { "required" },
+                "mutationApproval": "not_required",
+                "externalActionApproval": "not_required",
+                "maxCallsPerRun": 32,
+                "tags": [if tool.read_only { "external.read" } else { "external.may_write" }],
+                "presentation": { "label": tool.title.unwrap_or(tool.name), "category": "external" }
+            })
+        })
+        .collect::<Vec<_>>();
+    let object = submission
+        .as_object_mut()
+        .ok_or_else(|| "sidecar submission 必须是对象。".to_string())?;
+    object.insert("externalTools".to_string(), Value::Array(external_tools));
+    Ok(submission)
+}
+
+fn safe_sidecar_tool_name(value: &str) -> String {
+    let normalized = value
+        .to_ascii_lowercase()
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let trimmed = normalized.trim_matches('_');
+    if trimmed.is_empty() {
+        "tool".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 #[tauri::command]

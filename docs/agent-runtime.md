@@ -8,7 +8,7 @@ MyNoteBook 的 Agent 是受控的本地知识协作者。它可以读取许可�
 
 Phase 3 的生产链路为：`UI interaction snapshot -> TauriAgentRuntimeAdapter -> Rust AgentWorkerSupervisor -> NDJSON Worker Host -> SidecarRunPlanner -> AiSdkWorkerRuntime`。UI 不再组装 `AgentRunRequestV1`；SidecarRunPlanner 从冻结的文档/工作区/模型交互快照生成 Task、Context Bundle、ExecutionPolicy、Tool Manifest 和 Cognitive Output Contract，随后交给 AI SDK Runtime。Supervisor 维护 Worker 实例、heartbeat、重启计数、活动 Run 与崩溃终态，并在收到 `orchestration.prepared` 时写入 Task/Context Bundle。AI SDK Provider 请求通过自定义 `fetch` 交给 Rust 流式代理，Rust 从 Secret Store 注入凭据，因此密钥值不会进入 Node；Rust 同时写工具审计并执行全部内置 Domain Tool/MCP。Mind Map 读取使用 canonical SQLite，自动化、Skill 与 MCP 写入只生成停用草稿，文档修改仍只形成待 Diff 审阅的 Patch 提案。Composition 默认使用该链路，`VITE_AGENT_RUNTIME_OWNER=webview` 仅保留给兼容回归。
 
-标准 Agent/Create/Plan Run 在侧车中将模型输出编译为可审计的 proposal projection；Rust 在转发 `run.result` 前原子写入 Patch、来源和任务状态，随后 Vue 只投影已持久化结果到既有 Diff 审阅 UI。Rust snapshot 额外保存活动 Run 的脱敏身份投影、待授权请求和待领取终态投影。Cognitive 与 A2A 终态仍保留恢复上下文，窗口重建后复用既有 Cognitive Session/Research Candidate 路径完成投影；它们尚未承诺无窗口立即完成业务落库。
+标准 Agent/Create/Plan Run 在侧车中将模型输出编译为可审计的 proposal projection；Rust 在转发 `run.result` 前原子写入 Patch、来源和任务状态，随后 Vue 只投影已持久化结果到既有 Diff 审阅 UI。Rust 还在提交前枚举 MCP 工具并冻结 trusted/read 授权矩阵。Rust snapshot 额外保存活动 Run 的脱敏身份投影、待授权请求和待领取终态投影。Cognitive 与 A2A 的跨窗口业务投影属于后续 Workflow/数据库所有权阶段，不属于 Runtime 进程迁移承诺。
 
 ```text
 用户输入 / Slash Command
