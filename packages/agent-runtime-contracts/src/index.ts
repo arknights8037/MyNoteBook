@@ -261,6 +261,52 @@ export interface AgentRunResult {
   toolCalls: AgentToolCall[]
   finishReason?: string
   usage?: AgentRuntimeUsage
+  /** Sidecar-owned terminal projection. It contains proposals only, never applied changes. */
+  sidecarFinalization?: AgentSidecarFinalizationV1
+}
+
+export interface AgentSidecarPatchDraft {
+  patchId: string
+  taskId: string
+  operation:
+    | 'replace'
+    | 'insert_before'
+    | 'insert_after'
+    | 'append'
+    | 'create_document'
+    | 'create_group'
+  documentId: string
+  blockId: string
+  targetBlockIds: string[]
+  expectedVersion: number
+  before: string
+  after: string
+  reason: string
+  documentTitle?: string
+  parentDocumentId?: string | null
+}
+
+/** Serializable result of the sidecar's terminal proposal compiler. */
+export interface AgentSidecarFinalizationV1 {
+  version: 1
+  taskId: string
+  runId: string
+  outcome: 'proposal' | 'no_change' | 'blocked'
+  summary: string
+  taskStatus: 'waiting_confirmation' | 'completed'
+  currentStep: string
+  completedAt: number | null
+  patches: AgentSidecarPatchDraft[]
+  sources: Array<{ documentId: string; documentTitle: string; blockIds: string[] }>
+  report: {
+    version: 1
+    outcome: 'proposal' | 'no_change' | 'blocked'
+    summary: string
+    patchCount: number
+    targetDocumentIds: string[]
+    finishReason?: string
+    usage?: AgentRuntimeUsage
+  }
 }
 
 export interface AgentRuntimeEvent<TPayload = Record<string, unknown>> {
@@ -475,6 +521,12 @@ export type AgentWorkerMessage =
         provider: AiProvider
       }
       request: AgentRunRequestV1
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'orchestration.completed'
+      requestId: string
+      finalization: AgentSidecarFinalizationV1
     }
   | {
       version: typeof AGENT_WORKER_PROTOCOL_VERSION

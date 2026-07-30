@@ -1,5 +1,7 @@
 import type {
   AgentRunRequestV1,
+  AgentRunResult,
+  AgentSidecarFinalizationV1,
   AgentSidecarSubmissionV1,
   AgentRunSteerInput,
   AgentRuntimePort,
@@ -15,6 +17,7 @@ import type {
 } from '@mynotebook/agent-runtime-contracts'
 
 import { planSidecarRun } from './SidecarRunPlanner.js'
+import { finalizeSidecarRun } from './SidecarRunFinalizer.js'
 
 const AGENT_WORKER_PROTOCOL_VERSION = 1 as const
 
@@ -187,7 +190,11 @@ export class AgentWorkerHost {
     }
   }
 
-  private startRun(requestId: string, request: AgentRunRequestV1): void {
+  private startRun(
+    requestId: string,
+    request: AgentRunRequestV1,
+    finalize?: (result: AgentRunResult) => Promise<AgentSidecarFinalizationV1>,
+  ): void {
     if (this.claimedRunIds.has(request.runId)) {
       this.sendRunError(requestId, request.runId, {
         code: 'duplicate_run',
@@ -211,7 +218,17 @@ export class AgentWorkerHost {
     this.activeRunIds.add(request.runId)
     const running = this.runtime
       .startRun(request)
-      .then((result) => {
+      .then(async (result) => {
+        if (finalize) {
+          const finalization = await finalize(result)
+          result.sidecarFinalization = finalization
+          this.send({
+            version: AGENT_WORKER_PROTOCOL_VERSION,
+            type: 'orchestration.completed',
+            requestId,
+            finalization,
+          })
+        }
         this.send({ version: AGENT_WORKER_PROTOCOL_VERSION, type: 'run.result', requestId, result })
       })
       .catch((error: unknown) => {
@@ -257,7 +274,30 @@ export class AgentWorkerHost {
         },
         request: planned.request,
       })
-      this.startRun(requestId, planned.request)
+      this.startRun(
+        requestId,
+        planned.request,
+        ['research', 'review', 'learning'].includes(planned.request.intent)
+          ? undefined
+          : (result) =>
+              finalizeSidecarRun(planned.request, result, (input) =>
+                this.invokeTool({
+                  requestId: this.createId(),
+                  runId: planned.request.runId,
+                  turnId: null,
+                  internalToolCallId: this.createId(),
+                  providerToolCallId: null,
+                  toolName: 'replace_blocks_by_regex',
+                  arguments: input,
+                  source: { kind: 'builtin' },
+                }).then((reply) => {
+                  if (!reply.ok || !Array.isArray(reply.value)) {
+                    throw new Error(reply.error || '安全正则替换器返回了无效结果。')
+                  }
+                  return reply.value as Array<{ id: string; text: string; markdown?: string }>
+                }),
+              ),
+      )
     } catch (error) {
       this.sendRunError(requestId, submission.runId, normalizeWorkerError(error))
     }

@@ -914,6 +914,26 @@ async fn handle_worker_line(
             .await;
             Ok(false)
         }
+        "orchestration.completed" => {
+            let finalization = message
+                .get("finalization")
+                .ok_or_else(|| "orchestration.completed 缺少 finalization。".to_string())?;
+            let run_id = finalization
+                .get("runId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "orchestration.completed 缺少 runId。".to_string())?;
+            let request = context
+                .run_requests
+                .get(run_id)
+                .ok_or_else(|| format!("orchestration.completed 引用了未知 run_id {run_id}。"))?;
+            if request.get("workItemId").and_then(Value::as_str)
+                != finalization.get("taskId").and_then(Value::as_str)
+            {
+                return Err("orchestration.completed 的 task/run 身份不一致。".to_string());
+            }
+            persist_sidecar_finalization(app, context.data_directory.clone(), finalization).await?;
+            Ok(false)
+        }
         "run.event" => {
             let event = message
                 .get("event")
@@ -1171,6 +1191,20 @@ async fn dispatch_worker_tool(
     }
 
     match tool_name {
+        "replace_blocks_by_regex" => {
+            let arguments = arguments
+                .as_object()
+                .cloned()
+                .ok_or_else(|| "安全正则替换参数必须是对象。".to_string())?;
+            execute_native_tool(
+                app,
+                data_directory,
+                call_id,
+                "replace_blocks_by_regex",
+                Value::Object(arguments),
+            )
+            .await
+        }
         "get_current_document" => {
             let document_id = current_document_id(run_request)?;
             execute_native_tool(
@@ -2076,6 +2110,217 @@ async fn persist_sidecar_prepared_run_in_pool(
         .await
         .map_err(database_error)?;
     transaction.commit().await.map_err(database_error)
+}
+
+/// Persists the sidecar's proposal projection before the terminal is exposed
+/// to a WebView. Document application remains in agent_repository's existing
+/// revision-checked transaction commands.
+async fn persist_sidecar_finalization(
+    app: &AppHandle,
+    data_directory: Option<String>,
+    finalization: &Value,
+) -> Result<(), String> {
+    let connection = database::open_database(app, data_directory).await?;
+    let task_id = required_finalization_string(finalization, "taskId")?;
+    let run_id = required_finalization_string(finalization, "runId")?;
+    let outcome = required_finalization_string(finalization, "outcome")?;
+    if !matches!(outcome.as_str(), "proposal" | "no_change" | "blocked") {
+        return Err("sidecar finalization 的 outcome 无效。".to_string());
+    }
+    let status = required_finalization_string(finalization, "taskStatus")?;
+    if !matches!(status.as_str(), "waiting_confirmation" | "completed") {
+        return Err("sidecar finalization 的 taskStatus 无效。".to_string());
+    }
+    let current_step = required_finalization_string(finalization, "currentStep")?;
+    let completed_at = finalization.get("completedAt").and_then(Value::as_i64);
+    let patches = finalization
+        .get("patches")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "sidecar finalization 缺少 patches。".to_string())?;
+    let sources = finalization
+        .get("sources")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "sidecar finalization 缺少 sources。".to_string())?;
+    if (status == "waiting_confirmation") != !patches.is_empty() {
+        return Err("sidecar finalization 的任务状态与 Patch 不一致。".to_string());
+    }
+
+    let created_at = now_millis();
+    let mut transaction = connection.begin().await.map_err(database_error)?;
+    let task_exists: Option<String> =
+        sqlx::query_scalar("SELECT id FROM agent_tasks WHERE id = ? AND run_id = ? LIMIT 1")
+            .bind(&task_id)
+            .bind(&run_id)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(database_error)?;
+    if task_exists.is_none() {
+        return Err("sidecar finalization 找不到对应的 Agent 任务。".to_string());
+    }
+
+    let source_document_ids = sources
+        .iter()
+        .filter_map(|source| source.get("documentId").and_then(Value::as_str))
+        .collect::<HashSet<_>>();
+    sqlx::query("DELETE FROM agent_patches WHERE task_id = ?")
+        .bind(&task_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(database_error)?;
+    sqlx::query("DELETE FROM agent_task_sources WHERE task_id = ?")
+        .bind(&task_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(database_error)?;
+    if !patches.is_empty() {
+        let model: String = sqlx::query_scalar("SELECT model FROM agent_tasks WHERE id = ?")
+            .bind(&task_id)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(database_error)?;
+        sqlx::query(
+            "INSERT INTO agent_patch_sets (task_id, model, created_at) VALUES (?, ?, ?) \
+             ON CONFLICT(task_id) DO UPDATE SET model = excluded.model, created_at = excluded.created_at",
+        )
+        .bind(&task_id)
+        .bind(model)
+        .bind(created_at)
+        .execute(&mut *transaction)
+        .await
+        .map_err(database_error)?;
+    }
+    let mut targeted_blocks = HashSet::<String>::new();
+    for patch in patches {
+        persist_sidecar_patch(
+            &mut transaction,
+            patch,
+            &task_id,
+            &source_document_ids,
+            created_at,
+            &mut targeted_blocks,
+        )
+        .await?;
+    }
+    for source in sources {
+        let document_id = required_finalization_string(source, "documentId")?;
+        let document_title = required_finalization_string(source, "documentTitle")?;
+        let block_ids = source.get("blockIds").cloned().unwrap_or_else(|| json!([]));
+        sqlx::query(
+            "INSERT INTO agent_task_sources (task_id, document_id, document_title, block_ids_json, created_at) \
+             VALUES (?, ?, ?, ?, ?) ON CONFLICT(task_id, document_id) DO UPDATE SET \
+             document_title = excluded.document_title, block_ids_json = excluded.block_ids_json, created_at = excluded.created_at",
+        )
+        .bind(&task_id)
+        .bind(document_id)
+        .bind(document_title)
+        .bind(block_ids.to_string())
+        .bind(created_at)
+        .execute(&mut *transaction)
+        .await
+        .map_err(database_error)?;
+    }
+    sqlx::query(
+        "UPDATE agent_tasks SET status = ?, current_step = ?, error = NULL, completed_at = ? WHERE id = ?",
+    )
+    .bind(status)
+    .bind(current_step)
+    .bind(completed_at)
+    .bind(&task_id)
+    .execute(&mut *transaction)
+    .await
+    .map_err(database_error)?;
+    transaction.commit().await.map_err(database_error)
+}
+
+async fn persist_sidecar_patch(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    patch: &Value,
+    task_id: &str,
+    source_document_ids: &HashSet<&str>,
+    created_at: i64,
+    targeted_blocks: &mut HashSet<String>,
+) -> Result<(), String> {
+    let id = required_finalization_string(patch, "patchId")?;
+    let patch_task_id = required_finalization_string(patch, "taskId")?;
+    if patch_task_id != task_id {
+        return Err("sidecar Patch 的 taskId 不匹配。".to_string());
+    }
+    let operation = required_finalization_string(patch, "operation")?;
+    if !matches!(
+        operation.as_str(),
+        "replace"
+            | "insert_before"
+            | "insert_after"
+            | "append"
+            | "create_document"
+            | "create_group"
+    ) {
+        return Err("sidecar Patch 的 operation 无效。".to_string());
+    }
+    let document_id = required_finalization_string(patch, "documentId")?;
+    let block_id = patch.get("blockId").and_then(Value::as_str).unwrap_or("");
+    let target_block_ids = patch
+        .get("targetBlockIds")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "sidecar Patch 缺少 targetBlockIds。".to_string())?;
+    let is_creation = matches!(operation.as_str(), "create_document" | "create_group");
+    if is_creation {
+        if !target_block_ids.is_empty() {
+            return Err("创建类 Patch 不能声明目标块。".to_string());
+        }
+    } else {
+        if !source_document_ids.contains(document_id.as_str()) || target_block_ids.is_empty() {
+            return Err("Patch 目标文档未作为本次任务来源读取。".to_string());
+        }
+        let block_ids = target_block_ids
+            .iter()
+            .map(|value| value.as_str().unwrap_or(""))
+            .collect::<Vec<_>>();
+        if block_ids.iter().any(|value| value.trim().is_empty()) || !block_ids.contains(&block_id) {
+            return Err("Patch 目标块无效。".to_string());
+        }
+        if operation != "replace" && block_ids.len() != 1 {
+            return Err("插入 Patch 只能使用一个稳定锚点块。".to_string());
+        }
+        for block in block_ids {
+            let key = format!("{document_id}:{block}");
+            if !targeted_blocks.insert(key) {
+                return Err("多个 Patch 不能修改同一个目标块。".to_string());
+            }
+        }
+    }
+    sqlx::query(
+        "INSERT INTO agent_patches (id, task_id, operation, document_id, block_id, target_block_ids_json, \
+         expected_version, before_text, after_text, reason, status, created_at, updated_at, document_title, parent_document_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(task_id)
+    .bind(operation)
+    .bind(document_id)
+    .bind(block_id)
+    .bind(Value::Array(target_block_ids.clone()).to_string())
+    .bind(patch.get("expectedVersion").and_then(Value::as_i64).unwrap_or(0))
+    .bind(patch.get("before").and_then(Value::as_str).unwrap_or(""))
+    .bind(patch.get("after").and_then(Value::as_str).unwrap_or(""))
+    .bind(patch.get("reason").and_then(Value::as_str).unwrap_or(""))
+    .bind(created_at)
+    .bind(created_at)
+    .bind(patch.get("documentTitle").and_then(Value::as_str))
+    .bind(patch.get("parentDocumentId").and_then(Value::as_str))
+    .execute(&mut **transaction)
+    .await
+    .map_err(database_error)?;
+    Ok(())
+}
+
+fn required_finalization_string(value: &Value, name: &str) -> Result<String, String> {
+    value
+        .get(name)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| format!("sidecar finalization 缺少 {name}。"))
 }
 
 async fn buffer_terminal_message(

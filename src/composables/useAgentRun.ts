@@ -4,6 +4,7 @@ import type { AgentRuntimeResult } from '@/services/agent/AgentRuntime'
 import type { ContextBundle } from '@/models/agent/contextBundle'
 import type {
   AgentRuntimeEvent,
+  AgentSidecarFinalizationV1,
   AgentSidecarSubmissionV1,
 } from '@/models/agent/agentRuntimeContract'
 import type { AgentToolCall } from '@/models/agent/agentTool'
@@ -47,7 +48,10 @@ import {
   createExecuteToolCallback,
   type ReadableDocument,
 } from './agentRun/agentRunToolExecutorFactory'
-import { resolveAgentRunOutput } from './agentRun/agentRunOutputResolution'
+import {
+  resolveAgentRunOutput,
+  type AgentRunOutputResolution,
+} from './agentRun/agentRunOutputResolution'
 
 export {
   compileConversationContinuationContext,
@@ -343,7 +347,8 @@ export function useAgentRun(options: UseAgentRunOptions) {
             document: options.document,
           })
       if (!sidecarOwned) {
-        const conversationContext = compileConversationContinuationContext(priorConversationMessages)
+        const conversationContext =
+          compileConversationContinuationContext(priorConversationMessages)
         if (conversationContext) {
           context.text += `\n\n${conversationContext}`
         }
@@ -355,42 +360,46 @@ export function useAgentRun(options: UseAgentRunOptions) {
         instructions: '',
         skills: [],
       }))
-      const effectiveKnowledge = !sidecarOwned && options.services?.getKnowledgeRepository
-        ? await options.services
-            .getKnowledgeRepository()
-            .then(async (repository) => {
-              const result = await repository.listObjects({
-                types: ['rule', 'decision'],
-                documentId: snapshot.document.id,
-                effectiveAt: Date.now(),
-                limit: 100,
+      const effectiveKnowledge =
+        !sidecarOwned && options.services?.getKnowledgeRepository
+          ? await options.services
+              .getKnowledgeRepository()
+              .then(async (repository) => {
+                const result = await repository.listObjects({
+                  types: ['rule', 'decision'],
+                  documentId: snapshot.document.id,
+                  effectiveAt: Date.now(),
+                  limit: 100,
+                })
+                return result.ok ? result.value : []
               })
-              return result.ok ? result.value : []
-            })
-            .catch(() => [])
-        : []
-      const approvedReferenceKnowledge = !sidecarOwned && options.services?.getKnowledgeRepository
-        ? await options.services
-            .getKnowledgeRepository()
-            .then(async (repository) => {
-              const result = await repository.listObjects({
-                types: [
-                  'claim',
-                  'evidence',
-                  'inference',
-                  'assumption',
-                  'concept',
-                  'question',
-                  'limitation',
-                  'fact',
-                ],
-                effectiveAt: Date.now(),
-                limit: 80,
+              .catch(() => [])
+          : []
+      const approvedReferenceKnowledge =
+        !sidecarOwned && options.services?.getKnowledgeRepository
+          ? await options.services
+              .getKnowledgeRepository()
+              .then(async (repository) => {
+                const result = await repository.listObjects({
+                  types: [
+                    'claim',
+                    'evidence',
+                    'inference',
+                    'assumption',
+                    'concept',
+                    'question',
+                    'limitation',
+                    'fact',
+                  ],
+                  effectiveAt: Date.now(),
+                  limit: 80,
+                })
+                return result.ok
+                  ? selectRelevantApprovedKnowledge(result.value, snapshot.prompt)
+                  : []
               })
-              return result.ok ? selectRelevantApprovedKnowledge(result.value, snapshot.prompt) : []
-            })
-            .catch(() => [])
-        : []
+              .catch(() => [])
+          : []
       if (effectiveKnowledge.length > 0) {
         context.text += [
           '',
@@ -655,6 +664,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
           },
         ) => Promise<string>
       } | null = null
+      let sidecarFinalization: AgentSidecarFinalizationV1 | undefined
       const executeToolCallback = editPlan
         ? createExecuteToolCallback({
             snapshot,
@@ -896,6 +906,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
                 }
                 return result
               })().then((result) => {
+                sidecarFinalization = result.sidecarFinalization
                 agentRounds = result.rounds
                 agentToolCallCount = result.toolCalls.length
                 agentDiagnostics = {
@@ -915,32 +926,43 @@ export function useAgentRun(options: UseAgentRunOptions) {
                 onDelta: handleDelta,
               })
 
-      const resolution = await resolveAgentRunOutput({
-        output,
-        mode,
-        editPlan,
-        snapshot,
-        sources,
-        readableDocuments,
-        agentRounds,
-        agentToolCallCount,
-        agentDiagnostics,
-        agentIntent,
-        cognitiveRun: cognitiveRun as Parameters<typeof resolveAgentRunOutput>[0]['cognitiveRun'],
-        cognitiveSession,
-        learningState,
-        learningStateBeforeRun,
-        learningUserAttempt,
-        resumedLearningSession,
-        session,
-        slashCommand,
-        options,
-        assistantMessage: runContext.messages.value[assistantIndex],
-        hasCognitivePersistence,
-        getCognitiveSessionService,
-        setSummary,
-        runtime: { complete: runtime.complete, cancel: runtime.cancel, fail: runtime.fail },
-      })
+      const resolution =
+        sidecarOwned && sidecarFinalization
+          ? await projectPersistedSidecarFinalization({
+              finalization: sidecarFinalization,
+              editPlan,
+              options,
+              assistantMessage: runContext.messages.value[assistantIndex],
+              setSummary,
+            })
+          : await resolveAgentRunOutput({
+              output,
+              mode,
+              editPlan,
+              snapshot,
+              sources,
+              readableDocuments,
+              agentRounds,
+              agentToolCallCount,
+              agentDiagnostics,
+              agentIntent,
+              cognitiveRun: cognitiveRun as Parameters<
+                typeof resolveAgentRunOutput
+              >[0]['cognitiveRun'],
+              cognitiveSession,
+              learningState,
+              learningStateBeforeRun,
+              learningUserAttempt,
+              resumedLearningSession,
+              session,
+              slashCommand,
+              options,
+              assistantMessage: runContext.messages.value[assistantIndex],
+              hasCognitivePersistence,
+              getCognitiveSessionService,
+              setSummary,
+              runtime: { complete: runtime.complete, cancel: runtime.cancel, fail: runtime.fail },
+            })
       const { patchSet, learningResult } = resolution
       cognitiveSession = resolution.cognitiveSession
       learningState = resolution.learningState
@@ -1355,4 +1377,61 @@ function parseSidecarRunRecoveryContext(value: unknown): SidecarRunRecoveryConte
     return null
   }
   return candidate as SidecarRunRecoveryContextV1
+}
+
+/**
+ * Rust has already persisted this projection. Vue only updates its local
+ * review/message state and must not parse model output or write Agent rows.
+ */
+async function projectPersistedSidecarFinalization(input: {
+  finalization: AgentSidecarFinalizationV1
+  editPlan: AgentEditPlan | null
+  options: UseAgentRunOptions
+  assistantMessage: AiConversationMessage | undefined
+  setSummary: (summary: string) => void
+}): Promise<AgentRunOutputResolution> {
+  const { finalization, editPlan, options } = input
+  let patchSet: AgentPatchSet | null = null
+  if (editPlan) {
+    editPlan.task.status = finalization.taskStatus
+    editPlan.task.currentStep = finalization.currentStep
+    editPlan.task.completedAt = finalization.completedAt
+    if (!options.tasks.value.some((task) => task.id === editPlan.task.id)) {
+      options.tasks.value.unshift(editPlan.task)
+    }
+    if (finalization.patches.length > 0) {
+      patchSet = {
+        taskId: finalization.taskId,
+        model: editPlan.task.model,
+        createdAt: Date.now(),
+        contextSources: finalization.sources.map((source) => ({ ...source })),
+        patches: finalization.patches.map((patch) => ({ ...patch, accepted: true })),
+      }
+      if (options.patches.queueReview) options.patches.queueReview(editPlan.task, patchSet)
+      else {
+        options.patches.pendingTask.value = editPlan.task
+        options.patches.pendingPatchSet.value = patchSet
+        options.patches.showModal.value = true
+      }
+    }
+  }
+  if (input.assistantMessage) {
+    input.assistantMessage.content = finalization.summary
+    input.assistantMessage.status = 'done'
+  }
+  input.setSummary(finalization.summary)
+  return {
+    patchSet,
+    outcome: finalization.outcome,
+    summary: finalization.summary,
+    researchResult: null,
+    reviewResult: null,
+    learningResult: null,
+    researchCandidates: [],
+    cognitiveProvenance: null,
+    lastRunReport: finalization.report,
+    agentTaskResultPersisted: true,
+    cognitiveSession: null,
+    learningState: null,
+  }
 }

@@ -44,12 +44,16 @@ describe('Runtime architecture boundaries', () => {
   })
 
   it('keeps the sidecar planner in the pure domain layer and out of Vue/Tauri persistence', () => {
-    const source = readFileSync(
-      resolve(root, 'packages/agent-runtime-worker/src/SidecarRunPlanner.ts'),
-      'utf8',
-    )
-    expect(source).toContain('planSidecarRun')
-    expect(source).not.toMatch(/from ['"]vue['"]|@tauri-apps|@\/infrastructure\/|plugin-sql|\bsqlite\b|\bsqlx\b/i)
+    for (const [file, symbol] of [
+      ['packages/agent-runtime-worker/src/SidecarRunPlanner.ts', 'planSidecarRun'],
+      ['packages/agent-runtime-worker/src/SidecarRunFinalizer.ts', 'finalizeSidecarRun'],
+    ]) {
+      const source = readFileSync(resolve(root, file), 'utf8')
+      expect(source).toContain(symbol)
+      expect(source).not.toMatch(
+        /from ['"]vue['"]|@tauri-apps|@\/infrastructure\/|plugin-sql|\bsqlite\b|\bsqlx\b/i,
+      )
+    }
   })
 
   it('makes the production composition default to the sidecar planner', () => {
@@ -58,9 +62,12 @@ describe('Runtime architecture boundaries', () => {
       'utf8',
     )
     const run = readFileSync(resolve(root, 'src/composables/useAgentRun.ts'), 'utf8')
-    expect(composition).toContain("VITE_AGENT_RUNTIME_OWNER === 'webview' ? 'webview' : 'rust_worker'")
+    expect(composition).toContain(
+      "VITE_AGENT_RUNTIME_OWNER === 'webview' ? 'webview' : 'rust_worker'",
+    )
     expect(run).toContain('adapter.startSubmission')
     expect(run).toContain('AgentSidecarSubmissionV1')
+    expect(run).toContain('projectPersistedSidecarFinalization')
   })
 
   it('makes the PI worker consume the frozen manifest without defining another registry', () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { planSidecarRun } from '../src/SidecarRunPlanner.js'
+import { finalizeSidecarRun } from '../src/SidecarRunFinalizer.js'
 
 describe('planSidecarRun', () => {
   it('creates a frozen Runtime request and context bundle inside the sidecar', async () => {
@@ -39,6 +40,36 @@ describe('planSidecarRun', () => {
     expect(planned.request.toolManifest.some((tool) => tool.name === 'submit_document_edits')).toBe(
       false,
     )
+  })
+
+  it('compiles a completed sidecar proposal without WebView persistence', async () => {
+    const planned = await planSidecarRun(submission())
+    const finalization = await finalizeSidecarRun(planned.request, {
+      runId: planned.request.runId,
+      output: JSON.stringify({
+        outcome: 'proposal',
+        finalAnswer: '建议更新当前段落。',
+        patches: [
+          {
+            documentId: 'doc-1',
+            operation: 'replace',
+            blockId: 'block-1',
+            targetBlockIds: ['block-1'],
+            after: '更新后的内容',
+            reason: '修正表述。',
+          },
+        ],
+      }),
+      rounds: 2,
+      toolCalls: [],
+      finishReason: 'stop',
+    })
+
+    expect(finalization.taskStatus).toBe('waiting_confirmation')
+    expect(finalization.patches).toMatchObject([
+      { taskId: planned.task.id, documentId: 'doc-1', blockId: 'block-1' },
+    ])
+    expect(finalization.report.patchCount).toBe(1)
   })
 })
 
