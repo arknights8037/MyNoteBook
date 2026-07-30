@@ -1,52 +1,38 @@
 <script setup lang="ts">
 import {
+  Boxes,
+  Braces,
   Check,
-  ChevronDown,
-  ChevronRight,
   Clipboard,
+  Code2,
+  GitBranch,
   Laptop,
+  Package,
   RefreshCw,
-  Search,
   ShieldCheck,
   TerminalSquare,
+  Wrench,
 } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 
-import type { LocalEnvironmentVariable } from '@/models/integrations/localEnvironment'
+import type { LocalEnvironmentVariable, LocalRuntime } from '@/models/integrations/localEnvironment'
 import { getLocalEnvironmentSnapshot } from '@/services/integrations/LocalEnvironmentService'
 
-const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
+withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
 
 const native = Reflect.has(globalThis, '__TAURI_INTERNALS__')
 const snapshot = ref<Awaited<ReturnType<typeof getLocalEnvironmentSnapshot>> | null>(null)
 const loading = ref(false)
 const error = ref('')
-const query = ref('')
-const activeCategory = ref('全部')
-const expandedVariables = ref(new Set<string>())
-const copiedName = ref('')
+const copiedId = ref('')
 
-const categories = computed(() => [
-  '全部',
-  ...Array.from(new Set(snapshot.value?.variables.map((item) => item.category) ?? [])),
-])
-const filteredVariables = computed(() => {
-  const keyword = query.value.trim().toLocaleLowerCase()
-  const limit = props.compact && !keyword ? 6 : Number.POSITIVE_INFINITY
-  return (snapshot.value?.variables ?? [])
-    .filter((item) => {
-      if (activeCategory.value !== '全部' && item.category !== activeCategory.value) return false
-      return (
-        !keyword ||
-        `${item.name} ${item.value} ${item.category}`.toLocaleLowerCase().includes(keyword)
-      )
-    })
-    .slice(0, limit)
-})
+const availableRuntimes = computed(() =>
+  (snapshot.value?.runtimes ?? []).filter((runtime) => runtime.available),
+)
 
 async function load(): Promise<void> {
   if (!native) {
-    error.value = '本地环境仅可在 Tauri 桌面应用中读取。'
+    error.value = '核心运行环境仅可在 Tauri 桌面应用中检测。'
     return
   }
   loading.value = true
@@ -60,27 +46,25 @@ async function load(): Promise<void> {
   }
 }
 
-function pathSegments(item: LocalEnvironmentVariable): string[] {
-  if (!item.isPathList) return [item.value]
-  return item.value
-    .split(item.name === 'PATHEXT' || item.value.includes(';') ? ';' : ':')
-    .map((value) => value.trim())
-    .filter(Boolean)
+function runtimeIcon(runtime: LocalRuntime) {
+  if (runtime.kind === '编程语言' || runtime.kind === '运行时') return Braces
+  if (runtime.kind === '包管理器') return Package
+  if (runtime.kind === '版本控制') return GitBranch
+  if (runtime.kind === '容器工具') return Boxes
+  if (runtime.kind === '构建工具') return Wrench
+  return Code2
 }
 
-function toggleExpanded(name: string): void {
-  const next = new Set(expandedVariables.value)
-  if (next.has(name)) next.delete(name)
-  else next.add(name)
-  expandedVariables.value = next
-}
-
-async function copyVariable(item: LocalEnvironmentVariable): Promise<void> {
-  await globalThis.navigator.clipboard.writeText(item.value)
-  copiedName.value = item.name
+async function copyValue(id: string, value: string): Promise<void> {
+  await globalThis.navigator.clipboard.writeText(value)
+  copiedId.value = id
   globalThis.setTimeout(() => {
-    if (copiedName.value === item.name) copiedName.value = ''
+    if (copiedId.value === id) copiedId.value = ''
   }, 1400)
+}
+
+function copyVariable(item: LocalEnvironmentVariable): Promise<void> {
+  return copyValue(item.name, item.value)
 }
 
 onMounted(load)
@@ -94,16 +78,16 @@ defineExpose({ refresh: load })
       <div class="local-environment__heading">
         <span><Laptop :size="21" /></span>
         <div>
-          <h2>本地环境</h2>
-          <p>快速确认当前设备、工具链路径与 myNoteBook 运行上下文。</p>
+          <h2>核心运行环境</h2>
+          <p>聚焦当前设备可直接调用的编程语言、包管理器与开发工具。</p>
         </div>
       </div>
-      <button type="button" :disabled="loading" aria-label="刷新本地环境" @click="load">
+      <button type="button" :disabled="loading" aria-label="刷新运行环境" @click="load">
         <RefreshCw :size="15" :class="{ 'is-spinning': loading }" />刷新
       </button>
     </header>
 
-    <div v-if="snapshot" class="local-environment__identity">
+    <div v-if="snapshot && !compact" class="local-environment__identity">
       <div>
         <Laptop :size="16" /><span
           ><small>设备</small><strong>{{ snapshot.hostName }}</strong></span
@@ -116,78 +100,73 @@ defineExpose({ refresh: load })
         >
       </div>
       <div>
-        <ShieldCheck :size="16" /><span
-          ><small>可见范围</small><strong>{{ snapshot.variables.length }} 个安全变量</strong></span
+        <Code2 :size="16" /><span
+          ><small>默认 Shell</small
+          ><strong :title="snapshot.shell">{{ snapshot.shell }}</strong></span
         >
       </div>
     </div>
 
-    <div v-if="snapshot && !compact" class="local-environment__toolbar">
-      <label
-        ><Search :size="14" /><input
-          v-model="query"
-          type="search"
-          placeholder="搜索名称、路径或分组"
-      /></label>
-      <div role="tablist" aria-label="环境变量分组">
-        <button
-          v-for="category in categories"
-          :key="category"
-          type="button"
-          role="tab"
-          :aria-selected="activeCategory === category"
-          :class="{ 'is-active': activeCategory === category }"
-          @click="activeCategory = category"
-        >
-          {{ category }}
-        </button>
-      </div>
-    </div>
-
-    <p v-if="loading && !snapshot" class="local-environment__state">正在读取本机环境…</p>
+    <p v-if="loading && !snapshot" class="local-environment__state">正在检测核心工具…</p>
     <p v-else-if="error" class="local-environment__state is-error">{{ error }}</p>
-    <div v-else-if="snapshot" class="local-environment__variables">
-      <article v-for="item in filteredVariables" :key="item.name">
-        <button
-          v-if="item.isPathList"
-          type="button"
-          class="local-environment__expand"
-          :aria-label="`${expandedVariables.has(item.name) ? '收起' : '展开'} ${item.name}`"
-          @click="toggleExpanded(item.name)"
-        >
-          <ChevronDown v-if="expandedVariables.has(item.name)" :size="14" />
-          <ChevronRight v-else :size="14" />
-        </button>
-        <span v-else class="local-environment__bullet" />
-        <div>
-          <span
-            ><strong>{{ item.name }}</strong
-            ><small>{{ item.category }}</small></span
-          >
-          <code :title="item.value">{{ item.value }}</code>
-          <ol v-if="expandedVariables.has(item.name)">
-            <li v-for="segment in pathSegments(item)" :key="segment">
-              <code>{{ segment }}</code>
-            </li>
-          </ol>
+    <template v-else-if="snapshot">
+      <section class="local-environment__runtime-section" aria-label="已安装的核心运行环境">
+        <header>
+          <div>
+            <strong>已检测到的运行环境</strong>
+            <small>{{ availableRuntimes.length }} 项可直接调用</small>
+          </div>
+        </header>
+        <div v-if="availableRuntimes.length" class="local-environment__runtimes">
+          <article v-for="runtime in availableRuntimes" :key="runtime.id">
+            <span><component :is="runtimeIcon(runtime)" :size="18" /></span>
+            <div>
+              <span
+                ><strong>{{ runtime.name }}</strong
+                ><small>{{ runtime.kind }}</small></span
+              >
+              <code :title="runtime.version">{{ runtime.version }}</code>
+              <small :title="runtime.executable">{{ runtime.executable }}</small>
+            </div>
+            <button
+              type="button"
+              :aria-label="`复制 ${runtime.name} 路径`"
+              @click="copyValue(runtime.id, runtime.executable)"
+            >
+              <Check v-if="copiedId === runtime.id" :size="14" />
+              <Clipboard v-else :size="14" />
+            </button>
+          </article>
         </div>
-        <button
-          type="button"
-          class="local-environment__copy"
-          :aria-label="`复制 ${item.name}`"
-          @click="copyVariable(item)"
-        >
-          <Check v-if="copiedName === item.name" :size="14" /><Clipboard v-else :size="14" />
-        </button>
-      </article>
-      <p v-if="filteredVariables.length === 0" class="local-environment__state">
-        没有匹配的环境变量。
-      </p>
-    </div>
+        <p v-else class="local-environment__state">暂未检测到可直接调用的开发工具。</p>
+      </section>
+
+      <section v-if="!compact && snapshot.variables.length" class="local-environment__paths">
+        <header>
+          <div><strong>关键目录</strong><small>仅保留日常排查最常用的位置</small></div>
+        </header>
+        <div>
+          <article v-for="item in snapshot.variables" :key="item.name">
+            <span class="local-environment__bullet" />
+            <div>
+              <span
+                ><strong>{{ item.label }}</strong
+                ><small>{{ item.name }}</small></span
+              >
+              <code :title="item.value">{{ item.value }}</code>
+            </div>
+            <button type="button" :aria-label="`复制 ${item.label}`" @click="copyVariable(item)">
+              <Check v-if="copiedId === item.name" :size="14" />
+              <Clipboard v-else :size="14" />
+            </button>
+          </article>
+        </div>
+      </section>
+    </template>
 
     <footer v-if="!compact">
       <ShieldCheck :size="14" />
-      仅展示预设白名单；API Key、Token、密码等敏感变量不会被读取。
+      仅执行固定的版本查询并读取关键目录白名单；不会扫描项目文件或敏感变量。
     </footer>
   </section>
 </template>

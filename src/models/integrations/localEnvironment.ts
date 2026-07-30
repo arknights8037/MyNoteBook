@@ -1,8 +1,16 @@
 export interface LocalEnvironmentVariable {
   name: string
   value: string
-  category: string
-  isPathList: boolean
+  label: string
+}
+
+export interface LocalRuntime {
+  id: string
+  name: string
+  kind: string
+  version: string
+  executable: string
+  available: boolean
 }
 
 export interface LocalEnvironmentSnapshot {
@@ -10,5 +18,6 @@ export interface LocalEnvironmentSnapshot {
   operatingSystem: string
   architecture: string
   shell: string
+  runtimes: LocalRuntime[]
   variables: LocalEnvironmentVariable[]
 }

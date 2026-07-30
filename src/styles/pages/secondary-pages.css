@@ -174,10 +174,10 @@
 .local-environment__heading,
 .local-environment__header > button,
 .local-environment__identity > div,
-.local-environment__toolbar,
-.local-environment__toolbar > label,
-.local-environment__toolbar > div,
-.local-environment__variables article,
+.local-environment__runtime-section > header,
+.local-environment__paths > header,
+.local-environment__runtimes article,
+.local-environment__paths article,
 .local-environment footer {
   display: flex;
   align-items: center;
@@ -252,14 +252,19 @@
 }
 
 .local-environment__identity span,
-.local-environment__variables article > div,
-.local-environment__variables article > div > span {
+.local-environment__runtime-section > header > div,
+.local-environment__paths > header > div,
+.local-environment__runtimes article > div,
+.local-environment__runtimes article > div > span,
+.local-environment__paths article > div,
+.local-environment__paths article > div > span {
   display: grid;
   min-width: 0;
 }
 
 .local-environment__identity small,
-.local-environment__variables small {
+.local-environment__runtime-section small,
+.local-environment__paths small {
   color: var(--color-text-tertiary);
   font-size: var(--font-size-micro);
 }
@@ -272,119 +277,82 @@
   white-space: nowrap;
 }
 
-.local-environment__toolbar {
+.local-environment__runtime-section,
+.local-environment__paths {
+  display: grid;
+  gap: 9px;
+}
+
+.local-environment__runtime-section > header,
+.local-environment__paths > header {
   justify-content: space-between;
-  gap: 12px;
 }
 
-.local-environment__toolbar > label {
-  min-width: 220px;
-  flex: 1;
-  gap: 7px;
-  border: 1px solid var(--color-border-default);
-  border-radius: 7px;
-  padding: 0 9px;
-  color: var(--color-text-tertiary);
+.local-environment__runtime-section > header > div,
+.local-environment__paths > header > div {
+  gap: 2px;
 }
 
-.local-environment__toolbar input {
-  width: 100%;
-  min-height: 32px;
-  border: 0;
-  outline: 0;
-  color: var(--color-text-primary);
-  background: transparent;
-  font: inherit;
+.local-environment__runtime-section > header strong,
+.local-environment__paths > header strong {
   font-size: var(--font-size-small);
 }
 
-.local-environment__toolbar > div {
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 3px;
-}
-
-.local-environment__toolbar > div button {
-  border: 0;
-  border-radius: 6px;
-  padding: 6px 8px;
-  color: var(--color-text-tertiary);
-  background: transparent;
-  font: inherit;
-  font-size: var(--font-size-micro);
-  cursor: pointer;
-}
-
-.local-environment__toolbar > div button:hover,
-.local-environment__toolbar > div button.is-active {
-  color: var(--color-text-primary);
-  background: var(--color-bg-hover);
-}
-
-.local-environment__variables {
+.local-environment__runtimes {
   display: grid;
-  overflow: hidden;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 9px;
-}
-
-.local-environment__variables article {
-  min-width: 0;
-  grid-template-columns: 20px minmax(0, 1fr) 28px;
-  align-items: start;
-  gap: 7px;
-  padding: 10px 11px;
-}
-
-.local-environment__variables article + article {
-  border-top: 1px solid var(--color-border-subtle);
-}
-
-.local-environment__variables article:hover {
-  background: var(--color-bg-subtle);
-}
-
-.local-environment__variables article > div {
-  gap: 5px;
-}
-
-.local-environment__variables article > div > span {
-  grid-template-columns: auto 1fr;
-  align-items: baseline;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
-.local-environment__variables strong,
-.local-environment__variables code {
-  font-family: var(--font-family-monospace, 'SFMono-Regular', Consolas, monospace);
+.local-environment__runtimes article {
+  min-width: 0;
+  align-items: flex-start;
+  gap: 9px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 9px;
+  padding: 11px;
+  background: var(--color-bg-subtle);
 }
 
-.local-environment__variables strong {
+.local-environment__runtimes article > span {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--color-agent-accent);
+  background: var(--color-agent-thinking-bg);
+}
+
+.local-environment__runtimes article > div {
+  flex: 1;
+  gap: 4px;
+}
+
+.local-environment__runtimes article > div > span,
+.local-environment__paths article > div > span {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 7px;
+}
+
+.local-environment__runtimes article > div > span strong {
   font-size: var(--font-size-small);
 }
 
-.local-environment__variables code {
+.local-environment__runtimes code,
+.local-environment__paths code {
   overflow: hidden;
   color: var(--color-text-secondary);
+  font-family: var(--font-family-monospace, 'SFMono-Regular', Consolas, monospace);
   font-size: var(--font-size-micro);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.local-environment__variables ol {
-  display: grid;
-  gap: 3px;
-  margin: 3px 0 0;
-  padding-left: 25px;
-}
-
-.local-environment__variables ol code {
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-.local-environment__expand,
-.local-environment__copy {
+.local-environment__runtimes article > button,
+.local-environment__paths article > button {
   display: grid;
   width: 26px;
   height: 26px;
@@ -397,24 +365,53 @@
   cursor: pointer;
 }
 
-.local-environment__expand {
-  width: 20px;
-  height: 20px;
-  margin-top: 1px;
-}
-
-.local-environment__copy {
+.local-environment__runtimes article > button,
+.local-environment__paths article > button {
   opacity: 0;
 }
 
-.local-environment__variables article:hover .local-environment__copy,
-.local-environment__copy:focus-visible {
+.local-environment__runtimes article:hover > button,
+.local-environment__paths article:hover > button,
+.local-environment__runtimes article > button:focus-visible,
+.local-environment__paths article > button:focus-visible {
   opacity: 1;
 }
 
-.local-environment__copy:hover {
+.local-environment__runtimes article > button:hover,
+.local-environment__paths article > button:hover {
   color: var(--color-agent-accent);
   background: var(--color-agent-thinking-bg);
+}
+
+.local-environment__paths > div {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 9px;
+}
+
+.local-environment__paths article {
+  min-width: 0;
+  grid-template-columns: 12px minmax(0, 1fr) 28px;
+  align-items: start;
+  gap: 8px;
+  padding: 9px 11px;
+}
+
+.local-environment__paths article + article {
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.local-environment__paths article:hover {
+  background: var(--color-bg-subtle);
+}
+
+.local-environment__paths article > div {
+  gap: 4px;
+}
+
+.local-environment__paths article > div > span strong {
+  font-size: var(--font-size-small);
 }
 
 .local-environment__bullet {
@@ -452,12 +449,8 @@
   padding: 0;
 }
 
-.local-environment--compact .local-environment__identity {
-  flex: 0 0 auto;
-}
-
-.local-environment--compact .local-environment__variables {
-  overflow: visible;
+.local-environment--compact .local-environment__runtimes {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 @media (max-width: 760px) {
@@ -479,13 +472,9 @@
     border-left: 0;
   }
 
-  .local-environment__toolbar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .local-environment__toolbar > div {
-    justify-content: flex-start;
+  .local-environment__runtimes,
+  .local-environment--compact .local-environment__runtimes {
+    grid-template-columns: 1fr;
   }
 }
 
