@@ -107,6 +107,29 @@ describe('AgentWorkerHost', () => {
     })
     await expect(toolPromise).resolves.toEqual({ ok: true, value: [{ id: 'doc' }] })
 
+    const toolAbort = new AbortController()
+    const cancelledTool = bridge.invokeTool(
+      {
+        requestId: 'tool-rpc-cancelled',
+        runId: 'run-1',
+        turnId: 'turn-1',
+        internalToolCallId: 'call-cancelled',
+        providerToolCallId: null,
+        toolName: 'execute_shell',
+        arguments: { command: 'git', args: ['status'] },
+        source: { kind: 'builtin' },
+      },
+      toolAbort.signal,
+    )
+    toolAbort.abort(new DOMException('cancelled', 'AbortError'))
+    await expect(cancelledTool).rejects.toMatchObject({ name: 'AbortError' })
+    expect(channel.sent).toContainEqual(
+      expect.objectContaining({
+        type: 'tool.cancel',
+        internalToolCallId: 'call-cancelled',
+      }),
+    )
+
     const authorizationPromise = bridge.requestAuthorization({
       authorizationId: 'authorization-1',
       runId: 'run-1',
@@ -128,19 +151,65 @@ describe('AgentWorkerHost', () => {
     })
     await expect(authorizationPromise).resolves.toBe('允许')
 
-    const credentialPromise = bridge.resolveCredential({
-      requestId: 'credential-rpc',
-      runId: 'run-1',
-      provider: 'openai',
+    const providerPromise = bridge.proxyProviderFetch('run-1', 'https://example.com/v1/chat', {
+      method: 'POST',
+      headers: { authorization: 'Bearer sk-test' },
+      body: '{"prompt":"hello"}',
     })
-    expect(channel.sent.at(-1)).toMatchObject({ type: 'credential.request' })
+    await vi.waitFor(() => {
+      expect(channel.sent.some((message) => message.type === 'provider.request')).toBe(true)
+    })
+    const providerMessage = channel.sent.findLast((message) => message.type === 'provider.request')
+    expect(providerMessage).toMatchObject({
+      type: 'provider.request',
+      request: {
+        runId: 'run-1',
+        method: 'POST',
+        body: '{"prompt":"hello"}',
+      },
+    })
+    const providerRequestId =
+      providerMessage?.type === 'provider.request' ? providerMessage.request.requestId : 'missing'
     channel.receive({
       version: 1,
-      type: 'credential.result',
-      requestId: 'credential-rpc',
-      credential: 'sk-test',
+      type: 'provider.response.started',
+      requestId: providerRequestId,
+      status: 200,
+      headers: { 'content-type': 'text/plain' },
     })
-    await expect(credentialPromise).resolves.toBe('sk-test')
+    const providerResponse = await providerPromise
+    channel.receive({
+      version: 1,
+      type: 'provider.response.chunk',
+      requestId: providerRequestId,
+      bodyBase64: 'aGVsbG8=',
+    })
+    channel.receive({
+      version: 1,
+      type: 'provider.response.completed',
+      requestId: providerRequestId,
+    })
+    await expect(providerResponse.text()).resolves.toBe('hello')
+
+    const abortController = new AbortController()
+    const cancelledProvider = bridge.proxyProviderFetch('run-1', 'https://example.com/v1/chat', {
+      signal: abortController.signal,
+    })
+    await vi.waitFor(() => {
+      expect(channel.sent.filter((message) => message.type === 'provider.request')).toHaveLength(2)
+    })
+    const cancelledRequest = channel.sent.findLast((message) => message.type === 'provider.request')
+    abortController.abort(new DOMException('cancelled', 'AbortError'))
+    await expect(cancelledProvider).rejects.toMatchObject({ name: 'AbortError' })
+    expect(channel.sent).toContainEqual(
+      expect.objectContaining({
+        type: 'provider.cancel',
+        requestId:
+          cancelledRequest?.type === 'provider.request'
+            ? cancelledRequest.request.requestId
+            : 'missing',
+      }),
+    )
 
     const recordPromise = bridge.recordToolCall({
       id: 'call-1',

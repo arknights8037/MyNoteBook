@@ -22,9 +22,9 @@
 
 当前真正限制异步任务、自动化和外部事件发展的不是 Agent 工具不足，而是：
 
-> Agent Runtime、业务编排、授权等待和 A2A 轮询仍运行在 Vue/WebView 生命周期中。
+> 默认 Agent Runtime、业务编排和授权 UI 仍运行在 Vue/WebView 生命周期中；可选 sidecar 已迁出模型循环、Provider 网络与工具执行，A2A 队列轮询已由 Rust watcher 持有。
 
-`useAgentRun.ts` 目前已通过 Runtime Client/Port 驱动 AI SDK Adapter，但仍连接 UI 状态、模式分发、Context、MCP、Skill、授权和终态持久化；A2A worker 使用 Vue `setInterval`。窗口/应用退出后普通 Agent Run 不能继续，也不能从 tool step checkpoint 恢复。后续不得继续围绕这条前端热路径叠加邮件、IM、定时器或长期 Workflow。
+`useAgentRun.ts` 目前已通过 Runtime Client/Port 驱动 AI SDK Adapter，但仍连接 UI 状态、模式分发、Context、授权和终态持久化；A2A 队列由 Rust watcher 轮询并向窗口发送变化事件，Vue 不再持有该 `setInterval`。窗口/应用退出后 sidecar Run 可以继续执行，但 UI 尚不能完整重建运行投影或接管终态持久化。后续不得继续围绕前端热路径叠加邮件、IM、定时器或长期 Workflow。
 
 ## 2. 当前边界与目标边界
 
@@ -215,12 +215,13 @@ AgentRunRequest
 
 - 共享 contracts 已冻结 Worker v1 envelope，覆盖实例身份、Run、Tool、工具审计、凭据解析、Authorization、heartbeat 和 shutdown。
 - `@mynotebook/agent-runtime-worker` 已提供 Node Worker Host 和真实 `AiSdkWorkerRuntime`；AI SDK 模型循环、流式事件、Tool Manifest 消费、独立 Tool Call ID、提案捕获、structured-output repair、取消与唯一终态均位于 sidecar。
-- Rust `AgentWorkerSupervisor` 已提供自包含 Worker 路径解析、stdin/stdout NDJSON、实例校验、heartbeat 超时、受控重启、活动 Run 跟踪、崩溃 `interrupted` 终态、Tauri commands 和窗口重建状态快照。
-- Rust dispatcher 已接管 Provider 凭据解析、工具审计、全部 25 个内置工具和 MCP 调用：文档、检索、Mind Map、Skill 读取、本机检查走受控读取；自动化、Skill 和 MCP 资源只创建停用草稿；文档写工具仍由 Worker 捕获为 Patch 提案。Node 不访问 SQLite、MCP 配置或密钥文件。
+- Rust `AgentWorkerSupervisor` 已提供自包含 Worker 路径解析、stdin/stdout NDJSON、实例校验、heartbeat 超时、受控重启、活动 Run 跟踪、崩溃 `interrupted` 终态、Tauri commands 和窗口重建状态快照。Snapshot 只暴露 Run/work item/session/objective 等投影与待授权请求，不泄露 compiled context；新窗口会重建运行/等待视图并继续转发取消或授权。
+- Rust dispatcher 已接管 Provider 网络与凭据注入、工具审计、全部 25 个内置工具和 MCP 调用：AI SDK 的自定义 `fetch` 通过 NDJSON 把请求交给 Rust `reqwest`，响应分片流回 Worker，取消会终止 Rust future；文档、检索、Mind Map、Skill 读取、本机检查走受控读取；自动化、Skill 和 MCP 资源只创建停用草稿；文档写工具仍由 Worker 捕获为 Patch 提案。Node 不访问 SQLite、MCP 配置或密钥值。
 - Node SEA + esbuild 构建可生成按 Tauri target-triple 命名的自包含 sidecar，构建时会执行真实进程协议 smoke；`externalBin` 桌面构建已通过，不要求最终用户安装 Node。
 - `useAgentRun` 可由 composition 通过 `VITE_AGENT_RUNTIME_OWNER=rust_worker` 选择 Tauri Runtime Port；默认仍为 `webview`，Ask/Edit 路径不变。
+- A2A 队列检查已迁入 Rust watcher；WebView 只订阅 `agent-communication://queue-changed` 并触发现有受控执行，不再运行轮询定时器。
 
-剩余工作是补齐真实 Provider/Tauri 网络策略验收、让 UI 消费 Rust 活动/等待快照、移除 WebView Agent fallback，并迁出 A2A polling。在 sidecar 覆盖所有生产 Agent 模式且完成真实凭据 smoke 前，不得把可选链路描述成默认后台 Agent。
+剩余工作是完成真实 Provider/Tauri 凭据 smoke、让 Rust 缓冲并可靠交付窗口缺席期间的 Run 终态、把 Patch/Cognitive 与 A2A 的上下文冻结和终态持久化移出窗口，以及移除 WebView Agent fallback。在这些验收完成前，不得把可选链路描述成默认后台 Agent。
 
 ### 目标
 

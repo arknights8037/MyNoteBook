@@ -145,6 +145,52 @@ describe('useAgentRun', () => {
     expect(agentLoop).not.toHaveBeenCalled()
   })
 
+  it('rebuilds an active authorization view from the Rust Worker snapshot', async () => {
+    const settings = ref(createAiSettings('openai'))
+    const run = createRun(
+      settings,
+      snapshot(),
+      async () => true,
+      'agent',
+      '恢复任务',
+      [],
+      undefined,
+      { runtimeOwner: 'rust_worker', runtimeDataDirectory: () => 'C:/data' },
+    )
+
+    await run.workflow.restoreWorkerSnapshot({
+      activeRuns: [
+        {
+          runId: 'run-restored',
+          workItemId: 'task-restored',
+          sessionId: 'conversation-restored',
+          objective: '恢复任务',
+        },
+      ],
+      pendingAuthorizations: [
+        {
+          authorizationId: 'authorization-restored',
+          runId: 'run-restored',
+          question: '继续吗？',
+          context: '恢复授权',
+          options: ['继续', '停止'],
+          allowFreeText: false,
+        },
+      ],
+    })
+
+    expect(run.workflow.isConversationRunning('conversation-restored')).toBe(true)
+    expect(run.workflow.runtimeStateFor('conversation-restored')).toMatchObject({
+      status: 'waiting_authorizer',
+      authorizationRequest: { id: 'authorization-restored' },
+    })
+    expect(run.workflow.answerAuthorization('authorization-restored', '继续')).toBe(true)
+    expect(run.workflow.runtimeStateFor('conversation-restored')).toMatchObject({
+      status: 'running',
+      authorizationRequest: null,
+    })
+  })
+
   it('runs different conversations concurrently without sharing message state', async () => {
     const firstGate = deferred<string>()
     const secondGate = deferred<string>()

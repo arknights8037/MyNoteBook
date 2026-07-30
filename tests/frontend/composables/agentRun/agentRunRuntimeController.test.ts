@@ -25,4 +25,32 @@ describe('agentRunRuntimeController', () => {
     expect(controller.runtimeState.value.authorizationRequest).toBeNull()
     expect(controller.runEvents.value.map((event) => event.type)).toContain('ApprovalGranted')
   })
+
+  it('rebuilds an active waiting view from the Rust supervisor snapshot', () => {
+    const controller = createAgentRunRuntimeController(() => 'generated')
+    controller.restoreActive({
+      runId: 'run-1',
+      goal: '后台审阅',
+      detail: '等待授权人回答',
+      authorizationRequest: {
+        id: 'authorization-1',
+        question: '继续吗？',
+        context: '恢复的授权请求',
+        options: ['继续', '停止'],
+        allowFreeText: false,
+      },
+    })
+
+    expect(controller.runtimeState.value).toMatchObject({
+      status: 'waiting_authorizer',
+      phase: 'waiting_authorizer',
+      authorizationRequest: { id: 'authorization-1' },
+    })
+    expect(controller.settleRestoredAuthorization('authorization-1')).toBe(true)
+    expect(controller.runtimeState.value).toMatchObject({
+      status: 'running',
+      phase: 'tool_running',
+      authorizationRequest: null,
+    })
+  })
 })

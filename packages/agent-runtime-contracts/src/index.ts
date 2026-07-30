@@ -265,10 +265,13 @@ export interface AgentWorkerAuthorizationRequest {
   allowFreeText: boolean
 }
 
-export interface AgentWorkerCredentialRequest {
+export interface AgentWorkerProviderRequest {
   requestId: string
   runId: string
-  provider: AiProvider
+  url: string
+  method: string
+  headers: Record<string, string>
+  body?: string
 }
 
 export interface AgentWorkerError {
@@ -322,14 +325,32 @@ export type AgentWorkerHostMessage =
     }
   | {
       version: typeof AGENT_WORKER_PROTOCOL_VERSION
-      type: 'credential.result'
+      type: 'tool.recorded'
       requestId: string
-      credential: string
     }
   | {
       version: typeof AGENT_WORKER_PROTOCOL_VERSION
-      type: 'tool.recorded'
+      type: 'provider.response.started'
       requestId: string
+      status: number
+      headers: Record<string, string>
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'provider.response.chunk'
+      requestId: string
+      bodyBase64: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'provider.response.completed'
+      requestId: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'provider.response.failed'
+      requestId: string
+      error: string
     }
   | {
       version: typeof AGENT_WORKER_PROTOCOL_VERSION
@@ -380,6 +401,11 @@ export type AgentWorkerMessage =
     }
   | {
       version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'tool.cancel'
+      internalToolCallId: string
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
       type: 'tool.record'
       requestId: string
       call: AgentToolCall
@@ -392,8 +418,13 @@ export type AgentWorkerMessage =
     }
   | {
       version: typeof AGENT_WORKER_PROTOCOL_VERSION
-      type: 'credential.request'
-      request: AgentWorkerCredentialRequest
+      type: 'provider.request'
+      request: AgentWorkerProviderRequest
+    }
+  | {
+      version: typeof AGENT_WORKER_PROTOCOL_VERSION
+      type: 'provider.cancel'
+      requestId: string
     }
   | {
       version: typeof AGENT_WORKER_PROTOCOL_VERSION

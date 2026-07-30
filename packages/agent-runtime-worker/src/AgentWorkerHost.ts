@@ -3,11 +3,11 @@ import type {
   AgentRunSteerInput,
   AgentRuntimePort,
   AgentWorkerAuthorizationRequest,
-  AgentWorkerCredentialRequest,
   AgentWorkerError,
   AgentWorkerHostMessage,
   AgentWorkerIdentity,
   AgentWorkerMessage,
+  AgentWorkerProviderRequest,
   AgentWorkerToolInvocation,
   AgentWorkerToolResult,
   AgentToolCall,
@@ -30,8 +30,12 @@ export interface AgentWorkerRuntimeBridge {
     request: AgentWorkerAuthorizationRequest,
     signal?: AbortSignal,
   ): Promise<string>
-  resolveCredential(request: AgentWorkerCredentialRequest, signal?: AbortSignal): Promise<string>
   recordToolCall(call: AgentToolCall, signal?: AbortSignal): Promise<void>
+  proxyProviderFetch(
+    runId: string,
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response>
 }
 
 export interface AgentWorkerHostOptions {
@@ -46,6 +50,16 @@ export interface AgentWorkerHostOptions {
 interface PendingHostReply<T> {
   resolve: (value: T) => void
   reject: (error: Error) => void
+  abortCleanup: () => void
+}
+
+interface PendingProviderResponse {
+  resolve: (response: Response) => void
+  reject: (error: Error) => void
+  stream: ReadableStream<Uint8Array>
+  controller: ReadableStreamDefaultController<Uint8Array>
+  responseStarted: boolean
+  finished: boolean
   abortCleanup: () => void
 }
 
@@ -64,8 +78,8 @@ export class AgentWorkerHost {
   private readonly activeRunPromises = new Map<string, Promise<void>>()
   private readonly pendingTools = new Map<string, PendingHostReply<AgentWorkerToolResult>>()
   private readonly pendingAuthorizations = new Map<string, PendingHostReply<string>>()
-  private readonly pendingCredentials = new Map<string, PendingHostReply<string>>()
   private readonly pendingToolRecords = new Map<string, PendingHostReply<void>>()
+  private readonly pendingProviderResponses = new Map<string, PendingProviderResponse>()
   private readonly createId: () => string
   private readonly now: () => number
   private readonly heartbeatIntervalMs: number
@@ -87,8 +101,8 @@ export class AgentWorkerHost {
     this.runtime = options.createRuntime({
       invokeTool: (request, signal) => this.invokeTool(request, signal),
       requestAuthorization: (request, signal) => this.requestAuthorization(request, signal),
-      resolveCredential: (request, signal) => this.resolveCredential(request, signal),
       recordToolCall: (call, signal) => this.recordToolCall(call, signal),
+      proxyProviderFetch: (runId, input, init) => this.proxyProviderFetch(runId, input, init),
     })
   }
 
@@ -147,11 +161,20 @@ export class AgentWorkerHost {
       case 'authorization.result':
         this.resolvePending(this.pendingAuthorizations, message.requestId, message.answer)
         return
-      case 'credential.result':
-        this.resolvePending(this.pendingCredentials, message.requestId, message.credential)
-        return
       case 'tool.recorded':
         this.resolvePending(this.pendingToolRecords, message.requestId, undefined)
+        return
+      case 'provider.response.started':
+        this.startProviderResponse(message.requestId, message.status, message.headers)
+        return
+      case 'provider.response.chunk':
+        this.pushProviderChunk(message.requestId, message.bodyBase64)
+        return
+      case 'provider.response.completed':
+        this.finishProviderResponse(message.requestId)
+        return
+      case 'provider.response.failed':
+        this.failProviderResponse(message.requestId, new Error(message.error))
         return
       case 'shutdown':
         void this.stop(message.reason)
@@ -222,9 +245,21 @@ export class AgentWorkerHost {
     request: AgentWorkerToolInvocation,
     signal?: AbortSignal,
   ): Promise<AgentWorkerToolResult> {
-    return this.waitForHostReply(this.pendingTools, request.requestId, signal, () => {
-      this.send({ version: AGENT_WORKER_PROTOCOL_VERSION, type: 'tool.invoke', request })
-    })
+    return this.waitForHostReply(
+      this.pendingTools,
+      request.requestId,
+      signal,
+      () => {
+        this.send({ version: AGENT_WORKER_PROTOCOL_VERSION, type: 'tool.invoke', request })
+      },
+      () => {
+        this.send({
+          version: AGENT_WORKER_PROTOCOL_VERSION,
+          type: 'tool.cancel',
+          internalToolCallId: request.internalToolCallId,
+        })
+      },
+    )
   }
 
   private requestAuthorization(
@@ -242,15 +277,6 @@ export class AgentWorkerHost {
     })
   }
 
-  private resolveCredential(
-    request: AgentWorkerCredentialRequest,
-    signal?: AbortSignal,
-  ): Promise<string> {
-    return this.waitForHostReply(this.pendingCredentials, request.requestId, signal, () => {
-      this.send({ version: AGENT_WORKER_PROTOCOL_VERSION, type: 'credential.request', request })
-    })
-  }
-
   private recordToolCall(call: AgentToolCall, signal?: AbortSignal): Promise<void> {
     const requestId = this.createId()
     return this.waitForHostReply(this.pendingToolRecords, requestId, signal, () => {
@@ -263,17 +289,123 @@ export class AgentWorkerHost {
     })
   }
 
+  private async proxyProviderFetch(
+    runId: string,
+    input: string | URL | Request,
+    init: RequestInit = {},
+  ): Promise<Response> {
+    const request = new Request(input, init)
+    const signal = init.signal ?? request.signal
+    if (signal.aborted) throw abortError(signal)
+    const requestId = this.createId()
+    const body =
+      request.method === 'GET' || request.method === 'HEAD'
+        ? undefined
+        : await request.clone().text()
+    let controller!: ReadableStreamDefaultController<Uint8Array>
+    const stream = new ReadableStream<Uint8Array>({
+      start(value) {
+        controller = value
+      },
+      cancel: () => {
+        this.send({
+          version: AGENT_WORKER_PROTOCOL_VERSION,
+          type: 'provider.cancel',
+          requestId,
+        })
+        const pending = this.pendingProviderResponses.get(requestId)
+        if (pending) {
+          pending.finished = true
+          pending.abortCleanup()
+          this.pendingProviderResponses.delete(requestId)
+        }
+      },
+    })
+    const providerRequest: AgentWorkerProviderRequest = {
+      requestId,
+      runId,
+      url: request.url,
+      method: request.method,
+      headers: Object.fromEntries(request.headers.entries()),
+      ...(body === undefined ? {} : { body }),
+    }
+    return new Promise<Response>((resolve, reject) => {
+      const onAbort = () => {
+        this.send({
+          version: AGENT_WORKER_PROTOCOL_VERSION,
+          type: 'provider.cancel',
+          requestId,
+        })
+        this.failProviderResponse(requestId, abortError(signal))
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+      this.pendingProviderResponses.set(requestId, {
+        resolve,
+        reject,
+        stream,
+        controller,
+        responseStarted: false,
+        finished: false,
+        abortCleanup: () => signal.removeEventListener('abort', onAbort),
+      })
+      this.send({
+        version: AGENT_WORKER_PROTOCOL_VERSION,
+        type: 'provider.request',
+        request: providerRequest,
+      })
+    })
+  }
+
+  private startProviderResponse(
+    requestId: string,
+    status: number,
+    headers: Record<string, string>,
+  ): void {
+    const pending = this.pendingProviderResponses.get(requestId)
+    if (!pending || pending.finished) return
+    pending.responseStarted = true
+    pending.resolve(new Response(pending.stream, { status, headers }))
+  }
+
+  private pushProviderChunk(requestId: string, bodyBase64: string): void {
+    const pending = this.pendingProviderResponses.get(requestId)
+    if (!pending || pending.finished || !pending.responseStarted) return
+    pending.controller.enqueue(decodeBase64(bodyBase64))
+  }
+
+  private finishProviderResponse(requestId: string): void {
+    const pending = this.pendingProviderResponses.get(requestId)
+    if (!pending || pending.finished) return
+    pending.finished = true
+    pending.abortCleanup()
+    this.pendingProviderResponses.delete(requestId)
+    if (pending.responseStarted) pending.controller.close()
+    else pending.reject(new Error('Provider 响应在返回响应头前结束。'))
+  }
+
+  private failProviderResponse(requestId: string, error: Error): void {
+    const pending = this.pendingProviderResponses.get(requestId)
+    if (!pending || pending.finished) return
+    pending.finished = true
+    pending.abortCleanup()
+    this.pendingProviderResponses.delete(requestId)
+    if (pending.responseStarted) pending.controller.error(error)
+    else pending.reject(error)
+  }
+
   private waitForHostReply<T>(
     pending: Map<string, PendingHostReply<T>>,
     requestId: string,
     signal: AbortSignal | undefined,
     send: () => void,
+    notifyAbort?: () => void,
   ): Promise<T> {
     if (pending.has(requestId)) return Promise.reject(new Error(`duplicate requestId ${requestId}`))
     if (signal?.aborted) return Promise.reject(abortError(signal))
     return new Promise<T>((resolve, reject) => {
       const onAbort = () => {
         pending.delete(requestId)
+        notifyAbort?.()
         reject(abortError(signal))
       }
       signal?.addEventListener('abort', onAbort, { once: true })
@@ -302,7 +434,6 @@ export class AgentWorkerHost {
     for (const pending of [
       this.pendingTools,
       this.pendingAuthorizations,
-      this.pendingCredentials,
       this.pendingToolRecords,
     ]) {
       for (const reply of pending.values()) {
@@ -310,6 +441,9 @@ export class AgentWorkerHost {
         reply.reject(new Error(reason))
       }
       pending.clear()
+    }
+    for (const [requestId] of this.pendingProviderResponses) {
+      this.failProviderResponse(requestId, new Error(reason))
     }
   }
 
@@ -375,4 +509,9 @@ function abortError(signal: AbortSignal | undefined): Error {
 
 function defaultCreateId(): string {
   return globalThis.crypto.randomUUID()
+}
+
+function decodeBase64(value: string): Uint8Array {
+  const decoded = globalThis.atob(value)
+  return Uint8Array.from(decoded, (character) => character.charCodeAt(0))
 }

@@ -75,16 +75,10 @@ export class AiSdkWorkerRuntime implements AgentRuntimePort {
       if (!supportsToolChoice(request)) {
         throw new Error('当前模型不支持 Agent 工具调用，请选择支持原生工具调用的模型。')
       }
-      const credential = await this.bridge.resolveCredential(
-        {
-          requestId: this.createId(),
-          runId: request.runId,
-          provider: request.modelPolicy.provider,
-        },
-        active.abortController.signal,
-      )
       const tools = this.buildTools(active)
-      const model = createModel(request, credential)
+      const model = createModel(request, 'rust-managed-credential', (input, init) =>
+        this.bridge.proxyProviderFetch(request.runId, input, init),
+      )
       const agent = new ToolLoopAgent({
         model,
         instructions: buildInstructions(request),
@@ -406,18 +400,26 @@ class WorkerRuntimeContractError extends Error {
   }
 }
 
-function createModel(request: AgentRunRequestV1, apiKey: string): LanguageModel {
+function createModel(
+  request: AgentRunRequestV1,
+  apiKey: string,
+  providerFetch: typeof globalThis.fetch,
+): LanguageModel {
   const baseURL = request.modelPolicy.endpoint.replace(/\/+$/, '')
   if (request.modelPolicy.provider === 'anthropic') {
-    return createAnthropic({ apiKey, baseURL, name: 'mynotebook-worker-anthropic' })(
-      request.modelPolicy.model,
-    )
+    return createAnthropic({
+      apiKey,
+      baseURL,
+      name: 'mynotebook-worker-anthropic',
+      fetch: providerFetch,
+    })(request.modelPolicy.model)
   }
   return createOpenAICompatible({
     name: `mynotebook-worker-${request.modelPolicy.provider}`,
     apiKey,
     baseURL,
     includeUsage: true,
+    fetch: providerFetch,
   })(request.modelPolicy.model)
 }
 

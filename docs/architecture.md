@@ -87,7 +87,7 @@ Knowledge Object 可锚定 document/block/revision。Context Compiler 已读取�
 - `agent_repository.rs`：Agent task、Context Bundle、Patch、事务与审计持久化。
 - `agent_tools.rs`：数据库工具、只读命令和 Rust 线性时间正则执行。
 - `agent_cancellation.rs`：按 tool call ID 取消正在运行的原生或 MCP future。
-- `agent_worker_supervisor.rs`：Phase 3 Worker 子进程身份、NDJSON 通道、heartbeat、重启、活动 Run 快照、崩溃终态，以及全部内置 Domain Tool/MCP 的受控分发；当前为可选 Runtime，尚未成为默认生产 Agent。
+- `agent_worker_supervisor.rs`：Phase 3 Worker 子进程身份、NDJSON 通道、heartbeat、重启、活动/待授权 Run 的脱敏快照、崩溃终态、Provider 流式代理，以及全部内置 Domain Tool/MCP 的受控分发；当前为可选 Runtime，尚未成为默认生产 Agent。
 - `ai_models.rs` / `ai_proxy.rs`：Provider 模型列表、请求代理、流式响应和敏感信息边界。
 - `work.rs`：TaskRun、Verifier、ChangeSet 和 Approval 的原子状态变更。
 - `views.rs`：View snapshot/dependency 发布及 override 保护。
@@ -177,7 +177,7 @@ Rust command 应立即委托给对应模块。数据库访问必须复用 `datab
 - Tool Tags 已在运行前编译成 `ExecutionPolicy.allowedTools`，Runtime 热路径仍只检查稳定工具名；Mode/Template/Skill 不能扩大基础策略。
 - Knowledge Object 已扩展研究候选所需类型、正文、结构化数据、认知 provenance、多来源、Validation 和 rejected 状态；候选 UI 会在接受前重新验证来源 revision 和稳定 block，并只将显式接受项转为 `approved`。
 - Run lifecycle、Plan、运行级事件和 tool timeline 已绑定 assistant 消息并持久化；规范工具审计仍保存在独立数据库表中。
-- Agent Runtime、授权等待和 A2A polling 仍依附 Vue/WebView；普通 Agent Run 没有 durable checkpoint/resume，窗口退出后不能从中间 tool step 接管。
+- 默认 Agent Runtime、授权 UI 与 A2A 终态编排仍依附 Vue/WebView；可选 sidecar 已由 Rust 代理 Provider 网络并执行工具，A2A polling 也已迁入 Rust watcher，但普通 Run 仍没有 durable checkpoint/resume，窗口重建后尚不能从中间 tool step 接管。
 - 新 Agent 任务分别保存 `AgentTask.id`（迁移期 work item）、独立 `run_id`、可空 `workflow_id`、conversation/cognitive `session_id` 和 `document_id`；历史记录使用确定性 `legacy-run-*` 映射，`task_runs.id` 保留原有治理语义。
 - `tokenBudget` 当前主要约束单次输出参数，没有基于累计 input/output usage、成本、模型轮次和并行工具数的统一预算器。
 - Rust SQLx 与 TypeScript `plugin-sql` 仍是双数据库访问路径；Rust 成为唯一写入者是既定迁移方向，不是当前事实。

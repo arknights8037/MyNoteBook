@@ -99,6 +99,31 @@ describe('Runtime architecture boundaries', () => {
     }
     expect(dispatcher).not.toContain('尚未迁移到 Rust Worker dispatcher')
   })
+
+  it('keeps Provider network and credentials behind the Rust proxy boundary', () => {
+    const contracts = readFileSync(
+      resolve(root, 'packages/agent-runtime-contracts/src/index.ts'),
+      'utf8',
+    )
+    const host = readFileSync(
+      resolve(root, 'packages/agent-runtime-worker/src/AgentWorkerHost.ts'),
+      'utf8',
+    )
+    const runtime = readFileSync(
+      resolve(root, 'packages/agent-runtime-worker/src/AiSdkWorkerRuntime.ts'),
+      'utf8',
+    )
+    const supervisor = readFileSync(
+      resolve(root, 'src-tauri/src/agent_worker_supervisor.rs'),
+      'utf8',
+    )
+    expect(contracts).not.toContain('credential.request')
+    expect(host).toContain('provider.request')
+    expect(runtime).toContain('proxyProviderFetch')
+    expect(runtime).toContain('fetch: providerFetch')
+    expect(supervisor).toContain('start_ai_request')
+    expect(supervisor).toContain('inject_provider_credential')
+  })
 })
 
 function listSourceFiles(directory: string): string[] {

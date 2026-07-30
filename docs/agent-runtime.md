@@ -6,7 +6,9 @@ MyNoteBook 的 Agent 是受控的本地知识协作者。它可以读取许可�
 
 当前生产 Runtime 仍位于 Vue/WebView。`useAgentRun` 冻结输入并构造可序列化 `AgentRunRequest v1`，通过 `AgentRuntimeClient` 的 `startRun/cancelRun/steerRun/subscribeEvents` 驱动 `AiSdkAgentRuntimeAdapter`；`prepareAgentRun()` 恢复 Cognitive Session 并创建任务；`AgentRunEngine` 继续提供 UI lifecycle projection。
 
-Phase 3 的可选链路为：`AgentRuntimeClient -> TauriAgentRuntimeAdapter -> Rust AgentWorkerSupervisor -> NDJSON Worker Host -> AiSdkWorkerRuntime`。Supervisor 维护 Worker 实例、heartbeat、重启计数、活动 Run 与崩溃终态；Worker 维护 AI SDK 模型循环、Tool Manifest、提案捕获和 Runtime events；Rust 解析凭据、写工具审计并执行全部内置 Domain Tool/MCP。Mind Map 读取使用 canonical SQLite，自动化、Skill 与 MCP 写入只生成停用草稿，文档修改仍只形成待 Diff 审阅的 Patch 提案。Composition 仅在 `VITE_AGENT_RUNTIME_OWNER=rust_worker` 时选择该链路，默认仍保留 WebView Adapter。
+Phase 3 的可选链路为：`AgentRuntimeClient -> TauriAgentRuntimeAdapter -> Rust AgentWorkerSupervisor -> NDJSON Worker Host -> AiSdkWorkerRuntime`。Supervisor 维护 Worker 实例、heartbeat、重启计数、活动 Run 与崩溃终态；Worker 维护 AI SDK 模型循环、Tool Manifest、提案捕获和 Runtime events。AI SDK Provider 请求通过自定义 `fetch` 交给 Rust 流式代理，Rust 从 Secret Store 注入凭据，因此密钥值不会进入 Node；Rust 同时写工具审计并执行全部内置 Domain Tool/MCP。Mind Map 读取使用 canonical SQLite，自动化、Skill 与 MCP 写入只生成停用草稿，文档修改仍只形成待 Diff 审阅的 Patch 提案。Composition 仅在 `VITE_AGENT_RUNTIME_OWNER=rust_worker` 时选择该链路，默认仍保留 WebView Adapter。
+
+Rust snapshot 额外保存活动 Run 的脱敏身份投影和待授权请求。窗口重建时，`useAgentRun` 按 `sessionId` 恢复运行/等待状态并重新绑定 Runtime event、取消和授权通道；仍在 Worker 中执行的任务不会被启动恢复逻辑误标为 interrupted。Snapshot 不保存 compiled context，也尚不承担窗口缺席期间的最终 Patch/Cognitive 结果持久化。
 
 ```text
 用户输入 / Slash Command
@@ -257,7 +259,7 @@ Run lifecycle、Plan snapshot、运行级事件和 Step/tool timeline 会绑定�
 - `/learn` 已绑定 Learning Mode、`learning-turn` v1 contract 与多轮 Cognitive Session。首次解释题由本地状态机生成且不请求 Provider；后续普通回复按 conversation 恢复 `waiting_user` session，将用户回复保存为 Attempt 后再更新理解状态、提示层级和下一问题。Learning 运行没有文档或正式知识写权限，临时候选理解记录只保存在结果消息中。
 - 自动化有定义和运行队列，但没有后台无人值守模型调度器。
 - 普通 Agent Run 没有 durable checkpoint/resume；应用重启后不能从中间 tool step 恢复。Learning Session 的跨 run 继续和待确认 Patch 的恢复不等同于恢复同一个 Run。
-- Runtime、授权等待和 A2A polling 仍由 Vue/WebView 生命周期承载；窗口或应用退出会终止当前执行。
+- 默认 Runtime、授权 UI 和 A2A 终态编排仍由 Vue/WebView 生命周期承载；可选 sidecar 的模型、Provider 和工具执行不依赖窗口，A2A 队列 polling 已迁入 Rust，但窗口重建投影和无窗口终态持久化尚未完成。
 - 当前已有独立 `run_id` 贯穿 Runtime 请求、`agent_tasks`、Context Bundle 和 Tool Call；`task_runs.id` 仍保留历史治理语义，完整轨迹重放和 durable checkpoint 尚未实现。
 - MCP Prompts、Roots、Sampling、OAuth、旧 SSE 和跨任务长连接尚未开放。
 - 真实 DeepSeek Provider、stdio/Streamable HTTP MCP、真实 CLI 外部进程和隔离数据恢复已通过 G0 smoke；Windows 干净安装包仍属于发布流程检查。

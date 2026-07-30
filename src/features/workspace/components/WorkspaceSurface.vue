@@ -70,6 +70,8 @@ import type { DocumentSidebarExpose, EditorShellExpose } from './home/homePageTy
 import { useDocumentTransferActions } from './home/useDocumentTransferActions'
 import { useHomeAiMessageActions } from './home/useHomeAiMessageActions'
 import { useAgentCommunicationWorker } from './home/useAgentCommunicationWorker'
+import { subscribeAgentRequestQueue } from '@/infrastructure/runtime/TauriAgentCommunicationWatcher'
+import { getAgentWorkerSnapshot } from '@/infrastructure/runtime/AgentWorkerSnapshotClient'
 import { useWorkspaceItems } from './home/useWorkspaceItems'
 import { useResearchReviewActions } from './home/useResearchReviewActions'
 import { useAiChatPanelBindings } from './home/useAiChatPanelBindings'
@@ -645,6 +647,8 @@ const agentCommunicationWorker = useAgentCommunicationWorker({
   rejectPatches: rejectPendingAgentPatches,
   notifyError: message.error,
   createId: createDocumentId,
+  watchQueue: (listener) =>
+    subscribeAgentRequestQueue(appSettings.value.dataDirectory ?? undefined, listener),
 })
 const activeA2aTask = agentCommunicationWorker.activeA2aTask
 const agentAuthorizationRequest = computed(() => agentRun.runtimeState.value.authorizationRequest)
@@ -780,10 +784,20 @@ onMounted(async () => {
       .map((entry) => `${entry.name}=${Math.round(entry.startTime)}ms`)
     globalThis.console.info(`[startup] ${marks.join(', ')}`)
   }
-  void restoreAgentStateForDocument(currentDocumentId.value, { markInterrupted: true })
+  void restoreStartupAgentState()
   void initializeDefaultDataDirectory()
   agentCommunicationWorker.start()
 })
+
+async function restoreStartupAgentState(): Promise<void> {
+  let markInterrupted = true
+  if (dependencies.agentRunServices.runtimeOwner === 'rust_worker') {
+    const snapshot = await getAgentWorkerSnapshot().catch(() => null)
+    markInterrupted = !snapshot?.activeRunIds.length
+    if (snapshot) await agentRun.restoreWorkerSnapshot(snapshot)
+  }
+  await restoreAgentStateForDocument(currentDocumentId.value, { markInterrupted })
+}
 
 onBeforeUnmount(() => {
   globalThis.removeEventListener('keydown', handleDeveloperToolKeydown, true)

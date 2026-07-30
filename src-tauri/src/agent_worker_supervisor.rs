@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sqlx::{Row, SqlitePool};
@@ -5,7 +6,10 @@ use std::{
     collections::{HashMap, HashSet},
     env,
     path::PathBuf,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -45,6 +49,8 @@ pub(crate) struct AgentWorkerSnapshot {
     worker_instance_id: Option<String>,
     pid: Option<u32>,
     active_run_ids: Vec<String>,
+    active_runs: Vec<Value>,
+    pending_authorizations: Vec<Value>,
     last_heartbeat_at: Option<i64>,
     restart_count: u32,
     last_error: Option<String>,
@@ -58,6 +64,8 @@ impl Default for AgentWorkerSnapshot {
             worker_instance_id: None,
             pid: None,
             active_run_ids: Vec::new(),
+            active_runs: Vec::new(),
+            pending_authorizations: Vec::new(),
             last_heartbeat_at: None,
             restart_count: 0,
             last_error: None,
@@ -351,6 +359,7 @@ async fn run_supervisor(
             .await;
             break;
         }
+        let stdin = Arc::new(Mutex::new(stdin));
 
         let mut lines = BufReader::new(stdout).lines();
         let mut heartbeat_check = interval(Duration::from_secs(2));
@@ -358,7 +367,7 @@ async fn run_supervisor(
         let mut worker_instance_id: Option<String> = None;
         let mut active_run_ids = HashSet::<String>::new();
         let mut run_requests = HashMap::<String, Value>::new();
-        let mut pending_authorizations = HashMap::<String, String>::new();
+        let mut pending_authorizations = HashMap::<String, PendingAuthorization>::new();
         let mut intentional_shutdown = false;
         let mut exit_description = "stdout closed".to_string();
 
@@ -376,12 +385,18 @@ async fn run_supervisor(
                         Some(command) => {
                             let outcome = handle_command(
                                 command,
-                                &mut stdin,
+                                &stdin,
                                 &mut active_run_ids,
                                 &mut claimed_run_ids,
                                 &mut run_requests,
                                 &mut pending_authorizations,
                             ).await;
+                            update_snapshot(&app, |snapshot| {
+                                snapshot.active_run_ids = sorted_run_ids(&active_run_ids);
+                                snapshot.active_runs = sorted_active_runs(&run_requests);
+                                snapshot.pending_authorizations =
+                                    sorted_pending_authorizations(&pending_authorizations);
+                            }).await;
                             if outcome.shutdown {
                                 intentional_shutdown = true;
                                 should_restart = false;
@@ -405,7 +420,7 @@ async fn run_supervisor(
                             &app,
                             &line,
                             &mut WorkerLineContext {
-                                stdin: &mut stdin,
+                                stdin: Arc::clone(&stdin),
                                 worker_instance_id: &mut worker_instance_id,
                                 active_run_ids: &mut active_run_ids,
                                 run_requests: &mut run_requests,
@@ -466,6 +481,7 @@ async fn run_supervisor(
             }
             active_run_ids.clear();
             run_requests.clear();
+            pending_authorizations.clear();
             restart_count += 1;
             should_restart = restart_count <= MAX_RESTARTS;
             update_snapshot(&app, |snapshot| {
@@ -477,6 +493,8 @@ async fn run_supervisor(
                 snapshot.worker_instance_id = None;
                 snapshot.pid = None;
                 snapshot.active_run_ids.clear();
+                snapshot.active_runs.clear();
+                snapshot.pending_authorizations.clear();
                 snapshot.restart_count = restart_count;
                 snapshot.last_error = Some(exit_description.clone());
             })
@@ -490,6 +508,8 @@ async fn run_supervisor(
                 snapshot.worker_instance_id = None;
                 snapshot.pid = None;
                 snapshot.active_run_ids.clear();
+                snapshot.active_runs.clear();
+                snapshot.pending_authorizations.clear();
                 snapshot.last_error = None;
             })
             .await;
@@ -502,13 +522,18 @@ struct CommandOutcome {
     reason: String,
 }
 
+struct PendingAuthorization {
+    request_id: String,
+    request: Value,
+}
+
 async fn handle_command(
     command: SupervisorCommand,
-    stdin: &mut ChildStdin,
+    stdin: &Arc<Mutex<ChildStdin>>,
     active_run_ids: &mut HashSet<String>,
     claimed_run_ids: &mut HashSet<String>,
     run_requests: &mut HashMap<String, Value>,
-    pending_authorizations: &mut HashMap<String, String>,
+    pending_authorizations: &mut HashMap<String, PendingAuthorization>,
 ) -> CommandOutcome {
     let mut shutdown = false;
     let mut reason = String::new();
@@ -523,7 +548,7 @@ async fn handle_command(
             let result = match result {
                 Ok(run_id) => {
                     let request_id = new_instance_id("run-request");
-                    match write_message(
+                    match write_shared_message(
                         stdin,
                         &json!({
                             "version": PROTOCOL_VERSION,
@@ -548,7 +573,7 @@ async fn handle_command(
         }
         SupervisorCommand::CancelRun { run_id, response } => {
             let result = if active_run_ids.contains(&run_id) {
-                write_message(
+                write_shared_message(
                     stdin,
                     &json!({
                         "version": PROTOCOL_VERSION,
@@ -578,13 +603,13 @@ async fn handle_command(
                 .map(ToOwned::to_owned);
             let result = if let (Some(authorization_id), Some(answer)) = (authorization_id, answer)
             {
-                if let Some(request_id) = pending_authorizations.remove(&authorization_id) {
-                    write_message(
+                if let Some(pending) = pending_authorizations.remove(&authorization_id) {
+                    write_shared_message(
                         stdin,
                         &json!({
                             "version": PROTOCOL_VERSION,
                             "type": "authorization.result",
-                            "requestId": request_id,
+                            "requestId": pending.request_id,
                             "authorizationId": authorization_id,
                             "answer": answer,
                         }),
@@ -596,7 +621,7 @@ async fn handle_command(
                     ))
                 }
             } else if active_run_ids.contains(&run_id) {
-                write_message(
+                write_shared_message(
                     stdin,
                     &json!({
                         "version": PROTOCOL_VERSION,
@@ -616,7 +641,7 @@ async fn handle_command(
             reason: shutdown_reason,
             response,
         } => {
-            let result = write_message(
+            let result = write_shared_message(
                 stdin,
                 &json!({
                     "version": PROTOCOL_VERSION,
@@ -634,11 +659,11 @@ async fn handle_command(
 }
 
 struct WorkerLineContext<'a> {
-    stdin: &'a mut ChildStdin,
+    stdin: Arc<Mutex<ChildStdin>>,
     worker_instance_id: &'a mut Option<String>,
     active_run_ids: &'a mut HashSet<String>,
     run_requests: &'a mut HashMap<String, Value>,
-    pending_authorizations: &'a mut HashMap<String, String>,
+    pending_authorizations: &'a mut HashMap<String, PendingAuthorization>,
     data_directory: Option<String>,
 }
 
@@ -694,6 +719,9 @@ async fn handle_worker_line(
             update_snapshot(app, |snapshot| {
                 snapshot.last_heartbeat_at = Some(now_millis());
                 snapshot.active_run_ids = sorted_run_ids(context.active_run_ids);
+                snapshot.active_runs = sorted_active_runs(context.run_requests);
+                snapshot.pending_authorizations =
+                    sorted_pending_authorizations(context.pending_authorizations);
             })
             .await;
             Ok(true)
@@ -707,12 +735,18 @@ async fn handle_worker_line(
                 if let Some(run_id) = event.get("runId").and_then(Value::as_str) {
                     context.active_run_ids.remove(run_id);
                     context.run_requests.remove(run_id);
+                    context.pending_authorizations.retain(|_, pending| {
+                        pending.request.get("runId").and_then(Value::as_str) != Some(run_id)
+                    });
                 }
             }
             app.emit(RUN_EVENT, event)
                 .map_err(|error| format!("无法转发 Runtime event：{error}"))?;
             update_snapshot(app, |snapshot| {
                 snapshot.active_run_ids = sorted_run_ids(context.active_run_ids);
+                snapshot.active_runs = sorted_active_runs(context.run_requests);
+                snapshot.pending_authorizations =
+                    sorted_pending_authorizations(context.pending_authorizations);
             })
             .await;
             Ok(false)
@@ -726,11 +760,17 @@ async fn handle_worker_line(
             {
                 context.active_run_ids.remove(run_id);
                 context.run_requests.remove(run_id);
+                context.pending_authorizations.retain(|_, pending| {
+                    pending.request.get("runId").and_then(Value::as_str) != Some(run_id)
+                });
             }
             app.emit(MESSAGE_EVENT, message)
                 .map_err(|error| format!("无法转发 Worker 消息：{error}"))?;
             update_snapshot(app, |snapshot| {
                 snapshot.active_run_ids = sorted_run_ids(context.active_run_ids);
+                snapshot.active_runs = sorted_active_runs(context.run_requests);
+                snapshot.pending_authorizations =
+                    sorted_pending_authorizations(context.pending_authorizations);
             })
             .await;
             Ok(false)
@@ -745,11 +785,23 @@ async fn handle_worker_line(
                 .and_then(|request| request.get("authorizationId"))
                 .and_then(Value::as_str)
                 .ok_or_else(|| "authorization.request 缺少 authorizationId。".to_string())?;
-            context
-                .pending_authorizations
-                .insert(authorization_id.to_string(), request_id.to_string());
+            context.pending_authorizations.insert(
+                authorization_id.to_string(),
+                PendingAuthorization {
+                    request_id: request_id.to_string(),
+                    request: message
+                        .get("request")
+                        .cloned()
+                        .ok_or_else(|| "authorization.request 缺少 request。".to_string())?,
+                },
+            );
             app.emit(AUTHORIZATION_EVENT, message)
                 .map_err(|error| format!("无法转发授权请求：{error}"))?;
+            update_snapshot(app, |snapshot| {
+                snapshot.pending_authorizations =
+                    sorted_pending_authorizations(context.pending_authorizations);
+            })
+            .await;
             Ok(false)
         }
         "tool.invoke" => {
@@ -759,23 +811,24 @@ async fn handle_worker_line(
             let request_id = request
                 .get("requestId")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "tool.invoke 缺少 requestId。".to_string())?;
+                .ok_or_else(|| "tool.invoke 缺少 requestId。".to_string())?
+                .to_string();
             app.emit(MESSAGE_EVENT, message.clone())
                 .map_err(|error| format!("无法记录工具 RPC：{error}"))?;
             let run_id = request
                 .get("runId")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "tool.invoke 缺少 runId。".to_string())?;
-            let result = dispatch_worker_tool(
-                app,
-                context.data_directory.clone(),
-                request,
-                context.run_requests.get(run_id),
-            )
-            .await;
-            write_message(
-                context.stdin,
-                &match result {
+            let request = request.clone();
+            let run_request = context.run_requests.get(run_id).cloned();
+            let data_directory = context.data_directory.clone();
+            let app = app.clone();
+            let stdin = Arc::clone(&context.stdin);
+            tauri::async_runtime::spawn(async move {
+                let result =
+                    dispatch_worker_tool(&app, data_directory, &request, run_request.as_ref())
+                        .await;
+                let reply = match result {
                     Ok(value) => json!({
                         "version": PROTOCOL_VERSION,
                         "type": "tool.result",
@@ -793,9 +846,14 @@ async fn handle_worker_line(
                             "retryable": false
                         }
                     }),
-                },
-            )
-            .await?;
+                };
+                if let Err(error) = write_shared_message(&stdin, &reply).await {
+                    eprintln!(
+                        "[agent-worker] {}",
+                        crate::sensitive_data::redact_sensitive_text(&error)
+                    );
+                }
+            });
             Ok(false)
         }
         "tool.record" => {
@@ -807,8 +865,8 @@ async fn handle_worker_line(
                 .get("call")
                 .ok_or_else(|| "tool.record 缺少 call。".to_string())?;
             record_worker_tool_call(app, context.data_directory.clone(), call).await?;
-            write_message(
-                context.stdin,
+            write_shared_message(
+                &context.stdin,
                 &json!({
                     "version": PROTOCOL_VERSION,
                     "type": "tool.recorded",
@@ -818,30 +876,52 @@ async fn handle_worker_line(
             .await?;
             Ok(false)
         }
-        "credential.request" => {
+        "tool.cancel" => {
+            let call_id = message
+                .get("internalToolCallId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "tool.cancel 缺少 internalToolCallId。".to_string())?;
+            crate::agent_cancellation::cancel_agent_tool_call(
+                crate::agent_cancellation::CancelAgentToolCallInput {
+                    call_id: call_id.to_string(),
+                },
+            )?;
+            Ok(false)
+        }
+        "provider.request" => {
             let request = message
                 .get("request")
-                .ok_or_else(|| "credential.request 缺少 request。".to_string())?;
-            let request_id = request
+                .cloned()
+                .ok_or_else(|| "provider.request 缺少 request。".to_string())?;
+            let run_id = request
+                .get("runId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "provider.request 缺少 runId。".to_string())?;
+            let provider = context
+                .run_requests
+                .get(run_id)
+                .and_then(|request| request.get("modelPolicy"))
+                .and_then(|policy| policy.get("provider"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Provider 请求无法解析冻结的模型策略。".to_string())?
+                .to_string();
+            let stdin = Arc::clone(&context.stdin);
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                proxy_worker_provider_request(&app, &stdin, request, &provider).await;
+            });
+            Ok(false)
+        }
+        "provider.cancel" => {
+            let request_id = message
                 .get("requestId")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "credential.request 缺少 requestId。".to_string())?;
-            let provider = request
-                .get("provider")
-                .and_then(Value::as_str)
-                .ok_or_else(|| "credential.request 缺少 provider。".to_string())?;
-            let state = app.state::<crate::secret_store::AiSecretState>();
-            let credential = crate::secret_store::get_secret_value(app, &state, provider).await?;
-            write_message(
-                context.stdin,
-                &json!({
-                    "version": PROTOCOL_VERSION,
-                    "type": "credential.result",
-                    "requestId": request_id,
-                    "credential": credential
-                }),
-            )
-            .await?;
+                .ok_or_else(|| "provider.cancel 缺少 requestId。".to_string())?;
+            crate::agent_cancellation::cancel_agent_tool_call(
+                crate::agent_cancellation::CancelAgentToolCallInput {
+                    call_id: request_id.to_string(),
+                },
+            )?;
             Ok(false)
         }
         "run.cancelled" | "run.steered" | "shutdown" => {
@@ -1057,6 +1137,123 @@ async fn dispatch_worker_tool(
             optional_argument_string(&arguments, "url")?,
         ),
         other => Err(format!("Worker 不允许未注册的领域工具 {other}。")),
+    }
+}
+
+async fn proxy_worker_provider_request(
+    app: &AppHandle,
+    stdin: &Arc<Mutex<ChildStdin>>,
+    request: Value,
+    provider: &str,
+) {
+    let request_id = request
+        .get("requestId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned);
+    let Some(request_id) = request_id else {
+        return;
+    };
+    let operation = async {
+        let url = required_argument_string(&request, "url")?;
+        let method = optional_argument_string(&request, "method")?;
+        let body = request
+            .get("body")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+        let mut headers = request
+            .get("headers")
+            .and_then(Value::as_object)
+            .ok_or_else(|| "Provider 请求 headers 必须是对象。".to_string())?
+            .iter()
+            .map(|(name, value)| {
+                value
+                    .as_str()
+                    .map(|value| (name.clone(), value.to_string()))
+                    .ok_or_else(|| "Provider 请求 header 必须是字符串。".to_string())
+            })
+            .collect::<Result<HashMap<_, _>, String>>()?;
+        let state = app.state::<crate::secret_store::AiSecretState>();
+        let credential = crate::secret_store::get_secret_value(app, &state, provider).await?;
+        inject_provider_credential(&mut headers, provider, credential);
+        let mut response =
+            crate::ai_proxy::start_ai_request(crate::ai_proxy::ProxyAiRequestInput {
+                url,
+                method,
+                headers,
+                body,
+            })
+            .await?;
+        write_shared_message(
+            stdin,
+            &json!({
+                "version": PROTOCOL_VERSION,
+                "type": "provider.response.started",
+                "requestId": request_id,
+                "status": response.status,
+                "headers": response.headers.clone()
+            }),
+        )
+        .await?;
+        while let Some(chunk) = response.next_chunk().await? {
+            write_shared_message(
+                stdin,
+                &json!({
+                    "version": PROTOCOL_VERSION,
+                    "type": "provider.response.chunk",
+                    "requestId": request_id,
+                    "bodyBase64": BASE64_STANDARD.encode(chunk)
+                }),
+            )
+            .await?;
+        }
+        write_shared_message(
+            stdin,
+            &json!({
+                "version": PROTOCOL_VERSION,
+                "type": "provider.response.completed",
+                "requestId": request_id
+            }),
+        )
+        .await
+    };
+    let result =
+        match crate::agent_cancellation::ToolCancellationGuard::register(request_id.clone()) {
+            Ok(cancellation) => tokio::select! {
+                result = operation => result,
+                _ = cancellation.cancelled() => Err("Provider 请求已取消。".to_string()),
+            },
+            Err(error) => Err(error),
+        };
+    if let Err(error) = result {
+        let _ = write_shared_message(
+            stdin,
+            &json!({
+                "version": PROTOCOL_VERSION,
+                "type": "provider.response.failed",
+                "requestId": request_id,
+                "error": crate::sensitive_data::redact_sensitive_text(&error)
+            }),
+        )
+        .await;
+    }
+}
+
+fn inject_provider_credential(
+    headers: &mut HashMap<String, String>,
+    provider: &str,
+    credential: String,
+) {
+    headers.retain(|name, _| {
+        !matches!(
+            name.to_ascii_lowercase().as_str(),
+            "authorization" | "x-api-key"
+        )
+    });
+    if provider == "anthropic" {
+        headers.insert("x-api-key".to_string(), credential);
+    } else {
+        headers.insert("authorization".to_string(), format!("Bearer {credential}"));
     }
 }
 
@@ -1535,6 +1732,13 @@ async fn write_message(stdin: &mut ChildStdin, message: &Value) -> Result<(), St
     stdin.flush().await.map_err(worker_error)
 }
 
+async fn write_shared_message(
+    stdin: &Arc<Mutex<ChildStdin>>,
+    message: &Value,
+) -> Result<(), String> {
+    write_message(&mut *stdin.lock().await, message).await
+}
+
 async fn update_snapshot(app: &AppHandle, update: impl FnOnce(&mut AgentWorkerSnapshot)) {
     let state = app.state::<AgentWorkerSupervisorState>();
     let snapshot = {
@@ -1564,6 +1768,41 @@ fn is_terminal_event(event: &Value) -> bool {
 fn sorted_run_ids(run_ids: &HashSet<String>) -> Vec<String> {
     let mut values = run_ids.iter().cloned().collect::<Vec<_>>();
     values.sort();
+    values
+}
+
+fn sorted_active_runs(run_requests: &HashMap<String, Value>) -> Vec<Value> {
+    let mut values = run_requests
+        .iter()
+        .map(|(run_id, request)| {
+            json!({
+                "runId": run_id,
+                "workItemId": request.get("workItemId").cloned().unwrap_or(Value::Null),
+                "sessionId": request.get("sessionId").cloned().unwrap_or(Value::Null),
+                "workflowId": request.get("workflowId").cloned().unwrap_or(Value::Null),
+                "objective": request.get("objective").cloned().unwrap_or(Value::Null),
+                "intent": request.get("intent").cloned().unwrap_or(Value::Null)
+            })
+        })
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        left.get("runId")
+            .and_then(Value::as_str)
+            .cmp(&right.get("runId").and_then(Value::as_str))
+    });
+    values
+}
+
+fn sorted_pending_authorizations(pending: &HashMap<String, PendingAuthorization>) -> Vec<Value> {
+    let mut values = pending
+        .values()
+        .map(|pending| pending.request.clone())
+        .collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        left.get("authorizationId")
+            .and_then(Value::as_str)
+            .cmp(&right.get("authorizationId").and_then(Value::as_str))
+    });
     values
 }
 
@@ -1715,6 +1954,31 @@ mod tests {
             context_block_ids(Some(&request), "doc-1"),
             vec!["block-1".to_string()]
         );
+        let mut headers = HashMap::from([
+            (
+                "Authorization".to_string(),
+                "Bearer worker-placeholder".to_string(),
+            ),
+            ("x-api-key".to_string(), "worker-placeholder".to_string()),
+        ]);
+        inject_provider_credential(&mut headers, "anthropic", "secret".to_string());
+        assert_eq!(headers.get("x-api-key").map(String::as_str), Some("secret"));
+        assert!(!headers.contains_key("Authorization"));
+        let active = sorted_active_runs(&HashMap::from([(
+            "run-1".to_string(),
+            json!({
+                "workItemId": "task-1",
+                "sessionId": "conversation-1",
+                "objective": "Review",
+                "intent": "review",
+                "compiledContext": "must not enter the status snapshot"
+            }),
+        )]));
+        assert_eq!(
+            active[0].get("sessionId").and_then(Value::as_str),
+            Some("conversation-1")
+        );
+        assert!(active[0].get("compiledContext").is_none());
     }
 
     #[test]

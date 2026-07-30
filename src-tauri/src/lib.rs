@@ -77,6 +77,7 @@ unsafe fn apply_fixed_light_acrylic(hwnd: *mut core::ffi::c_void) {
 
 mod agent_cancellation;
 mod agent_repository;
+mod agent_request_watcher;
 mod agent_tools;
 mod agent_worker_supervisor;
 mod ai_models;
@@ -342,6 +343,7 @@ pub fn run() {
         .manage(secret_store::AiSecretState::default())
         .manage(dingtalk::DingTalkRuntimeState::default())
         .manage(agent_worker_supervisor::AgentWorkerSupervisorState::default())
+        .manage(agent_request_watcher::AgentRequestWatcherState::default())
         .invoke_handler(tauri::generate_handler![
             storage::get_system_fonts,
             storage::get_default_data_directory,
@@ -406,6 +408,7 @@ pub fn run() {
             agent_worker_supervisor::cancel_agent_runtime_run,
             agent_worker_supervisor::steer_agent_runtime_run,
             agent_worker_supervisor::shutdown_agent_worker,
+            agent_request_watcher::start_agent_request_watcher,
             work::commit_result_verification,
             work::decide_change_set,
             work::record_authorization,

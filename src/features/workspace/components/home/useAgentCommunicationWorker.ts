@@ -36,11 +36,14 @@ interface AgentCommunicationWorkerOptions {
   rejectPatches: () => Promise<void>
   notifyError: (message: string) => void
   createId: () => string
+  watchQueue?: (listener: () => void) => Promise<() => void>
 }
 
 export function useAgentCommunicationWorker(options: AgentCommunicationWorkerOptions) {
   let servicePromise: Promise<AgentCommunicationService> | null = null
-  let timer: ReturnType<typeof globalThis.setInterval> | null = null
+  let unlistenQueue: (() => void) | null = null
+  let startingQueueWatcher: Promise<void> | null = null
+  let queueWatcherGeneration = 0
   let polling = false
   let checkedLegacyLeaks = false
   const service = () => (servicePromise ??= options.getService())
@@ -220,22 +223,18 @@ export function useAgentCommunicationWorker(options: AgentCommunicationWorkerOpt
       messages: detachedMessages.value,
     })
 
-    const finalStatus =
-      options.pendingTask.value
-        ? 'completed'
-        : options.agentRun.runtimeState.value.status === 'failed' ||
-            options.agentRun.runtimeState.value.status === 'cancelled'
-          ? 'failed'
-          : 'completed'
+    const finalStatus = options.pendingTask.value
+      ? 'completed'
+      : options.agentRun.runtimeState.value.status === 'failed' ||
+          options.agentRun.runtimeState.value.status === 'cancelled'
+        ? 'failed'
+        : 'completed'
     activeA2aTask.value = {
       id: routedConversationId,
       title: taskTitle,
       prompt: runtimePrompt,
       status: finalStatus,
-      detail:
-        options.agentRun.runtimeState.value.detail ||
-        detachedError.value ||
-        undefined,
+      detail: options.agentRun.runtimeState.value.detail || detachedError.value || undefined,
     }
 
     const taskId = options.agentRun.lastTaskId.value
@@ -290,15 +289,27 @@ export function useAgentCommunicationWorker(options: AgentCommunicationWorkerOpt
     }
   }
 
-  function start(intervalMs = 1_000): void {
-    if (timer !== null) return
+  function start(): void {
+    if (unlistenQueue || startingQueueWatcher) return
     void poll()
-    timer = globalThis.setInterval(() => void poll(), intervalMs)
+    if (!options.watchQueue) return
+    const generation = ++queueWatcherGeneration
+    startingQueueWatcher = options
+      .watchQueue(() => void poll())
+      .then((unlisten) => {
+        if (generation === queueWatcherGeneration) unlistenQueue = unlisten
+        else unlisten()
+      })
+      .catch((error) => options.notifyError(error instanceof Error ? error.message : String(error)))
+      .finally(() => {
+        startingQueueWatcher = null
+      })
   }
 
   function stop(): void {
-    if (timer !== null) globalThis.clearInterval(timer)
-    timer = null
+    queueWatcherGeneration += 1
+    unlistenQueue?.()
+    unlistenQueue = null
   }
 
   return { poll, start, stop, activeA2aTask, hasActiveA2aTask }

@@ -4,6 +4,7 @@ import type { AgentRuntimeResult } from '@/services/agent/AgentRuntime'
 import type { ContextBundle } from '@/models/agent/contextBundle'
 import type { AgentRuntimeEvent } from '@/models/agent/agentRuntimeContract'
 import type { AgentToolCall } from '@/models/agent/agentTool'
+import type { AgentTask } from '@/models/agent/agent'
 import type { AgentRuntimeClient } from '@/services/agent/AgentRuntimeClient'
 import type { KnowledgeSource } from '@/models/knowledge/knowledgeRetrieval'
 import { createIdleAgentRuntimeState } from '@/models/agent/agentRuntime'
@@ -898,10 +899,119 @@ export function useAgentRun(options: UseAgentRunOptions) {
     target?.runtime.cancelPendingAuthorization('用户停止了 Agent。')
   }
 
+  async function restoreWorkerSnapshot(snapshot: {
+    activeRuns: Array<{
+      runId: string
+      workItemId: string
+      sessionId: string
+      objective: string
+    }>
+    pendingAuthorizations: Array<{
+      authorizationId: string
+      runId: string
+      question: string
+      context: string
+      options: string[]
+      allowFreeText: boolean
+    }>
+  }): Promise<void> {
+    if (options.services?.runtimeOwner !== 'rust_worker') return
+    const { TauriAgentRuntimeAdapter, AgentRuntimeClient } = await loadAgentRunModules()
+    for (const run of snapshot.activeRuns) {
+      const runKey = run.sessionId.trim() || run.runId
+      if (activeRuns.has(runKey)) continue
+      const runtime = createAgentRunRuntimeController(options.createId)
+      const pending = snapshot.pendingAuthorizations.find((request) => request.runId === run.runId)
+      runtime.restoreActive({
+        runId: run.runId,
+        goal: run.objective,
+        detail: pending ? '等待授权人回答' : '已从 Rust Worker 恢复运行视图',
+        authorizationRequest: pending
+          ? {
+              id: pending.authorizationId,
+              question: pending.question,
+              context: pending.context,
+              options: [...pending.options],
+              allowFreeText: pending.allowFreeText,
+            }
+          : null,
+      })
+      const task = { id: run.workItemId, runId: run.runId, currentStep: '' } as AgentTask
+      const adapter = new TauriAgentRuntimeAdapter({
+        dataDirectory: options.services.runtimeDataDirectory?.(),
+        requestAuthorizerInput: (request) =>
+          runtime.waitForAuthorizerInput(
+            {
+              id: request.authorizationId,
+              question: request.question,
+              context: request.context,
+              options: request.options,
+              allowFreeText: request.allowFreeText,
+            },
+            task,
+          ),
+      })
+      const client = new AgentRuntimeClient(adapter)
+      const unsubscribe = client.subscribeEvents(run.runId, (event) => {
+        if (event.type === 'run.progress') {
+          const phase = event.payload.phase
+          if (
+            phase === 'planning' ||
+            phase === 'tool_running' ||
+            phase === 'tool_completed' ||
+            phase === 'finalizing'
+          ) {
+            runtime.applyProgressUpdate({
+              phase,
+              detail:
+                typeof event.payload.detail === 'string' ? event.payload.detail : 'Agent 正在运行',
+            })
+          }
+        } else if (event.type.startsWith('tool.')) {
+          const call = event.payload.toolCall as AgentToolCall | undefined
+          if (call) {
+            runtime.applyProgressUpdate({
+              phase: call.status === 'completed' ? 'tool_completed' : 'tool_running',
+              toolName: call.toolName,
+              detail: call.error || call.toolName,
+              toolCall: call,
+            })
+          }
+        } else if (event.type === 'run.completed') {
+          runtime.complete('后台 Agent 运行已完成')
+          finishRun(runKey, runtime)
+          void adapter.dispose()
+        } else if (event.type === 'run.failed') {
+          runtime.fail(
+            typeof event.payload.error === 'string' ? event.payload.error : '后台 Agent 运行失败',
+          )
+          finishRun(runKey, runtime)
+          void adapter.dispose()
+        } else if (event.type === 'run.cancelled') {
+          runtime.cancel('后台 Agent 运行已取消')
+          finishRun(runKey, runtime)
+          void adapter.dispose()
+        }
+      })
+      runtimes.set(runKey, runtime)
+      activeRuns.set(runKey, {
+        abortController: new AbortController(),
+        runtime,
+        runtimeClient: client,
+        runtimeRunId: run.runId,
+        unsubscribeRuntime: unsubscribe,
+      })
+      activeConversationId.value = runKey
+    }
+    options.isRunning.value = activeRuns.size > 0
+  }
+
   function answerAuthorization(requestId: string, answer: string): boolean {
     for (const active of activeRuns.values()) {
       if (active.runtime.runtimeState.value.authorizationRequest?.id !== requestId) continue
       if (active.runtimeClient && active.runtimeRunId) {
+        if (active.runtime.answerAuthorization(requestId, answer)) return true
+        active.runtime.settleRestoredAuthorization(requestId)
         void active.runtimeClient
           .steerRun(active.runtimeRunId, {
             kind: 'authorization_response',
@@ -945,5 +1055,6 @@ export function useAgentRun(options: UseAgentRunOptions) {
     isConversationRunning,
     runtimeStateFor,
     resetRuntime,
+    restoreWorkerSnapshot,
   }
 }

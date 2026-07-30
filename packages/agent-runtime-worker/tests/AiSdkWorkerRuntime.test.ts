@@ -66,7 +66,6 @@ describe('AiSdkWorkerRuntime', () => {
     const invocations: AgentWorkerToolInvocation[] = []
     const audits: AgentToolCall[] = []
     const bridge = {
-      resolveCredential: vi.fn(async () => 'sk-test-worker'),
       invokeTool: vi.fn(async (input: AgentWorkerToolInvocation) => {
         invocations.push(input)
         return { ok: true, value: [{ id: 'doc-1' }] }
@@ -75,6 +74,10 @@ describe('AiSdkWorkerRuntime', () => {
         audits.push(call)
       }),
       requestAuthorization: vi.fn(async () => '仅允许本次调用'),
+      proxyProviderFetch: vi.fn(
+        async (_runId: string, input: string | URL | Request, init?: RequestInit) =>
+          globalThis.fetch(input, init),
+      ),
     }
     harness.run = async (tools) => {
       await tools.search_documents?.execute({ query: 'runtime' }, { toolCallId: 'provider-call-1' })
@@ -83,7 +86,6 @@ describe('AiSdkWorkerRuntime', () => {
       'event-1',
       'event-2',
       'event-3',
-      'credential-rpc',
       'turn-1',
       'event-4',
       'call-1',
@@ -100,10 +102,6 @@ describe('AiSdkWorkerRuntime', () => {
 
     const result = await runtime.startRun(request())
 
-    expect(bridge.resolveCredential).toHaveBeenCalledWith(
-      expect.objectContaining({ runId: 'run-1', provider: 'openai' }),
-      expect.any(AbortSignal),
-    )
     expect(invocations).toHaveLength(1)
     expect(invocations[0]).toMatchObject({
       runId: 'run-1',
@@ -122,10 +120,13 @@ describe('AiSdkWorkerRuntime', () => {
 
   it('captures write proposals inside the worker without executing a second registry', async () => {
     const bridge = {
-      resolveCredential: vi.fn(async () => 'sk-test-worker'),
       invokeTool: vi.fn(),
       recordToolCall: vi.fn(async () => undefined),
       requestAuthorization: vi.fn(),
+      proxyProviderFetch: vi.fn(
+        async (_runId: string, input: string | URL | Request, init?: RequestInit) =>
+          globalThis.fetch(input, init),
+      ),
     }
     harness.run = async (tools) => {
       await tools.replace_block?.execute(
