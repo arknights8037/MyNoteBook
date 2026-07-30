@@ -88,4 +88,37 @@ describe('InformationHomeSurface', () => {
     expect(wrapper.get('[aria-label="布局操作"]').text()).toContain('恢复默认')
     wrapper.unmount()
   })
+
+  it('enters a reversible edit session when a widget requests removal', async () => {
+    Reflect.set(globalThis, '__TAURI_INTERNALS__', {})
+    homeService.getOrCreate.mockResolvedValue(ok(home))
+    homeService.listSummaries.mockResolvedValue(ok([]))
+    const { default: InformationHomeSurface } =
+      await import('@/features/information-home/components/InformationHomeSurface.vue')
+    const wrapper = mount(InformationHomeSurface, {
+      props: {
+        aiSettings: {} as never,
+        ensureAiSecretLoaded: vi.fn(async () => false),
+      },
+      global: {
+        stubs: {
+          InformationHomeGrid: {
+            emits: ['remove'],
+            template:
+              '<button data-test="remove-widget" @click="$emit(\'remove\', \'home-widget-test\')">remove</button>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-test="remove-widget"]').trigger('click')
+    expect(
+      wrapper.findAll('.information-home-controls button').map((button) => button.text()),
+    ).toEqual(['取消', '保存布局'])
+    expect(
+      wrapper.get('.information-home-controls .is-primary').attributes('disabled'),
+    ).toBeUndefined()
+    wrapper.unmount()
+  })
 })

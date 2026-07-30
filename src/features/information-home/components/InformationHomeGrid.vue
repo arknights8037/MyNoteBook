@@ -58,15 +58,6 @@ const responsiveLayouts = computed(() => ({
   xs: compactLayout.value,
   xxs: compactLayout.value,
 }))
-const resizeOption = {
-  edges: {
-    right: '.information-home-grid__resize-handle',
-    bottom: '.information-home-grid__resize-handle',
-    left: false,
-    top: false,
-  },
-}
-
 function updateLayout(next: Layout): void {
   if (!props.editing) return
   emit(
@@ -125,9 +116,8 @@ function updateLayout(next: Layout): void {
       :min-h="2"
       :is-draggable="editing"
       :is-resizable="editing"
-      :resize-option="resizeOption"
       drag-allow-from=".dashboard-widget-frame__drag-handle"
-      drag-ignore-from="button, input, select, .dashboard-widget-frame__body, .information-home-grid__resize-handle"
+      drag-ignore-from="button, input, select, .dashboard-widget-frame__body"
     >
       <InformationHomeWidgetHost
         :widget="widget"
@@ -145,14 +135,6 @@ function updateLayout(next: Layout): void {
         @change-summary-interval="emit('changeSummaryInterval')"
         @resize="emit('resize', widget.id, $event)"
         @update-settings="emit('updateSettings', widget.id, $event)"
-      />
-      <span
-        v-if="editing"
-        class="information-home-grid__resize-handle"
-        role="separator"
-        aria-label="拖动调整卡片大小"
-        aria-orientation="horizontal"
-        title="拖动调整卡片大小"
       />
     </GridItem>
   </GridLayout>

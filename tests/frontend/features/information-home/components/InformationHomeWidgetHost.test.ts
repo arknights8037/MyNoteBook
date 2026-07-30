@@ -93,4 +93,44 @@ describe('InformationHomeWidgetHost', () => {
     expect(document.body.querySelector('[aria-label="卡片右键菜单"]')).not.toBeNull()
     wrapper.unmount()
   })
+
+  it('keeps empty widget data stable and offers removal from the context menu outside edit mode', async () => {
+    const widget: InformationHomeWidget = {
+      id: 'todo-widget',
+      widgetType: 'todo-list',
+      widgetVersion: 1,
+      query: { limit: 8 },
+      settings: {},
+      layout: { desktop: { x: 0, y: 0, w: 5, h: 5, minW: 4, minH: 3 } },
+    }
+    const wrapper = mount(InformationHomeWidgetHost, {
+      props: {
+        widget,
+        editing: false,
+        summary: null,
+        generatingSummary: false,
+        autoSummaryEnabled: false,
+        summaryIntervalMinutes: 360,
+      },
+    })
+    await nextTick()
+
+    const firstItems = wrapper.getComponent({ name: 'TodoListHomeWidget' }).props('items')
+    await wrapper.setProps({ generatingSummary: true })
+    await nextTick()
+    expect(wrapper.getComponent({ name: 'TodoListHomeWidget' }).props('items')).toBe(firstItems)
+
+    await wrapper.get('.dashboard-widget-frame').trigger('contextmenu', {
+      clientX: 80,
+      clientY: 100,
+    })
+    const removeButton = Array.from(
+      document.body.querySelectorAll<HTMLButtonElement>('[aria-label="卡片右键菜单"] button'),
+    ).find((button) => button.textContent?.includes('移除卡片'))
+    expect(removeButton).toBeDefined()
+    removeButton?.click()
+    await nextTick()
+    expect(wrapper.emitted('remove')).toHaveLength(1)
+    wrapper.unmount()
+  })
 })

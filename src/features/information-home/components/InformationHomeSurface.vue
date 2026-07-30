@@ -157,6 +157,8 @@ function addWidget(type: InformationHomeWidgetType): void {
 }
 
 function copyWidget(id: string): void {
+  if (!editing.value) beginEdit()
+  if (!editing.value) return
   mutate((payload) => {
     const source = payload.widgets.find((widget) => widget.id === id)
     if (!source) return
@@ -168,12 +170,16 @@ function copyWidget(id: string): void {
 }
 
 function removeWidget(id: string): void {
+  if (!editing.value) beginEdit()
+  if (!editing.value) return
   mutate((payload) => {
     payload.widgets = payload.widgets.filter((widget) => widget.id !== id)
   })
 }
 
 function resizeWidget(id: string, size: { w: number; h: number }): void {
+  if (!editing.value) beginEdit()
+  if (!editing.value) return
   mutate((payload) => {
     const widget = payload.widgets.find((candidate) => candidate.id === id)
     if (!widget) return

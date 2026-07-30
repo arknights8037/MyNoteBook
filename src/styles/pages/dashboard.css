@@ -208,7 +208,9 @@
 
 .information-home-surface.dashboard-surface--editing
   .information-home-grid
-  .information-home-grid__resize-handle {
+  > .vgl-item
+  > .vgl-item__resizer {
+  display: block;
   position: absolute;
   z-index: 70;
   right: -4px;
@@ -224,7 +226,8 @@
 
 .information-home-surface.dashboard-surface--editing
   .information-home-grid
-  .information-home-grid__resize-handle::before {
+  > .vgl-item
+  > .vgl-item__resizer::before {
   position: absolute;
   top: 10px;
   right: 6px;
@@ -238,12 +241,9 @@
 
 .information-home-surface.dashboard-surface--editing
   .information-home-grid
-  .information-home-grid__resize-handle:hover {
+  > .vgl-item
+  > .vgl-item__resizer:hover {
   background: color-mix(in srgb, var(--color-agent-accent) 25%, transparent);
-}
-
-.information-home-grid > .vgl-item > .vgl-item__resizer {
-  display: none;
 }
 
 .dashboard-toolbar strong {

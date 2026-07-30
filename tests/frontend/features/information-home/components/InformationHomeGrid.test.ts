@@ -7,7 +7,7 @@ import InformationHomeGrid from '@/features/information-home/components/Informat
 import type { InformationHomeWidget } from '@/models/home/informationHome'
 
 describe('InformationHomeGrid', () => {
-  it('renders an explicit free-resize handle only while editing', async () => {
+  it('uses the grid library resize handle only while editing', async () => {
     const widget: InformationHomeWidget = {
       id: 'todo-grid-test',
       widgetType: 'todo-list',
@@ -28,22 +28,17 @@ describe('InformationHomeGrid', () => {
     })
     await nextTick()
 
-    expect(wrapper.find('.information-home-grid__resize-handle').exists()).toBe(true)
+    expect(wrapper.find('.vgl-item__resizer').exists()).toBe(true)
+    expect(wrapper.find('.information-home-grid__resize-handle').exists()).toBe(false)
     expect(wrapper.get('.vgl-item').classes()).toContain('vgl-item--resizable')
     expect(wrapper.getComponent(GridLayout).props('verticalCompact')).toBe(false)
     expect(wrapper.getComponent(GridLayout).props('preventCollision')).toBe(false)
     expect(wrapper.getComponent(GridItem).props('minH')).toBe(2)
     expect(wrapper.getComponent(GridItem).props('minW')).toBe(2)
-    expect(wrapper.getComponent(GridItem).props('resizeOption')).toEqual({
-      edges: {
-        right: '.information-home-grid__resize-handle',
-        bottom: '.information-home-grid__resize-handle',
-        left: false,
-        top: false,
-      },
-    })
+    expect(wrapper.getComponent(GridItem).props('resizeOption')).toEqual({})
 
     await wrapper.setProps({ editing: false })
-    expect(wrapper.find('.information-home-grid__resize-handle').exists()).toBe(false)
+    await nextTick()
+    expect(wrapper.find('.vgl-item__resizer').exists()).toBe(false)
   })
 })

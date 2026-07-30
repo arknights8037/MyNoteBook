@@ -2,7 +2,12 @@
 import { ChevronRight, Copy, Trash2 } from '@lucide/vue'
 import { computed, onErrorCaptured, ref } from 'vue'
 
-import type { InformationHomeSummary, InformationHomeWidget } from '@/models/home/informationHome'
+import type {
+  InformationHomeCalendarEvent,
+  InformationHomeSummary,
+  InformationHomeTodoItem,
+  InformationHomeWidget,
+} from '@/models/home/informationHome'
 import DashboardWidgetFrame from '@/features/dashboard/components/DashboardWidgetFrame.vue'
 import { getInformationHomeWidgetDefinition } from '../informationHomeWidgetRegistry'
 import AgentSummaryHomeWidget from './AgentSummaryHomeWidget.vue'
@@ -51,6 +56,10 @@ const sizePresets = [
 ]
 const definition = computed(() => getInformationHomeWidgetDefinition(props.widget.widgetType))
 const title = computed(() => props.widget.settings.title || definition.value.title)
+const emptyTodoItems: InformationHomeTodoItem[] = []
+const emptyCalendarEvents: InformationHomeCalendarEvent[] = []
+const todoItems = computed(() => props.widget.settings.todos ?? emptyTodoItems)
+const calendarEvents = computed(() => props.widget.settings.events ?? emptyCalendarEvents)
 
 onErrorCaptured((error) => {
   renderError.value = error instanceof Error ? error.message : String(error)
@@ -69,7 +78,6 @@ function selectSize(size: { w: number; h: number }, close = true): void {
 }
 
 function openWidgetContextMenu(event: BrowserMouseEvent): void {
-  if (!props.editing) return
   event.preventDefault()
   event.stopPropagation()
   const width = 444
@@ -80,6 +88,17 @@ function openWidgetContextMenu(event: BrowserMouseEvent): void {
   }
   activeSubmenu.value = null
   showSizeMenu.value = true
+}
+
+function updateMetrics(next: Array<{ value: number; label: string }>): void {
+  if (
+    metrics.value.length === next.length &&
+    metrics.value.every(
+      (item, index) => item.value === next[index]?.value && item.label === next[index]?.label,
+    )
+  )
+    return
+  metrics.value = next
 }
 
 function selectWidth(width: number): void {
@@ -129,7 +148,7 @@ function removeWidget(): void {
       :limit="widget.query.limit"
       @open="emit('openEmail', $event)"
       @refreshing="refreshing = $event"
-      @metrics="metrics = $event"
+      @metrics="updateMetrics"
     />
     <RssNewsHomeWidget
       v-else-if="widget.widgetType === 'rss-news'"
@@ -137,7 +156,7 @@ function removeWidget(): void {
       :limit="widget.query.limit"
       @open="emit('openRss', $event)"
       @refreshing="refreshing = $event"
-      @metrics="metrics = $event"
+      @metrics="updateMetrics"
     />
     <AgentSummaryHomeWidget
       v-else-if="widget.widgetType === 'agent-summary'"
@@ -151,16 +170,16 @@ function removeWidget(): void {
     />
     <TodoListHomeWidget
       v-else-if="widget.widgetType === 'todo-list'"
-      :items="widget.settings.todos ?? []"
+      :items="todoItems"
       :editing="editing"
-      @metrics="metrics = $event"
+      @metrics="updateMetrics"
       @update="emit('updateSettings', { ...widget.settings, todos: $event })"
     />
     <CalendarHomeWidget
       v-else
-      :events="widget.settings.events ?? []"
+      :events="calendarEvents"
       :editing="editing"
-      @metrics="metrics = $event"
+      @metrics="updateMetrics"
       @update="emit('updateSettings', { ...widget.settings, events: $event })"
     />
   </DashboardWidgetFrame>
