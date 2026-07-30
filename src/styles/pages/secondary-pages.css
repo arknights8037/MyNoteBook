@@ -104,6 +104,391 @@
   padding: 20px 0 64px;
 }
 
+.extension-context-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 11px;
+  padding: 13px 15px;
+  background:
+    linear-gradient(
+      110deg,
+      color-mix(in srgb, var(--color-agent-accent) 7%, transparent),
+      transparent 60%
+    ),
+    var(--color-bg-elevated);
+}
+
+.extension-context-card > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+}
+
+.extension-context-card > div > span {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--color-agent-accent);
+  background: var(--color-agent-thinking-bg);
+}
+
+.extension-context-card > div > div {
+  display: grid;
+  gap: 3px;
+}
+
+.extension-context-card small,
+.extension-context-card p {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+}
+
+.extension-context-card strong {
+  font-size: var(--font-size-body-large);
+}
+
+.extension-context-card p {
+  max-width: 360px;
+  margin: 0;
+  line-height: 1.55;
+  text-align: right;
+}
+
+.local-environment {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 12px;
+  padding: 18px;
+  background: var(--color-bg-elevated);
+}
+
+.local-environment__header,
+.local-environment__heading,
+.local-environment__header > button,
+.local-environment__identity > div,
+.local-environment__toolbar,
+.local-environment__toolbar > label,
+.local-environment__toolbar > div,
+.local-environment__variables article,
+.local-environment footer {
+  display: flex;
+  align-items: center;
+}
+
+.local-environment__header {
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.local-environment__heading {
+  min-width: 0;
+  gap: 11px;
+}
+
+.local-environment__heading > span {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--color-agent-accent);
+  background: var(--color-agent-thinking-bg);
+}
+
+.local-environment__heading h2,
+.local-environment__heading p {
+  margin: 0;
+}
+
+.local-environment__heading h2 {
+  font-size: var(--font-size-title-large);
+}
+
+.local-environment__heading p {
+  margin-top: 3px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+}
+
+.local-environment__header > button {
+  gap: 6px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 7px;
+  padding: 7px 9px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-elevated);
+  font: inherit;
+  font-size: var(--font-size-micro);
+  cursor: pointer;
+}
+
+.local-environment__identity {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 9px;
+  background: var(--color-bg-subtle);
+}
+
+.local-environment__identity > div {
+  min-width: 0;
+  gap: 9px;
+  padding: 10px 12px;
+  color: var(--color-agent-accent);
+}
+
+.local-environment__identity > div + div {
+  border-left: 1px solid var(--color-border-subtle);
+}
+
+.local-environment__identity span,
+.local-environment__variables article > div,
+.local-environment__variables article > div > span {
+  display: grid;
+  min-width: 0;
+}
+
+.local-environment__identity small,
+.local-environment__variables small {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+}
+
+.local-environment__identity strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-environment__toolbar {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.local-environment__toolbar > label {
+  min-width: 220px;
+  flex: 1;
+  gap: 7px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 7px;
+  padding: 0 9px;
+  color: var(--color-text-tertiary);
+}
+
+.local-environment__toolbar input {
+  width: 100%;
+  min-height: 32px;
+  border: 0;
+  outline: 0;
+  color: var(--color-text-primary);
+  background: transparent;
+  font: inherit;
+  font-size: var(--font-size-small);
+}
+
+.local-environment__toolbar > div {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 3px;
+}
+
+.local-environment__toolbar > div button {
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--color-text-tertiary);
+  background: transparent;
+  font: inherit;
+  font-size: var(--font-size-micro);
+  cursor: pointer;
+}
+
+.local-environment__toolbar > div button:hover,
+.local-environment__toolbar > div button.is-active {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.local-environment__variables {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 9px;
+}
+
+.local-environment__variables article {
+  min-width: 0;
+  grid-template-columns: 20px minmax(0, 1fr) 28px;
+  align-items: start;
+  gap: 7px;
+  padding: 10px 11px;
+}
+
+.local-environment__variables article + article {
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.local-environment__variables article:hover {
+  background: var(--color-bg-subtle);
+}
+
+.local-environment__variables article > div {
+  gap: 5px;
+}
+
+.local-environment__variables article > div > span {
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.local-environment__variables strong,
+.local-environment__variables code {
+  font-family: var(--font-family-monospace, 'SFMono-Regular', Consolas, monospace);
+}
+
+.local-environment__variables strong {
+  font-size: var(--font-size-small);
+}
+
+.local-environment__variables code {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-environment__variables ol {
+  display: grid;
+  gap: 3px;
+  margin: 3px 0 0;
+  padding-left: 25px;
+}
+
+.local-environment__variables ol code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.local-environment__expand,
+.local-environment__copy {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  padding: 0;
+  color: var(--color-text-tertiary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.local-environment__expand {
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+}
+
+.local-environment__copy {
+  opacity: 0;
+}
+
+.local-environment__variables article:hover .local-environment__copy,
+.local-environment__copy:focus-visible {
+  opacity: 1;
+}
+
+.local-environment__copy:hover {
+  color: var(--color-agent-accent);
+  background: var(--color-agent-thinking-bg);
+}
+
+.local-environment__bullet {
+  width: 5px;
+  height: 5px;
+  margin: 7px auto 0;
+  border-radius: 50%;
+  background: var(--color-status-success);
+}
+
+.local-environment__state {
+  margin: 0;
+  padding: 20px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-small);
+  text-align: center;
+}
+
+.local-environment__state.is-error {
+  color: var(--color-status-error);
+}
+
+.local-environment footer {
+  gap: 6px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+}
+
+.local-environment--compact {
+  height: 100%;
+  align-content: start;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+
+.local-environment--compact .local-environment__identity {
+  flex: 0 0 auto;
+}
+
+.local-environment--compact .local-environment__variables {
+  overflow: visible;
+}
+
+@media (max-width: 760px) {
+  .extension-context-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .extension-context-card p {
+    text-align: left;
+  }
+
+  .local-environment__identity {
+    grid-template-columns: 1fr;
+  }
+
+  .local-environment__identity > div + div {
+    border-top: 1px solid var(--color-border-subtle);
+    border-left: 0;
+  }
+
+  .local-environment__toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .local-environment__toolbar > div {
+    justify-content: flex-start;
+  }
+}
+
 .connector-catalog {
   display: grid;
   gap: 14px;

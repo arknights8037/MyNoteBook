@@ -44,6 +44,13 @@ export const INFORMATION_HOME_WIDGET_REGISTRY: readonly InformationHomeWidgetDef
     source: '信息首页本地日程',
     defaultSize: { w: 7, h: 6, minW: 5, minH: 5 },
   },
+  {
+    type: 'local-environment',
+    title: '本地环境',
+    description: '快速浏览设备、系统架构与关键环境变量。',
+    source: '本机安全环境白名单',
+    defaultSize: { w: 12, h: 4, minW: 6, minH: 3 },
+  },
 ] as const
 
 export function getInformationHomeWidgetDefinition(type: InformationHomeWidgetType) {

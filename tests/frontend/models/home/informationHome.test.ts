@@ -10,13 +10,14 @@ describe('informationHome model', () => {
   let id = 0
   const createId = (prefix: string) => `${prefix}-${++id}`
 
-  it('creates an independent default grid with email, RSS and Agent modules', () => {
+  it('creates an independent default grid with signals and local environment modules', () => {
     const payload = createDefaultInformationHomePayload(createId)
 
     expect(payload.widgets.map((widget) => widget.widgetType)).toEqual([
       'email-actions',
       'rss-news',
       'agent-summary',
+      'local-environment',
     ])
     expect(validateInformationHomePayload(payload)).toBeNull()
   })
