@@ -224,6 +224,8 @@ AgentRunRequest
 
 Phase 3 的退出条件已经满足。真实 Provider/Tauri 凭据 smoke、A2A 队列决策、Cognitive 最终投影、无窗口业务终态持久化和删除 WebView compatibility path 分别进入 Phase 4/5 的数据库所有权与 Workflow 迁移，不应再阻塞 Runtime 进程边界验收。
 
+Phase 4 的数据库所有权收敛已开始：Cognitive Session 的 create/get/list/update 已迁至 Rust command，现有 WebView repository 不再拥有该表的 SQL 写入口。
+
 ### 目标
 
 让 Agent 执行不再由 Vue 生命周期拥有。
