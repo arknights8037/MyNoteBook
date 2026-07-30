@@ -25,9 +25,9 @@ export const INFORMATION_HOME_WIDGET_REGISTRY: readonly InformationHomeWidgetDef
   },
   {
     type: 'agent-summary',
-    title: 'Agent 信息摘要',
-    description: '将当前邮件事项和 RSS 新闻整理成只读行动摘要。',
-    source: '本地信号 + 当前 AI Provider',
+    title: '智能事件摘要',
+    description: '汇总系统事件处理结果，并提供原始条目的定位入口。',
+    source: '本地事件处理结果',
     defaultSize: { w: 12, h: 4, minW: 6, minH: 3 },
   },
   {

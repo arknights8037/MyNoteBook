@@ -16,6 +16,8 @@ describe('AgentSummaryHomeWidget', () => {
     })
 
     expect(wrapper.text()).toContain('已消费 1 次事件处理')
+    expect(wrapper.text()).toContain('自动处理')
+    expect(wrapper.text()).not.toContain('AUTO')
     expect(wrapper.text()).toContain('构建问题需要处理')
     expect(wrapper.text()).toContain('CI 构建失败')
     expect(wrapper.text()).toContain('Rust 检查未通过')

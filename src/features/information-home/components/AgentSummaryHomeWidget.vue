@@ -63,7 +63,7 @@ const rendered = computed(() => renderAiMarkdown(digest.value.narrativeMarkdown)
       <div class="home-agent-summary__meta">
         <span
           >已消费 {{ digest.completedCount }} 次事件处理 ·
-          {{ digest.primaryResult?.triggerSource === 'auto' ? 'AUTO' : 'MANUAL' }}</span
+          {{ digest.primaryResult?.triggerSource === 'auto' ? '自动处理' : '手动处理' }}</span
         ><time v-if="digest.primaryResult">{{
           new Date(digest.primaryResult.generatedAt).toLocaleString()
         }}</time>

@@ -110,7 +110,7 @@ onMounted(() => void refresh())
         />
         <span class="dashboard-widget-list__main"
           ><strong
-            ><span v-if="hotItemIds.has(item.id)" class="home-rss-hot-label">HOT</span
+            ><span v-if="hotItemIds.has(item.id)" class="home-rss-hot-label">热点</span
             >{{ item.title }}</strong
           ><small
             >{{ item.author || sourceName(item.sourceId) }} · {{ sourceName(item.sourceId) }}</small

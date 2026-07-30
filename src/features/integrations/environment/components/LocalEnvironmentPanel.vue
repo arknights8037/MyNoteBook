@@ -101,7 +101,7 @@ defineExpose({ refresh: load })
       </div>
       <div>
         <Code2 :size="16" /><span
-          ><small>默认 Shell</small
+          ><small>默认命令行</small
           ><strong :title="snapshot.shell">{{ snapshot.shell }}</strong></span
         >
       </div>

@@ -51,7 +51,7 @@ function collectEmailBriefs(summaries: InformationHomeSummary[]): EmailResultBri
       items.push({
         messageId,
         title: match[2].trim(),
-        summary: match[3]?.trim() || 'Agent 已完成该邮件的简要研判',
+        summary: match[3]?.trim() || '智能助手已完成该邮件的简要研判',
       })
       if (items.length >= 8) return items
     }

@@ -33,7 +33,7 @@ describe('SignalResultDigestService', () => {
       {
         messageId: 'mail-2',
         title: '服务到期提醒',
-        summary: 'Agent 已完成该邮件的简要研判',
+        summary: '智能助手已完成该邮件的简要研判',
       },
       { messageId: 'mail-3', title: '账单提醒', summary: '本月账单已生成' },
     ])

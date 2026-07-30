@@ -29,7 +29,7 @@ describe('RssNewsHomeWidget', () => {
     expect(wrapper.text()).not.toContain('生成速览')
     expect(wrapper.text()).not.toContain('自动 开')
     expect(wrapper.text()).not.toContain('自动 关')
-    expect(wrapper.get('.home-rss-hot-label').text()).toBe('HOT')
+    expect(wrapper.get('.home-rss-hot-label').text()).toBe('热点')
     wrapper.unmount()
   })
 })
