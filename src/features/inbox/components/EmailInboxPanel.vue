@@ -5,6 +5,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { createEmailService } from '@/app/composition/emailServiceFactory'
 import type { EmailAccount, EmailMessage, EmailProcessingStatus } from '@/models/inbox/email'
 import type { EmailService } from '@/services/inbox/EmailService'
+import { publishSignalRefresh } from '@/services/agent/SignalAgentService'
 import { useMessage } from '@/ui/services'
 
 const props = defineProps<{ mode: 'pending' | 'all' | 'email'; targetId?: string }>()
@@ -89,6 +90,7 @@ async function load(): Promise<void> {
 }
 
 async function syncAll(): Promise<void> {
+  const refreshStartedAt = Date.now()
   syncing.value = true
   error.value = ''
   let syncedMessages = 0
@@ -100,8 +102,15 @@ async function syncAll(): Promise<void> {
       else syncError = result.error.message
     }
     await load()
-    if (syncError) error.value = syncError
-    else notify.success(`邮箱同步完成，读取 ${syncedMessages} 封邮件`)
+    await publishSignalRefresh({
+      since: refreshStartedAt,
+      triggerSource: 'sync',
+      importedCount: syncedMessages,
+    })
+    if (syncError) error.value = `${syncError}；已读取的邮件仍交给 Agent 处理。`
+    else notify.success(`已读取 ${syncedMessages} 封邮件，Agent 正在自主处理`)
+  } catch (syncFailure) {
+    error.value = syncFailure instanceof Error ? syncFailure.message : String(syncFailure)
   } finally {
     syncing.value = false
   }

@@ -97,6 +97,7 @@ mod reliability;
 mod rss;
 mod secret_store;
 mod sensitive_data;
+mod signal_runtime;
 mod skills;
 mod storage;
 mod views;
@@ -238,6 +239,7 @@ pub fn run() {
             agent_request_watcher::configure_agent_background_runtime,
             agent_request_watcher::claim_agent_request,
             agent_request_watcher::settle_agent_request,
+            signal_runtime::publish_signal_refresh_event,
             workflow_timers::get_workflow_timer_snapshot,
             work::commit_result_verification,
             work::decide_change_set,

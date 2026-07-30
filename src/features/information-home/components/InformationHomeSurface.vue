@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { Check, ChevronRight, Pencil, Plus, RotateCcw, Undo2, X } from '@lucide/vue'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
-import { createEmailService } from '@/app/composition/emailServiceFactory'
 import { createInformationHomeService } from '@/app/composition/informationHomeServiceFactory'
-import { createRssService } from '@/app/composition/rssServiceFactory'
 import type { AiSettings } from '@/models/ai/ai'
 import {
   createDefaultInformationHomePayload,
@@ -15,10 +14,8 @@ import {
   type InformationHomeWidget,
   type InformationHomeWidgetType,
 } from '@/models/home/informationHome'
-import type {
-  InformationHomeService,
-  InformationHomeSignal,
-} from '@/services/home/InformationHomeService'
+import { publishSignalRefresh } from '@/services/agent/SignalAgentService'
+import type { InformationHomeService } from '@/services/home/InformationHomeService'
 import {
   getInformationHomeWidgetDefinition,
   INFORMATION_HOME_WIDGET_REGISTRY,
@@ -48,8 +45,8 @@ const settingsSaving = ref(false)
 const generatingSummary = ref(false)
 const error = ref('')
 let servicePromise: Promise<InformationHomeService> | null = null
-let autoTimer: ReturnType<typeof globalThis.setInterval> | null = null
-let lastAutoAttemptAt = 0
+let unlistenSignalAgent: UnlistenFn | null = null
+let lastSignalUpdateAt: number | null = null
 let settingsSaveQueue = Promise.resolve()
 let pendingSettingsSaves = 0
 
@@ -266,12 +263,10 @@ async function generateSummary(trigger: 'manual' | 'auto' = 'manual'): Promise<v
   try {
     const loaded = await props.ensureAiSecretLoaded()
     if (!loaded) throw new Error('AI 凭据尚未加载，请先在设置中完成 Provider 配置。')
-    const signals = await readSignals()
-    const result = await (await service()).generateSummary(signals, props.aiSettings, trigger)
-    if (!result.ok) throw new Error(result.error.message)
-    const summaryResult = await (await service()).listSummaries(20)
-    if (!summaryResult.ok) throw new Error(summaryResult.error.message)
-    summaries.value = summaryResult.value
+    await publishSignalRefresh({
+      since: latestSummary.value?.sourceCursorAt ?? Date.now() - 24 * 60 * 60 * 1_000,
+      triggerSource: trigger === 'manual' ? 'manual' : 'connector',
+    })
   } catch (value) {
     error.value = value instanceof Error ? value.message : String(value)
     const summaryResult = await (await service()).listSummaries(20)
@@ -288,7 +283,6 @@ async function toggleAutoSummary(): Promise<void> {
   ).updateSummarySettings(!home.value.autoSummaryEnabled, home.value.summaryIntervalMinutes)
   if (!result.ok) return void (error.value = result.error.message)
   home.value = result.value
-  if (result.value.autoSummaryEnabled) void maybeGenerateAutomatically()
 }
 
 async function changeSummaryInterval(): Promise<void> {
@@ -305,59 +299,6 @@ async function changeSummaryInterval(): Promise<void> {
   ).updateSummarySettings(home.value.autoSummaryEnabled, minutes)
   if (!result.ok) return void (error.value = result.error.message)
   home.value = result.value
-}
-
-async function maybeGenerateAutomatically(): Promise<void> {
-  if (!home.value || generatingSummary.value) return
-  const minimumWait = home.value.summaryIntervalMinutes * 60_000
-  if (Date.now() - lastAutoAttemptAt < minimumWait) return
-  const signals = await readSignals().catch(() => [])
-  if (!(await service()).shouldGenerateAutomatically(home.value, latestSummary.value, signals))
-    return
-  lastAutoAttemptAt = Date.now()
-  await generateSummary('auto')
-}
-
-async function readSignals(): Promise<InformationHomeSignal[]> {
-  const [email, rss] = await Promise.all([createEmailService(), createRssService()])
-  const [accounts, emails, sources, entries] = await Promise.all([
-    email.listAccounts(),
-    email.listMessages({ status: 'pending', limit: 20 }),
-    rss.listSources(),
-    rss.listEntries({ limit: 20 }),
-  ])
-  const failed = [accounts, emails, sources, entries].find((result) => !result.ok)
-  if (failed && !failed.ok) throw new Error(failed.error.message)
-  if (!accounts.ok || !emails.ok || !sources.ok || !entries.ok) return []
-  return [
-    ...emails.value.map(
-      (message): InformationHomeSignal => ({
-        kind: 'email',
-        id: message.id,
-        source:
-          accounts.value.find((account) => account.id === message.accountId)?.displayName ?? '邮箱',
-        title: message.subject,
-        author: message.fromName || message.fromAddress || '未知发件人',
-        preview: message.preview || message.bodyText,
-        timestamp: message.receivedAt,
-        cursorAt: message.syncedAt,
-        status: message.processingStatus,
-      }),
-    ),
-    ...entries.value.map(
-      (entry): InformationHomeSignal => ({
-        kind: 'rss',
-        id: entry.id,
-        source: sources.value.find((source) => source.id === entry.sourceId)?.displayName ?? 'RSS',
-        title: entry.title,
-        author: entry.author || 'RSS 来源',
-        preview: entry.preview || entry.bodyText,
-        timestamp: entry.publishedAt,
-        cursorAt: entry.syncedAt,
-        status: entry.processingStatus,
-      }),
-    ),
-  ]
 }
 
 function createWidget(
@@ -392,13 +333,23 @@ function clone<T>(value: T): T {
 
 onMounted(async () => {
   await load()
-  if (native) {
-    void maybeGenerateAutomatically()
-    autoTimer = globalThis.setInterval(() => void maybeGenerateAutomatically(), 60_000)
-  }
+  if (native)
+    unlistenSignalAgent = await listen<{
+      latestUpdateAt?: number
+      queuedCount?: number
+      runningCount?: number
+      toolName?: string
+    }>('signal-agent://changed', ({ payload }) => {
+      if (typeof payload.queuedCount === 'number' && typeof payload.runningCount === 'number')
+        generatingSummary.value = payload.queuedCount + payload.runningCount > 0
+      if (payload.toolName) return void load()
+      if (!payload.latestUpdateAt || payload.latestUpdateAt === lastSignalUpdateAt) return
+      lastSignalUpdateAt = payload.latestUpdateAt
+      void load()
+    })
 })
 onBeforeUnmount(() => {
-  if (autoTimer) globalThis.clearInterval(autoTimer)
+  unlistenSignalAgent?.()
 })
 </script>
 

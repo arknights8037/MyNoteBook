@@ -6,6 +6,7 @@ export type AgentRunIntent =
   | 'review'
   | 'learning'
   | 'interactive'
+  | 'signal'
 
 export type AiProvider = 'openai' | 'anthropic' | 'deepseek' | 'qwen' | 'openai-compatible'
 export type AiReasoningEffort = 'auto' | 'low' | 'medium' | 'high'

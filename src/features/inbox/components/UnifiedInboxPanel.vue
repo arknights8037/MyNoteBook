@@ -23,6 +23,7 @@ import type { ImConnector, ImMessage, ImProcessingStatus } from '@/models/inbox/
 import type { DingTalkService } from '@/services/inbox/DingTalkService'
 import type { EmailService } from '@/services/inbox/EmailService'
 import type { RssService } from '@/services/inbox/RssService'
+import { publishSignalRefresh } from '@/services/agent/SignalAgentService'
 import { useMessage } from '@/ui/services'
 
 type UnifiedStatus = EmailProcessingStatus | RssProcessingStatus | ImProcessingStatus
@@ -230,6 +231,7 @@ async function load(showLoading = true): Promise<void> {
 }
 
 async function syncAll(): Promise<void> {
+  const refreshStartedAt = Date.now()
   syncing.value = true
   error.value = ''
   let imported = 0
@@ -248,8 +250,20 @@ async function syncAll(): Promise<void> {
       else syncError = result.error.message
     }
     await load()
-    if (syncError) error.value = syncError
-    else notify.success(imported ? `统一收件箱已读取 ${imported} 条更新` : '所有来源已是最新状态')
+    await publishSignalRefresh({
+      since: refreshStartedAt,
+      triggerSource: 'sync',
+      importedCount: imported,
+    })
+    if (syncError) error.value = `${syncError}；已读取的更新仍交给 Agent 处理。`
+    else
+      notify.success(
+        imported
+          ? `已读取 ${imported} 条更新，Agent 正在自主处理`
+          : '已检查所有来源，Agent 正在核对相关更新',
+      )
+  } catch (syncFailure) {
+    error.value = syncFailure instanceof Error ? syncFailure.message : String(syncFailure)
   } finally {
     syncing.value = false
   }

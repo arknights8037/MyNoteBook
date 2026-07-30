@@ -107,6 +107,33 @@ export const AGENT_TOOL_REGISTRY: readonly AgentToolDefinition[] = defineAgentTo
     tags: ['system.inspect'],
   },
   {
+    name: 'read_personal_organizer',
+    description:
+      '读取信号事件冻结时刻的个人待办与日历，用于去重和会议后续更新；仅限 signal intent。',
+    risk: 'read',
+    authorization: 'none',
+    maxCallsPerRun: 8,
+    tags: ['external.read'],
+  },
+  {
+    name: 'upsert_personal_todo',
+    description:
+      '根据信号 Agent 的自主判断创建或更新本地个人待办。需要事件内稳定 actionKey；不发送外部消息。',
+    risk: 'draft',
+    authorization: 'none',
+    maxCallsPerRun: 16,
+    tags: ['external.may_write'],
+  },
+  {
+    name: 'upsert_personal_calendar_event',
+    description:
+      '根据信号 Agent 的自主判断创建或更新本地日历事项；仅接受明确的 YYYY-MM-DD 日期，不发送外部邀请。',
+    risk: 'draft',
+    authorization: 'none',
+    maxCallsPerRun: 12,
+    tags: ['external.may_write'],
+  },
+  {
     name: 'request_authorizer_input',
     description:
       '仅在目标、范围、结构或写入位置需要授权人决策时暂停任务，收到回答后继续同一次运行。',

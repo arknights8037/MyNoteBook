@@ -1374,7 +1374,9 @@ mod tests {
         .await
         .expect("insert existing data");
         sqlx::raw_sql(
-            "DROP INDEX idx_domain_events_source_deduplication; \
+            "DROP TABLE signal_action_receipts; \
+             DROP TABLE signal_agent_runs; \
+             DROP INDEX idx_domain_events_source_deduplication; \
              ALTER TABLE domain_events DROP COLUMN security_scope_json; \
              ALTER TABLE domain_events DROP COLUMN deduplication_key; \
              ALTER TABLE domain_events DROP COLUMN workspace_id; \
@@ -1416,7 +1418,7 @@ mod tests {
               ALTER TABLE automation_runs DROP COLUMN source_cursor_at; \
               ALTER TABLE automation_runs DROP COLUMN agent_task_id; \
               ALTER TABLE automation_runs DROP COLUMN run_id; \
-              DELETE FROM _sqlx_migrations WHERE version IN (39, 40, 41, 42);",
+              DELETE FROM _sqlx_migrations WHERE version IN (39, 40, 41, 42, 43);",
         )
         .execute(pool.as_ref())
         .await
@@ -1442,7 +1444,7 @@ mod tests {
                 .fetch_one(upgraded.as_ref())
                 .await
                 .expect("existing document");
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
         assert_eq!(existing, 1);
         assert!(table_exists(upgraded.as_ref(), "workflow_wait_conditions")
             .await
@@ -1450,6 +1452,12 @@ mod tests {
         assert!(table_exists(upgraded.as_ref(), "workflow_timers")
             .await
             .expect("timer table"));
+        assert!(table_exists(upgraded.as_ref(), "signal_agent_runs")
+            .await
+            .expect("signal agent run table"));
+        assert!(table_exists(upgraded.as_ref(), "signal_action_receipts")
+            .await
+            .expect("signal action receipt table"));
         assert!(
             column_exists(upgraded.as_ref(), "domain_events", "deduplication_key")
                 .await

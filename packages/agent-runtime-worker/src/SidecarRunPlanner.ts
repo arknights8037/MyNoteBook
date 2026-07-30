@@ -327,6 +327,22 @@ function restrictPolicyForIntent(
     'discover_local_tools',
     'get_system_info',
   ]
+  if (intent === 'signal') {
+    policy.allowedTools = [
+      'search_documents',
+      'list_document_groups',
+      'read_document',
+      'list_mind_maps',
+      'read_mind_map',
+      'read_personal_organizer',
+      'upsert_personal_todo',
+      'upsert_personal_calendar_event',
+    ]
+    policy.allowWriteProposals = false
+    policy.allowUserInput = false
+    policy.riskLevel = 'propose_write'
+    return
+  }
   if (intent === 'plan' || isCognitiveIntent(intent)) {
     policy.allowedTools = [...sharedReadTools, ...diagnosticReadTools, 'mcp:*']
     policy.allowWriteProposals = false

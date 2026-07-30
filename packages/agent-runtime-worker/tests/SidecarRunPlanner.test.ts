@@ -42,6 +42,28 @@ describe('planSidecarRun', () => {
     )
   })
 
+  it('gives signal runs autonomous read access and only local organizer writes', async () => {
+    const planned = await planSidecarRun({ ...submission(), intent: 'signal' })
+    const toolNames = planned.request.toolManifest.map((tool) => tool.name)
+
+    expect(planned.request.executionPolicy).toMatchObject({
+      riskLevel: 'propose_write',
+      allowWriteProposals: false,
+      allowUserInput: false,
+    })
+    expect(toolNames).toEqual(
+      expect.arrayContaining([
+        'search_documents',
+        'read_document',
+        'read_personal_organizer',
+        'upsert_personal_todo',
+        'upsert_personal_calendar_event',
+      ]),
+    )
+    expect(toolNames).not.toContain('submit_document_edits')
+    expect(toolNames).not.toContain('create_automation_draft')
+  })
+
   it('compiles a completed sidecar proposal without WebView persistence', async () => {
     const planned = await planSidecarRun(submission())
     const finalization = await finalizeSidecarRun(planned.request, {

@@ -1,6 +1,6 @@
 # 当前架构与模块边界
 
-本文是 MyNoteBook 当前架构的事实入口，已按 2026-07-30 代码与 migration `0001`–`0042` 复核。它描述已经存在的实现、代码所有权和必须保持的依赖方向。产品定位、工作循环与品牌原则见 [产品定位与愿景](product-positioning.md)；认知系统契约见 [认知系统集成](cognitive-system-integration.md)，未完成事项和目标边界见 [后续开发路线图](roadmap.md)。
+本文是 MyNoteBook 当前架构的事实入口，已按 2026-07-30 代码与 migration `0001`–`0043` 复核。它描述已经存在的实现、代码所有权和必须保持的依赖方向。产品定位、工作循环与品牌原则见 [产品定位与愿景](product-positioning.md)；认知系统契约见 [认知系统集成](cognitive-system-integration.md)，未完成事项和目标边界见 [后续开发路线图](roadmap.md)。
 
 ## 1. 产品与技术边界
 
@@ -92,6 +92,7 @@ Knowledge Object 可锚定 document/block/revision。Context Compiler 已读取�
 - `agent_worker_supervisor.rs`：Phase 3 Worker 子进程身份、NDJSON 通道、heartbeat、重启、活动/待授权/待领取终态的脱敏快照、标准 proposal 的原子持久化、崩溃终态、Provider 流式代理，以及全部内置 Domain Tool/MCP 的受控分发；默认生产 Agent 由它监督。
 - `agent_request_watcher.rs`：后台 Runtime Profile、A2A lease 原子领取与自动调度、审批/修订状态机、按 `run_id` fencing 的请求/Cognitive 终态、Research candidate 原子持久化、指数退避、Dead Letter 和启动恢复扫描。
 - `automation_runtime.rs`：自动化到期入队、原子领取、文档/RSS 输入冻结、只读 Sidecar Agent 提交、来源游标、lease/retry/Dead Letter 和启动恢复。
+- `signal_runtime.rs`：消费相关更新领域事件，冻结邮件/RSS/IM/会议与个人工作上下文，提交自主 `signal` Agent，并持有本地待办/日历写入的权限、幂等和运行恢复边界。
 - `workflow_timers.rs`：绝对 UTC Durable Timer、等待条件、lease/retry/Dead Letter，以及 Domain Event/Outbox 原子触发。
 - `reliability.rs`：A2A、自动化、Timer 与 Rust Outbox dispatcher 共享的有界 RetryPolicy、lease clamp 和 UTC clock。
 - `ai_models.rs` / `ai_proxy.rs`：Provider 模型列表、请求代理、流式响应和敏感信息边界。
@@ -195,7 +196,7 @@ Agent Runtime、凭据、MCP、A2A Workflow、Durable Timer 和规范 Patch 终�
 - Rust SQLx 是唯一数据库连接所有者和唯一写入者；TypeScript repository 只提交固定 mutation ID 或参数化只读 query，不拥有连接池。
 - Review 已完成真实 DeepSeek/Tauri smoke；Research、Learning 和 Windows 发布升级的剩余真实环境验收单独记录在路线图，不用历史测试总数代替当前结论。
 - Provider 工具名称、Zod/JSON Schema、风险、三类授权、调用上限、tags 和展示元数据由 Domain Tool Catalog 生成；Rust 原生工具仍保留独立安全校验，不能被前端 schema 替代。
-- 自动化已由 Rust watcher 领取手动或到期运行，并复用生产 Sidecar 执行只读 Agent；RSS 类型会先同步来源并冻结增量输入。IM/邮件信号、外部委派触发和真实外部动作仍属于后续 Phase 5。
+- 自动化已由 Rust watcher 领取手动或到期运行，并复用生产 Sidecar 执行只读 Agent；RSS 类型会先同步来源并冻结增量输入。邮件/统一收件箱刷新和首页人工入口会发布相关更新事件，信号 Agent 可自主读取知识并幂等更新本地待办/日历。更多 IM 收纳、外部委派触发和真实外部动作仍属于后续 Phase 5。
 
 未完成的设计债与验收顺序以 [后续开发路线图](roadmap.md) 为准。
 

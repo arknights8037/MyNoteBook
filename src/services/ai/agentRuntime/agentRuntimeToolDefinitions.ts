@@ -86,6 +86,30 @@ export function buildAgentToolSet(
       execute: (args, options) =>
         execute(ctx, 'read_skill_file', args, { providerToolCallId: options?.toolCallId }),
     }),
+    read_personal_organizer: tool({
+      description: '读取当前信号事件可见的个人待办和本地日历。处理会议纪要前先核对，避免重复创建。',
+      inputSchema: AGENT_TOOL_INPUT_SCHEMAS.read_personal_organizer,
+      execute: (args, options) =>
+        execute(ctx, 'read_personal_organizer', args, {
+          providerToolCallId: options?.toolCallId,
+        }),
+    }),
+    upsert_personal_todo: tool({
+      description:
+        '创建或更新个人待办。仅在冻结信号里有明确可执行工作时调用；会议纪要对应已有事项时传 existingTodoId。actionKey 在同一信号内保持稳定。',
+      inputSchema: AGENT_TOOL_INPUT_SCHEMAS.upsert_personal_todo,
+      execute: (args, options) =>
+        execute(ctx, 'upsert_personal_todo', args, { providerToolCallId: options?.toolCallId }),
+    }),
+    upsert_personal_calendar_event: tool({
+      description:
+        '创建或更新本地日历事项。只有信号包含明确日期时调用；不会发送邀请或写入外部日历。actionKey 在同一信号内保持稳定。',
+      inputSchema: AGENT_TOOL_INPUT_SCHEMAS.upsert_personal_calendar_event,
+      execute: (args, options) =>
+        execute(ctx, 'upsert_personal_calendar_event', args, {
+          providerToolCallId: options?.toolCallId,
+        }),
+    }),
     request_authorizer_input: tool({
       description:
         '当关键目标、范围、结构或写入位置需要授权人决策时，暂停任务并等待授权人回答。不要询问可从上下文或只读工具自行确定的事实。',

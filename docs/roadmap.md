@@ -1,6 +1,6 @@
 # 后续开发路线图
 
-本文是 MyNoteBook 未完成工程工作的权威排序，已按 2026-07-30 代码与 migration `0001`–`0042` 复核。当前架构事实见 [系统架构](architecture.md)，生产 Agent 行为见 [Agent Runtime](agent-runtime.md)，PI 评审输入见 [PI 接入资料](pi-integration-high-value.md)。
+本文是 MyNoteBook 未完成工程工作的权威排序，已按 2026-07-30 代码与 migration `0001`–`0043` 复核。当前架构事实见 [系统架构](architecture.md)，生产 Agent 行为见 [Agent Runtime](agent-runtime.md)，PI 评审输入见 [PI 接入资料](pi-integration-high-value.md)。
 
 路线图按依赖、交付物和退出条件推进，不承诺未经验证的日历日期。以下标签必须严格区分：
 
@@ -337,7 +337,7 @@ Agent 遇到长期等待时返回终态 `SuspendRequest`，当前 Run 随即结�
 
 ### 交付物
 
-- 首批来源只覆盖人工请求、定时任务和 RSS。
+- 首批来源覆盖人工请求、定时任务、RSS 和相关更新事件；后者冻结邮件/RSS/IM/会议上下文后由 Agent 自主决策。
 - 每个来源先去重、分类和创建 Work Item，再决定是否需要 Agent；不得“每条事件启动一个 Agent”。
 - 外部动作统一经过 Action Gateway、`externalActionApproval` 和 Outbox。
 - 人工授权、知识 Mutation 和外部动作等待都可跨窗口/Worker 重启恢复。
@@ -346,13 +346,13 @@ Agent 遇到长期等待时返回终态 `SuspendRequest`，当前 Run 随即结�
 
 Phase 4 的 durable timer、lease、outbox 和托盘运行稳定。
 
-P4.5 已提供 `DomainEventEnvelopeV1` 与 `ExternalActionRequestV1/ResultV1` 契约脚手架，但没有启用任何真实外部动作。Phase 5 第一纵切已接通手动/间隔/每日自动化、Rust 队列领取、只读 Sidecar Agent、RSS 运行前同步、来源游标、lease/retry/Dead Letter 和结果投影。后续仍必须由 Rust Action Gateway 持有审批、幂等、fencing 和外部投递终态。
+P4.5 已提供 `DomainEventEnvelopeV1` 与 `ExternalActionRequestV1/ResultV1` 契约脚手架，但没有启用任何真实外部动作。Phase 5 已接通两条纵切：手动/间隔/每日自动化的只读 Agent；以及 `workspace.signals.refreshed` 事件驱动的自主信号 Agent。后者可检索知识并通过专用工具幂等更新本地待办/日历，不是固定分类 flow。后续真实外部动作仍必须由 Rust Action Gateway 持有审批、幂等、fencing 和投递终态。
 
 ### 退出条件
 
 - 人工请求、Timer 和 RSS 各完成一条可恢复 Workflow。
 - 重复事件不会创建重复 Work Item 或重复副作用。
-- 邮件与 IM 接入前，等待、重试、审批和恢复均有可重复验收。
+- 扩展更多 IM 来源和外部动作前，等待、重试、审批和恢复均有可重复验收。
 
 ### 本阶段不做
 

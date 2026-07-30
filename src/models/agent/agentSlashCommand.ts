@@ -8,6 +8,7 @@ export type AgentRunIntent =
   | 'review'
   | 'learning'
   | 'interactive'
+  | 'signal'
 
 export interface AgentSlashCommand {
   name: string

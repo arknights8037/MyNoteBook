@@ -12,6 +12,9 @@ export function getToolProgressLabel(name: string, completed: boolean): string {
     read_document: ['正在阅读相关资料', '已读取相关资料'],
     find_blocks_by_regex: ['正在定位需要修改的内容', '已定位需要修改的内容'],
     read_skill_file: ['正在读取技能资料', '已读取技能资料'],
+    read_personal_organizer: ['正在核对个人待办与日历', '已核对个人待办与日历'],
+    upsert_personal_todo: ['正在更新个人待办', '已更新个人待办'],
+    upsert_personal_calendar_event: ['正在更新本地日历', '已更新本地日历'],
     request_authorizer_input: ['正在等待授权人决策', '已收到授权人回答'],
     execute_shell: ['正在执行受限本机命令', '受限本机命令已完成'],
     inspect_environment_paths: ['正在检查环境路径', '已检查环境路径'],
@@ -33,20 +36,14 @@ export function getToolFailureProgressLabel(name: string): string {
   return `${getToolProgressLabel(name, false).replace(/^正在/, '')}失败`
 }
 
-export function policyAllowsToolName(
-  name: string,
-  policy: ExecutionPolicy,
-): boolean {
+export function policyAllowsToolName(name: string, policy: ExecutionPolicy): boolean {
   return (
     policy.allowedTools.includes(name) ||
     (name.startsWith('mcp__') && policy.allowedTools.includes('mcp:*'))
   )
 }
 
-export function createToolTimelineEvent(
-  call: AgentToolCall,
-  detail: string,
-): AgentTimelineEvent {
+export function createToolTimelineEvent(call: AgentToolCall, detail: string): AgentTimelineEvent {
   return {
     id: `tool:${call.id}`,
     kind: 'tool',

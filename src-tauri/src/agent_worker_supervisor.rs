@@ -1488,6 +1488,17 @@ async fn dispatch_worker_tool(
     }
 
     match tool_name {
+        "read_personal_organizer" | "upsert_personal_todo" | "upsert_personal_calendar_event" => {
+            let connection = crate::database::open_database(app, data_directory).await?;
+            crate::signal_runtime::execute_personal_organizer_tool(
+                app,
+                connection.as_ref(),
+                tool_name,
+                &arguments,
+                run_request,
+            )
+            .await
+        }
         "replace_blocks_by_regex" => {
             let arguments = arguments
                 .as_object()

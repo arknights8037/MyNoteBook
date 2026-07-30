@@ -43,6 +43,31 @@ export const AGENT_TOOL_INPUT_SCHEMAS: Record<AgentToolDefinition['name'], z.Zod
     skillId: z.string().min(1).max(80),
     relativePath: z.string().min(1).max(500),
   }),
+  read_personal_organizer: z.object({
+    signalId: z.string().min(1).max(160),
+  }),
+  upsert_personal_todo: z.object({
+    signalId: z.string().min(1).max(160),
+    actionKey: z
+      .string()
+      .min(1)
+      .max(120)
+      .regex(/^[A-Za-z0-9_.:-]+$/),
+    title: z.string().min(1).max(160),
+    existingTodoId: z.string().min(1).max(160).optional(),
+    completed: z.boolean().optional(),
+  }),
+  upsert_personal_calendar_event: z.object({
+    signalId: z.string().min(1).max(160),
+    actionKey: z
+      .string()
+      .min(1)
+      .max(120)
+      .regex(/^[A-Za-z0-9_.:-]+$/),
+    title: z.string().min(1).max(160),
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    existingEventId: z.string().min(1).max(160).optional(),
+  }),
   request_authorizer_input: z.object({
     question: z.string().min(1).max(500),
     context: z.string().max(1_000).optional(),
