@@ -251,6 +251,23 @@ pub(crate) async fn start_agent_sidecar_orchestration(
     .await
 }
 
+pub(crate) async fn start_background_orchestration(
+    app: &AppHandle,
+    data_directory: Option<String>,
+    submission: Value,
+    recovery_context: Value,
+) -> Result<(), String> {
+    let state = app.state::<AgentWorkerSupervisorState>();
+    let sender = ensure_supervisor(app, &state, data_directory.clone()).await?;
+    let submission = enrich_sidecar_submission_with_mcp(app, data_directory, submission).await?;
+    request_supervisor(&sender, |response| SupervisorCommand::StartOrchestration {
+        submission,
+        recovery_context: Some(recovery_context),
+        response,
+    })
+    .await
+}
+
 async fn enrich_sidecar_submission_with_mcp(
     app: &AppHandle,
     data_directory: Option<String>,
@@ -974,6 +991,16 @@ async fn handle_worker_line(
             }
             persist_sidecar_prepared_run(app, context.data_directory.clone(), &task, &request)
                 .await?;
+            if let Some(recovery) = context.run_recovery_contexts.get(&run_id) {
+                let connection =
+                    database::open_database(app, context.data_directory.clone()).await?;
+                crate::agent_request_watcher::bind_background_request_task(
+                    connection.as_ref(),
+                    recovery,
+                    task.get("id").and_then(Value::as_str).unwrap_or_default(),
+                )
+                .await?;
+            }
             context.run_requests.insert(run_id, request);
             update_snapshot(app, |snapshot| {
                 snapshot.active_run_ids = sorted_run_ids(context.active_run_ids);
@@ -1027,6 +1054,38 @@ async fn handle_worker_line(
             {
                 let run_request = context.run_requests.get(run_id).cloned();
                 let recovery_context = context.run_recovery_contexts.get(run_id).cloned();
+                if let Some(recovery) = recovery_context.as_ref() {
+                    let connection =
+                        database::open_database(app, context.data_directory.clone()).await?;
+                    let task_id = run_request
+                        .as_ref()
+                        .and_then(|request| request.get("workItemId"))
+                        .and_then(Value::as_str);
+                    if message_type == "run.result" {
+                        crate::agent_request_watcher::settle_background_run(
+                            connection.as_ref(),
+                            recovery,
+                            task_id,
+                            message.get("result"),
+                            None,
+                        )
+                        .await?;
+                    } else {
+                        let error = message
+                            .get("error")
+                            .and_then(|value| value.get("message"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("Agent Worker 运行失败。");
+                        crate::agent_request_watcher::settle_background_run(
+                            connection.as_ref(),
+                            recovery,
+                            task_id,
+                            None,
+                            Some(error),
+                        )
+                        .await?;
+                    }
+                }
                 buffer_terminal_message(
                     app,
                     run_id,

@@ -9,6 +9,30 @@ import type {
 import { useAgentCommunicationWorker } from '@/features/workspace/components/home/useAgentCommunicationWorker'
 
 describe('useAgentCommunicationWorker', () => {
+  it('does not claim or execute requests when Rust owns background orchestration', async () => {
+    const claimNext = vi.fn(async () => null)
+    const worker = useAgentCommunicationWorker({
+      backgroundOwned: true,
+      getService: async () => ({ claimNext }) as never,
+      agentRun: {} as Parameters<typeof useAgentCommunicationWorker>[0]['agentRun'],
+      conversation: {} as Parameters<typeof useAgentCommunicationWorker>[0]['conversation'],
+      aiIsRunning: ref(false),
+      isApplyingPatches: ref(false),
+      pendingTask: ref(null),
+      pendingPatchSet: ref(null),
+      showPatchModal: ref(false),
+      aiError: ref(''),
+      createDocumentSnapshot: vi.fn() as never,
+      acceptAllPatches: vi.fn(),
+      rejectPatches: vi.fn(),
+      notifyError: vi.fn(),
+      createId: () => 'id',
+    })
+
+    await worker.poll()
+
+    expect(claimNext).not.toHaveBeenCalled()
+  })
   it('applies an approved request and marks it completed after the patch clears', async () => {
     const task = { id: 'task-1' } as AgentTask
     const pendingTask = ref<AgentTask | null>(task)

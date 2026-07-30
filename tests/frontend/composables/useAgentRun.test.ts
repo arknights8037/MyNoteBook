@@ -230,7 +230,7 @@ describe('useAgentRun', () => {
     expect(cognitive.current()?.status).toBe('completed')
   })
 
-  it('projects a Rust-retained terminal without acknowledging unpersisted output', async () => {
+  it('acknowledges a Rust-retained terminal after background business persistence', async () => {
     const settings = ref(createAiSettings('openai'))
     const run = createRun(
       settings,
@@ -258,11 +258,11 @@ describe('useAgentRun', () => {
     })
 
     expect(sidecarGetRetainedTerminal).toHaveBeenCalledWith('run-restored')
-    expect(sidecarAcknowledgeRun).not.toHaveBeenCalled()
+    expect(sidecarAcknowledgeRun).toHaveBeenCalledWith('run-restored')
     expect(run.workflow.isConversationRunning('conversation-restored')).toBe(false)
     expect(run.workflow.runtimeStateFor('conversation-restored')).toMatchObject({
       status: 'completed',
-      detail: '后台 Agent 已完成，结果待恢复处理',
+      detail: '后台 Agent 已完成，业务终态已由 Rust Core 持久化',
     })
   })
 

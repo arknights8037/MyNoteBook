@@ -1037,6 +1037,258 @@ pub async fn reject_agent_patch_set(
     transaction.commit().await.map_err(database_error)
 }
 
+pub(crate) async fn apply_background_patch_decision(
+    app: &AppHandle,
+    data_directory: Option<String>,
+    task_id: &str,
+    approved: bool,
+) -> Result<(), String> {
+    let connection = open_database(app, data_directory.clone()).await?;
+    let rows = sqlx::query(
+        "SELECT id, operation, document_id, block_id, target_block_ids_json, expected_version, \
+         before_text, after_text, document_title, parent_document_id FROM agent_patches \
+         WHERE task_id = ? AND status = 'proposed' ORDER BY created_at ASC",
+    )
+    .bind(task_id)
+    .fetch_all(connection.as_ref())
+    .await
+    .map_err(database_error)?;
+    if rows.is_empty() {
+        return Err("A2A 审批找不到待处理 Patch。".to_string());
+    }
+    let now: i64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(i64::MAX);
+    if !approved {
+        return reject_agent_patch_set(
+            app.clone(),
+            RejectAgentPatchSetInput {
+                data_directory,
+                task_id: task_id.to_string(),
+                patch_ids: rows
+                    .iter()
+                    .filter_map(|row| row.try_get::<String, _>("id").ok())
+                    .collect(),
+                completed_at: now,
+            },
+        )
+        .await;
+    }
+    if rows.len() == 1 {
+        let row = &rows[0];
+        let operation: String = row.try_get("operation").map_err(database_error)?;
+        if operation == "create_document" {
+            let document_id: String = row.try_get("document_id").map_err(database_error)?;
+            let patch_id: String = row.try_get("id").map_err(database_error)?;
+            let after: String = row.try_get("after_text").map_err(database_error)?;
+            return apply_agent_document_creation(
+                app.clone(),
+                ApplyAgentDocumentCreationInput {
+                    data_directory,
+                    task_id: task_id.to_string(),
+                    patch_id,
+                    document_id,
+                    parent_document_id: row.try_get("parent_document_id").unwrap_or(None),
+                    title: row
+                        .try_get::<Option<String>, _>("document_title")
+                        .unwrap_or(None)
+                        .unwrap_or_else(|| "Agent 新建文档".to_string()),
+                    content_json: plain_text_document(&new_background_block_id(), &after)
+                        .to_string(),
+                    accepted_after_text: after,
+                    transaction_id: background_id("agent-transaction", now),
+                    created_at: now,
+                },
+            )
+            .await
+            .map(|_| ());
+        }
+        if operation == "create_group" {
+            let group_document_id: String = row.try_get("document_id").map_err(database_error)?;
+            let child_document_id: String = row.try_get("block_id").map_err(database_error)?;
+            let child_after: String = row.try_get("after_text").map_err(database_error)?;
+            let has_child = !child_document_id.trim().is_empty() && !child_after.trim().is_empty();
+            return apply_agent_group_creation(
+                app.clone(),
+                ApplyAgentGroupCreationInput {
+                    data_directory,
+                    task_id: task_id.to_string(),
+                    patch_id: row.try_get("id").map_err(database_error)?,
+                    group_document_id,
+                    group_title: row
+                        .try_get::<Option<String>, _>("document_title")
+                        .unwrap_or(None)
+                        .unwrap_or_else(|| "Agent 新建分组".to_string()),
+                    child_document_id: has_child.then_some(child_document_id),
+                    child_title: has_child.then(|| {
+                        row.try_get::<String, _>("before_text")
+                            .unwrap_or_else(|_| "Agent 新建文档".to_string())
+                    }),
+                    child_content_json: has_child.then(|| {
+                        plain_text_document(&new_background_block_id(), &child_after).to_string()
+                    }),
+                    child_after_text: has_child.then_some(child_after),
+                    transaction_id: background_id("agent-transaction", now),
+                    created_at: now,
+                },
+            )
+            .await
+            .map(|_| ());
+        }
+    }
+    if rows.iter().any(|row| {
+        row.try_get::<String, _>("operation")
+            .is_ok_and(|operation| matches!(operation.as_str(), "create_document" | "create_group"))
+    }) {
+        return Err("新建文档或分组必须作为独立提案确认。".to_string());
+    }
+    let mut by_document =
+        std::collections::BTreeMap::<String, Vec<&sqlx::sqlite::SqliteRow>>::new();
+    for row in &rows {
+        by_document
+            .entry(row.try_get("document_id").map_err(database_error)?)
+            .or_default()
+            .push(row);
+    }
+    let mut documents = Vec::with_capacity(by_document.len());
+    for (document_id, patches) in by_document {
+        let document = sqlx::query(
+            "SELECT content_json, revision FROM documents WHERE id = ? AND is_deleted = 0 LIMIT 1",
+        )
+        .bind(&document_id)
+        .fetch_optional(connection.as_ref())
+        .await
+        .map_err(database_error)?
+        .ok_or_else(|| format!("目标文档 {document_id} 不存在。"))?;
+        let revision: i64 = document.try_get("revision").map_err(database_error)?;
+        let mut content: serde_json::Value = serde_json::from_str(
+            &document
+                .try_get::<String, _>("content_json")
+                .map_err(database_error)?,
+        )
+        .map_err(database_error)?;
+        apply_patches_to_tiptap(&mut content, &patches)?;
+        documents.push(AgentDocumentMutation {
+            document_id,
+            expected_revision: revision,
+            content_json: content.to_string(),
+            transaction_id: background_id("agent-transaction", now),
+        });
+    }
+    let decisions = rows
+        .iter()
+        .map(|row| {
+            Ok(AgentPatchDecision {
+                id: row.try_get("id").map_err(database_error)?,
+                after_text: row.try_get("after_text").map_err(database_error)?,
+                accepted: true,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    apply_agent_patch_set(
+        app.clone(),
+        ApplyAgentPatchSetInput {
+            data_directory,
+            task_id: task_id.to_string(),
+            batch_id: background_id("agent-batch", now),
+            documents,
+            patches: decisions,
+            created_at: now,
+        },
+    )
+    .await
+    .map(|_| ())
+}
+
+fn apply_patches_to_tiptap(
+    document: &mut serde_json::Value,
+    patches: &[&sqlx::sqlite::SqliteRow],
+) -> Result<(), String> {
+    let content = document
+        .get_mut("content")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| "Tiptap doc.content 无效。".to_string())?;
+    for patch in patches {
+        let operation: String = patch.try_get("operation").map_err(database_error)?;
+        let block_id: String = patch.try_get("block_id").map_err(database_error)?;
+        let targets: Vec<String> = serde_json::from_str(
+            &patch
+                .try_get::<String, _>("target_block_ids_json")
+                .map_err(database_error)?,
+        )
+        .map_err(database_error)?;
+        let after: String = patch.try_get("after_text").map_err(database_error)?;
+        let anchor = content
+            .iter()
+            .position(|node| tiptap_block_id(node) == Some(block_id.as_str()))
+            .ok_or_else(|| format!("Patch 锚点块 {block_id} 不存在。"))?;
+        match operation.as_str() {
+            "replace" => {
+                content.retain(|candidate| {
+                    tiptap_block_id(candidate)
+                        .is_none_or(|id| !targets.iter().any(|target| target == id))
+                });
+                let insertion = anchor.min(content.len());
+                content.insert(insertion, plain_text_block(&block_id, &after));
+            }
+            "insert_before" | "insert_after" | "append" => {
+                let patch_id: String = patch.try_get("id").map_err(database_error)?;
+                let node = plain_text_block(&format!("block-{patch_id}"), &after);
+                if operation == "insert_before" {
+                    content.insert(anchor, node);
+                } else if operation == "insert_after" {
+                    content.insert((anchor + 1).min(content.len()), node);
+                } else {
+                    content.push(node);
+                }
+            }
+            _ => return Err(format!("后台审批不支持 Patch operation {operation}。")),
+        }
+    }
+    Ok(())
+}
+
+fn tiptap_block_id(value: &serde_json::Value) -> Option<&str> {
+    value.get("attrs")?.get("id")?.as_str()
+}
+
+fn plain_text_block(id: &str, text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "paragraph",
+        "attrs": { "id": id },
+        "content": if text.is_empty() { serde_json::json!([]) } else { serde_json::json!([{ "type": "text", "text": text }]) }
+    })
+}
+
+fn plain_text_document(id: &str, text: &str) -> serde_json::Value {
+    serde_json::json!({ "type": "doc", "content": [plain_text_block(id, text)] })
+}
+
+fn new_background_block_id() -> String {
+    background_id(
+        "block",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .try_into()
+            .unwrap_or(i64::MAX),
+    )
+}
+
+fn background_id(prefix: &str, now: i64) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQUENCE: AtomicU64 = AtomicU64::new(1);
+    format!(
+        "{prefix}-{}-{now}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 #[tauri::command]
 pub async fn cleanup_orphan_agent_tasks(
     app: AppHandle,

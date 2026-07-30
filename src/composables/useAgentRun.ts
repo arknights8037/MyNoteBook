@@ -1203,8 +1203,9 @@ export function useAgentRun(options: UseAgentRunOptions) {
         runtime.recordExecutionResult({ rounds: result.rounds, toolCalls: result.toolCalls })
         const recovery = parseSidecarRunRecoveryContext(retained.recoveryContext)
         if (!recovery) {
-          runtime.setSummary('后台 Agent 已完成；结果仍保留在 Rust Core，等待恢复业务持久化。')
-          runtime.complete('后台 Agent 已完成，结果待恢复处理')
+          runtime.setSummary('后台 Agent 已完成，业务终态已由 Rust Core 持久化。')
+          await adapter.acknowledgeRun(terminal.runId)
+          runtime.complete('后台 Agent 已完成，业务终态已由 Rust Core 持久化')
         } else {
           const readableDocuments = new Map(
             recovery.readableDocuments.map((document) => [document.documentId, document]),

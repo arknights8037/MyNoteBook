@@ -317,6 +317,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0036_add_runtime_port_contracts.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 37,
+            description: "add_background_agent_runtime",
+            sql: include_str!("../migrations/0037_add_background_agent_runtime.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -339,7 +345,39 @@ pub fn run() {
                 }
             }
 
+            let show =
+                tauri::menu::MenuItem::with_id(app, "show", "打开 myNoteBook", true, None::<&str>)?;
+            let quit = tauri::menu::MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = tauri::menu::Menu::with_items(app, &[&show, &quit])?;
+            tauri::tray::TrayIconBuilder::with_id("main")
+                .icon(app.default_window_icon().cloned().ok_or("缺少应用图标")?)
+                .menu(&menu)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => show_main_window(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::Click {
+                        button: tauri::tray::MouseButton::Left,
+                        button_state: tauri::tray::MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .manage(secret_store::AiSecretState::default())
         .manage(dingtalk::DingTalkRuntimeState::default())
@@ -417,6 +455,7 @@ pub fn run() {
             agent_worker_supervisor::steer_agent_runtime_run,
             agent_worker_supervisor::shutdown_agent_worker,
             agent_request_watcher::start_agent_request_watcher,
+            agent_request_watcher::configure_agent_background_runtime,
             agent_request_watcher::claim_agent_request,
             agent_request_watcher::settle_agent_request,
             work::commit_result_verification,
@@ -462,4 +501,12 @@ pub fn run() {
         )
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
 }

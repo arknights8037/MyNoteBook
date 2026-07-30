@@ -71,6 +71,24 @@ describe('Runtime architecture boundaries', () => {
     expect(run).toContain("!sidecarOwned && mode === 'agent' && options.services?.mcpClient")
   })
 
+  it('keeps A2A orchestration and cognitive terminal ownership in Rust', () => {
+    const watcher = readFileSync(resolve(root, 'src-tauri/src/agent_request_watcher.rs'), 'utf8')
+    const workspace = readFileSync(
+      resolve(root, 'src/features/workspace/components/WorkspaceSurface.vue'),
+      'utf8',
+    )
+    const legacyWorker = readFileSync(
+      resolve(root, 'src/features/workspace/components/home/useAgentCommunicationWorker.ts'),
+      'utf8',
+    )
+    expect(watcher).toContain('dispatch_next_background_request')
+    expect(watcher).toContain('process_background_decision')
+    expect(watcher).toContain('persist_research_candidates')
+    expect(workspace).toContain("runtimeOwner === 'rust_worker'")
+    expect(workspace).toContain('backgroundOwned:')
+    expect(legacyWorker).toContain('if (options.backgroundOwned) return')
+  })
+
   it('makes the PI worker consume the frozen manifest without defining another registry', () => {
     const source = readFileSync(
       resolve(root, 'packages/pi-agent-worker/src/PiToolAdapter.ts'),

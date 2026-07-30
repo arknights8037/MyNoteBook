@@ -70,7 +70,10 @@ import type { DocumentSidebarExpose, EditorShellExpose } from './home/homePageTy
 import { useDocumentTransferActions } from './home/useDocumentTransferActions'
 import { useHomeAiMessageActions } from './home/useHomeAiMessageActions'
 import { useAgentCommunicationWorker } from './home/useAgentCommunicationWorker'
-import { subscribeAgentRequestQueue } from '@/infrastructure/runtime/TauriAgentCommunicationWatcher'
+import {
+  configureAgentBackgroundRuntime,
+  subscribeAgentRequestQueue,
+} from '@/infrastructure/runtime/TauriAgentCommunicationWatcher'
 import { getAgentWorkerSnapshot } from '@/infrastructure/runtime/AgentWorkerSnapshotClient'
 import { useWorkspaceItems } from './home/useWorkspaceItems'
 import { useResearchReviewActions } from './home/useResearchReviewActions'
@@ -557,6 +560,15 @@ watch(
   },
   { immediate: true },
 )
+watch(
+  [aiSettings, () => appSettings.value.dataDirectory] as const,
+  ([settings, dataDirectory]) => {
+    if (dependencies.agentRunServices.runtimeOwner === 'rust_worker') {
+      void configureAgentBackgroundRuntime(dataDirectory ?? undefined, settings).catch(() => undefined)
+    }
+  },
+  { deep: true },
+)
 const agentRun = useAgentRun({
   settings: aiSettings,
   mode: aiChatMode,
@@ -633,6 +645,7 @@ const agentRuntimeState = computed(() =>
     : createIdleAgentRuntimeState(),
 )
 const agentCommunicationWorker = useAgentCommunicationWorker({
+  backgroundOwned: dependencies.agentRunServices.runtimeOwner === 'rust_worker',
   getService: dependencies.getAgentCommunicationService,
   agentRun,
   conversation: aiConversation,
@@ -648,7 +661,14 @@ const agentCommunicationWorker = useAgentCommunicationWorker({
   notifyError: message.error,
   createId: createDocumentId,
   watchQueue: (listener) =>
-    subscribeAgentRequestQueue(appSettings.value.dataDirectory ?? undefined, listener),
+    subscribeAgentRequestQueue(appSettings.value.dataDirectory ?? undefined, () => {
+      listener()
+      if (dependencies.agentRunServices.runtimeOwner === 'rust_worker') {
+        void getAgentWorkerSnapshot()
+          .then((snapshot) => agentRun.restoreWorkerSnapshot(snapshot))
+          .catch(() => undefined)
+      }
+    }),
 })
 const activeA2aTask = agentCommunicationWorker.activeA2aTask
 const agentAuthorizationRequest = computed(() => agentRun.runtimeState.value.authorizationRequest)

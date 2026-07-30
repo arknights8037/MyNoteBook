@@ -22,6 +22,7 @@ export interface ActiveA2aTask {
 }
 
 interface AgentCommunicationWorkerOptions {
+  backgroundOwned?: boolean
   getService: () => Promise<AgentCommunicationService>
   agentRun: ReturnType<typeof useAgentRun>
   conversation: ReturnType<typeof useAiConversation>
@@ -52,6 +53,7 @@ export function useAgentCommunicationWorker(options: AgentCommunicationWorkerOpt
   const hasActiveA2aTask = computed(() => activeA2aTask.value !== null)
 
   async function poll(): Promise<void> {
+    if (options.backgroundOwned) return
     if (polling || options.aiIsRunning.value || options.isApplyingPatches.value) return
     polling = true
     let claimedRequest: AgentCommunicationRequest | null = null

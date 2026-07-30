@@ -194,7 +194,7 @@ Agent 任务按项目组管理。左侧采用项目文件夹树，项目下直�
 
 当前身份模型尚未收敛：`AgentTask.id`、通用 `task_runs.id`、前端临时 run ID 和 Provider tool-call ID 分属不同层，部分 Agent 调用还把 document ID 复用于 `sessionId`。因此目前不存在贯穿 Workflow、Run、Turn 和 Tool Call 的稳定 ID 契约。路线图将分别引入 `work_item_id`、`workflow_id`、`run_id`、`turn_id`、`tool_call_id` 和可选 `provider_tool_call_id`；`session_id` 只表示对话或认知连续性。
 
-项目还提供本地 Agent 请求通信队列。持有 capability token 的调用方先通过 stdio MCP 读取项目、资料根、任务和 A2A 分支目录，再可在指定项目下创建稳定分支，并把任务路由到 `project_id` / `branch_id`。Rust watcher 发现队列变化后通知桌面应用；请求领取由 Rust transaction 原子完成，awaiting-review/completed/failed 结算也只通过 Rust command 写入。当前仍由窗口内 Workflow 触发对应 `useAgentRun`，因此尚不承诺无窗口自动调度。同一分支复用同一条持久化任务记录，父分支关系随历史快照保存。未提供路由参数的旧调用继续作为未分组独立任务处理。请求保存 `request_mode`、路由和版本化 decision envelope；批准、拒绝与修订都返回 action、reply、request/task、结果摘要和时间等可审计信息。跨文档写入只对本次运行已成功读取且 revision 未变化的文档开放，最终结果仍是待审阅 Patch。MCP 的提交动作不会批准或应用修改；查询 Patch 后必须另行批准或拒绝，应用仍走同一 Rust transaction。
+项目还提供本地 Agent 请求通信队列。持有 capability token 的调用方先通过 stdio MCP 读取项目、资料根、任务和 A2A 分支目录，再可在指定项目下创建稳定分支，并把任务路由到 `project_id` / `branch_id`。Rust watcher 从 SQLite 冻结项目/文档范围，使用持久化且不含密钥的 Runtime Profile 构造 submission，并直接启动 sidecar；请求领取、task/run/session 绑定和终态结算不依赖窗口。批准、拒绝和修订也由 Rust Workflow 处理：批准继续执行 Patch revision、before、覆盖范围和单事务校验，修订用新 run ID 携带反馈与上一版摘要。需要人工授权或 Patch 审阅时保持等待态。主窗口关闭后应用隐藏到托盘，显式退出才停止 Core。同一分支复用同一条持久化任务记录，父分支关系随历史快照保存。MCP 的提交动作不会自行批准修改；查询 Patch 后仍必须另行批准或拒绝。
 
 ## 9. Patch、确认与撤销
 
@@ -208,7 +208,7 @@ command 先由本地 `AgentCommandService` 展开为 Patch。每个 Patch 保存
 
 复杂提案若在工具入口违反这些约束，会以失败 Observation 返回模型，不会记录为已捕获提案。Runtime 允许模型根据错误重新规划一次完整提案；第一次成功捕获后不能再提交第二批。即使上游校验遗漏，结果解析、通用 Patch 验证和 Rust 保存边界仍会独立拒绝未读取文档、同文档重叠、重复 target、无效锚点和 no-op 替换。
 
-批准时，前端为每个被接受的目标文档加载独立 revision、canonical blocks 和 content，分别生成修改后投影。Rust 在一个 SQLite transaction 内验证并写入所有文档；任一目标发生并发变化或语义校验失败时整批回滚。每个文档保留自己的 `agent_document_transactions` 记录，统一 batch confirmation 用于一次性撤销整批修改。
+交互式批准时，前端为每个被接受的目标文档生成修改后投影；A2A 后台批准则由 Rust 从规范 Tiptap JSON 和持久化 Patch 生成投影。两条路径最终进入同一个 Rust revision/范围/覆盖校验与 SQLite transaction；任一目标发生并发变化或语义校验失败时整批回滚。每个文档保留自己的 `agent_document_transactions` 记录，统一 batch confirmation 用于一次性撤销整批修改。
 
 用户可逐项接受、编辑 `after`、拒绝或接受全部。Rust apply 边界重新校验：
 
@@ -259,7 +259,7 @@ Run lifecycle、Plan snapshot、运行级事件和 Step/tool timeline 会绑定�
 - `/learn` 已绑定 Learning Mode、`learning-turn` v1 contract 与多轮 Cognitive Session。首次解释题由本地状态机生成且不请求 Provider；后续普通回复按 conversation 恢复 `waiting_user` session，将用户回复保存为 Attempt 后再更新理解状态、提示层级和下一问题。Learning 运行没有文档或正式知识写权限，临时候选理解记录只保存在结果消息中。
 - 自动化有定义和运行队列，但没有后台无人值守模型调度器。
 - 普通 Agent Run 没有 durable checkpoint/resume；应用重启后不能从中间 tool step 恢复。Learning Session 的跨 run 继续和待确认 Patch 的恢复不等同于恢复同一个 Run。
-- 默认 Runtime 的任务规划、模型循环、工具调度和标准 Patch 终态编译均由 Rust 托管 sidecar 承载；Vue 负责用户交互、事件投影和 Diff 审阅。Cognitive Session CRUD、A2A 原子领取和请求结算已经迁入 Rust；A2A 自动调度、审批/修订 Workflow 与 Cognitive 最终业务投影仍待迁入 Rust/sidecar，窗口缺席期间不承诺立即完成这些流程。
+- 默认 Runtime 的任务规划、模型循环、工具调度和标准 Patch 终态编译均由 Rust 托管 sidecar 承载；Vue 负责用户交互、事件投影和 Diff 审阅。A2A 自动调度、审批/修订 Workflow、Cognitive Session 终态和 Research candidate 业务投影均由 Rust/sidecar 完成，可在主窗口隐藏时继续。显式退出进程仍会停止任务，普通 Run 也没有 durable checkpoint/resume。
 - 当前已有独立 `run_id` 贯穿 Runtime 请求、`agent_tasks`、Context Bundle 和 Tool Call；`task_runs.id` 仍保留历史治理语义，完整轨迹重放和 durable checkpoint 尚未实现。
 - MCP Prompts、Roots、Sampling、OAuth、旧 SSE 和跨任务长连接尚未开放。
 - 真实 DeepSeek Provider、stdio/Streamable HTTP MCP、真实 CLI 外部进程和隔离数据恢复已通过 G0 smoke；Windows 干净安装包仍属于发布流程检查。
