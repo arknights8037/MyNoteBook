@@ -122,7 +122,7 @@ describe('InformationHomeSurface', () => {
     wrapper.unmount()
   })
 
-  it('commits the final grid resize into the controlled draft layout', async () => {
+  it('commits the final grid layout into the controlled draft', async () => {
     Reflect.set(globalThis, '__TAURI_INTERNALS__', {})
     homeService.getOrCreate.mockResolvedValue(ok(home))
     homeService.listSummaries.mockResolvedValue(ok([]))
@@ -138,25 +138,29 @@ describe('InformationHomeSurface', () => {
           InformationHomeGrid: {
             name: 'InformationHomeGrid',
             props: ['widgets'],
-            emits: ['move', 'resize'],
+            emits: ['layout', 'resize'],
             template:
-              "<div><button data-test=\"resize-widget\" @click=\"$emit('resize', 'home-widget-test', { w: 8, h: 7 }, 'desktop')\">resize</button><button data-test=\"move-widget\" @click=\"$emit('move', 'home-widget-test', { x: 3, y: 4 }, 'desktop')\">move</button><button data-test=\"resize-widget-compact\" @click=\"$emit('resize', 'home-widget-test', { w: 8, h: 6 }, 'compact')\">compact</button></div>",
+              "<div><button data-test=\"update-layout\" @click=\"$emit('layout', { 'home-widget-test': { x: 3, y: 4, w: 8, h: 7, minW: 4, minH: 3 } }, 'desktop')\">layout</button><button data-test=\"resize-widget-compact\" @click=\"$emit('resize', 'home-widget-test', { w: 8, h: 6 }, 'compact')\">compact</button></div>",
           },
         },
       },
     })
     await flushPromises()
 
-    await wrapper.get('[data-test="resize-widget"]').trigger('click')
+    await wrapper.get('.information-home-surface').trigger('contextmenu', {
+      clientX: 140,
+      clientY: 180,
+    })
+    const editButton = wrapper
+      .findAll('[role="menuitem"]')
+      .find((button) => button.text().includes('编辑布局'))
+    await editButton?.trigger('click')
+
+    await wrapper.get('[data-test="update-layout"]').trigger('click')
     const widgets = wrapper
       .getComponent({ name: 'InformationHomeGrid' })
       .props('widgets') as typeof home.payload.widgets
-    expect(widgets[0]?.layout.desktop).toMatchObject({ w: 8, h: 7 })
-    await wrapper.get('[data-test="move-widget"]').trigger('click')
-    const movedWidgets = wrapper
-      .getComponent({ name: 'InformationHomeGrid' })
-      .props('widgets') as typeof home.payload.widgets
-    expect(movedWidgets[0]?.layout.desktop).toMatchObject({ x: 3, y: 4 })
+    expect(widgets[0]?.layout.desktop).toMatchObject({ x: 3, y: 4, w: 8, h: 7 })
     await wrapper.get('[data-test="resize-widget-compact"]').trigger('click')
     const compactWidgets = wrapper
       .getComponent({ name: 'InformationHomeGrid' })

@@ -11,6 +11,7 @@ import InformationHomeWidgetHost from './InformationHomeWidgetHost.vue'
 
 type BrowserElement = InstanceType<typeof globalThis.HTMLElement>
 type BrowserResizeObserver = InstanceType<typeof globalThis.ResizeObserver>
+type BrowserPointerEvent = InstanceType<typeof globalThis.PointerEvent>
 
 const props = defineProps<{
   widgets: InformationHomeWidget[]
@@ -29,7 +30,6 @@ const emit = defineEmits<{
   generateSummary: []
   toggleAutoSummary: []
   changeSummaryInterval: []
-  move: [id: string, position: { x: number; y: number }, target: 'desktop' | 'compact']
   resize: [id: string, size: { w: number; h: number }, target: 'desktop' | 'compact']
   updateSettings: [id: string, settings: InformationHomeWidget['settings']]
 }>()
@@ -39,14 +39,17 @@ const gridShell = ref<BrowserElement | null>(null)
 const gridWidth = ref(0)
 const gridMargin = 10
 let gridResizeObserver: BrowserResizeObserver | null = null
+let activeResizeId: string | null = null
+let pendingResize: {
+  id: string
+  size: { w: number; h: number }
+  target: 'desktop' | 'compact'
+} | null = null
 const isCompact = computed(() => !['lg', 'md'].includes(breakpoint.value))
 const columnCount = computed(() => (isCompact.value ? 6 : 12))
 const rowHeight = computed(() => {
   if (!gridWidth.value) return 72
-  return Math.max(
-    40,
-    Math.floor((gridWidth.value - gridMargin * (columnCount.value + 1)) / columnCount.value),
-  )
+  return Math.max(40, (gridWidth.value - gridMargin * (columnCount.value + 1)) / columnCount.value)
 })
 const gridStyle = computed(() => ({
   '--information-home-grid-track-size': `${rowHeight.value + gridMargin}px`,
@@ -98,28 +101,64 @@ function updateLayout(next: Layout): void {
   )
 }
 
-function commitResize(id: string | number, height: number, width: number): void {
-  emit('resize', String(id), { w: width, h: height }, isCompact.value ? 'compact' : 'desktop')
-}
-
-function commitMove(id: string | number, x: number, y: number): void {
-  emit('move', String(id), { x, y }, isCompact.value ? 'compact' : 'desktop')
-}
-
 function syncGridWidth(): void {
-  const next = Math.round(gridShell.value?.clientWidth ?? 0)
+  const grid = gridShell.value?.querySelector<BrowserElement>('.information-home-grid')
+  const next = Math.round(grid?.clientWidth ?? 0)
   if (next > 0 && next !== gridWidth.value) gridWidth.value = next
+}
+
+function beginResize(event: BrowserPointerEvent): void {
+  const target = event.target
+  if (!(target instanceof globalThis.Element) || !target.closest('.vgl-item__resizer')) return
+  const id = target.closest<BrowserElement>('[data-home-widget-id]')?.dataset.homeWidgetId
+  if (!id) return
+  activeResizeId = id
+  pendingResize = null
+  globalThis.addEventListener('pointerup', finishResize, { once: true })
+  globalThis.addEventListener('pointercancel', cancelResize, { once: true })
+}
+
+function trackResize(id: string | number, height: number, width: number): void {
+  const normalizedId = String(id)
+  if (!props.editing || activeResizeId !== normalizedId) return
+  pendingResize = {
+    id: normalizedId,
+    size: { w: width, h: height },
+    target: isCompact.value ? 'compact' : 'desktop',
+  }
+}
+
+function finishResize(): void {
+  const resize = pendingResize
+  clearResizeSession()
+  if (!resize) return
+  // grid-layout-plus 1.1.1 restores the previous w/h during resizeend. Commit the last
+  // grid-snapped resize event after its pointerup handler has finished instead.
+  globalThis.queueMicrotask(() => emit('resize', resize.id, resize.size, resize.target))
+}
+
+function cancelResize(): void {
+  clearResizeSession()
+}
+
+function clearResizeSession(): void {
+  activeResizeId = null
+  pendingResize = null
+  globalThis.removeEventListener('pointerup', finishResize)
+  globalThis.removeEventListener('pointercancel', cancelResize)
 }
 
 onMounted(() => {
   syncGridWidth()
-  if (!gridShell.value || !globalThis.ResizeObserver) return
+  const grid = gridShell.value?.querySelector<BrowserElement>('.information-home-grid')
+  if (!grid || !globalThis.ResizeObserver) return
   gridResizeObserver = new globalThis.ResizeObserver(syncGridWidth)
-  gridResizeObserver.observe(gridShell.value)
+  gridResizeObserver.observe(grid)
 })
 onBeforeUnmount(() => {
   gridResizeObserver?.disconnect()
   gridResizeObserver = null
+  clearResizeSession()
 })
 </script>
 
@@ -127,7 +166,12 @@ onBeforeUnmount(() => {
   <div v-if="!widgets.length" class="dashboard-grid-empty">
     <strong>首页还没有卡片</strong>
   </div>
-  <div v-else ref="gridShell" class="information-home-grid-shell">
+  <div
+    v-else
+    ref="gridShell"
+    class="information-home-grid-shell"
+    @pointerdown.capture="beginResize"
+  >
     <GridLayout
       class="dashboard-grid information-home-grid"
       :style="gridStyle"
@@ -141,7 +185,7 @@ onBeforeUnmount(() => {
       :margin="[gridMargin, gridMargin]"
       :is-draggable="editing"
       :is-resizable="editing"
-      :vertical-compact="true"
+      :vertical-compact="false"
       :prevent-collision="false"
       :restore-on-drag="false"
       :use-css-transforms="true"
@@ -152,6 +196,7 @@ onBeforeUnmount(() => {
         v-for="widget in widgets"
         :key="widget.id"
         :i="widget.id"
+        :data-home-widget-id="widget.id"
         :x="(isCompact ? widget.layout.compact : widget.layout.desktop)?.x ?? 0"
         :y="(isCompact ? widget.layout.compact : widget.layout.desktop)?.y ?? 0"
         :w="(isCompact ? widget.layout.compact : widget.layout.desktop)?.w ?? 6"
@@ -164,8 +209,7 @@ onBeforeUnmount(() => {
         :is-resizable="editing"
         drag-allow-from=".dashboard-widget-frame__drag-handle"
         drag-ignore-from="button, input, select, .dashboard-widget-frame__body"
-        @moved="commitMove"
-        @resized="commitResize"
+        @resize="trackResize"
       >
         <InformationHomeWidgetHost
           :widget="widget"
