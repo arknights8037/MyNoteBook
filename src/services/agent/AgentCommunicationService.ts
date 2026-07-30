@@ -30,6 +30,10 @@ export class AgentCommunicationService {
     return this.repository.findFailedForTask(taskId)
   }
 
+  listRecent(limit = 50) {
+    return this.repository.listRecent(limit)
+  }
+
   listRecentCompleted(limit = 20) {
     return this.repository.listRecentCompleted(limit)
   }

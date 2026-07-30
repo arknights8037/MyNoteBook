@@ -11,6 +11,7 @@ function createRepository(): AgentCommunicationRepository {
     claimRevisionForTask: vi.fn().mockResolvedValue(null),
     findDecisionForTask: vi.fn().mockResolvedValue(null),
     findFailedForTask: vi.fn().mockResolvedValue(null),
+    listRecent: vi.fn().mockResolvedValue([]),
     listRecentCompleted: vi.fn().mockResolvedValue([]),
     markAwaitingReview: vi.fn().mockResolvedValue(undefined),
     markCompleted: vi.fn().mockResolvedValue(undefined),
@@ -27,12 +28,14 @@ describe('AgentCommunicationService', () => {
     await service.claimRevisionForTask('task-previous')
     await service.findDecisionForTask('task-1')
     await service.findFailedForTask('task-1')
+    await service.listRecent(18)
     await service.listRecentCompleted(12)
 
     expect(repository.claimNext).toHaveBeenCalledOnce()
     expect(repository.claimRevisionForTask).toHaveBeenCalledWith('task-previous')
     expect(repository.findDecisionForTask).toHaveBeenCalledWith('task-1')
     expect(repository.findFailedForTask).toHaveBeenCalledWith('task-1')
+    expect(repository.listRecent).toHaveBeenCalledWith(18)
     expect(repository.listRecentCompleted).toHaveBeenCalledWith(12)
   })
 

@@ -22,6 +22,7 @@ import KnowledgeAssetsPanel from '@/features/knowledge-control/components/Knowle
 import KnowledgeAssetPreviewModal from '@/features/knowledge-control/components/KnowledgeAssetPreviewModal.vue'
 import AiConversationImportPreviewModal from '@/features/knowledge-control/components/AiConversationImportPreviewModal.vue'
 import TaskRunsPanel from '@/features/knowledge-control/components/TaskRunsPanel.vue'
+import AgentRuntimeOperationsPanel from '@/features/knowledge-control/components/AgentRuntimeOperationsPanel.vue'
 import ViewsPanel from '@/features/knowledge-control/components/ViewsPanel.vue'
 import { useDialog, useMessage } from '@/ui'
 import SurfaceTitleBar from '@/features/workspace/components/SurfaceTitleBar.vue'
@@ -410,20 +411,22 @@ onMounted(load)
         @propose="proposeViewWriteback"
         @fork="forkView"
       />
-      <TaskRunsPanel
-        v-else
-        v-model:export-path="cliExportPath"
-        v-model:submission-path="cliSubmissionPath"
-        v-model:capability-token="cliCapabilityToken"
-        :task-runs="taskRuns"
-        :loading="loading"
-        :delegation-grant="delegationGrant"
-        :has-active-grant="Boolean(activeGrant)"
-        @verify="verifyRun"
-        @delegate="delegateRun"
-        @export="exportCliEnvelope"
-        @import="importCliSubmission"
-      />
+      <template v-else>
+        <AgentRuntimeOperationsPanel />
+        <TaskRunsPanel
+          v-model:export-path="cliExportPath"
+          v-model:submission-path="cliSubmissionPath"
+          v-model:capability-token="cliCapabilityToken"
+          :task-runs="taskRuns"
+          :loading="loading"
+          :delegation-grant="delegationGrant"
+          :has-active-grant="Boolean(activeGrant)"
+          @verify="verifyRun"
+          @delegate="delegateRun"
+          @export="exportCliEnvelope"
+          @import="importCliSubmission"
+        />
+      </template>
       <KnowledgeAssetPreviewModal
         v-if="showAssetPreview"
         v-model:show="showAssetPreview"

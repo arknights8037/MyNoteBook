@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 import type { AgentWorkerAuthorizationRequest } from '@/models/agent/agentRuntimeContract'
 
@@ -34,4 +35,12 @@ export interface AgentWorkerSnapshot {
 
 export function getAgentWorkerSnapshot(): Promise<AgentWorkerSnapshot> {
   return invoke<AgentWorkerSnapshot>('get_agent_worker_snapshot')
+}
+
+export function subscribeAgentWorkerSnapshot(
+  listener: (snapshot: AgentWorkerSnapshot) => void,
+): Promise<() => void> {
+  return listen<AgentWorkerSnapshot>('agent-runtime://worker-status', ({ payload }) =>
+    listener(payload),
+  )
 }

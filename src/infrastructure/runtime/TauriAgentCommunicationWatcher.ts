@@ -29,6 +29,12 @@ export async function subscribeAgentRequestQueue(
   return unlisten
 }
 
+export function listenAgentRequestQueue(
+  listener: (snapshot: AgentRequestQueueSnapshot) => void,
+): Promise<() => void> {
+  return listen<AgentRequestQueueSnapshot>(QUEUE_EVENT, ({ payload }) => listener(payload))
+}
+
 export async function configureAgentBackgroundRuntime(
   dataDirectory: string | undefined,
   settings: AiSettings,

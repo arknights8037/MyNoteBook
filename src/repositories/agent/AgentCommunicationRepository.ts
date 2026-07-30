@@ -41,6 +41,8 @@ export interface AgentCommunicationDecision {
 
 export interface AgentCommunicationRequest {
   id: string
+  runId: string | null
+  cognitiveSessionId: string | null
   prompt: string
   mode: AgentCommunicationMode
   projectId: string | null
@@ -52,6 +54,14 @@ export interface AgentCommunicationRequest {
   previousTaskId: string | null
   revisionFeedback: string | null
   revisionCount: number
+  attemptCount: number
+  nextAttemptAt: number | null
+  deadLetteredAt: number | null
+  lastFailureKind: string | null
+  error: string | null
+  createdAt: number | null
+  updatedAt: number | null
+  completedAt: number | null
   result: AgentCommunicationResult | null
   decision: AgentCommunicationDecision | null
 }
@@ -61,6 +71,7 @@ export interface AgentCommunicationRepository {
   claimRevisionForTask(taskId: string): Promise<AgentCommunicationRequest | null>
   findDecisionForTask(taskId: string): Promise<AgentCommunicationRequest | null>
   findFailedForTask(taskId: string): Promise<AgentCommunicationRequest | null>
+  listRecent(limit?: number): Promise<AgentCommunicationRequest[]>
   listRecentCompleted(limit?: number): Promise<AgentCommunicationRequest[]>
   markAwaitingReview(id: string, taskId: string, result: AgentCommunicationResult): Promise<void>
   markCompleted(

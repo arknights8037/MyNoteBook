@@ -183,4 +183,39 @@ describe('TauriAgentCommunicationRepository', () => {
 
     expect(select).toHaveBeenLastCalledWith(expect.stringContaining("status = 'completed'"), [100])
   })
+
+  it('maps recent request reliability projections without exposing lease ownership', async () => {
+    select.mockResolvedValue([
+      {
+        id: 'request-retry',
+        run_id: 'run-2',
+        cognitive_session_id: 'session-2',
+        prompt: '重新检查依据',
+        mode: 'review',
+        status: 'queued',
+        task_id: 'task-2',
+        attempt_count: 2,
+        next_attempt_at: 5_000,
+        dead_lettered_at: null,
+        last_failure_kind: 'retryable',
+        error: 'provider timeout',
+        created_at: 1_000,
+        updated_at: 4_000,
+      },
+    ])
+
+    const requests = await new TauriAgentCommunicationRepository(client).listRecent(500)
+
+    expect(requests[0]).toMatchObject({
+      id: 'request-retry',
+      runId: 'run-2',
+      cognitiveSessionId: 'session-2',
+      attemptCount: 2,
+      nextAttemptAt: 5_000,
+      lastFailureKind: 'retryable',
+      error: 'provider timeout',
+    })
+    expect(select).toHaveBeenCalledWith(expect.stringContaining('ORDER BY updated_at DESC'), [100])
+    expect(select.mock.calls[0]?.[0]).not.toContain('lease_owner')
+  })
 })

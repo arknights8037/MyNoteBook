@@ -38,6 +38,8 @@ describe('useAgentCommunicationWorker', () => {
     const pendingTask = ref<AgentTask | null>(task)
     const decision = {
       id: 'request-1',
+      runId: 'run-1',
+      cognitiveSessionId: null,
       prompt: '同步修改',
       mode: 'agent',
       projectId: null,
@@ -49,6 +51,14 @@ describe('useAgentCommunicationWorker', () => {
       previousTaskId: null,
       revisionFeedback: null,
       revisionCount: 0,
+      attemptCount: 1,
+      nextAttemptAt: null,
+      deadLetteredAt: null,
+      lastFailureKind: null,
+      error: null,
+      createdAt: 1,
+      updatedAt: 1,
+      completedAt: null,
       result: null,
       decision: null,
     } satisfies AgentCommunicationRequest
