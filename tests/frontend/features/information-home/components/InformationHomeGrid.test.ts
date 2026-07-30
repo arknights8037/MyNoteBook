@@ -1,13 +1,17 @@
 import { mount } from '@vue/test-utils'
 import { GridItem, GridLayout } from 'grid-layout-plus'
 import { nextTick } from 'vue'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import InformationHomeGrid from '@/features/information-home/components/InformationHomeGrid.vue'
 import type { InformationHomeWidget } from '@/models/home/informationHome'
 
 describe('InformationHomeGrid', () => {
+  afterEach(() => vi.restoreAllMocks())
+
   it('uses the grid library resize handle only while editing', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1300)
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1300)
     const widget: InformationHomeWidget = {
       id: 'todo-grid-test',
       widgetType: 'todo-list',
@@ -27,6 +31,7 @@ describe('InformationHomeGrid', () => {
       },
     })
     await nextTick()
+    await nextTick()
 
     expect(wrapper.find('.vgl-item__resizer').exists()).toBe(true)
     expect(wrapper.find('.information-home-grid__resize-handle').exists()).toBe(false)
@@ -36,6 +41,13 @@ describe('InformationHomeGrid', () => {
     expect(wrapper.getComponent(GridItem).props('minH')).toBe(2)
     expect(wrapper.getComponent(GridItem).props('minW')).toBe(2)
     expect(wrapper.getComponent(GridItem).props('resizeOption')).toEqual({})
+    expect(wrapper.getComponent(GridLayout).props('rowHeight')).toBe(97)
+    expect(wrapper.get('.information-home-grid').attributes('style')).toContain(
+      '--information-home-grid-track-size: 107px',
+    )
+
+    wrapper.getComponent(GridItem).vm.$emit('resized', widget.id, 7, 8, 0, 0)
+    expect(wrapper.emitted('resize')?.[0]).toEqual([widget.id, { w: 8, h: 7 }, 'desktop'])
 
     await wrapper.setProps({ editing: false })
     await nextTick()

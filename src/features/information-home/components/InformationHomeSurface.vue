@@ -177,19 +177,33 @@ function removeWidget(id: string): void {
   })
 }
 
-function resizeWidget(id: string, size: { w: number; h: number }): void {
+function resizeWidget(
+  id: string,
+  size: { w: number; h: number },
+  target: 'desktop' | 'compact' = 'desktop',
+): void {
   if (!editing.value) beginEdit()
   if (!editing.value) return
   mutate((payload) => {
     const widget = payload.widgets.find((candidate) => candidate.id === id)
     if (!widget) return
-    widget.layout.desktop = {
-      ...widget.layout.desktop,
-      x: Math.min(widget.layout.desktop.x, 12 - size.w),
-      w: size.w,
-      h: size.h,
-      minW: Math.min(widget.layout.desktop.minW ?? 1, size.w),
-      minH: Math.min(widget.layout.desktop.minH ?? 1, size.h),
+    const columns = target === 'compact' ? 6 : 12
+    const width = Math.max(1, Math.min(Math.round(size.w), columns))
+    const height = Math.max(1, Math.round(size.h))
+    const current =
+      widget.layout[target] ??
+      ({
+        ...widget.layout.desktop,
+        x: 0,
+        w: Math.min(widget.layout.desktop.w, columns),
+      } satisfies InformationHomeGridPosition)
+    widget.layout[target] = {
+      ...current,
+      x: Math.min(current.x, columns - width),
+      w: width,
+      h: height,
+      minW: Math.min(current.minW ?? 1, width),
+      minH: Math.min(current.minH ?? 1, height),
     }
   })
 }

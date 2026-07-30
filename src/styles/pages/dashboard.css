@@ -202,8 +202,8 @@
       transparent 1px
     );
   background-size:
-    calc(100% / 12) 100%,
-    100% 82px;
+    var(--information-home-grid-track-size) var(--information-home-grid-track-size),
+    var(--information-home-grid-track-size) var(--information-home-grid-track-size);
 }
 
 .information-home-surface.dashboard-surface--editing

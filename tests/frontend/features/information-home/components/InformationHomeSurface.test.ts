@@ -121,4 +121,43 @@ describe('InformationHomeSurface', () => {
     ).toBeUndefined()
     wrapper.unmount()
   })
+
+  it('commits the final grid resize into the controlled draft layout', async () => {
+    Reflect.set(globalThis, '__TAURI_INTERNALS__', {})
+    homeService.getOrCreate.mockResolvedValue(ok(home))
+    homeService.listSummaries.mockResolvedValue(ok([]))
+    const { default: InformationHomeSurface } =
+      await import('@/features/information-home/components/InformationHomeSurface.vue')
+    const wrapper = mount(InformationHomeSurface, {
+      props: {
+        aiSettings: {} as never,
+        ensureAiSecretLoaded: vi.fn(async () => false),
+      },
+      global: {
+        stubs: {
+          InformationHomeGrid: {
+            name: 'InformationHomeGrid',
+            props: ['widgets'],
+            emits: ['resize'],
+            template:
+              "<div><button data-test=\"resize-widget\" @click=\"$emit('resize', 'home-widget-test', { w: 8, h: 7 }, 'desktop')\">resize</button><button data-test=\"resize-widget-compact\" @click=\"$emit('resize', 'home-widget-test', { w: 8, h: 6 }, 'compact')\">compact</button></div>",
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-test="resize-widget"]').trigger('click')
+    const widgets = wrapper
+      .getComponent({ name: 'InformationHomeGrid' })
+      .props('widgets') as typeof home.payload.widgets
+    expect(widgets[0]?.layout.desktop).toMatchObject({ w: 8, h: 7 })
+    await wrapper.get('[data-test="resize-widget-compact"]').trigger('click')
+    const compactWidgets = wrapper
+      .getComponent({ name: 'InformationHomeGrid' })
+      .props('widgets') as typeof home.payload.widgets
+    expect(compactWidgets[0]?.layout.compact).toMatchObject({ x: 0, w: 6, h: 6 })
+    expect(wrapper.find('.information-home-controls').exists()).toBe(true)
+    wrapper.unmount()
+  })
 })
