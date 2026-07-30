@@ -4,7 +4,7 @@
 
 SQLite schema 只由 `src-tauri/migrations/` 中的 SQLx 迁移管理。应用启动时 Rust 端按版本执行迁移，并把 checksum 写入 `_sqlx_migrations`。
 
-截至 2026-07-29，当前迁移链为 `0001`–`0035`。最新迁移已包含邮箱、RSS、钉钉 Stream 收件箱与独立信息首页。
+截至 2026-07-30，当前迁移链为 `0001`–`0038`。最新迁移已包含 Runtime Port 身份/审批契约、后台 Agent Runtime Profile，以及 A2A 请求 lease、重试与 Dead Letter 字段。
 
 前端不再执行 `CREATE TABLE`、`ALTER TABLE` 或补列逻辑。这样避免了两个运行时同时管理 schema，防止“每次打开都提示迁移”或已应用迁移 checksum 不匹配。
 
@@ -22,7 +22,7 @@ SQLite schema 只由 `src-tauri/migrations/` 中的 SQLx 迁移管理。应用�
 | Agent 任务与审计 | `agent_*` 表保存 task、tool call、Patch、confirmation、transaction 和 request；`agent_workspace_state` 保存版本化项目/任务消息快照    |
 | 消息连接器       | `im_connectors` 保存非敏感连接配置和运行状态；`im_conversations`、`im_messages` 保存标准化钉钉会话与消息；Client Secret 不进入 SQLite |
 | 独立信息首页     | `information_home` 保存单例模块布局与自动摘要设置；`information_home_summaries` 保存只读 Agent 摘要历史，不属于 `workspace_views`     |
-| Agent 通信与路由 | `agent_requests` 保存 request mode、result、revision、decision 和 project/branch routing；`agent_branches` 保存 A2A 分支目录          |
+| Agent 通信与路由 | `agent_requests` 保存 mode、result、revision、decision、project/branch routing、run/session binding、lease、attempt/retry 和 Dead Letter；`agent_branches` 保存 A2A 分支目录 |
 | 自动化与运行队列 | `automation_tasks`、`automation_runs`                                                                                                 |
 | 上下文追溯       | `context_bundles`；Agent ExecutionPolicy、Provider 参数、Skill 版本与关联 ID                                                          |
 | 结构化知识       | `knowledge_objects`、`knowledge_object_relations`                                                                                     |

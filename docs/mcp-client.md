@@ -49,7 +49,7 @@ MyNoteBook 可以作为 MCP Client 连接用户显式导入并启用的外部服
 - 导入 `stdio` 配置等同于授权应用启动其中指定的外部程序。只导入可信配置。
 - MCP 工具不能绕过 MyNoteBook 的文档 Patch/Diff 确认协议。
 - MCP annotations 只是风险参考，不能建立本地信任。导入或重新导入配置不会自动设置 `trusted`；信任必须在管理页单独确认，也可以随时撤销。
-- 目标安全不变量是只有 `serverTrusted && readOnlyHint` 才可免除调用前授权；对应代码修复、授权语义拆分和安全测试列入 [路线图 Phase 0](roadmap.md#4-phase-0安全与基础契约)。
+- 只有 `serverTrusted && readOnlyHint` 才可免除调用前授权；trusted/write、trusted/read、untrusted/read、untrusted/write 四象限由统一 Tool Manifest 与授权测试约束。
 - MCP 返回内容会作为外部、不可信工具结果交给模型，不会直接写入文档。
 - 当前版本会把 `env` 和 `headers` 保存在本机 `mcp-servers.json`。如果配置包含长期密钥，应限制数据目录访问；将 MCP 凭据迁移到系统密钥库列为后续安全增强。
 - 当前连接采用“发现/调用时建立，完成后关闭”的有界会话，单次初始化、发现或调用默认最多等待 30 秒。
@@ -91,7 +91,7 @@ mynotebook-agent submit --database-url $env:MYNOTEBOOK_DATABASE_URL `
   --project-id project-1 --branch-id branch-project-1-... --prompt "对比并更新本地规范"
 ```
 
-`get_agent_request` 还返回请求的 `mode`、`route`，以及 Runtime 写入的版本化 `result` 信封：`version`、`outcome`、`summary`、`patchCount` 和 `targetDocumentIds`。`route` 包含 `projectId`、`branchId`、`branchTitle` 和 `parentConversationId`。认知任务额外返回 `result.cognitive`，包含规范化模式、结构化输出，以及 Learning 的最新会话状态。这是 Agent 向调用方回传执行汇总的标准通道；调用方不需要通过数据库、界面或重新解析对话消息猜测 Agent 做了什么。进入 `awaiting_review` 时信封与 Patch 同时持久化，批准或拒绝后继续保留。
+`get_agent_request` 还返回请求的 `mode`、`route`，以及 Runtime 写入的版本化 `result` 信封：`version`、`outcome`、`summary`、`patchCount` 和 `targetDocumentIds`。`route` 包含 `projectId`、`branchId`、`branchTitle` 和 `parentConversationId`。认知任务额外返回 `result.cognitive`，包含规范化模式、结构化输出，以及 Learning 的最新会话状态。可靠性投影包含 `attemptCount`、`nextAttemptAt`、`deadLetteredAt` 和 `lastFailureKind`，用于区分等待重试与已耗尽请求，不暴露内部 lease owner。这是 Agent 向调用方回传执行汇总的标准通道；调用方不需要通过数据库、界面或重新解析对话消息猜测 Agent 做了什么。进入 `awaiting_review` 时信封与 Patch 同时持久化，批准或拒绝后继续保留。
 
 审批调用写入独立的 `decision` v1 信封：`action`、`reply`、`requestId`、`taskId`、`resultVersion`、`resultSummary` 和 `decidedAt`。桌面端只消费与当前待确认 `taskId` 精确匹配的决定；其他实例不能把不属于自己的审批误标完成。CLI 的 `approve` / `reject` 可通过 `--reply` 提交审批回复，并可通过 `--summary` 要求当前 summary 精确匹配后再决定。
 

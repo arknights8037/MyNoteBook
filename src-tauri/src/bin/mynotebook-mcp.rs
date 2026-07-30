@@ -827,7 +827,9 @@ async fn read_agent_request(pool: &SqlitePool, id: &str) -> Result<Value, String
          agent_request.revision_feedback, agent_request.revision_count, \
          agent_request.project_id, agent_request.branch_id, branch.title AS branch_title, \
          branch.parent_conversation_id, agent_request.created_at, \
-         agent_request.updated_at, agent_request.completed_at FROM agent_requests agent_request \
+         agent_request.updated_at, agent_request.completed_at, agent_request.attempt_count, \
+         agent_request.next_attempt_at, agent_request.dead_lettered_at, \
+         agent_request.last_failure_kind FROM agent_requests agent_request \
          LEFT JOIN agent_branches branch ON branch.id = agent_request.branch_id \
          WHERE agent_request.id = ? LIMIT 1",
     )
@@ -884,6 +886,10 @@ async fn read_agent_request(pool: &SqlitePool, id: &str) -> Result<Value, String
         "previousTaskId": row.get::<Option<String>, _>("previous_task_id"),
         "revisionFeedback": row.get::<Option<String>, _>("revision_feedback"),
         "revisionCount": row.get::<i64, _>("revision_count"),
+        "attemptCount": row.get::<i64, _>("attempt_count"),
+        "nextAttemptAt": row.get::<Option<i64>, _>("next_attempt_at"),
+        "deadLetteredAt": row.get::<Option<i64>, _>("dead_lettered_at"),
+        "lastFailureKind": row.get::<Option<String>, _>("last_failure_kind"),
         "createdAt": row.get::<i64, _>("created_at"),
         "updatedAt": row.get::<i64, _>("updated_at"),
         "completedAt": row.get::<Option<i64>, _>("completed_at"),

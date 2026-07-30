@@ -179,6 +179,15 @@ pub(crate) async fn get_agent_worker_snapshot(
     Ok(state.snapshot.read().await.clone())
 }
 
+pub(crate) async fn active_run_ids(app: &AppHandle) -> Vec<String> {
+    app.state::<AgentWorkerSupervisorState>()
+        .snapshot
+        .read()
+        .await
+        .active_run_ids
+        .clone()
+}
+
 #[tauri::command]
 pub(crate) async fn get_agent_runtime_terminal(
     state: State<'_, AgentWorkerSupervisorState>,
@@ -643,6 +652,8 @@ async fn run_supervisor(
         };
         if !intentional_shutdown {
             exit_description = format!("{exit_description}; {status}");
+            let persisted_exit_description =
+                crate::sensitive_data::redact_sensitive_text(&exit_description);
             for run_id in &active_run_ids {
                 let terminal = json!({
                     "version": PROTOCOL_VERSION,
@@ -651,7 +662,7 @@ async fn run_supervisor(
                     "runId": run_id,
                     "error": {
                         "code": "worker_unavailable",
-                        "message": crate::sensitive_data::redact_sensitive_text(&exit_description),
+                        "message": persisted_exit_description,
                         "retryable": true
                     }
                 });
@@ -666,6 +677,24 @@ async fn run_supervisor(
             }
             refresh_terminal_snapshot(&app).await;
             if let Ok(connection) = database::open_database(&app, data_directory.clone()).await {
+                for run_id in &active_run_ids {
+                    let Some(recovery) = run_recovery_contexts.get(run_id) else {
+                        continue;
+                    };
+                    let task_id = run_requests
+                        .get(run_id)
+                        .and_then(|request| request.get("workItemId"))
+                        .and_then(Value::as_str);
+                    let _ = crate::agent_request_watcher::settle_background_run(
+                        connection.as_ref(),
+                        recovery,
+                        task_id,
+                        None,
+                        Some(&persisted_exit_description),
+                        true,
+                    )
+                    .await;
+                }
                 let active = active_run_ids.iter().cloned().collect::<Vec<_>>();
                 let _ = handle_agent_worker_exit(
                     connection.as_ref(),
@@ -1034,6 +1063,17 @@ async fn handle_worker_line(
                 .get("event")
                 .cloned()
                 .ok_or_else(|| "run.event 缺少 event。".to_string())?;
+            if let Some(run_id) = event.get("runId").and_then(Value::as_str) {
+                if let Some(recovery) = context.run_recovery_contexts.get(run_id) {
+                    let connection =
+                        database::open_database(app, context.data_directory.clone()).await?;
+                    crate::agent_request_watcher::renew_background_lease(
+                        connection.as_ref(),
+                        recovery,
+                    )
+                    .await?;
+                }
+            }
             app.emit(RUN_EVENT, event)
                 .map_err(|error| format!("无法转发 Runtime event：{error}"))?;
             update_snapshot(app, |snapshot| {
@@ -1068,6 +1108,7 @@ async fn handle_worker_line(
                             task_id,
                             message.get("result"),
                             None,
+                            false,
                         )
                         .await?;
                     } else {
@@ -1076,12 +1117,18 @@ async fn handle_worker_line(
                             .and_then(|value| value.get("message"))
                             .and_then(Value::as_str)
                             .unwrap_or("Agent Worker 运行失败。");
+                        let retryable = message
+                            .get("error")
+                            .and_then(|value| value.get("retryable"))
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
                         crate::agent_request_watcher::settle_background_run(
                             connection.as_ref(),
                             recovery,
                             task_id,
                             None,
                             Some(error),
+                            retryable,
                         )
                         .await?;
                     }

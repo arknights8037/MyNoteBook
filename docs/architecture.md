@@ -1,6 +1,6 @@
 # 当前架构与模块边界
 
-本文是 MyNoteBook 当前架构的事实入口，已按 2026-07-30 代码与 migration `0001`–`0037` 复核。它描述已经存在的实现、代码所有权和必须保持的依赖方向。产品定位、工作循环与品牌原则见 [产品定位与愿景](product-positioning.md)；认知系统契约见 [认知系统集成](cognitive-system-integration.md)，未完成事项和目标边界见 [后续开发路线图](roadmap.md)。
+本文是 MyNoteBook 当前架构的事实入口，已按 2026-07-30 代码与 migration `0001`–`0038` 复核。它描述已经存在的实现、代码所有权和必须保持的依赖方向。产品定位、工作循环与品牌原则见 [产品定位与愿景](product-positioning.md)；认知系统契约见 [认知系统集成](cognitive-system-integration.md)，未完成事项和目标边界见 [后续开发路线图](roadmap.md)。
 
 ## 1. 产品与技术边界
 
@@ -88,7 +88,7 @@ Knowledge Object 可锚定 document/block/revision。Context Compiler 已读取�
 - `agent_tools.rs`：数据库工具、只读命令和 Rust 线性时间正则执行。
 - `agent_cancellation.rs`：按 tool call ID 取消正在运行的原生或 MCP future。
 - `agent_worker_supervisor.rs`：Phase 3 Worker 子进程身份、NDJSON 通道、heartbeat、重启、活动/待授权/待领取终态的脱敏快照、标准 proposal 的原子持久化、崩溃终态、Provider 流式代理，以及全部内置 Domain Tool/MCP 的受控分发；默认生产 Agent 由它监督。
-- `agent_request_watcher.rs`：后台 Runtime Profile、A2A 原子领取与自动调度、审批/修订状态机、请求/Cognitive 终态及 Research candidate 持久化。
+- `agent_request_watcher.rs`：后台 Runtime Profile、A2A lease 原子领取与自动调度、审批/修订状态机、请求/Cognitive 终态、Research candidate 持久化、指数退避、Dead Letter 和启动恢复扫描。
 - `ai_models.rs` / `ai_proxy.rs`：Provider 模型列表、请求代理、流式响应和敏感信息边界。
 - `work.rs`：TaskRun、Verifier、ChangeSet 和 Approval 的原子状态变更。
 - `views.rs`：View snapshot/dependency 发布及 override 保护。
@@ -103,9 +103,9 @@ Knowledge Object 可锚定 document/block/revision。Context Compiler 已读取�
 
 Rust command 应立即委托给对应模块。数据库访问必须复用 `database.rs` 管理的路径、迁移和连接设置。
 
-### 目标边界摘要（尚未实现）
+### 目标边界摘要（部分实现）
 
-后续按路线图逐步把 SQLite、连接器、凭据、Workflow 状态和副作用收敛到 Rust Core。Node 仅可作为可替换的 Agent Worker，通过受控 RPC 调用 Rust 领域工具，禁止直接访问 SQLite。现有 AI SDK Runtime 在 PI 原型决策门完成前仍是唯一生产 Agent Loop；PI 若被采用，也只是 Runtime Port 的 Worker 内部实现，不接管权限、Workflow、MCP、Skill、Secret 或 Patch transaction。
+Agent Runtime、凭据、MCP、A2A Workflow 和规范 Patch 终态已收敛到 Rust Core 与其托管的 Node sidecar；Node 只通过受控 RPC 调用 Rust 领域工具，禁止直接访问 SQLite。后续继续把存量 WebView repository 写操作迁入 Rust，并收敛连接器、定时器和外部副作用。Phase 2 已决定保留 AI SDK 作为唯一生产 Agent Loop；PI 仅保留为已验证的候选 adapter，不接管权限、Workflow、MCP、Skill、Secret 或 Patch transaction。
 
 ## 4. 前端模块所有权
 
@@ -180,6 +180,7 @@ Rust command 应立即委托给对应模块。数据库访问必须复用 `datab
 - Run lifecycle、Plan、运行级事件和 tool timeline 已绑定 assistant 消息并持久化；规范工具审计仍保存在独立数据库表中。
 - 默认 Agent Runtime 的规划、模型循环、工具调度、MCP manifest 枚举与标准 Patch proposal 编译已移入 sidecar/Rust；Rust 会先持久化这些 proposal，再允许 Vue 显示 Diff。授权 UI 仍由 Vue 投影；普通 Run 仍没有 durable checkpoint/resume。
 - Cognitive Session CRUD/终态、A2A 自动领取与 sidecar 调度、审批/拒绝、修订和请求终态均由 Rust 写入。Research 结构化结果会生成 candidate Knowledge Object、source 与 validation；WebView 只保留交互式投影和审阅入口。
+- A2A `running` 请求保存 lease owner/expiry 和 attempt；Worker 事件续租，可重试失败使用有上限的指数退避，耗尽后进入 Dead Letter。Rust watcher 启动时依据 Supervisor 活动 Run 快照回收孤儿请求，并终止旧 task/session 后以新 run 重排；这不是模型步骤级 checkpoint/resume。
 - 新 Agent 任务分别保存 `AgentTask.id`（迁移期 work item）、独立 `run_id`、可空 `workflow_id`、conversation/cognitive `session_id` 和 `document_id`；历史记录使用确定性 `legacy-run-*` 映射，`task_runs.id` 保留原有治理语义。
 - `tokenBudget` 当前主要约束单次输出参数，没有基于累计 input/output usage、成本、模型轮次和并行工具数的统一预算器。
 - Rust SQLx 与 TypeScript `plugin-sql` 仍是双数据库访问路径；Rust 成为唯一写入者是既定迁移方向，不是当前事实。

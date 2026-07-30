@@ -8,20 +8,22 @@ MyNoteBook 的 Agent 是受控的本地知识协作者。它可以读取许可�
 
 Phase 3 的生产链路为：`UI interaction snapshot -> TauriAgentRuntimeAdapter -> Rust AgentWorkerSupervisor -> NDJSON Worker Host -> SidecarRunPlanner -> AiSdkWorkerRuntime`。UI 不再组装 `AgentRunRequestV1`；SidecarRunPlanner 从冻结的文档/工作区/模型交互快照生成 Task、Context Bundle、ExecutionPolicy、Tool Manifest 和 Cognitive Output Contract，随后交给 AI SDK Runtime。Supervisor 维护 Worker 实例、heartbeat、重启计数、活动 Run 与崩溃终态，并在收到 `orchestration.prepared` 时写入 Task/Context Bundle。AI SDK Provider 请求通过自定义 `fetch` 交给 Rust 流式代理，Rust 从 Secret Store 注入凭据，因此密钥值不会进入 Node；Rust 同时写工具审计并执行全部内置 Domain Tool/MCP。Mind Map 读取使用 canonical SQLite，自动化、Skill 与 MCP 写入只生成停用草稿，文档修改仍只形成待 Diff 审阅的 Patch 提案。Composition 默认使用该链路，`VITE_AGENT_RUNTIME_OWNER=webview` 仅保留给兼容回归。
 
-标准 Agent/Create/Plan Run 在侧车中将模型输出编译为可审计的 proposal projection；Rust 在转发 `run.result` 前原子写入 Patch、来源和任务状态，随后 Vue 只投影已持久化结果到既有 Diff 审阅 UI。Rust 还在提交前枚举 MCP 工具并冻结 trusted/read 授权矩阵。Rust snapshot 额外保存活动 Run 的脱敏身份投影、待授权请求和待领取终态投影。Cognitive 与 A2A 的跨窗口业务投影属于后续 Workflow/数据库所有权阶段，不属于 Runtime 进程迁移承诺。
+标准 Agent/Create/Plan Run 在侧车中将模型输出编译为可审计的 proposal projection；Rust 在转发 `run.result` 前原子写入 Patch、来源和任务状态，随后 Vue 只投影已持久化结果到既有 Diff 审阅 UI。Rust 还在提交前枚举 MCP 工具并冻结 trusted/read 授权矩阵。Rust snapshot 额外保存活动 Run 的脱敏身份投影、待授权请求和待领取终态投影。Cognitive 与 A2A 的跨窗口业务投影、审批/修订、Research candidate 和请求终态也已由 Rust/sidecar 持久化。
 
 ```text
-用户输入 / Slash Command
-  -> CREATE_RUN -> TaskCreated
-  -> prepareAgentRun：冻结项目、会话、作业区、文档、选区、Provider 和模式
-  -> 创建带 projectId / conversationId 的 AgentTask
-  -> 编译 Skill 摘要、Context Bundle 和 ExecutionPolicy
-  -> AgentRuntimeClient -> AiSdkAgentRuntimeAdapter
-  -> ToolLoopAgent：模型 -> Tool -> Observation -> 下一轮
-  -> 本地校验最终结构化输出
-  -> COMPLETE_RUN / FAIL_RUN / CANCEL_RUN -> Event -> Reducer
-  -> 回答，或 command/Patch 提案
-  -> Diff / 用户确认 / Rust transaction
+交互输入 / Slash Command
+  -> WebView 冻结文档、选区、项目、会话、Provider 与模式快照
+  -> TauriAgentRuntimeAdapter -> Rust Supervisor -> Node sidecar
+  -> SidecarRunPlanner 编译 Task / Context / Policy / Manifest / Output Contract
+  -> ToolLoopAgent：模型 -> Rust Tool/MCP -> Observation -> 下一轮
+  -> sidecar 校验并编译回答、Patch 或 Cognitive projection
+  -> Rust 持久化业务终态 -> Runtime Event -> Vue projection
+  -> Patch 进入 Diff / 用户确认 / Rust transaction
+
+A2A MCP request
+  -> Rust watcher lease 领取 -> 冻结 SQLite 资料范围 -> sidecar Run
+  -> Rust 持久化终态，或等待审批/修订
+  -> retryable failure 指数退避 -> 新 run；耗尽后 Dead Letter
 ```
 
 Ask 使用普通流式 Markdown 请求；Edit 生成受控 Patch；Agent 使用真实工具循环。Slash Command 只选择 intent 和策略，不包含独立业务 Runtime。
@@ -134,11 +136,11 @@ Agent MVP 使用文档 command/Patch 契约。Runtime 也可注入版本化 `Age
 
 工具授权已经拆成三类，Adapter 或 Workflow 不得把一次确认错误复用到另一类副作用：
 
-- `executionAuthorization`：调用工具前的授权。目标规则是 MCP 只有 `serverTrusted && readOnly` 时可免逐次确认。
+- `executionAuthorization`：调用工具前的授权。MCP 只有 `serverTrusted && readOnly` 时可免逐次确认。
 - `mutationApproval`：Patch 已生成后，对文档或正式知识写入的审批；继续走 Diff、revision 校验和 Rust transaction。
 - `externalActionApproval`：发送邮件、提交外部系统等不可逆动作执行前的审批。
 
-这三类语义目前尚未形成统一数据契约；路线图 Phase 0 负责定义，不能仅通过改名把旧字段视为已迁移。
+三类字段已经进入统一 Domain Tool Catalog/Manifest；审批记录保存 `approval_kind` 与 `pending/approved/rejected/cancelled` 状态，并保留历史 `decision` 兼容字段。一次授权不能跨类型复用。
 
 ## 6. 内置工具
 
@@ -192,7 +194,7 @@ Agent 任务按项目组管理。左侧采用项目文件夹树，项目下直�
 
 项目、作业区和整组任务消息以版本化状态快照保存到 SQLite `agent_workspace_state`，不再使用 WebView localStorage 保存业务历史。旧历史键在启动时只删除、不迁移。侧栏中新建但尚无消息的任务是 `transient` 内存锚点；发送第一条消息后才进入持久化快照，避免空任务污染历史。`agent_tasks` 同时保存 `project_id` 和 `conversation_id`，因此重启后仍可从项目、会话、任务三层追踪作业归属；任务本身的 Patch、工具调用、确认和事务继续使用既有规范化审计表。
 
-当前身份模型尚未收敛：`AgentTask.id`、通用 `task_runs.id`、前端临时 run ID 和 Provider tool-call ID 分属不同层，部分 Agent 调用还把 document ID 复用于 `sessionId`。因此目前不存在贯穿 Workflow、Run、Turn 和 Tool Call 的稳定 ID 契约。路线图将分别引入 `work_item_id`、`workflow_id`、`run_id`、`turn_id`、`tool_call_id` 和可选 `provider_tool_call_id`；`session_id` 只表示对话或认知连续性。
+新 Agent 任务显式保存 `document_id`，并使用独立 `run_id`、可空 `workflow_id` 与 conversation/cognitive `session_id`；`AgentTask.id` 在迁移期作为 `workItemId`。Tool Call 使用独立内部 ID 作为审计主键，Provider 原始 ID 只写入可空 `provider_tool_call_id`，每次模型调用带 `turn_id`。历史记录通过确定性 `legacy-run-*` 映射继续可读；通用 `task_runs.id` 保留原有 Work 治理语义，不与 Agent Run ID 合并。
 
 项目还提供本地 Agent 请求通信队列。持有 capability token 的调用方先通过 stdio MCP 读取项目、资料根、任务和 A2A 分支目录，再可在指定项目下创建稳定分支，并把任务路由到 `project_id` / `branch_id`。Rust watcher 从 SQLite 冻结项目/文档范围，使用持久化且不含密钥的 Runtime Profile 构造 submission，并直接启动 sidecar；请求领取、task/run/session 绑定和终态结算不依赖窗口。批准、拒绝和修订也由 Rust Workflow 处理：批准继续执行 Patch revision、before、覆盖范围和单事务校验，修订用新 run ID 携带反馈与上一版摘要。需要人工授权或 Patch 审阅时保持等待态。主窗口关闭后应用隐藏到托盘，显式退出才停止 Core。同一分支复用同一条持久化任务记录，父分支关系随历史快照保存。MCP 的提交动作不会自行批准修改；查询 Patch 后仍必须另行批准或拒绝。
 
@@ -260,6 +262,7 @@ Run lifecycle、Plan snapshot、运行级事件和 Step/tool timeline 会绑定�
 - 自动化有定义和运行队列，但没有后台无人值守模型调度器。
 - 普通 Agent Run 没有 durable checkpoint/resume；应用重启后不能从中间 tool step 恢复。Learning Session 的跨 run 继续和待确认 Patch 的恢复不等同于恢复同一个 Run。
 - 默认 Runtime 的任务规划、模型循环、工具调度和标准 Patch 终态编译均由 Rust 托管 sidecar 承载；Vue 负责用户交互、事件投影和 Diff 审阅。A2A 自动调度、审批/修订 Workflow、Cognitive Session 终态和 Research candidate 业务投影均由 Rust/sidecar 完成，可在主窗口隐藏时继续。显式退出进程仍会停止任务，普通 Run 也没有 durable checkpoint/resume。
+- A2A 请求使用持久 lease 和 attempt 计数；Worker 活动事件续租，显式可重试错误按指数退避最多尝试三次，耗尽后写入 Dead Letter。应用启动会保留 Supervisor 仍持有的 Run，并把无活动所有者的 `running` 请求作为新 run 重排。该机制恢复业务请求，不恢复旧模型循环的中间 tool step。
 - 当前已有独立 `run_id` 贯穿 Runtime 请求、`agent_tasks`、Context Bundle 和 Tool Call；`task_runs.id` 仍保留历史治理语义，完整轨迹重放和 durable checkpoint 尚未实现。
 - MCP Prompts、Roots、Sampling、OAuth、旧 SSE 和跨任务长连接尚未开放。
 - 真实 DeepSeek Provider、stdio/Streamable HTTP MCP、真实 CLI 外部进程和隔离数据恢复已通过 G0 smoke；Windows 干净安装包仍属于发布流程检查。
@@ -270,4 +273,4 @@ Run lifecycle、Plan snapshot、运行级事件和 Step/tool timeline 会绑定�
 
 Runtime 事件使用 `run/model/message/tool/authorization` 与 `started/progress/completed/failed/cancelled` 的组合，包含递增 sequence、correlation/causation、Provider 明确返回的 content/reasoning、脱敏工具输入输出、usage 和终态；不保存应用内部隐藏思维链。Provider Tool Call ID 只作为可空映射，内部 Tool Call ID 始终是审计主键。
 
-`resumeRun` 不属于 v1 承诺：在 durable checkpoint 尚未落地时，等待外部事件或用户审批会结束当前 Agent Run，由 Workflow 持久化等待条件，并以新的 `run_id` 和 `causation_id` 继续。PI 只有在 Node 纵向原型通过决策门后才能成为 Worker 内部候选实现；在此之前，AI SDK Runtime 仍是唯一生产实现。
+`resumeRun` 不属于 v1 承诺：在 durable checkpoint 尚未落地时，等待外部事件或用户审批会结束当前 Agent Run，由 Workflow 持久化等待条件，并以新的 `run_id` 和 `causation_id` 继续。Phase 2 决策已保留 AI SDK 作为唯一生产实现；PI 原型只保留为可替换 Worker adapter 的评估证据。

@@ -323,6 +323,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0037_add_background_agent_runtime.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 38,
+            description: "add_agent_request_reliability",
+            sql: include_str!("../migrations/0038_add_agent_request_reliability.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

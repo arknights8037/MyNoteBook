@@ -8,6 +8,8 @@ use tokio::{sync::Mutex, task::JoinHandle, time::Duration};
 use crate::database;
 
 const QUEUE_EVENT: &str = "agent-communication://queue-changed";
+const BACKGROUND_LEASE_MS: i64 = 60 * 60 * 1_000;
+const MAX_BACKGROUND_ATTEMPTS: i64 = 3;
 
 #[derive(Default)]
 pub(crate) struct AgentRequestWatcherState {
@@ -99,7 +101,8 @@ pub(crate) async fn settle_agent_request(
     let result_json = input.result.map(|value| value.to_string());
     let result = sqlx::query(
         "UPDATE agent_requests SET status = ?, task_id = COALESCE(?, task_id), error = ?, \
-         result_json = COALESCE(?, result_json), updated_at = ?, completed_at = ? WHERE id = ?",
+         result_json = COALESCE(?, result_json), updated_at = ?, completed_at = ?, \
+         lease_owner = NULL, lease_expires_at = NULL, next_attempt_at = NULL WHERE id = ?",
     )
     .bind(&input.status)
     .bind(&input.task_id)
@@ -125,29 +128,32 @@ async fn claim_agent_request_in_pool(
     connection: &SqlitePool,
     previous_task_id: Option<&str>,
 ) -> Result<Option<Value>, String> {
-    let stale_before = now_millis() - 50 * 60 * 1_000;
+    let now = now_millis();
+    let lease_owner = new_id("a2a-lease");
     let mut transaction = connection.begin().await.map_err(database::database_error)?;
     let row = if let Some(task_id) = previous_task_id {
         sqlx::query(
             "SELECT request.*, branch.title AS branch_title, branch.parent_conversation_id \
              FROM agent_requests request LEFT JOIN agent_branches branch ON branch.id = request.branch_id \
-             WHERE request.previous_task_id = ? AND (request.status = 'queued' OR \
-             (request.status = 'running' AND request.task_id IS NULL AND request.updated_at < ?)) \
+             WHERE request.previous_task_id = ? AND request.status = 'queued' \
+             AND request.dead_lettered_at IS NULL \
+             AND (request.next_attempt_at IS NULL OR request.next_attempt_at <= ?) \
              ORDER BY request.updated_at ASC LIMIT 1",
         )
         .bind(task_id)
-        .bind(stale_before)
+        .bind(now)
         .fetch_optional(&mut *transaction)
         .await
     } else {
         sqlx::query(
             "SELECT request.*, branch.title AS branch_title, branch.parent_conversation_id \
              FROM agent_requests request LEFT JOIN agent_branches branch ON branch.id = request.branch_id \
-             WHERE request.previous_task_id IS NULL AND (request.status = 'queued' OR \
-             (request.status = 'running' AND request.task_id IS NULL AND request.updated_at < ?)) \
+             WHERE request.previous_task_id IS NULL AND request.status = 'queued' \
+             AND request.dead_lettered_at IS NULL \
+             AND (request.next_attempt_at IS NULL OR request.next_attempt_at <= ?) \
              ORDER BY request.created_at ASC LIMIT 1",
         )
-        .bind(stale_before)
+        .bind(now)
         .fetch_optional(&mut *transaction)
         .await
     }
@@ -161,12 +167,16 @@ async fn claim_agent_request_in_pool(
     };
     let id: String = row.try_get("id").map_err(database::database_error)?;
     let result = sqlx::query(
-        "UPDATE agent_requests SET status = 'running', updated_at = ? WHERE id = ? AND \
-         (status = 'queued' OR (status = 'running' AND task_id IS NULL AND updated_at < ?))",
+        "UPDATE agent_requests SET status = 'running', updated_at = ?, lease_owner = ?, \
+         lease_expires_at = ?, attempt_count = attempt_count + 1, next_attempt_at = NULL, \
+         last_failure_kind = NULL WHERE id = ? AND status = 'queued' AND dead_lettered_at IS NULL \
+         AND (next_attempt_at IS NULL OR next_attempt_at <= ?)",
     )
-    .bind(now_millis())
+    .bind(now)
+    .bind(&lease_owner)
+    .bind(now + BACKGROUND_LEASE_MS)
     .bind(&id)
-    .bind(stale_before)
+    .bind(now)
     .execute(&mut *transaction)
     .await
     .map_err(database::database_error)?;
@@ -187,6 +197,8 @@ async fn claim_agent_request_in_pool(
         "status": "running", "taskId": optional_string("task_id"),
         "previousTaskId": optional_string("previous_task_id"), "revisionFeedback": optional_string("revision_feedback"),
         "revisionCount": row.try_get::<i64, _>("revision_count").unwrap_or(0),
+        "attemptCount": row.try_get::<i64, _>("attempt_count").unwrap_or(0) + 1,
+        "leaseOwner": lease_owner,
         "result": optional_string("result_json").and_then(|value| serde_json::from_str::<Value>(&value).ok()),
         "decision": optional_string("decision_json").and_then(|value| serde_json::from_str::<Value>(&value).ok())
     });
@@ -223,12 +235,22 @@ pub(crate) async fn start_agent_request_watcher(
 
 async fn watch_agent_requests(app: AppHandle, data_directory: Option<String>) {
     let mut last_snapshot: Option<(i64, Option<i64>)> = None;
+    let mut startup_recovered = false;
     let mut ticker = tokio::time::interval(Duration::from_secs(1));
     loop {
         ticker.tick().await;
         let Ok(connection) = database::open_database(&app, data_directory.clone()).await else {
             continue;
         };
+        if !startup_recovered {
+            let active_run_ids = crate::agent_worker_supervisor::active_run_ids(&app).await;
+            if recover_orphaned_background_requests(connection.as_ref(), &active_run_ids)
+                .await
+                .is_ok()
+            {
+                startup_recovered = true;
+            }
+        }
         if let Err(error) =
             dispatch_next_background_request(&app, connection.as_ref(), data_directory.clone())
                 .await
@@ -244,7 +266,7 @@ async fn watch_agent_requests(app: AppHandle, data_directory: Option<String>) {
             continue;
         };
         let signature = (actionable_count, latest_update_at);
-        if actionable_count > 0 || last_snapshot.as_ref() != Some(&signature) {
+        if last_snapshot.as_ref() != Some(&signature) {
             let _ = app.emit(
                 QUEUE_EVENT,
                 AgentRequestQueueSnapshot {
@@ -271,8 +293,12 @@ async fn dispatch_next_background_request(
         Some(request) => Some(request),
         None => {
             let previous = sqlx::query_scalar::<_, String>(
-                "SELECT previous_task_id FROM agent_requests WHERE status = 'queued' AND previous_task_id IS NOT NULL ORDER BY created_at ASC LIMIT 1",
+                "SELECT previous_task_id FROM agent_requests WHERE status = 'queued' \
+                 AND previous_task_id IS NOT NULL AND dead_lettered_at IS NULL \
+                 AND (next_attempt_at IS NULL OR next_attempt_at <= ?) \
+                 ORDER BY created_at ASC LIMIT 1",
             )
+            .bind(now_millis())
             .fetch_optional(connection)
             .await
             .map_err(database::database_error)?;
@@ -293,11 +319,11 @@ async fn dispatch_next_background_request(
     let (submission, recovery_context) = match submission {
         Ok(value) => value,
         Err(error) => {
-            settle_request_in_pool(connection, request_id, "failed", None, Some(&error), None)
-                .await?;
+            schedule_background_failure(connection, request_id, None, None, &error, false).await?;
             return Ok(());
         }
     };
+    let recovery_for_failure = recovery_context.clone();
     if let Err(error) = crate::agent_worker_supervisor::start_background_orchestration(
         app,
         data_directory,
@@ -306,8 +332,199 @@ async fn dispatch_next_background_request(
     )
     .await
     {
-        settle_request_in_pool(connection, request_id, "failed", None, Some(&error), None).await?;
+        schedule_background_failure(
+            connection,
+            request_id,
+            None,
+            recovery_for_failure
+                .get("cognitiveSessionId")
+                .and_then(Value::as_str),
+            &error,
+            true,
+        )
+        .await?;
     }
+    Ok(())
+}
+
+async fn recover_orphaned_background_requests(
+    connection: &SqlitePool,
+    active_run_ids: &[String],
+) -> Result<usize, String> {
+    let rows = sqlx::query(
+        "SELECT id, run_id, task_id, cognitive_session_id, attempt_count FROM agent_requests \
+         WHERE status = 'running' ORDER BY updated_at ASC",
+    )
+    .fetch_all(connection)
+    .await
+    .map_err(database::database_error)?;
+    let active = active_run_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::HashSet<_>>();
+    let mut recovered = 0;
+    for row in rows {
+        let run_id = row.try_get::<Option<String>, _>("run_id").unwrap_or(None);
+        if run_id
+            .as_deref()
+            .is_some_and(|run_id| active.contains(run_id))
+        {
+            continue;
+        }
+        let id: String = row.try_get("id").map_err(database::database_error)?;
+        let task_id = row.try_get::<Option<String>, _>("task_id").unwrap_or(None);
+        let session_id = row
+            .try_get::<Option<String>, _>("cognitive_session_id")
+            .unwrap_or(None);
+        let attempts = row.try_get::<i64, _>("attempt_count").unwrap_or(0);
+        if attempts >= MAX_BACKGROUND_ATTEMPTS {
+            dead_letter_background_request(
+                connection,
+                &id,
+                task_id.as_deref(),
+                session_id.as_deref(),
+                "应用恢复时发现请求已超过最大尝试次数。",
+                "startup_recovery_exhausted",
+            )
+            .await?;
+        } else {
+            mark_background_attempt_abandoned(
+                connection,
+                task_id.as_deref(),
+                session_id.as_deref(),
+                "应用恢复时回收了失去所有者的后台 Run。",
+            )
+            .await?;
+            sqlx::query(
+                "UPDATE agent_requests SET status = 'queued', task_id = NULL, run_id = NULL, \
+                 cognitive_session_id = NULL, lease_owner = NULL, lease_expires_at = NULL, \
+                 next_attempt_at = ?, last_failure_kind = 'startup_recovery', error = ?, \
+                 updated_at = ? WHERE id = ? AND status = 'running'",
+            )
+            .bind(now_millis())
+            .bind("应用恢复时回收了失去所有者的后台 Run。")
+            .bind(now_millis())
+            .bind(&id)
+            .execute(connection)
+            .await
+            .map_err(database::database_error)?;
+        }
+        recovered += 1;
+    }
+    Ok(recovered)
+}
+
+async fn schedule_background_failure(
+    connection: &SqlitePool,
+    request_id: &str,
+    task_id: Option<&str>,
+    cognitive_session_id: Option<&str>,
+    error: &str,
+    retryable: bool,
+) -> Result<(), String> {
+    let attempts = sqlx::query_scalar::<_, i64>(
+        "SELECT attempt_count FROM agent_requests WHERE id = ? LIMIT 1",
+    )
+    .bind(request_id)
+    .fetch_optional(connection)
+    .await
+    .map_err(database::database_error)?
+    .ok_or_else(|| "A2A 请求不存在。".to_string())?;
+    if !retryable || attempts >= MAX_BACKGROUND_ATTEMPTS {
+        return dead_letter_background_request(
+            connection,
+            request_id,
+            task_id,
+            cognitive_session_id,
+            error,
+            if retryable {
+                "retry_exhausted"
+            } else {
+                "non_retryable"
+            },
+        )
+        .await;
+    }
+    mark_background_attempt_abandoned(connection, task_id, cognitive_session_id, error).await?;
+    let delay_ms =
+        (5_000_i64 * 2_i64.pow((attempts.saturating_sub(1) as u32).min(6))).min(5 * 60 * 1_000);
+    let now = now_millis();
+    sqlx::query(
+        "UPDATE agent_requests SET status = 'queued', task_id = NULL, run_id = NULL, \
+         cognitive_session_id = NULL, lease_owner = NULL, lease_expires_at = NULL, \
+         next_attempt_at = ?, last_failure_kind = 'retryable', error = ?, updated_at = ?, \
+         completed_at = NULL WHERE id = ?",
+    )
+    .bind(now + delay_ms)
+    .bind(error.chars().take(2_000).collect::<String>())
+    .bind(now)
+    .bind(request_id)
+    .execute(connection)
+    .await
+    .map_err(database::database_error)?;
+    Ok(())
+}
+
+async fn dead_letter_background_request(
+    connection: &SqlitePool,
+    request_id: &str,
+    task_id: Option<&str>,
+    cognitive_session_id: Option<&str>,
+    error: &str,
+    failure_kind: &str,
+) -> Result<(), String> {
+    mark_background_attempt_abandoned(connection, task_id, cognitive_session_id, error).await?;
+    let now = now_millis();
+    sqlx::query(
+        "UPDATE agent_requests SET status = 'failed', error = ?, updated_at = ?, completed_at = ?, \
+         lease_owner = NULL, lease_expires_at = NULL, next_attempt_at = NULL, \
+         dead_lettered_at = ?, last_failure_kind = ? WHERE id = ?",
+    )
+    .bind(error.chars().take(2_000).collect::<String>())
+    .bind(now)
+    .bind(now)
+    .bind(now)
+    .bind(failure_kind)
+    .bind(request_id)
+    .execute(connection)
+    .await
+    .map_err(database::database_error)?;
+    Ok(())
+}
+
+async fn mark_background_attempt_abandoned(
+    connection: &SqlitePool,
+    task_id: Option<&str>,
+    cognitive_session_id: Option<&str>,
+    error: &str,
+) -> Result<(), String> {
+    let now = now_millis();
+    if let Some(task_id) = task_id {
+        sqlx::query("UPDATE agent_tasks SET status = 'interrupted', current_step = '后台 Run 已失去 lease', error = ?, completed_at = ? WHERE id = ? AND status IN ('running', 'waiting_confirmation')")
+            .bind(error.chars().take(2_000).collect::<String>()).bind(now).bind(task_id)
+            .execute(connection).await.map_err(database::database_error)?;
+    }
+    if let Some(session_id) = cognitive_session_id {
+        sqlx::query("UPDATE cognitive_sessions SET status = 'cancelled', state_json = ?, version = version + 1, updated_at = ? WHERE id = ? AND status IN ('active', 'waiting_user')")
+            .bind(json!({ "error": error, "reason": "background_attempt_abandoned" }).to_string())
+            .bind(now).bind(session_id).execute(connection).await.map_err(database::database_error)?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn renew_background_lease(
+    connection: &SqlitePool,
+    recovery: &Value,
+) -> Result<(), String> {
+    if recovery.get("kind").and_then(Value::as_str) != Some("a2a") {
+        return Ok(());
+    }
+    let request_id = required_value_string(recovery, "requestId")?;
+    let lease_owner = required_value_string(recovery, "leaseOwner")?;
+    let now = now_millis();
+    sqlx::query("UPDATE agent_requests SET lease_expires_at = ?, updated_at = ? WHERE id = ? AND status = 'running' AND lease_owner = ?")
+        .bind(now + BACKGROUND_LEASE_MS).bind(now).bind(request_id).bind(lease_owner)
+        .execute(connection).await.map_err(database::database_error)?;
     Ok(())
 }
 
@@ -469,6 +686,7 @@ async fn build_background_submission(
         "kind": "a2a",
         "requestId": request_id,
         "runId": run_id,
+        "leaseOwner": request.get("leaseOwner").cloned().unwrap_or(Value::Null),
         "cognitiveSessionId": cognitive_session_id,
         "intent": intent
     });
@@ -592,40 +810,22 @@ pub(crate) async fn settle_background_run(
     task_id: Option<&str>,
     result: Option<&Value>,
     error: Option<&str>,
+    retryable: bool,
 ) -> Result<(), String> {
     if recovery.get("kind").and_then(Value::as_str) != Some("a2a") {
         return Ok(());
     }
     let request_id = required_value_string(recovery, "requestId")?;
     if let Some(error) = error {
-        if let Some(task_id) = task_id {
-            sqlx::query("UPDATE agent_tasks SET status = 'failed', current_step = '后台 Agent 运行失败', error = ?, completed_at = ? WHERE id = ? AND status <> 'completed'")
-                .bind(error.chars().take(2_000).collect::<String>())
-                .bind(now_millis())
-                .bind(task_id)
-                .execute(connection)
-                .await
-                .map_err(database::database_error)?;
-        }
-        if let Some(session_id) = recovery.get("cognitiveSessionId").and_then(Value::as_str) {
-            update_cognitive_terminal(
-                connection,
-                session_id,
-                "cancelled",
-                json!({ "error": error }),
-            )
-            .await?;
-        }
-        settle_request_in_pool(
+        return schedule_background_failure(
             connection,
             &request_id,
-            "failed",
             task_id,
-            Some(error),
-            None,
+            recovery.get("cognitiveSessionId").and_then(Value::as_str),
+            error,
+            retryable,
         )
-        .await?;
-        return Ok(());
+        .await;
     }
     let result = result.ok_or_else(|| "后台 Run 缺少终态结果。".to_string())?;
     let finalization = result.get("sidecarFinalization");
@@ -793,7 +993,7 @@ async fn settle_request_in_pool(
     result: Option<&Value>,
 ) -> Result<(), String> {
     let completed_at = (status != "awaiting_review").then(now_millis);
-    sqlx::query("UPDATE agent_requests SET status = ?, task_id = COALESCE(?, task_id), error = ?, result_json = COALESCE(?, result_json), updated_at = ?, completed_at = ? WHERE id = ?")
+    sqlx::query("UPDATE agent_requests SET status = ?, task_id = COALESCE(?, task_id), error = ?, result_json = COALESCE(?, result_json), updated_at = ?, completed_at = ?, lease_owner = NULL, lease_expires_at = NULL, next_attempt_at = NULL WHERE id = ?")
         .bind(status).bind(task_id).bind(error.map(|value| value.chars().take(2_000).collect::<String>()))
         .bind(result.map(Value::to_string)).bind(now_millis()).bind(completed_at).bind(id)
         .execute(connection).await.map_err(database::database_error)?;
@@ -840,10 +1040,14 @@ fn new_id(prefix: &str) -> String {
 }
 
 async fn read_queue_snapshot(connection: &SqlitePool) -> Result<(i64, Option<i64>), String> {
+    let now = now_millis();
     let row = sqlx::query(
         "SELECT COUNT(*) AS actionable_count, MAX(updated_at) AS latest_update_at \
-         FROM agent_requests WHERE status IN ('queued', 'approved', 'rejected', 'failed')",
+         FROM agent_requests WHERE status IN ('approved', 'rejected', 'failed') OR \
+         (status = 'queued' AND dead_lettered_at IS NULL AND \
+         (next_attempt_at IS NULL OR next_attempt_at <= ?))",
     )
+    .bind(now)
     .fetch_one(connection)
     .await
     .map_err(database::database_error)?;
@@ -947,6 +1151,19 @@ mod tests {
         assert_eq!(claimed["mode"], "review");
         assert_eq!(claimed["projectId"], "project-1");
         assert_eq!(claimed["revisionCount"], 2);
+        assert_eq!(claimed["attemptCount"], 1);
+        assert!(claimed["leaseOwner"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()));
+        let lease: (i64, Option<String>, Option<i64>) = sqlx::query_as(
+            "SELECT attempt_count, lease_owner, lease_expires_at FROM agent_requests WHERE id = 'request-1'",
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("read lease");
+        assert_eq!(lease.0, 1);
+        assert!(lease.1.is_some());
+        assert!(lease.2.is_some_and(|expires_at| expires_at > now_millis()));
         assert!(claim_agent_request_in_pool(pool.as_ref(), None)
             .await
             .expect("second claim")
@@ -974,17 +1191,129 @@ mod tests {
         });
         let (submission, recovery) = build_background_submission(
             pool.as_ref(),
-            &json!({ "id": "request-1", "prompt": "Review", "mode": "review", "projectId": "project-1", "branchId": "branch-1" }),
+            &json!({ "id": "request-1", "prompt": "Review", "mode": "review", "projectId": "project-1", "branchId": "branch-1", "leaseOwner": "lease-1" }),
             &profile,
         ).await.expect("build submission");
         assert_eq!(submission["intent"], "review");
         assert_eq!(submission["document"]["id"], "doc-1");
         assert_eq!(submission["workspace"]["rootDocumentIds"], json!(["doc-1"]));
         assert_eq!(recovery["kind"], "a2a");
+        assert_eq!(recovery["leaseOwner"], "lease-1");
         assert!(!submission
             .to_string()
             .to_ascii_lowercase()
             .contains("apikey"));
+        close_test_pool(path, pool).await;
+    }
+
+    #[tokio::test]
+    async fn retries_retryable_failures_then_dead_letters_exhausted_requests() {
+        let (path, pool) = test_pool("background-retry").await;
+        sqlx::query(
+            "INSERT INTO agent_requests (id, prompt, status, attempt_count, created_at, updated_at) \
+             VALUES ('request-1', 'Retry', 'running', 1, 1, 1)",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("insert request");
+
+        schedule_background_failure(
+            pool.as_ref(),
+            "request-1",
+            None,
+            None,
+            "temporary provider failure",
+            true,
+        )
+        .await
+        .expect("schedule retry");
+        let retry: (String, Option<i64>, Option<i64>, Option<String>) = sqlx::query_as(
+            "SELECT status, next_attempt_at, dead_lettered_at, last_failure_kind \
+             FROM agent_requests WHERE id = 'request-1'",
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("read retry state");
+        assert_eq!(retry.0, "queued");
+        assert!(retry
+            .1
+            .is_some_and(|next_attempt| next_attempt > now_millis()));
+        assert_eq!(retry.2, None);
+        assert_eq!(retry.3.as_deref(), Some("retryable"));
+
+        sqlx::query(
+            "UPDATE agent_requests SET status = 'running', attempt_count = ?, next_attempt_at = NULL WHERE id = 'request-1'",
+        )
+        .bind(MAX_BACKGROUND_ATTEMPTS)
+        .execute(pool.as_ref())
+        .await
+        .expect("exhaust attempts");
+        schedule_background_failure(
+            pool.as_ref(),
+            "request-1",
+            None,
+            None,
+            "provider still unavailable",
+            true,
+        )
+        .await
+        .expect("dead letter request");
+        let exhausted: (String, Option<i64>, Option<i64>, Option<String>) = sqlx::query_as(
+            "SELECT status, next_attempt_at, dead_lettered_at, last_failure_kind \
+             FROM agent_requests WHERE id = 'request-1'",
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("read dead letter state");
+        assert_eq!(exhausted.0, "failed");
+        assert_eq!(exhausted.1, None);
+        assert!(exhausted.2.is_some());
+        assert_eq!(exhausted.3.as_deref(), Some("retry_exhausted"));
+        close_test_pool(path, pool).await;
+    }
+
+    #[tokio::test]
+    async fn startup_recovery_preserves_active_runs_and_requeues_orphans() {
+        let (path, pool) = test_pool("background-recovery").await;
+        for (id, run_id) in [
+            ("request-active", "run-active"),
+            ("request-orphan", "run-orphan"),
+        ] {
+            sqlx::query(
+                "INSERT INTO agent_requests (id, prompt, status, run_id, attempt_count, lease_owner, lease_expires_at, created_at, updated_at) \
+                 VALUES (?, 'Recover', 'running', ?, 1, 'old-owner', 1, 1, 1)",
+            )
+            .bind(id)
+            .bind(run_id)
+            .execute(pool.as_ref())
+            .await
+            .expect("insert running request");
+        }
+
+        let recovered =
+            recover_orphaned_background_requests(pool.as_ref(), &["run-active".to_string()])
+                .await
+                .expect("recover startup requests");
+        assert_eq!(recovered, 1);
+        let active: (String, Option<String>) =
+            sqlx::query_as("SELECT status, run_id FROM agent_requests WHERE id = 'request-active'")
+                .fetch_one(pool.as_ref())
+                .await
+                .expect("read active request");
+        assert_eq!(
+            active,
+            ("running".to_string(), Some("run-active".to_string()))
+        );
+        let orphan: (String, Option<String>, Option<String>, Option<i64>) = sqlx::query_as(
+            "SELECT status, run_id, lease_owner, next_attempt_at FROM agent_requests WHERE id = 'request-orphan'",
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("read recovered request");
+        assert_eq!(orphan.0, "queued");
+        assert_eq!(orphan.1, None);
+        assert_eq!(orphan.2, None);
+        assert!(orphan.3.is_some());
         close_test_pool(path, pool).await;
     }
 
@@ -1014,6 +1343,7 @@ mod tests {
             None,
             Some(&json!({ "structuredOutput": structured })),
             None,
+            false,
         ).await.expect("settle run");
         let request_status: String =
             sqlx::query_scalar("SELECT status FROM agent_requests WHERE id = 'request-1'")

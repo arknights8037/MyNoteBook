@@ -1,6 +1,6 @@
 # 后续开发路线图
 
-本文是 MyNoteBook 未完成工程工作的权威排序，已按 2026-07-30 代码与 migration `0001`–`0037` 复核。当前架构事实见 [系统架构](architecture.md)，生产 Agent 行为见 [Agent Runtime](agent-runtime.md)，PI 评审输入见 [PI 接入资料](pi-integration-high-value.md)。
+本文是 MyNoteBook 未完成工程工作的权威排序，已按 2026-07-30 代码与 migration `0001`–`0038` 复核。当前架构事实见 [系统架构](architecture.md)，生产 Agent 行为见 [Agent Runtime](agent-runtime.md)，PI 评审输入见 [PI 接入资料](pi-integration-high-value.md)。
 
 路线图按依赖、交付物和退出条件推进，不承诺未经验证的日历日期。以下标签必须严格区分：
 
@@ -32,21 +32,25 @@
 
 ```text
 Vue / WebView
-├── Ask / Edit / Agent / Auto 分发
-├── AgentRuntimeClient / Runtime Port
-├── AiSdkAgentRuntimeAdapter -> AI SDK ToolLoopAgent
-├── Context / Tool / Skill / MCP 编译
-├── Agent 生命周期、授权等待与 A2A polling
+├── Ask / Edit / Agent / Auto 交互入口
+├── Runtime Client / Tauri Adapter
+├── 运行事件、授权和 Diff 审阅投影
 └── TypeScript repositories ─────┐
                                   ├── SQLite editor.db
 Tauri / Rust                     │
 ├── migration / WAL / backup ────┘
+├── Agent Worker Supervisor / A2A Workflow
+├── Provider proxy / Tool / MCP / Secret
 ├── canonical document transaction
-├── MCP / Skill / Secret / Connector
-└── 原生工具、取消与模型 HTTP 代理
+└── 托盘常驻与后台 watcher
+        ↓ NDJSON stdio
+Node sidecar
+├── SidecarRunPlanner
+├── AI SDK ToolLoopAgent
+└── Patch / Cognitive 终态编译
 ```
 
-当前 Rust SQLx 与 WebView `plugin-sql` 都会访问 SQLite，因此 Rust 尚不是严格的单一数据库进程所有者。`tauri.conf.json` 也尚未配置 Node sidecar、托盘或 daemon。
+当前 Rust SQLx 与 WebView `plugin-sql` 都会访问 SQLite，因此 Rust 尚不是严格的单一数据库进程所有者。Node sidecar 和托盘已经投入生产；独立 daemon 尚未实现。
 
 ### 2.2 既定方向
 
@@ -222,9 +226,9 @@ AgentRunRequest
 - composition 默认选择 `rust_worker`；只有显式设置 `VITE_AGENT_RUNTIME_OWNER=webview` 才启用兼容路径。Ask/Edit 的 Markdown completion 路径保持不变。
 - A2A 队列检查、原子领取、sidecar 启动、审批/拒绝、修订和终态结算均由 Rust watcher/仓储负责；WebView 只订阅变化事件和投影审阅状态，不再启动 A2A Run。
 
-Phase 3 的退出条件已经满足。真实 Provider/Tauri 凭据 smoke、A2A 队列决策、Cognitive 最终投影、无窗口业务终态持久化和删除 WebView compatibility path 分别进入 Phase 4/5 的数据库所有权与 Workflow 迁移，不应再阻塞 Runtime 进程边界验收。
+Phase 3 的退出条件已经满足。真实 Provider/Tauri 凭据 smoke、发布升级验收和删除 WebView compatibility path 分别进入后续质量轨道与数据库所有权迁移，不再阻塞 Runtime 进程边界验收。
 
-Phase 4 的数据库所有权收敛持续推进：migration `0037` 保存无密钥后台 Runtime Profile，并为 A2A request 绑定 `run_id` / `cognitive_session_id`；A2A 自动调度、审批/修订 Workflow、Cognitive 最终业务投影与 Research candidate 落库已迁至 Rust/sidecar。主窗口关闭后隐藏到托盘，Rust watcher 与已开始 Run 可继续执行；需要人工授权或 Patch 审阅时保持等待态，不绕过确认。
+Phase 4 的数据库所有权收敛持续推进：migration `0037` 保存无密钥后台 Runtime Profile，并为 A2A request 绑定 `run_id` / `cognitive_session_id`；migration `0038` 增加领取 lease、尝试次数、下次重试、死信时间和失败分类。A2A 自动调度、审批/修订 Workflow、Cognitive 最终业务投影与 Research candidate 落库已迁至 Rust/sidecar。主窗口关闭后隐藏到托盘，Rust watcher 与已开始 Run 可继续执行；需要人工授权或 Patch 审阅时保持等待态，不绕过确认。
 
 ### 目标
 
@@ -271,7 +275,8 @@ Phase 2 完成决策门；Worker 内部可使用最终选择的 adapter。
 - 托盘常驻、主窗口关闭转隐藏、托盘重新打开/显式退出已完成。
 - A2A 自动调度、审批/拒绝、修订 continuation、无窗口终态结算已完成；批准仍复用既有 Rust Patch revision/覆盖/事务校验。
 - Cognitive Session 终态和 Research candidate/source/validation 已由 Rust 持久化；Review/Learning 结构化结果随 A2A result 保存。
-- Durable Timer、Dead Letter、升级/异常退出恢复、全部 WebView SQL writer 清除、CSP 与权限收敛仍未完成，因此 Phase 4 整体尚未完成。
+- A2A 请求已使用持久 lease 原子领取；Worker 事件续租，显式可重试错误按指数退避最多尝试三次，随后进入可诊断 Dead Letter。启动扫描会保留 Supervisor 仍持有的 Run，并回收、重排无活动所有者的 `running` 请求；旧 task/session 会写入中断/取消终态。软件 MCP 的 `get_agent_request` 返回尝试、重试和死信元数据。
+- 上述恢复以一次完整 Run 为粒度，不提供模型 tool step checkpoint。通用 Durable Timer、休眠/时区变化与安装升级恢复验收、全部 WebView SQL writer 清除、CSP 与权限收敛仍未完成，因此 Phase 4 整体尚未完成。
 
 ### 依赖
 
