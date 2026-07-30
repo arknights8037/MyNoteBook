@@ -4,9 +4,11 @@
 
 SQLite schema 只由 `src-tauri/migrations/` 中的 SQLx 迁移管理。应用启动时 Rust 端按版本执行迁移，并把 checksum 写入 `_sqlx_migrations`。
 
-截至 2026-07-30，当前迁移链为 `0001`–`0039`。最新迁移已包含 Runtime Port 身份/审批契约、后台 Agent Runtime Profile、A2A 请求 lease/retry/Dead Letter，以及 Durable Timer 与统一等待条件。
+截至 2026-07-30，当前迁移链为 `0001`–`0041`。最新迁移已包含 Runtime Port 身份/审批契约、后台 Agent Runtime Profile、A2A 请求 lease/retry/Dead Letter、Durable Timer/统一等待条件，以及 Event Envelope v1、有界 Outbox Dead Letter 字段和 processing lease 索引恢复。
 
 前端不再执行 `CREATE TABLE`、`ALTER TABLE` 或补列逻辑。这样避免了两个运行时同时管理 schema，防止“每次打开都提示迁移”或已应用迁移 checksum 不匹配。
+
+所有 `src-tauri/migrations/*.sql` 通过 `.gitattributes` 固定为 LF。已发布 migration 必须保持字节不可变；后续结构调整只能新增 migration。架构测试固定 migration `0029` 的 SHA-384，避免 Windows CRLF 检出改变 SQLx checksum。2026-07-30 已用实际版本 35 用户库验证升级到 41，数据库完整性与外键检查通过。
 
 Rust 是 SQLite 唯一连接所有者与唯一写入者。WebView repository 写操作只提交封闭的 mutation ID 和标量参数，由 `database_mutations.rs` 选择固定 SQL；不能提交任意写语句。参数化读取由 `database_queries.rs` 在独立只读 SQLx pool 中执行并序列化结果，只接受单条 `SELECT/WITH`，同时启用 `read_only` 与 `query_only`；主窗口没有 SQL capability，项目也不再依赖 `plugin-sql`。
 

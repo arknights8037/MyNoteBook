@@ -37,7 +37,12 @@ pub async fn prepare_database(
     let data_directory = data_directory.filter(|value| !value.trim().is_empty());
     let directory =
         configured_data_directory(&app, data_directory.clone()).map_err(database_error)?;
-    let preparation = prepare_database_path(&directory, &DATABASE_MIGRATOR).await?;
+    let preparation = prepare_database_path(&directory, &DATABASE_MIGRATOR)
+        .await
+        .map_err(|error| {
+            tauri_plugin_log::log::error!("数据库准备失败：{error}");
+            error
+        })?;
     crate::workflow_timers::ensure_scheduler(&app, timer_state.inner(), data_directory).await?;
     Ok(preparation)
 }
@@ -467,6 +472,23 @@ async fn cleanup_orphan_asset_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn published_dashboard_migration_checksum_stays_compatible() {
+        let migration = DATABASE_MIGRATOR
+            .iter()
+            .find(|migration| migration.version == 29)
+            .expect("migration 29");
+        let checksum = migration
+            .checksum
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>();
+        assert_eq!(
+            checksum,
+            "2E7B88C345A3FE4ECF88837D26943CA81352966E47FA585407089A19015AF1C2ED7BE770C901F2FFCA29DB9297286E71"
+        );
+    }
 
     #[tokio::test]
     async fn fresh_database_reaches_current_schema() {
@@ -1352,9 +1374,33 @@ mod tests {
         .await
         .expect("insert existing data");
         sqlx::raw_sql(
-            "DROP TABLE workflow_timers; \
+            "DROP INDEX idx_domain_events_source_deduplication; \
+             ALTER TABLE domain_events DROP COLUMN security_scope_json; \
+             ALTER TABLE domain_events DROP COLUMN deduplication_key; \
+             ALTER TABLE domain_events DROP COLUMN workspace_id; \
+             ALTER TABLE domain_events DROP COLUMN source; \
+             ALTER TABLE domain_events DROP COLUMN schema_version; \
+             ALTER TABLE outbox_messages RENAME TO outbox_messages_p5; \
+             CREATE TABLE outbox_messages ( \
+               id TEXT PRIMARY KEY, event_id TEXT NOT NULL UNIQUE, topic TEXT NOT NULL, \
+               payload_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending' \
+                 CHECK (status IN ('pending', 'processing', 'published', 'failed')), \
+               attempt_count INTEGER NOT NULL DEFAULT 0, available_at INTEGER NOT NULL, \
+               lease_until INTEGER, lease_owner TEXT, last_error TEXT, published_at INTEGER, \
+               created_at INTEGER NOT NULL, \
+               FOREIGN KEY (event_id) REFERENCES domain_events(id) ON DELETE CASCADE); \
+             INSERT INTO outbox_messages (id, event_id, topic, payload_json, status, attempt_count, \
+               available_at, lease_until, lease_owner, last_error, published_at, created_at) \
+             SELECT id, event_id, topic, payload_json, \
+               CASE WHEN status = 'dead_lettered' THEN 'failed' ELSE status END, attempt_count, \
+               available_at, lease_until, lease_owner, last_error, published_at, created_at \
+             FROM outbox_messages_p5; \
+             DROP TABLE outbox_messages_p5; \
+             CREATE INDEX idx_outbox_delivery \
+               ON outbox_messages(status, available_at ASC, created_at ASC); \
+             DROP TABLE workflow_timers; \
              DROP TABLE workflow_wait_conditions; \
-             DELETE FROM _sqlx_migrations WHERE version = 39;",
+             DELETE FROM _sqlx_migrations WHERE version IN (39, 40, 41);",
         )
         .execute(pool.as_ref())
         .await
@@ -1380,7 +1426,7 @@ mod tests {
                 .fetch_one(upgraded.as_ref())
                 .await
                 .expect("existing document");
-        assert_eq!(version, 39);
+        assert_eq!(version, 41);
         assert_eq!(existing, 1);
         assert!(table_exists(upgraded.as_ref(), "workflow_wait_conditions")
             .await
@@ -1388,6 +1434,24 @@ mod tests {
         assert!(table_exists(upgraded.as_ref(), "workflow_timers")
             .await
             .expect("timer table"));
+        assert!(
+            column_exists(upgraded.as_ref(), "domain_events", "deduplication_key")
+                .await
+                .expect("event envelope columns")
+        );
+        assert!(
+            column_exists(upgraded.as_ref(), "outbox_messages", "dead_lettered_at")
+                .await
+                .expect("outbox dead-letter columns")
+        );
+        let outbox_processing_lease_index: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master \
+             WHERE type = 'index' AND name = 'idx_outbox_processing_lease'",
+        )
+        .fetch_one(upgraded.as_ref())
+        .await
+        .expect("outbox processing lease index");
+        assert_eq!(outbox_processing_lease_index, 1);
 
         drop(upgraded);
         close_pool(&path).await.expect("close upgraded database");

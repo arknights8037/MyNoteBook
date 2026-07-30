@@ -155,6 +155,65 @@ export interface AgentRunRequestV1 {
   causationId: string | null
 }
 
+export interface DomainEventEnvelopeV1 {
+  version: 1
+  eventId: string
+  eventType: string
+  source: string
+  occurredAt: number
+  actorId: string
+  workspaceId: string | null
+  correlationId: string
+  causationId: string | null
+  deduplicationKey: string
+  payload: unknown
+  securityScope: Record<string, unknown>
+}
+
+export type ExternalActionStatus =
+  | 'pending_approval'
+  | 'approved'
+  | 'executing'
+  | 'completed'
+  | 'failed'
+  | 'dead_lettered'
+  | 'rejected'
+  | 'cancelled'
+
+/**
+ * Contract scaffold for Phase 5. Defining this envelope does not enable an
+ * external side effect; Rust Action Gateway ownership and approval are still required.
+ */
+export interface ExternalActionRequestV1 {
+  version: 1
+  actionId: string
+  workflowId: string
+  workItemId: string
+  runId: string | null
+  actionType: string
+  target: Record<string, unknown>
+  input: Record<string, unknown>
+  idempotencyKey: string
+  fencingToken: string
+  approvalId: string
+  status: ExternalActionStatus
+  correlationId: string
+  causationId: string | null
+  createdAt: number
+}
+
+export interface ExternalActionResultV1 {
+  version: 1
+  actionId: string
+  idempotencyKey: string
+  fencingToken: string
+  outcome: 'completed' | 'failed' | 'dead_lettered'
+  providerReference: string | null
+  output: unknown
+  error: string | null
+  completedAt: number
+}
+
 /**
  * UI-to-sidecar launch input. It deliberately contains user-visible state and
  * model configuration only; the sidecar derives the task, Context Bundle,

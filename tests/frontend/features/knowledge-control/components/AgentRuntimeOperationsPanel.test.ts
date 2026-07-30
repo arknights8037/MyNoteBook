@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import AgentRuntimeOperationsPanel from '@/features/knowledge-control/components/AgentRuntimeOperationsPanel.vue'
 import type { AgentWorkerSnapshot } from '@/infrastructure/runtime/AgentWorkerSnapshotClient'
 import type { AgentCommunicationRequest } from '@/repositories/agent/AgentCommunicationRepository'
+import type { WorkflowTimerSnapshot } from '@/infrastructure/runtime/WorkflowTimerSnapshotClient'
 
 const snapshot: AgentWorkerSnapshot = {
   status: 'running',
@@ -26,6 +27,19 @@ const snapshot: AgentWorkerSnapshot = {
   lastHeartbeatAt: 10_000,
   restartCount: 1,
   lastError: null,
+}
+
+const timerSnapshot: WorkflowTimerSnapshot = {
+  status: 'running',
+  lastTickAt: 10_000,
+  lastSuccessAt: 10_000,
+  lastError: null,
+  scheduledCount: 4,
+  processingCount: 1,
+  retryCount: 2,
+  dueCount: 1,
+  deadLetterCount: 1,
+  maxLagMs: 250,
 }
 
 function request(overrides: Partial<AgentCommunicationRequest>): AgentCommunicationRequest {
@@ -76,16 +90,22 @@ describe('AgentRuntimeOperationsPanel', () => {
       .mockResolvedValue([])
     let workerListener: ((value: AgentWorkerSnapshot) => void) | null = null
     let queueListener: (() => void) | null = null
+    let timerListener: ((value: WorkflowTimerSnapshot) => void) | null = null
     const wrapper = mount(AgentRuntimeOperationsPanel, {
       props: {
         getSnapshot,
         getRequests,
+        getTimerSnapshot: async () => timerSnapshot,
         subscribeSnapshot: async (listener) => {
           workerListener = listener
           return vi.fn()
         },
         subscribeQueue: async (listener) => {
           queueListener = listener
+          return vi.fn()
+        },
+        subscribeTimerSnapshot: async (listener) => {
+          timerListener = listener
           return vi.fn()
         },
       },
@@ -98,10 +118,17 @@ describe('AgentRuntimeOperationsPanel', () => {
     expect(wrapper.text()).toContain('等待重试')
     expect(wrapper.text()).toContain('死信')
     expect(wrapper.text()).toContain('Worker 异常退出：worker exited')
+    expect(wrapper.text()).toContain('Durable Timer')
+    expect(wrapper.text()).toContain('250ms')
 
     workerListener?.({ ...snapshot, status: 'restarting', activeRuns: [] })
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).toContain('重启中')
+
+    timerListener?.({ ...timerSnapshot, status: 'degraded', lastError: 'database busy' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('运行降级')
+    expect(wrapper.text()).toContain('database busy')
 
     queueListener?.()
     await flushPromises()

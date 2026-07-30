@@ -12,6 +12,8 @@ export type AuditCategory =
   | 'delegation'
   | 'domain_event'
   | 'outbox'
+  | 'workflow_wait'
+  | 'workflow_timer'
 export type AuditSeverity = 'info' | 'success' | 'warning' | 'error'
 
 export interface AuditEntry {

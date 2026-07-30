@@ -1,6 +1,6 @@
 # 后续开发路线图
 
-本文是 MyNoteBook 未完成工程工作的权威排序，已按 2026-07-30 代码与 migration `0001`–`0039` 复核。当前架构事实见 [系统架构](architecture.md)，生产 Agent 行为见 [Agent Runtime](agent-runtime.md)，PI 评审输入见 [PI 接入资料](pi-integration-high-value.md)。
+本文是 MyNoteBook 未完成工程工作的权威排序，已按 2026-07-30 代码与 migration `0001`–`0041` 复核。当前架构事实见 [系统架构](architecture.md)，生产 Agent 行为见 [Agent Runtime](agent-runtime.md)，PI 评审输入见 [PI 接入资料](pi-integration-high-value.md)。
 
 路线图按依赖、交付物和退出条件推进，不承诺未经验证的日历日期。以下标签必须严格区分：
 
@@ -282,6 +282,8 @@ Phase 2 完成决策门；Worker 内部可使用最终选择的 adapter。
 - Cognitive Session 终态和 Research candidate/source/validation 已由 Rust 持久化；candidate 使用稳定 projection ID，并与 Cognitive Session、AgentTask、A2A result 在同一个事务提交。Review/Learning 结构化结果随 A2A result 保存。
 - A2A 请求已使用持久 lease 原子领取和 `run_id` fencing；Worker 事件续租，迟到旧 Run 不能结算新尝试，显式可重试错误按指数退避最多尝试三次，随后进入可诊断 Dead Letter。启动扫描会保留 Supervisor 仍持有的 Run，并回收、重排无活动所有者的 `running` 请求；旧 task/session 会写入中断/取消终态。软件 MCP 的 `get_agent_request` 返回尝试、重试和死信元数据。
 - 前端已将上述可靠性字段纳入版本化请求模型和只读列表查询；任务验收页按队列事件刷新最近 A2A 请求，展示 `run_id`、尝试次数、下次重试、失败类型和死信时间，但不暴露 `lease_owner`，也不提供绕过 Rust 状态机的重试或结算按钮。
+- P4.5 过渡加固已完成：migration `0040` 冻结 Event Envelope v1 与 Outbox Dead Letter 字段，`0041` 恢复表重建后的 Outbox processing lease 索引；A2A/Timer/Outbox 复用显式可靠性策略；Timer 健康快照和跨 Workflow/Timer/Event/Outbox correlation 审计已进入 UI。Timer schedule/cancel 和 Outbox claim/settle 不再暴露给 WebView。
+- 已发布 SQL migration 通过 LF 属性和 checksum 架构测试保持字节不可变；实际版本 35 用户数据库已完成 35→41 升级、完整性与外键验证，修复 Windows CRLF 导致的 migration 29 checksum mismatch。
 - migration `0039` 增加 timer/event/human/approval 等待条件与 Durable Timer。Timer 使用绝对 UTC 到期时间、原子 lease、去重键、指数退避和 Dead Letter；触发时在同一事务写 Domain Event/Outbox 并满足等待条件。`0038 -> 0039` 数据保留升级、数据库关闭/重开、过期 lease、休眠或墙钟跳变、取消竞争与重复领取均有自动化测试。
 - WebView 的存量 repository mutation 已迁到 Rust 封闭 catalog；生产 TypeScript 中不存在 SQLite `.execute()`，`plugin-sql` 及其 Tauri/JS 依赖、预载配置和 SQL capability 已删除。读取命令只接受单条 `SELECT/WITH`，并使用 `read_only + query_only` 的独立 SQLx pool。
 - 生产 CSP 已非空，Provider 网络继续只由 Rust 代理；文本文件只在系统文件对话框动态授权后读写，外部 URL 仅允许 HTTP(S)，附件与 Skills 本地路径由 Rust 校验后打开，WebView 不再拥有静态文件范围或本地 path opener。
@@ -343,6 +345,8 @@ Agent 遇到长期等待时返回终态 `SuspendRequest`，当前 Run 随即结�
 ### 依赖
 
 Phase 4 的 durable timer、lease、outbox 和托盘运行稳定。
+
+P4.5 已提供 `DomainEventEnvelopeV1` 与 `ExternalActionRequestV1/ResultV1` 契约脚手架，但没有启用任何真实外部动作。Phase 5 必须继续由 Rust Action Gateway 持有审批、幂等、fencing 和投递终态。
 
 ### 退出条件
 

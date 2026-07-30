@@ -5,6 +5,7 @@ use tauri::AppHandle;
 
 use crate::database::{database_error, open_database};
 use crate::domain_events::{record_with_outbox, NewDomainEvent};
+use crate::reliability::{clamp_lease_ms, OUTBOX_RETRY_POLICY};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,18 +47,9 @@ pub struct ExternalSubmissionResult {
     replayed: bool,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaimOutboxInput {
-    data_directory: Option<String>,
-    worker_id: String,
-    now: i64,
-    lease_ms: i64,
-    limit: i64,
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // Internal contract for the future Rust Outbox dispatcher.
 pub struct ClaimedOutboxMessage {
     id: String,
     event_id: String,
@@ -65,18 +57,6 @@ pub struct ClaimedOutboxMessage {
     payload: Value,
     attempt_count: i64,
     lease_until: i64,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SettleOutboxInput {
-    data_directory: Option<String>,
-    id: String,
-    worker_id: String,
-    published: bool,
-    error: Option<String>,
-    now: i64,
-    retry_at: Option<i64>,
 }
 
 #[tauri::command]
@@ -140,6 +120,10 @@ async fn create_delegation_in_pool(
             aggregate_id: &input.id,
             payload: &event_payload,
             actor_id: "local_user",
+            source: "local_ui",
+            workspace_id: None,
+            deduplication_key: &input.event_id,
+            security_scope: None,
             correlation_id: &input.correlation_id,
             causation_id: input.causation_id.as_deref(),
             occurred_at: input.created_at,
@@ -285,6 +269,10 @@ async fn submit_external_work_in_pool(
             aggregate_id: &input.delegation_id,
             payload: &submission,
             actor_id: &actor_id,
+            source: "external_delegation",
+            workspace_id: None,
+            deduplication_key: &input.event_id,
+            security_scope: None,
             correlation_id: &correlation_id,
             causation_id: None,
             occurred_at: input.submitted_at,
@@ -314,25 +302,7 @@ async fn submit_external_work_in_pool(
     Ok(response)
 }
 
-#[tauri::command]
-pub async fn claim_outbox_messages(
-    app: AppHandle,
-    input: ClaimOutboxInput,
-) -> Result<Vec<ClaimedOutboxMessage>, String> {
-    if input.worker_id.trim().is_empty() {
-        return Err("Outbox worker ID 不能为空。".to_string());
-    }
-    let pool = open_database(&app, input.data_directory).await?;
-    claim_outbox_from_pool(
-        pool.as_ref(),
-        &input.worker_id,
-        input.now,
-        input.lease_ms,
-        input.limit,
-    )
-    .await
-}
-
+#[allow(dead_code)] // Deliberately not exposed as a WebView command.
 async fn claim_outbox_from_pool(
     pool: &sqlx::SqlitePool,
     worker_id: &str,
@@ -340,26 +310,49 @@ async fn claim_outbox_from_pool(
     lease_ms: i64,
     limit: i64,
 ) -> Result<Vec<ClaimedOutboxMessage>, String> {
+    if worker_id.trim().is_empty() {
+        return Err("Outbox worker ID 不能为空。".to_string());
+    }
     let limit = limit.clamp(1, 100);
-    let lease_until = now + lease_ms.clamp(1_000, 300_000);
+    let lease_until = now + clamp_lease_ms(lease_ms, 1_000, 300_000);
     let mut transaction = pool.begin().await.map_err(database_error)?;
+    sqlx::query(
+        "UPDATE outbox_messages SET status = 'dead_lettered', lease_until = NULL, \
+         lease_owner = NULL, dead_lettered_at = ?, last_failure_kind = 'retry_exhausted', \
+         updated_at = ? WHERE attempt_count >= ? AND ( \
+           (status = 'failed' AND available_at <= ?) OR \
+           (status = 'processing' AND lease_until <= ?))",
+    )
+    .bind(now)
+    .bind(now)
+    .bind(OUTBOX_RETRY_POLICY.max_attempts)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *transaction)
+    .await
+    .map_err(database_error)?;
     let claimed_rows = sqlx::query(
         "WITH candidates AS (\
            SELECT id FROM outbox_messages WHERE available_at <= ? AND \
-             ((status IN ('pending', 'failed')) OR (status = 'processing' AND lease_until <= ?)) \
+             attempt_count < ? AND \
+              ((status IN ('pending', 'failed')) OR (status = 'processing' AND lease_until <= ?)) \
            ORDER BY created_at ASC LIMIT ?\
          ) \
          UPDATE outbox_messages SET status = 'processing', attempt_count = attempt_count + 1, \
-           lease_until = ?, lease_owner = ? \
+           lease_until = ?, lease_owner = ?, updated_at = ? \
          WHERE id IN (SELECT id FROM candidates) AND \
+           attempt_count < ? AND \
            ((status IN ('pending', 'failed')) OR (status = 'processing' AND lease_until <= ?)) \
          RETURNING id, event_id, topic, payload_json, attempt_count, created_at",
     )
     .bind(now)
+    .bind(OUTBOX_RETRY_POLICY.max_attempts)
     .bind(now)
     .bind(limit)
     .bind(lease_until)
     .bind(worker_id)
+    .bind(now)
+    .bind(OUTBOX_RETRY_POLICY.max_attempts)
     .bind(now)
     .fetch_all(&mut *transaction)
     .await
@@ -389,21 +382,7 @@ async fn claim_outbox_from_pool(
     Ok(messages)
 }
 
-#[tauri::command]
-pub async fn settle_outbox_message(app: AppHandle, input: SettleOutboxInput) -> Result<(), String> {
-    let pool = open_database(&app, input.data_directory).await?;
-    settle_outbox_in_pool(
-        pool.as_ref(),
-        &input.id,
-        &input.worker_id,
-        input.published,
-        input.error.as_deref(),
-        input.now,
-        input.retry_at,
-    )
-    .await
-}
-
+#[allow(dead_code)] // Deliberately not exposed as a WebView command.
 async fn settle_outbox_in_pool(
     pool: &sqlx::SqlitePool,
     id: &str,
@@ -411,22 +390,50 @@ async fn settle_outbox_in_pool(
     published: bool,
     error: Option<&str>,
     now: i64,
-    retry_at: Option<i64>,
 ) -> Result<(), String> {
-    let (status, available_at, published_at) = if published {
-        ("published", now, Some(now))
+    let attempt_count = sqlx::query_scalar::<_, i64>(
+        "SELECT attempt_count FROM outbox_messages \
+         WHERE id = ? AND status = 'processing' AND lease_owner = ?",
+    )
+    .bind(id)
+    .bind(worker_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(database_error)?
+    .ok_or_else(|| "Outbox lease 不属于当前 worker 或消息已处理。".to_string())?;
+    let exhausted = !published && OUTBOX_RETRY_POLICY.exhausted(attempt_count);
+    let (status, available_at, published_at, dead_lettered_at, failure_kind) = if published {
+        ("published", now, Some(now), None, None)
+    } else if exhausted {
+        (
+            "dead_lettered",
+            now,
+            None,
+            Some(now),
+            Some("retry_exhausted"),
+        )
     } else {
-        ("failed", retry_at.unwrap_or(now + 30_000), None)
+        (
+            "failed",
+            now.saturating_add(OUTBOX_RETRY_POLICY.delay_ms(attempt_count)),
+            None,
+            None,
+            Some("retryable"),
+        )
     };
     let updated = sqlx::query(
         "UPDATE outbox_messages SET status = ?, available_at = ?, lease_until = NULL, \
-         lease_owner = NULL, last_error = ?, published_at = ? \
+         lease_owner = NULL, last_error = ?, last_failure_kind = ?, published_at = ?, \
+         dead_lettered_at = ?, updated_at = ? \
          WHERE id = ? AND status = 'processing' AND lease_owner = ?",
     )
     .bind(status)
     .bind(available_at)
     .bind(error)
+    .bind(failure_kind)
     .bind(published_at)
+    .bind(dead_lettered_at)
+    .bind(now)
     .bind(id)
     .bind(worker_id)
     .execute(pool)
@@ -636,8 +643,9 @@ mod tests {
             "CREATE TABLE outbox_messages (id TEXT PRIMARY KEY, event_id TEXT NOT NULL UNIQUE, \
              topic TEXT NOT NULL, payload_json TEXT NOT NULL, status TEXT NOT NULL, \
              attempt_count INTEGER NOT NULL DEFAULT 0, available_at INTEGER NOT NULL, \
-             lease_until INTEGER, lease_owner TEXT, last_error TEXT, published_at INTEGER, \
-             created_at INTEGER NOT NULL)",
+             lease_until INTEGER, lease_owner TEXT, last_error TEXT, last_failure_kind TEXT, \
+             published_at INTEGER, dead_lettered_at INTEGER, created_at INTEGER NOT NULL, \
+             updated_at INTEGER NOT NULL)",
         )
         .execute(pool.as_ref())
         .await
@@ -663,8 +671,8 @@ mod tests {
         ] {
             sqlx::query(
                 "INSERT INTO outbox_messages (id, event_id, topic, payload_json, status, \
-                 attempt_count, available_at, lease_until, lease_owner, created_at) \
-                 VALUES (?, ?, 'test', '{}', ?, ?, 1, ?, ?, ?)",
+                 attempt_count, available_at, lease_until, lease_owner, created_at, updated_at) \
+                 VALUES (?, ?, 'test', '{}', ?, ?, 1, ?, ?, ?, ?)",
             )
             .bind(id)
             .bind(format!("event-{id}"))
@@ -672,6 +680,7 @@ mod tests {
             .bind(attempts)
             .bind(lease_until)
             .bind(owner)
+            .bind(created_at)
             .bind(created_at)
             .execute(pool.as_ref())
             .await
@@ -703,21 +712,43 @@ mod tests {
             true,
             None,
             10_100,
-            None,
         )
         .await
         .is_err());
-        settle_outbox_in_pool(
-            pool.as_ref(),
-            "expired",
-            "new-worker",
-            true,
-            None,
-            10_100,
-            None,
+        settle_outbox_in_pool(pool.as_ref(), "expired", "new-worker", true, None, 10_100)
+            .await
+            .expect("settle reclaimed lease");
+
+        sqlx::query(
+            "INSERT INTO outbox_messages (id, event_id, topic, payload_json, status, \
+             attempt_count, available_at, last_error, created_at, updated_at) \
+             VALUES ('exhausted', 'event-exhausted', 'test', '{}', 'failed', ?, 1, \
+             'still failing', 4, 4)",
         )
+        .bind(OUTBOX_RETRY_POLICY.max_attempts)
+        .execute(pool.as_ref())
         .await
-        .expect("settle reclaimed lease");
+        .expect("exhausted outbox row");
+        let exhausted_claim =
+            claim_outbox_from_pool(pool.as_ref(), "new-worker", 10_200, 2_000, 10)
+                .await
+                .expect("scan exhausted outbox");
+        assert!(exhausted_claim.is_empty());
+        let exhausted_status: (String, Option<i64>, Option<String>) = sqlx::query_as(
+            "SELECT status, dead_lettered_at, last_failure_kind \
+             FROM outbox_messages WHERE id = 'exhausted'",
+        )
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("dead-lettered outbox");
+        assert_eq!(
+            exhausted_status,
+            (
+                "dead_lettered".to_string(),
+                Some(10_200),
+                Some("retry_exhausted".to_string())
+            )
+        );
 
         drop(pool);
         crate::database::close_pool(&path)

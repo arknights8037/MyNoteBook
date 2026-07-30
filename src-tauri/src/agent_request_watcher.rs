@@ -6,11 +6,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter, State};
 use tokio::{sync::Mutex, task::JoinHandle, time::Duration};
 
-use crate::database;
+use crate::{
+    database,
+    reliability::{now_millis, A2A_RETRY_POLICY},
+};
 
 const QUEUE_EVENT: &str = "agent-communication://queue-changed";
 const BACKGROUND_LEASE_MS: i64 = 60 * 60 * 1_000;
-const MAX_BACKGROUND_ATTEMPTS: i64 = 3;
 
 #[derive(Default)]
 pub(crate) struct AgentRequestWatcherState {
@@ -420,7 +422,7 @@ async fn recover_orphaned_background_requests(
             .try_get::<Option<String>, _>("cognitive_session_id")
             .unwrap_or(None);
         let attempts = row.try_get::<i64, _>("attempt_count").unwrap_or(0);
-        if attempts >= MAX_BACKGROUND_ATTEMPTS {
+        if A2A_RETRY_POLICY.exhausted(attempts) {
             dead_letter_background_request(
                 connection,
                 &id,
@@ -473,7 +475,7 @@ async fn schedule_background_failure(
     .await
     .map_err(database::database_error)?
     .ok_or_else(|| "A2A 请求不存在。".to_string())?;
-    if !retryable || attempts >= MAX_BACKGROUND_ATTEMPTS {
+    if !retryable || A2A_RETRY_POLICY.exhausted(attempts) {
         return dead_letter_background_request(
             connection,
             request_id,
@@ -489,8 +491,7 @@ async fn schedule_background_failure(
         .await;
     }
     mark_background_attempt_abandoned(connection, task_id, cognitive_session_id, error).await?;
-    let delay_ms =
-        (5_000_i64 * 2_i64.pow((attempts.saturating_sub(1) as u32).min(6))).min(5 * 60 * 1_000);
+    let delay_ms = A2A_RETRY_POLICY.delay_ms(attempts);
     let now = now_millis();
     sqlx::query(
         "UPDATE agent_requests SET status = 'queued', task_id = NULL, run_id = NULL, \
@@ -1169,15 +1170,6 @@ async fn read_queue_snapshot(connection: &SqlitePool) -> Result<(i64, Option<i64
     ))
 }
 
-fn now_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .try_into()
-        .unwrap_or(i64::MAX)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1354,7 +1346,7 @@ mod tests {
         sqlx::query(
             "UPDATE agent_requests SET status = 'running', attempt_count = ?, next_attempt_at = NULL WHERE id = 'request-1'",
         )
-        .bind(MAX_BACKGROUND_ATTEMPTS)
+        .bind(A2A_RETRY_POLICY.max_attempts)
         .execute(pool.as_ref())
         .await
         .expect("exhaust attempts");

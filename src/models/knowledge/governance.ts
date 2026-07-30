@@ -100,12 +100,3 @@ export interface DelegatedCompletion {
   evidence?: Array<Extract<ExternalSubmission, { type: 'evidence' }>>
   changeSet?: Extract<ExternalSubmission, { type: 'change_set' }> | null
 }
-
-export interface OutboxMessage {
-  id: string
-  eventId: string
-  topic: string
-  payload: unknown
-  attemptCount: number
-  leaseUntil: number
-}

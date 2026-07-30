@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
+import { createHash } from 'node:crypto'
 
 import { describe, expect, it } from 'vitest'
 
@@ -197,6 +198,41 @@ describe('Runtime architecture boundaries', () => {
     expect(runtime).toContain('fetch: providerFetch')
     expect(supervisor).toContain('start_ai_request')
     expect(supervisor).toContain('inject_provider_credential')
+  })
+
+  it('keeps published migrations byte-stable and pinned to LF checkouts', () => {
+    const attributes = readFileSync(resolve(root, '.gitattributes'), 'utf8')
+    expect(attributes).toContain('src-tauri/migrations/*.sql text eol=lf')
+    const migrationDirectory = resolve(root, 'src-tauri/migrations')
+    for (const entry of readdirSync(migrationDirectory)) {
+      if (!entry.endsWith('.sql')) continue
+      const bytes = readFileSync(resolve(migrationDirectory, entry))
+      expect(bytes.includes(Buffer.from('\r\n')), entry).toBe(false)
+    }
+    const publishedMigration = readFileSync(
+      resolve(migrationDirectory, '0029_add_dashboard_workspace_view.sql'),
+    )
+    expect(createHash('sha384').update(publishedMigration).digest('hex').toUpperCase()).toBe(
+      '2E7B88C345A3FE4ECF88837D26943CA81352966E47FA585407089A19015AF1C2ED7BE770C901F2FFCA29DB9297286E71',
+    )
+  })
+
+  it('keeps Timer scheduling and Outbox lease settlement out of the WebView command surface', () => {
+    const commands = readFileSync(resolve(root, 'src-tauri/src/lib.rs'), 'utf8')
+    const repositoryPort = readFileSync(
+      resolve(root, 'src/repositories/knowledge/GovernanceRepository.ts'),
+      'utf8',
+    )
+    for (const command of [
+      'schedule_workflow_timer',
+      'cancel_workflow_timer',
+      'claim_outbox_messages',
+      'settle_outbox_message',
+    ]) {
+      expect(commands).not.toContain(`            ${command},`)
+    }
+    expect(repositoryPort).not.toContain('claimOutbox')
+    expect(repositoryPort).not.toContain('settleOutbox')
   })
 })
 

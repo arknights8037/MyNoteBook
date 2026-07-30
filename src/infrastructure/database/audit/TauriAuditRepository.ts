@@ -96,15 +96,50 @@ export class TauriAuditRepository implements AuditRepository {
           FROM delegations
           UNION ALL
           SELECT id, 'domain_event', aggregate_id, event_type, aggregate_type, 'recorded',
-                 payload_json, occurred_at, occurred_at
+                 json_object('payload', json(payload_json), 'schemaVersion', schema_version,
+                   'source', source, 'workspaceId', workspace_id,
+                   'deduplicationKey', deduplication_key,
+                   'securityScope', json(security_scope_json), 'actorId', actor_id,
+                   'correlationId', correlation_id, 'causationId', causation_id),
+                 occurred_at, occurred_at
           FROM domain_events
           UNION ALL
-          SELECT id, 'outbox', event_id, topic, COALESCE(last_error, '事件投递'), status,
-                 payload_json, created_at, published_at
-          FROM outbox_messages
+          SELECT outbox.id, 'outbox', outbox.event_id, outbox.topic,
+                 COALESCE(outbox.last_error, '事件投递'), outbox.status,
+                 json_object('payload', json(outbox.payload_json),
+                   'attemptCount', outbox.attempt_count,
+                   'lastFailureKind', outbox.last_failure_kind,
+                   'deadLetteredAt', outbox.dead_lettered_at,
+                   'correlationId', event.correlation_id,
+                   'causationId', event.causation_id),
+                 outbox.created_at, COALESCE(outbox.published_at, outbox.dead_lettered_at)
+          FROM outbox_messages outbox
+          INNER JOIN domain_events event ON event.id = outbox.event_id
+          UNION ALL
+          SELECT id, 'workflow_wait', workflow_id, condition_kind,
+                 deduplication_key, status,
+                 json_object('workflowId', workflow_id, 'correlationId', correlation_id,
+                   'causationId', causation_id, 'payload', json(payload_json),
+                   'resumePayload', CASE WHEN resume_payload_json IS NULL THEN NULL
+                     ELSE json(resume_payload_json) END),
+                 created_at, satisfied_at
+          FROM workflow_wait_conditions
+          UNION ALL
+          SELECT timer.id, 'workflow_timer', timer.workflow_id, 'Durable Timer',
+                 COALESCE(timer.last_error, condition.deduplication_key), timer.status,
+                 json_object('workflowId', timer.workflow_id,
+                   'waitConditionId', timer.wait_condition_id,
+                   'dueAt', timer.due_at, 'availableAt', timer.available_at,
+                   'attemptCount', timer.attempt_count,
+                   'correlationId', condition.correlation_id,
+                   'causationId', condition.causation_id),
+                 timer.created_at, COALESCE(timer.fired_at, timer.updated_at)
+          FROM workflow_timers timer
+          INNER JOIN workflow_wait_conditions condition ON condition.id = timer.wait_condition_id
         )
         WHERE (? = 'all' OR category = ?)
-          AND (? = '' OR instr(lower(title || char(10) || summary || char(10) || status), ?) > 0)
+          AND (? = '' OR instr(lower(title || char(10) || summary || char(10) || status ||
+            char(10) || entity_id || char(10) || COALESCE(details_json, '')), ?) > 0)
         ORDER BY created_at DESC LIMIT ?`,
         [category, category, search, search, limit],
       )
@@ -130,6 +165,8 @@ function mapAuditRow(row: AuditRow): AuditEntry {
     'delegation',
     'domain_event',
     'outbox',
+    'workflow_wait',
+    'workflow_timer',
   ].includes(row.category)
     ? (row.category as AuditCategory)
     : 'agent_task'
@@ -148,7 +185,7 @@ function mapAuditRow(row: AuditRow): AuditEntry {
 }
 
 function severityForStatus(status: string): AuditSeverity {
-  if (['failed', 'error', 'rejected', 'invalid'].includes(status)) return 'error'
+  if (['failed', 'error', 'rejected', 'invalid', 'dead_lettered'].includes(status)) return 'error'
   if (
     [
       'completed',
@@ -161,6 +198,8 @@ function severityForStatus(status: string): AuditSeverity {
       'active',
       'published',
       'recorded',
+      'fired',
+      'satisfied',
     ].includes(status)
   )
     return 'success'

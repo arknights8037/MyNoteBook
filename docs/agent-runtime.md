@@ -10,7 +10,7 @@ Phase 3 的生产链路为：`UI interaction snapshot -> TauriAgentRuntimeAdapte
 
 标准 Agent/Create/Plan Run 在侧车中将模型输出编译为可审计的 proposal projection；Rust 在转发 `run.result` 前原子写入 Patch、来源和任务状态，随后 Vue 只投影已持久化结果到既有 Diff 审阅 UI。Rust 还在提交前枚举 MCP 工具并冻结 trusted/read 授权矩阵。Rust snapshot 额外保存活动 Run 的脱敏身份投影、待授权请求和待领取终态投影。Cognitive 与 A2A 的跨窗口业务投影、审批/修订、Research candidate 和请求终态也已由 Rust/sidecar 持久化。
 
-Phase 4 的后台可靠性边界也已落地：主窗口关闭时应用隐藏到托盘，Rust Core 继续监督 Worker、A2A lease 和 Durable Timer。Timer/等待条件保存于 SQLite，使用绝对 UTC 到期时间、去重键、lease、退避和 Dead Letter；到期时 Domain Event、Outbox 与等待条件终态在同一事务提交。知识中心的任务验收页提供后台运行控制投影，显示 Worker heartbeat/restart、活动 Run、待授权/待领取终态和 A2A retry/Dead Letter；这些数据来自 Rust snapshot、只读查询和事件通知，WebView 不持有 SQLite、Provider 网络或后台编排能力。
+Phase 4 的后台可靠性边界也已落地：主窗口关闭时应用隐藏到托盘，Rust Core 继续监督 Worker、A2A lease 和 Durable Timer。Timer/等待条件保存于 SQLite，使用绝对 UTC 到期时间、去重键、lease、退避和 Dead Letter；到期时 Domain Event、Outbox 与等待条件终态在同一事务提交。知识中心的任务验收页提供后台运行控制投影，显示 Worker heartbeat/restart、活动 Run、待授权/待领取终态、A2A retry/Dead Letter，以及 Timer scheduled/due/retry/dead-letter/lag 健康快照；这些数据来自 Rust snapshot、只读查询和事件通知，WebView 不持有 SQLite、Provider 网络或后台编排能力。
 
 ```text
 交互输入 / Slash Command

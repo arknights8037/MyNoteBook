@@ -13,11 +13,19 @@ import {
   type AgentRequestQueueSnapshot,
 } from '@/infrastructure/runtime/TauriAgentCommunicationWatcher'
 import type { AgentCommunicationRequest } from '@/repositories/agent/AgentCommunicationRepository'
+import {
+  getWorkflowTimerSnapshot,
+  subscribeWorkflowTimerSnapshot,
+  type WorkflowTimerSnapshot,
+} from '@/infrastructure/runtime/WorkflowTimerSnapshotClient'
 import { NButton, NIcon, NTooltip } from '@/ui'
 
 type SubscribeSnapshot = (listener: (snapshot: AgentWorkerSnapshot) => void) => Promise<() => void>
 type SubscribeQueue = (
   listener: (snapshot: AgentRequestQueueSnapshot) => void,
+) => Promise<() => void>
+type SubscribeTimerSnapshot = (
+  listener: (snapshot: WorkflowTimerSnapshot) => void,
 ) => Promise<() => void>
 
 let requestsLoader: Promise<() => Promise<AgentCommunicationRequest[]>> | null = null
@@ -32,12 +40,15 @@ async function loadRecentRequests(): Promise<AgentCommunicationRequest[]> {
 const props = defineProps<{
   getSnapshot?: () => Promise<AgentWorkerSnapshot>
   getRequests?: () => Promise<AgentCommunicationRequest[]>
+  getTimerSnapshot?: () => Promise<WorkflowTimerSnapshot>
   subscribeSnapshot?: SubscribeSnapshot
   subscribeQueue?: SubscribeQueue
+  subscribeTimerSnapshot?: SubscribeTimerSnapshot
 }>()
 
 const snapshot = ref<AgentWorkerSnapshot | null>(null)
 const requests = ref<AgentCommunicationRequest[]>([])
+const timerSnapshot = ref<WorkflowTimerSnapshot | null>(null)
 const loading = ref(false)
 const error = ref('')
 const unlisteners: Array<() => void> = []
@@ -57,6 +68,12 @@ const workerLabels: Record<AgentWorkerSnapshot['status'], string> = {
   restarting: '重启中',
   crashed: '已崩溃',
   unavailable: '不可用',
+}
+const timerLabels: Record<WorkflowTimerSnapshot['status'], string> = {
+  stopped: '已停止',
+  running: '运行正常',
+  paused: '已暂停',
+  degraded: '运行降级',
 }
 const requestLabels: Record<AgentCommunicationRequest['status'], string> = {
   queued: '排队中',
@@ -85,12 +102,14 @@ async function refresh(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    const [nextSnapshot, nextRequests] = await Promise.all([
+    const [nextSnapshot, nextRequests, nextTimerSnapshot] = await Promise.all([
       (props.getSnapshot ?? getAgentWorkerSnapshot)(),
       (props.getRequests ?? loadRecentRequests)(),
+      (props.getTimerSnapshot ?? getWorkflowTimerSnapshot)(),
     ])
     snapshot.value = nextSnapshot
     requests.value = nextRequests
+    timerSnapshot.value = nextTimerSnapshot
   } catch (refreshError) {
     error.value = refreshError instanceof Error ? refreshError.message : String(refreshError)
   } finally {
@@ -135,9 +154,16 @@ onMounted(async () => {
       snapshot.value = nextSnapshot
     }),
     (props.subscribeQueue ?? listenAgentRequestQueue)(() => void refresh()),
+    (props.subscribeTimerSnapshot ?? subscribeWorkflowTimerSnapshot)((nextSnapshot) => {
+      timerSnapshot.value = nextSnapshot
+    }),
   ])
   for (const subscription of subscriptions) {
     if (subscription.status === 'fulfilled') unlisteners.push(subscription.value)
+  }
+  const failures = subscriptions.filter((subscription) => subscription.status === 'rejected')
+  if (failures.length && !error.value) {
+    error.value = `实时状态订阅失败（${failures.length} 项），可使用刷新按钮读取当前快照。`
   }
 })
 
@@ -207,6 +233,36 @@ onBeforeUnmount(() => {
     <div v-if="snapshot?.lastError" class="agent-runtime-alert">
       <TriangleAlert :size="15" />
       <span>{{ snapshot.lastError }}</span>
+    </div>
+
+    <div class="agent-timer-summary" aria-label="Durable Timer 运行摘要">
+      <div>
+        <span>Durable Timer</span>
+        <strong :class="`is-${timerSnapshot?.status ?? 'stopped'}`">
+          {{ timerSnapshot ? timerLabels[timerSnapshot.status] : '读取中' }}
+        </strong>
+        <small v-if="timerSnapshot">最近成功 {{ formatTime(timerSnapshot.lastSuccessAt) }}</small>
+      </div>
+      <div>
+        <span>计划中</span><strong>{{ timerSnapshot?.scheduledCount ?? 0 }}</strong>
+      </div>
+      <div>
+        <span>已到期</span><strong>{{ timerSnapshot?.dueCount ?? 0 }}</strong>
+      </div>
+      <div>
+        <span>等待重试</span><strong>{{ timerSnapshot?.retryCount ?? 0 }}</strong>
+      </div>
+      <div :class="{ 'has-alert': (timerSnapshot?.deadLetterCount ?? 0) > 0 }">
+        <span>死信</span><strong>{{ timerSnapshot?.deadLetterCount ?? 0 }}</strong>
+      </div>
+      <div>
+        <span>最大延迟</span><strong>{{ timerSnapshot?.maxLagMs ?? 0 }}ms</strong>
+      </div>
+    </div>
+
+    <div v-if="timerSnapshot?.lastError" class="agent-runtime-alert">
+      <TriangleAlert :size="15" />
+      <span>{{ timerSnapshot.lastError }}</span>
     </div>
 
     <div v-if="snapshot?.activeRuns.length" class="agent-runtime-active-runs">

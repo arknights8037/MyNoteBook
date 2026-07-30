@@ -114,11 +114,28 @@ describe('automation and audit repositories', () => {
       );
       CREATE TABLE domain_events (
         id TEXT PRIMARY KEY, event_type TEXT NOT NULL, aggregate_type TEXT NOT NULL,
-        aggregate_id TEXT NOT NULL, payload_json TEXT NOT NULL, occurred_at INTEGER NOT NULL
+        aggregate_id TEXT NOT NULL, payload_json TEXT NOT NULL, actor_id TEXT NOT NULL,
+        correlation_id TEXT NOT NULL, causation_id TEXT, occurred_at INTEGER NOT NULL,
+        schema_version INTEGER NOT NULL, source TEXT NOT NULL, workspace_id TEXT,
+        deduplication_key TEXT, security_scope_json TEXT NOT NULL
       );
       CREATE TABLE outbox_messages (
         id TEXT PRIMARY KEY, event_id TEXT NOT NULL, topic TEXT NOT NULL, payload_json TEXT NOT NULL,
-        status TEXT NOT NULL, last_error TEXT, created_at INTEGER NOT NULL, published_at INTEGER
+        status TEXT NOT NULL, attempt_count INTEGER NOT NULL, available_at INTEGER NOT NULL,
+        last_error TEXT, last_failure_kind TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        published_at INTEGER, dead_lettered_at INTEGER
+      );
+      CREATE TABLE workflow_wait_conditions (
+        id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, deduplication_key TEXT NOT NULL,
+        condition_kind TEXT NOT NULL, status TEXT NOT NULL, correlation_id TEXT NOT NULL,
+        causation_id TEXT, payload_json TEXT NOT NULL, resume_payload_json TEXT,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, satisfied_at INTEGER
+      );
+      CREATE TABLE workflow_timers (
+        id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, wait_condition_id TEXT NOT NULL,
+        due_at INTEGER NOT NULL, available_at INTEGER NOT NULL, status TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL, last_error TEXT, fired_at INTEGER,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
       );
       INSERT INTO documents VALUES ('doc-1');
       INSERT INTO agent_tasks VALUES ('agent-1', '总结页面', 'completed', NULL, 50, 80, NULL);
@@ -196,5 +213,53 @@ describe('automation and audit repositories', () => {
     })
     expect(filtered.ok && filtered.value).toHaveLength(1)
     expect(filtered.ok && filtered.value[0]).toMatchObject({ category: 'agent_task' })
+  })
+
+  it('traces workflow, timer, event and outbox records by correlation id', async () => {
+    client.database.exec(`
+      INSERT INTO domain_events (
+        id, event_type, aggregate_type, aggregate_id, payload_json, actor_id,
+        correlation_id, causation_id, occurred_at, schema_version, source,
+        workspace_id, deduplication_key, security_scope_json
+      ) VALUES (
+        'event-1', 'workflow.timer_fired', 'workflow', 'workflow-1', '{}',
+        'rust-workflow-timer', 'correlation-trace-1', 'cause-1', 300, 1,
+        'rust_timer', NULL, 'timer-1', '{}'
+      );
+      INSERT INTO outbox_messages (
+        id, event_id, topic, payload_json, status, attempt_count, available_at,
+        last_error, last_failure_kind, created_at, updated_at, dead_lettered_at
+      ) VALUES (
+        'outbox-1', 'event-1', 'workflow.timer_fired', '{}', 'dead_lettered', 8, 400,
+        'delivery failed', 'retry_exhausted', 310, 400, 400
+      );
+      INSERT INTO workflow_wait_conditions (
+        id, workflow_id, deduplication_key, condition_kind, status, correlation_id,
+        causation_id, payload_json, created_at, updated_at, satisfied_at
+      ) VALUES (
+        'wait-1', 'workflow-1', 'wake', 'timer', 'satisfied',
+        'correlation-trace-1', 'cause-1', '{}', 100, 300, 300
+      );
+      INSERT INTO workflow_timers (
+        id, workflow_id, wait_condition_id, due_at, available_at, status,
+        attempt_count, last_error, fired_at, created_at, updated_at
+      ) VALUES (
+        'timer-1', 'workflow-1', 'wait-1', 250, 250, 'fired', 1, NULL, 300, 110, 300
+      );
+    `)
+
+    const trace = await new TauriAuditRepository(client).listEntries({
+      search: 'correlation-trace-1',
+    })
+
+    expect(trace.ok).toBe(true)
+    if (!trace.ok) return
+    expect(trace.value.map((entry) => entry.category)).toEqual([
+      'outbox',
+      'domain_event',
+      'workflow_timer',
+      'workflow_wait',
+    ])
+    expect(trace.value[0]).toMatchObject({ status: 'dead_lettered', severity: 'error' })
   })
 })

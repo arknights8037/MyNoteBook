@@ -92,6 +92,7 @@ mod email;
 mod governance;
 mod mcp;
 pub mod mcp_server_exposure;
+mod reliability;
 mod rss;
 mod secret_store;
 mod sensitive_data;
@@ -236,8 +237,7 @@ pub fn run() {
             agent_request_watcher::configure_agent_background_runtime,
             agent_request_watcher::claim_agent_request,
             agent_request_watcher::settle_agent_request,
-            workflow_timers::schedule_workflow_timer,
-            workflow_timers::cancel_workflow_timer,
+            workflow_timers::get_workflow_timer_snapshot,
             work::commit_result_verification,
             work::decide_change_set,
             work::record_authorization,
@@ -245,9 +245,7 @@ pub fn run() {
             views::commit_view_refresh,
             views::set_view_manual_override,
             governance::create_delegation,
-            governance::submit_external_work,
-            governance::claim_outbox_messages,
-            governance::settle_outbox_message
+            governance::submit_external_work
         ])
         .plugin(
             tauri_plugin_log::Builder::new()

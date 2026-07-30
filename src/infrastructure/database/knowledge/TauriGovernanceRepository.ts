@@ -5,7 +5,6 @@ import type {
   DelegateType,
   DelegationOperation,
   ExternalSubmission,
-  OutboxMessage,
 } from '@/models/knowledge/governance'
 import { err, normalizeError, ok, type AppResult } from '@/models/shared/result'
 import { loadAppSettings } from '@/models/settings/settings'
@@ -97,41 +96,6 @@ export class TauriGovernanceRepository implements GovernanceRepository {
       )
     } catch (error) {
       return err(normalizeError(error, '外部结果提交失败。'))
-    }
-  }
-
-  async claimOutbox(input: {
-    workerId: string
-    now: number
-    leaseMs: number
-    limit: number
-  }): Promise<AppResult<OutboxMessage[]>> {
-    try {
-      return ok(
-        await invoke('claim_outbox_messages', {
-          input: { dataDirectory: loadAppSettings().dataDirectory, ...input },
-        }),
-      )
-    } catch (error) {
-      return err(normalizeError(error, '无法领取 Outbox 消息。'))
-    }
-  }
-
-  async settleOutbox(input: {
-    id: string
-    workerId: string
-    published: boolean
-    error?: string | null
-    now: number
-    retryAt?: number | null
-  }): Promise<AppResult<void>> {
-    try {
-      await invoke('settle_outbox_message', {
-        input: { dataDirectory: loadAppSettings().dataDirectory, ...input },
-      })
-      return ok(undefined)
-    } catch (error) {
-      return err(normalizeError(error, '无法更新 Outbox 消息。'))
     }
   }
 }

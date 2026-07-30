@@ -37,6 +37,8 @@ const categoryOptions = [
   { label: '外部委派', value: 'delegation' },
   { label: '领域事件', value: 'domain_event' },
   { label: 'Outbox', value: 'outbox' },
+  { label: 'Workflow 等待', value: 'workflow_wait' },
+  { label: 'Durable Timer', value: 'workflow_timer' },
 ]
 const errorCount = computed(
   () => entries.value.filter((entry) => entry.severity === 'error').length,
@@ -84,6 +86,8 @@ function categoryLabel(value: AuditCategory): string {
     delegation: '外部委派',
     domain_event: '领域事件',
     outbox: 'Outbox',
+    workflow_wait: 'Workflow 等待',
+    workflow_timer: 'Durable Timer',
   }[value]
 }
 

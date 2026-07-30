@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{
-    sync::Mutex,
+    sync::{Mutex, RwLock},
     task::JoinHandle,
     time::{Duration, MissedTickBehavior},
 };
@@ -12,17 +12,29 @@ use tokio::{
 use crate::{
     database,
     domain_events::{record_with_outbox, NewDomainEvent},
+    reliability::{clamp_lease_ms, now_millis, TIMER_RETRY_POLICY},
 };
 
 const TIMER_LEASE_MS: i64 = 30_000;
-const MAX_TIMER_ATTEMPTS: i64 = 5;
 const TIMER_BATCH_SIZE: i64 = 25;
+const TIMER_STATUS_EVENT: &str = "workflow-timer://status";
 
-#[derive(Default)]
 pub(crate) struct DurableTimerSchedulerState {
     task: Mutex<Option<JoinHandle<()>>>,
     data_directory: Mutex<Option<String>>,
     migration_paused: AtomicBool,
+    snapshot: RwLock<DurableTimerSnapshot>,
+}
+
+impl Default for DurableTimerSchedulerState {
+    fn default() -> Self {
+        Self {
+            task: Mutex::new(None),
+            data_directory: Mutex::new(None),
+            migration_paused: AtomicBool::new(false),
+            snapshot: RwLock::new(DurableTimerSnapshot::default()),
+        }
+    }
 }
 
 pub(crate) struct DurableTimerMigrationSnapshot {
@@ -30,8 +42,67 @@ pub(crate) struct DurableTimerMigrationSnapshot {
     pub(crate) data_directory: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DurableTimerStatus {
+    Stopped,
+    Running,
+    Paused,
+    Degraded,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DurableTimerSnapshot {
+    status: DurableTimerStatus,
+    last_tick_at: Option<i64>,
+    last_success_at: Option<i64>,
+    last_error: Option<String>,
+    scheduled_count: i64,
+    processing_count: i64,
+    retry_count: i64,
+    due_count: i64,
+    dead_letter_count: i64,
+    max_lag_ms: i64,
+}
+
+impl Default for DurableTimerSnapshot {
+    fn default() -> Self {
+        Self {
+            status: DurableTimerStatus::Stopped,
+            last_tick_at: None,
+            last_success_at: None,
+            last_error: None,
+            scheduled_count: 0,
+            processing_count: 0,
+            retry_count: 0,
+            due_count: 0,
+            dead_letter_count: 0,
+            max_lag_ms: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct DurableTimerMetrics {
+    scheduled_count: i64,
+    processing_count: i64,
+    retry_count: i64,
+    due_count: i64,
+    dead_letter_count: i64,
+    max_lag_ms: i64,
+}
+
+#[tauri::command]
+pub(crate) async fn get_workflow_timer_snapshot(
+    state: State<'_, DurableTimerSchedulerState>,
+) -> Result<DurableTimerSnapshot, String> {
+    Ok(state.snapshot.read().await.clone())
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // Internal Phase 5 Workflow input; not registered for WebView invocation.
 pub(crate) struct ScheduleWorkflowTimerInput {
     data_directory: Option<String>,
     workflow_id: String,
@@ -44,6 +115,7 @@ pub(crate) struct ScheduleWorkflowTimerInput {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // Internal Phase 5 Workflow input; not registered for WebView invocation.
 pub(crate) struct CancelWorkflowTimerInput {
     data_directory: Option<String>,
     wait_condition_id: String,
@@ -51,6 +123,7 @@ pub(crate) struct CancelWorkflowTimerInput {
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub(crate) struct ScheduledWorkflowTimer {
     timer_id: String,
     wait_condition_id: String,
@@ -70,6 +143,7 @@ struct ClaimedWorkflowTimer {
     attempt_count: i64,
 }
 
+#[allow(dead_code)]
 struct NewWorkflowTimer<'a> {
     workflow_id: &'a str,
     deduplication_key: &'a str,
@@ -79,7 +153,7 @@ struct NewWorkflowTimer<'a> {
     causation_id: Option<&'a str>,
 }
 
-#[tauri::command]
+#[allow(dead_code)] // Kept as a Rust-internal primitive; absent from invoke_handler.
 pub(crate) async fn schedule_workflow_timer(
     app: AppHandle,
     input: ScheduleWorkflowTimerInput,
@@ -100,7 +174,7 @@ pub(crate) async fn schedule_workflow_timer(
     .await
 }
 
-#[tauri::command]
+#[allow(dead_code)] // Kept as a Rust-internal primitive; absent from invoke_handler.
 pub(crate) async fn cancel_workflow_timer(
     app: AppHandle,
     input: CancelWorkflowTimerInput,
@@ -127,6 +201,11 @@ pub(crate) async fn ensure_scheduler(
         existing.abort();
     }
     *state.data_directory.lock().await = data_directory.clone();
+    update_timer_snapshot(app, |snapshot| {
+        snapshot.status = DurableTimerStatus::Running;
+        snapshot.last_error = None;
+    })
+    .await;
     let app = app.clone();
     *task = Some(tokio::spawn(async move {
         run_scheduler(app, data_directory).await;
@@ -144,6 +223,7 @@ pub(crate) async fn quiesce_for_data_migration(
         existing.abort();
         let _ = existing.await;
     }
+    state.snapshot.write().await.status = DurableTimerStatus::Paused;
     DurableTimerMigrationSnapshot {
         was_running,
         data_directory: state.data_directory.lock().await.clone(),
@@ -159,6 +239,11 @@ pub(crate) async fn resume_after_data_migration(
     let mut task = state.task.lock().await;
     *state.data_directory.lock().await = data_directory.clone();
     if snapshot.was_running {
+        update_timer_snapshot(app, |timer_snapshot| {
+            timer_snapshot.status = DurableTimerStatus::Running;
+            timer_snapshot.last_error = None;
+        })
+        .await;
         let app = app.clone();
         *task = Some(tokio::spawn(async move {
             run_scheduler(app, data_directory).await;
@@ -173,12 +258,24 @@ async fn run_scheduler(app: AppHandle, data_directory: Option<String>) {
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     loop {
         ticker.tick().await;
-        let Ok(connection) = database::open_database(&app, data_directory.clone()).await else {
-            continue;
-        };
         let now = now_millis();
-        let _ = dead_letter_exhausted_timers(connection.as_ref(), now).await;
-        let Ok(timers) = claim_due_timers(
+        update_timer_snapshot(&app, |snapshot| {
+            snapshot.status = DurableTimerStatus::Running;
+            snapshot.last_tick_at = Some(now);
+        })
+        .await;
+        let connection = match database::open_database(&app, data_directory.clone()).await {
+            Ok(connection) => connection,
+            Err(error) => {
+                record_timer_error(&app, now, error).await;
+                continue;
+            }
+        };
+        if let Err(error) = dead_letter_exhausted_timers(connection.as_ref(), now).await {
+            record_timer_error(&app, now, error).await;
+            continue;
+        }
+        let timers = match claim_due_timers(
             connection.as_ref(),
             &worker_id,
             now,
@@ -186,26 +283,127 @@ async fn run_scheduler(app: AppHandle, data_directory: Option<String>) {
             TIMER_BATCH_SIZE,
         )
         .await
-        else {
-            continue;
+        {
+            Ok(timers) => timers,
+            Err(error) => {
+                record_timer_error(&app, now, error).await;
+                continue;
+            }
         };
+        let mut last_error = None;
         for timer in timers {
             if let Err(error) =
                 fire_claimed_timer(connection.as_ref(), &worker_id, &timer, now).await
             {
-                let _ = reschedule_failed_timer(
+                if let Err(reschedule_error) = reschedule_failed_timer(
                     connection.as_ref(),
                     &worker_id,
                     &timer,
                     &error,
                     now_millis(),
                 )
-                .await;
+                .await
+                {
+                    last_error = Some(format!(
+                        "Timer {} 触发失败且无法重排：{}；{}",
+                        timer.id, error, reschedule_error
+                    ));
+                } else {
+                    last_error = Some(format!("Timer {} 触发失败，已重排：{}", timer.id, error));
+                }
             }
         }
+        let metrics = match load_timer_metrics(connection.as_ref(), now).await {
+            Ok(metrics) => metrics,
+            Err(error) => {
+                record_timer_error(&app, now, error).await;
+                continue;
+            }
+        };
+        update_timer_snapshot(&app, |snapshot| {
+            snapshot.status = if last_error.is_some() {
+                DurableTimerStatus::Degraded
+            } else {
+                DurableTimerStatus::Running
+            };
+            snapshot.last_success_at = Some(now);
+            snapshot.last_error = last_error.map(|error| truncate_error(&error));
+            snapshot.scheduled_count = metrics.scheduled_count;
+            snapshot.processing_count = metrics.processing_count;
+            snapshot.retry_count = metrics.retry_count;
+            snapshot.due_count = metrics.due_count;
+            snapshot.dead_letter_count = metrics.dead_letter_count;
+            snapshot.max_lag_ms = metrics.max_lag_ms;
+        })
+        .await;
     }
 }
 
+async fn load_timer_metrics(
+    connection: &SqlitePool,
+    now: i64,
+) -> Result<DurableTimerMetrics, String> {
+    let row = sqlx::query(
+        "SELECT \
+           COALESCE(SUM(CASE WHEN status = 'scheduled' THEN 1 ELSE 0 END), 0) AS scheduled_count, \
+           COALESCE(SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END), 0) AS processing_count, \
+           COALESCE(SUM(CASE WHEN status = 'scheduled' AND last_error IS NOT NULL THEN 1 ELSE 0 END), 0) AS retry_count, \
+           COALESCE(SUM(CASE WHEN status = 'scheduled' AND due_at <= ? AND available_at <= ? THEN 1 ELSE 0 END), 0) AS due_count, \
+           COALESCE(SUM(CASE WHEN status = 'dead_lettered' THEN 1 ELSE 0 END), 0) AS dead_letter_count, \
+           COALESCE(MAX(CASE WHEN status = 'scheduled' AND due_at <= ? THEN ? - due_at ELSE 0 END), 0) AS max_lag_ms \
+         FROM workflow_timers",
+    )
+    .bind(now)
+    .bind(now)
+    .bind(now)
+    .bind(now)
+    .fetch_one(connection)
+    .await
+    .map_err(database::database_error)?;
+    Ok(DurableTimerMetrics {
+        scheduled_count: row
+            .try_get("scheduled_count")
+            .map_err(database::database_error)?,
+        processing_count: row
+            .try_get("processing_count")
+            .map_err(database::database_error)?,
+        retry_count: row
+            .try_get("retry_count")
+            .map_err(database::database_error)?,
+        due_count: row.try_get("due_count").map_err(database::database_error)?,
+        dead_letter_count: row
+            .try_get("dead_letter_count")
+            .map_err(database::database_error)?,
+        max_lag_ms: row
+            .try_get("max_lag_ms")
+            .map_err(database::database_error)?,
+    })
+}
+
+async fn update_timer_snapshot(app: &AppHandle, update: impl FnOnce(&mut DurableTimerSnapshot)) {
+    let state = app.state::<DurableTimerSchedulerState>();
+    let next = {
+        let mut snapshot = state.snapshot.write().await;
+        update(&mut snapshot);
+        snapshot.clone()
+    };
+    let _ = app.emit(TIMER_STATUS_EVENT, next);
+}
+
+async fn record_timer_error(app: &AppHandle, now: i64, error: String) {
+    update_timer_snapshot(app, |snapshot| {
+        snapshot.status = DurableTimerStatus::Degraded;
+        snapshot.last_tick_at = Some(now);
+        snapshot.last_error = Some(truncate_error(&error));
+    })
+    .await;
+}
+
+fn truncate_error(error: &str) -> String {
+    error.chars().take(2_000).collect()
+}
+
+#[allow(dead_code)]
 async fn schedule_workflow_timer_in_pool(
     connection: &SqlitePool,
     timer: NewWorkflowTimer<'_>,
@@ -317,6 +515,7 @@ async fn schedule_workflow_timer_in_pool(
     })
 }
 
+#[allow(dead_code)]
 async fn cancel_workflow_timer_in_pool(
     connection: &SqlitePool,
     wait_condition_id: &str,
@@ -356,7 +555,7 @@ async fn claim_due_timers(
     limit: i64,
 ) -> Result<Vec<ClaimedWorkflowTimer>, String> {
     require_non_empty(worker_id, "Timer worker ID")?;
-    let lease_expires_at = now + lease_ms.clamp(1_000, 5 * 60_000);
+    let lease_expires_at = now + clamp_lease_ms(lease_ms, 1_000, 5 * 60_000);
     let limit = limit.clamp(1, 100);
     let mut transaction = connection.begin().await.map_err(database::database_error)?;
     let rows = sqlx::query(
@@ -374,7 +573,7 @@ async fn claim_due_timers(
            (status = 'processing' AND lease_expires_at <= ?) \
          ) RETURNING id, workflow_id, wait_condition_id, due_at, attempt_count",
     )
-    .bind(MAX_TIMER_ATTEMPTS)
+    .bind(TIMER_RETRY_POLICY.max_attempts)
     .bind(now)
     .bind(now)
     .bind(now)
@@ -382,7 +581,7 @@ async fn claim_due_timers(
     .bind(worker_id)
     .bind(lease_expires_at)
     .bind(now)
-    .bind(MAX_TIMER_ATTEMPTS)
+    .bind(TIMER_RETRY_POLICY.max_attempts)
     .bind(now)
     .bind(now)
     .bind(now)
@@ -478,6 +677,10 @@ async fn fire_claimed_timer(
             aggregate_id: &timer.workflow_id,
             payload: &event_payload,
             actor_id: "rust-workflow-timer",
+            source: "rust_timer",
+            workspace_id: None,
+            deduplication_key: &event_id,
+            security_scope: None,
             correlation_id: &timer.correlation_id,
             causation_id: timer.causation_id.as_deref(),
             occurred_at: fired_at,
@@ -525,7 +728,7 @@ async fn reschedule_failed_timer(
     now: i64,
 ) -> Result<(), String> {
     let error = error.chars().take(2_000).collect::<String>();
-    if timer.attempt_count >= MAX_TIMER_ATTEMPTS {
+    if TIMER_RETRY_POLICY.exhausted(timer.attempt_count) {
         let mut transaction = connection.begin().await.map_err(database::database_error)?;
         let updated = sqlx::query(
             "UPDATE workflow_timers SET status = 'dead_lettered', lease_owner = NULL, \
@@ -552,7 +755,7 @@ async fn reschedule_failed_timer(
         }
         return transaction.commit().await.map_err(database::database_error);
     }
-    let delay = retry_delay_ms(timer.attempt_count);
+    let delay = TIMER_RETRY_POLICY.delay_ms(timer.attempt_count);
     sqlx::query(
         "UPDATE workflow_timers SET status = 'scheduled', available_at = ?, lease_owner = NULL, \
          lease_expires_at = NULL, last_error = ?, updated_at = ? \
@@ -576,7 +779,7 @@ async fn dead_letter_exhausted_timers(connection: &SqlitePool, now: i64) -> Resu
          AND lease_expires_at <= ? AND attempt_count >= ?",
     )
     .bind(now)
-    .bind(MAX_TIMER_ATTEMPTS)
+    .bind(TIMER_RETRY_POLICY.max_attempts)
     .fetch_all(&mut *transaction)
     .await
     .map_err(database::database_error)?;
@@ -617,10 +820,6 @@ async fn dead_letter_exhausted_timers(connection: &SqlitePool, now: i64) -> Resu
     Ok(dead_lettered)
 }
 
-fn retry_delay_ms(attempt_count: i64) -> i64 {
-    (5_000_i64 * 2_i64.pow((attempt_count.saturating_sub(1) as u32).min(6))).min(5 * 60_000)
-}
-
 fn require_non_empty(value: &str, name: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         return Err(format!("{name} 不能为空。"));
@@ -636,15 +835,6 @@ fn new_id(prefix: &str) -> String {
         now_millis(),
         SEQUENCE.fetch_add(1, Ordering::Relaxed)
     )
-}
-
-fn now_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .try_into()
-        .unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]
@@ -673,6 +863,59 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(path.with_extension("db-wal"));
         let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    #[tokio::test]
+    async fn timer_metrics_report_backlog_retries_dead_letters_and_lag() {
+        let (path, pool) = test_pool("workflow-timer-metrics").await;
+        let mut timers = Vec::new();
+        for index in 0..3 {
+            let workflow_id = format!("workflow-metrics-{index}");
+            let correlation_id = format!("correlation-{index}");
+            let payload = json!({ "index": index });
+            timers.push(
+                schedule_workflow_timer_in_pool(
+                    pool.as_ref(),
+                    NewWorkflowTimer {
+                        workflow_id: &workflow_id,
+                        deduplication_key: "wake",
+                        due_at: 100 + index,
+                        payload: &payload,
+                        correlation_id: &correlation_id,
+                        causation_id: None,
+                    },
+                    1,
+                )
+                .await
+                .expect("schedule metric timer"),
+            );
+        }
+        sqlx::query("UPDATE workflow_timers SET last_error = 'retry' WHERE id = ?")
+            .bind(&timers[0].timer_id)
+            .execute(pool.as_ref())
+            .await
+            .expect("mark retry");
+        sqlx::query("UPDATE workflow_timers SET status = 'processing' WHERE id = ?")
+            .bind(&timers[1].timer_id)
+            .execute(pool.as_ref())
+            .await
+            .expect("mark processing");
+        sqlx::query("UPDATE workflow_timers SET status = 'dead_lettered' WHERE id = ?")
+            .bind(&timers[2].timer_id)
+            .execute(pool.as_ref())
+            .await
+            .expect("mark dead letter");
+
+        let metrics = load_timer_metrics(pool.as_ref(), 500)
+            .await
+            .expect("load timer metrics");
+        assert_eq!(metrics.scheduled_count, 1);
+        assert_eq!(metrics.processing_count, 1);
+        assert_eq!(metrics.retry_count, 1);
+        assert_eq!(metrics.due_count, 1);
+        assert_eq!(metrics.dead_letter_count, 1);
+        assert_eq!(metrics.max_lag_ms, 400);
+        cleanup(path, pool).await;
     }
 
     #[tokio::test]
@@ -915,13 +1158,13 @@ mod tests {
             "UPDATE workflow_timers SET status = 'processing', attempt_count = ?, \
              lease_owner = 'worker', lease_expires_at = 10_000 WHERE id = ?",
         )
-        .bind(MAX_TIMER_ATTEMPTS)
+        .bind(TIMER_RETRY_POLICY.max_attempts)
         .bind(&scheduled.timer_id)
         .execute(pool.as_ref())
         .await
         .expect("simulate exhausted attempts");
         let exhausted = ClaimedWorkflowTimer {
-            attempt_count: MAX_TIMER_ATTEMPTS,
+            attempt_count: TIMER_RETRY_POLICY.max_attempts,
             ..first
         };
         reschedule_failed_timer(pool.as_ref(), "worker", &exhausted, "permanent", 6_000)
@@ -999,7 +1242,7 @@ mod tests {
             "UPDATE workflow_timers SET status = 'processing', attempt_count = ?, \
              lease_owner = 'dead-process', lease_expires_at = 200 WHERE id = ?",
         )
-        .bind(MAX_TIMER_ATTEMPTS)
+        .bind(TIMER_RETRY_POLICY.max_attempts)
         .bind(&scheduled.timer_id)
         .execute(pool.as_ref())
         .await

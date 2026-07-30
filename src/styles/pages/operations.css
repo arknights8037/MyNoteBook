@@ -621,6 +621,58 @@
   overflow: hidden;
 }
 
+.agent-timer-summary {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin-bottom: 14px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.agent-timer-summary > div {
+  display: grid;
+  min-width: 0;
+  min-height: 58px;
+  align-content: center;
+  gap: 4px;
+  padding: 9px 12px;
+  border-right: 1px solid var(--color-border-subtle);
+}
+
+.agent-timer-summary > div:last-child {
+  border-right: 0;
+}
+
+.agent-timer-summary span {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+}
+
+.agent-timer-summary small {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-timer-summary strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-timer-summary strong.is-running {
+  color: var(--color-success, #238636);
+}
+
+.agent-timer-summary strong.is-degraded,
+.agent-timer-summary .has-alert strong {
+  color: var(--color-error, #c93c37);
+}
+
 .agent-runtime-summary > div {
   display: grid;
   min-width: 0;
@@ -1606,6 +1658,18 @@
 
   .agent-runtime-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-timer-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-timer-summary > div:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .agent-timer-summary > div:nth-child(-n + 4) {
+    border-bottom: 1px solid var(--color-border-subtle);
   }
 
   .agent-runtime-summary > div:nth-child(2n) {
