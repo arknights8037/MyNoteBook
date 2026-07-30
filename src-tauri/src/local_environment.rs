@@ -325,6 +325,7 @@ mod tests {
 
     #[test]
     fn resolves_a_configured_tool_without_requiring_the_ci_host_toolchain() {
+        // The Rust CI job intentionally does not install pnpm, so discovery uses a controlled PATH.
         let directory = std::env::temp_dir().join(format!(
             "mynotebook-environment-path-test-{}",
             std::process::id()
