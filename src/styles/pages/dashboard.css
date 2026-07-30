@@ -624,38 +624,18 @@
   gap: 3px;
 }
 
-.home-rss-insight-toolbar {
+.home-rss-insight-status {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 5px;
   border: 1px solid var(--color-border-subtle);
   border-radius: 7px;
-  padding: 5px 6px 5px 8px;
-  background: var(--color-bg-subtle);
-}
-
-.home-rss-insight-toolbar > span,
-.home-rss-insight-toolbar > div {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.home-rss-insight-toolbar > span {
+  padding: 6px 8px;
   color: var(--color-text-secondary);
+  background: var(--color-bg-subtle);
   font-size: var(--font-size-micro);
 }
 
-.dashboard-widget-frame .home-rss-insight-toolbar button {
-  min-height: 24px;
-  border-color: transparent;
-  padding: 2px 6px;
-  background: transparent;
-  font-size: var(--font-size-micro);
-}
-
-.dashboard-widget-frame .home-rss-insight-toolbar button.is-active,
 .home-agent-summary > header button.is-active {
   color: var(--color-agent-accent-contrast, #111);
   border-color: var(--color-agent-accent);

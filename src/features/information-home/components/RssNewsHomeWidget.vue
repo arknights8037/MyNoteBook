@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowUpRight, Check, EyeOff, Flame, Sparkles } from '@lucide/vue'
+import { ArrowUpRight, Check, EyeOff, Flame } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 
 import { createRssService } from '@/app/composition/rssServiceFactory'
@@ -10,15 +10,11 @@ import { findLatestRssInsight } from '@/services/inbox/RssInsightService'
 const props = defineProps<{
   limit: number
   summary: InformationHomeSummary | null
-  generating: boolean
-  autoEnabled: boolean
 }>()
 const emit = defineEmits<{
   open: [id?: string]
   refreshing: [value: boolean]
   metrics: [items: Array<{ value: number; label: string }>]
-  generate: []
-  toggleAuto: []
 }>()
 const sources = ref<RssSource[]>([])
 const entries = ref<RssEntry[]>([])
@@ -93,24 +89,8 @@ onMounted(() => void refresh())
 
 <template>
   <div class="dashboard-widget-content home-signal-widget">
-    <div v-if="sources.length" class="home-rss-insight-toolbar">
-      <span v-if="insight?.hotItems.length"
-        ><Flame :size="13" />{{ insight.hotItems.length }} 条热点</span
-      >
-      <span v-else><Sparkles :size="13" />等待 RSS 研判</span>
-      <div>
-        <button
-          type="button"
-          :class="{ 'is-active': autoEnabled }"
-          :aria-pressed="autoEnabled"
-          @click="emit('toggleAuto')"
-        >
-          自动 {{ autoEnabled ? '开' : '关' }}
-        </button>
-        <button type="button" :disabled="generating || !entries.length" @click="emit('generate')">
-          {{ generating ? '生成中…' : '生成速览' }}
-        </button>
-      </div>
+    <div v-if="insight?.hotItems.length" class="home-rss-insight-status">
+      <Flame :size="13" /><span>已自动研判 · {{ insight.hotItems.length }} 条热点</span>
     </div>
     <p v-if="loading" class="dashboard-widget-state">正在读取 RSS 新闻…</p>
     <div v-else-if="error" class="dashboard-widget-state dashboard-widget-state--error">
