@@ -30,6 +30,9 @@ describe('RssNewsHomeWidget', () => {
     expect(wrapper.text()).not.toContain('自动 开')
     expect(wrapper.text()).not.toContain('自动 关')
     expect(wrapper.get('.home-rss-hot-label').text()).toBe('热点')
+    expect(wrapper.text()).toContain('Rust 工具链更新')
+    expect(wrapper.text()).toContain('近期集中发布')
+    expect(wrapper.text()).not.toContain('Rust toolchain update')
     wrapper.unmount()
   })
 })
@@ -56,7 +59,7 @@ const entry: RssEntry = {
   sourceId: 'source-1',
   remoteId: 'remote-1',
   articleUrl: 'https://example.com/article',
-  title: 'Rust 工具链更新',
+  title: 'Rust toolchain update',
   author: '作者',
   publishedAt: 2,
   updatedAt: null,

@@ -3,9 +3,11 @@ import { ArrowUpRight, Check, EyeOff } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 
 import { createEmailService } from '@/app/composition/emailServiceFactory'
+import type { InformationHomeSummary } from '@/models/home/informationHome'
 import type { EmailAccount, EmailMessage, EmailProcessingStatus } from '@/models/inbox/email'
+import { buildSignalResultDigest } from '@/services/home/SignalResultDigestService'
 
-const props = defineProps<{ limit: number }>()
+const props = defineProps<{ limit: number; summaries: InformationHomeSummary[] }>()
 const emit = defineEmits<{
   open: [id?: string]
   refreshing: [value: boolean]
@@ -16,7 +18,15 @@ const messages = ref<EmailMessage[]>([])
 const error = ref('')
 const loading = ref(true)
 const processingId = ref('')
-const visible = computed(() => messages.value.slice(0, props.limit))
+const briefByMessageId = computed(
+  () =>
+    new Map(
+      buildSignalResultDigest(props.summaries).emailBriefs.map((brief) => [brief.messageId, brief]),
+    ),
+)
+const visible = computed(() =>
+  messages.value.filter((message) => briefByMessageId.value.has(message.id)).slice(0, props.limit),
+)
 
 function publishMetrics(): void {
   emit('metrics', [
@@ -34,7 +44,7 @@ async function refresh(): Promise<void> {
     const service = await createEmailService()
     const [accountResult, messageResult] = await Promise.all([
       service.listAccounts(),
-      service.listMessages({ status: 'pending', limit: props.limit }),
+      service.listMessages({ status: 'pending', limit: Math.max(props.limit, 30) }),
     ])
     if (!accountResult.ok) throw new Error(accountResult.error.message)
     if (!messageResult.ok) throw new Error(messageResult.error.message)
@@ -47,10 +57,6 @@ async function refresh(): Promise<void> {
     loading.value = false
     emit('refreshing', false)
   }
-}
-
-function accountName(id: string): string {
-  return accounts.value.find((account) => account.id === id)?.displayName ?? '邮箱'
 }
 
 async function setStatus(message: EmailMessage, status: EmailProcessingStatus): Promise<void> {
@@ -77,15 +83,16 @@ onMounted(() => void refresh())
       <strong>读取失败</strong><span>{{ error }}</span>
     </div>
     <p v-else-if="!accounts.length" class="dashboard-widget-state">尚未连接邮箱。</p>
-    <p v-else-if="!visible.length" class="dashboard-widget-state">当前没有待处理邮件。</p>
+    <p v-else-if="!messages.length" class="dashboard-widget-state">当前没有待处理邮件。</p>
+    <p v-else-if="!visible.length" class="dashboard-widget-state">
+      正在等待自动处理生成中文邮件简报…
+    </p>
     <ul v-else class="dashboard-widget-list">
       <li v-for="item in visible" :key="item.id">
         <span class="dashboard-status-dot dashboard-status-dot--pending" />
         <span class="dashboard-widget-list__main"
-          ><strong>{{ item.subject }}</strong
-          ><small
-            >{{ item.fromName || item.fromAddress }} · {{ accountName(item.accountId) }}</small
-          ></span
+          ><strong>{{ briefByMessageId.get(item.id)?.title }}</strong
+          ><small>{{ briefByMessageId.get(item.id)?.summary }}</small></span
         >
         <span class="home-signal-widget__item-tools">
           <em>{{ new Date(item.receivedAt).toLocaleDateString() }}</em>

@@ -150,6 +150,7 @@ function removeWidget(): void {
       v-else-if="widget.widgetType === 'email-actions'"
       ref="emailWidget"
       :limit="widget.query.limit"
+      :summaries="summaries"
       @open="emit('openEmail', $event)"
       @refreshing="refreshing = $event"
       @metrics="updateMetrics"
