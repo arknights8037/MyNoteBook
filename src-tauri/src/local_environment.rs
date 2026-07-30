@@ -323,18 +323,33 @@ mod tests {
         assert_eq!(first_output_line(""), "");
     }
 
-    #[tokio::test]
-    async fn detects_the_project_node_and_pnpm_toolchain() {
-        let environment = normalize_environment(std::env::vars().collect());
-        for id in ["node", "pnpm"] {
-            let spec = RUNTIME_SPECS
-                .iter()
-                .find(|candidate| candidate.id == id)
-                .expect("runtime spec");
-            let runtime = probe_runtime(spec, &environment).await;
-            assert!(runtime.available, "{id} should be available");
-            assert!(!runtime.version.is_empty());
-            assert!(!runtime.executable.is_empty());
-        }
+    #[test]
+    fn resolves_a_configured_tool_without_requiring_the_ci_host_toolchain() {
+        let directory = std::env::temp_dir().join(format!(
+            "mynotebook-environment-path-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).expect("create test directory");
+        let executable = directory.join(if cfg!(target_os = "windows") {
+            "pnpm.cmd"
+        } else {
+            "pnpm"
+        });
+        std::fs::write(&executable, b"").expect("create fake tool");
+        let environment = HashMap::from([(
+            "PATH".to_string(),
+            std::env::join_paths([&directory])
+                .expect("join test path")
+                .to_string_lossy()
+                .into_owned(),
+        )]);
+
+        assert_eq!(
+            resolve_command("pnpm", &environment),
+            Some(executable.clone())
+        );
+
+        std::fs::remove_file(executable).expect("remove fake tool");
+        std::fs::remove_dir(directory).expect("remove test directory");
     }
 }
