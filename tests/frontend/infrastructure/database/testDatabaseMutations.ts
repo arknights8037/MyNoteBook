@@ -15,7 +15,7 @@ export const TEST_DATABASE_MUTATIONS: Partial<Record<DatabaseMutation, string>> 
   saveAgentWorkspaceState:
     "INSERT INTO agent_workspace_state (id, state_json, updated_at) VALUES ('current', ?, ?) ON CONFLICT(id) DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at",
   createAutomationTask:
-    'INSERT INTO automation_tasks (id, name, instruction, trigger_type, trigger_config_json, document_id, enabled, next_run_at, last_run_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO automation_tasks (id, name, instruction, trigger_type, trigger_config_json, source_type, source_config_json, source_cursor_at, document_id, enabled, next_run_at, last_run_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   setAutomationTaskEnabled:
     'UPDATE automation_tasks SET enabled = ?, next_run_at = ?, updated_at = ? WHERE id = ?',
   deleteAutomationTask: 'DELETE FROM automation_tasks WHERE id = ?',

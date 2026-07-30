@@ -292,9 +292,32 @@ async fn watch_agent_requests(app: AppHandle, data_directory: Option<String>) {
             if recover_orphaned_background_requests(connection.as_ref(), &active_run_ids)
                 .await
                 .is_ok()
+                && crate::automation_runtime::recover_orphaned_runs(
+                    connection.as_ref(),
+                    &active_run_ids,
+                )
+                .await
+                .is_ok()
             {
                 startup_recovered = true;
             }
+        }
+        let profile = read_background_profile(connection.as_ref())
+            .await
+            .ok()
+            .flatten();
+        if let Err(error) = crate::automation_runtime::tick(
+            &app,
+            connection.as_ref(),
+            data_directory.clone(),
+            profile.as_ref(),
+        )
+        .await
+        {
+            let _ = app.emit(
+                QUEUE_EVENT,
+                json!({ "actionableCount": 0, "latestUpdateAt": Value::Null, "occurredAt": now_millis(), "error": error }),
+            );
         }
         if let Err(error) =
             dispatch_next_background_request(&app, connection.as_ref(), data_directory.clone())
@@ -560,6 +583,9 @@ pub(crate) async fn renew_background_lease(
     connection: &SqlitePool,
     recovery: &Value,
 ) -> Result<(), String> {
+    if crate::automation_runtime::renew_lease(connection, recovery).await? {
+        return Ok(());
+    }
     if recovery.get("kind").and_then(Value::as_str) != Some("a2a") {
         return Ok(());
     }
@@ -761,7 +787,7 @@ async fn read_workspace_projection(
     }))
 }
 
-async fn read_document_projection(
+pub(crate) async fn read_document_projection(
     connection: &SqlitePool,
     document_id: &str,
 ) -> Result<Value, String> {
@@ -832,6 +858,9 @@ pub(crate) async fn bind_background_request_task(
     recovery: &Value,
     task_id: &str,
 ) -> Result<(), String> {
+    if crate::automation_runtime::bind_agent_task(connection, recovery, task_id).await? {
+        return Ok(());
+    }
     if recovery.get("kind").and_then(Value::as_str) != Some("a2a") {
         return Ok(());
     }
@@ -862,6 +891,13 @@ pub(crate) async fn settle_background_run(
     error: Option<&str>,
     retryable: bool,
 ) -> Result<(), String> {
+    if crate::automation_runtime::settle_run(
+        connection, recovery, task_id, result, error, retryable,
+    )
+    .await?
+    {
+        return Ok(());
+    }
     if recovery.get("kind").and_then(Value::as_str) != Some("a2a") {
         return Ok(());
     }
@@ -1102,7 +1138,7 @@ async fn settle_request_in_pool(
     Ok(())
 }
 
-fn validate_background_profile(profile: &Value) -> Result<(), String> {
+pub(crate) fn validate_background_profile(profile: &Value) -> Result<(), String> {
     if profile.to_string().to_ascii_lowercase().contains("apikey") {
         return Err("后台 Runtime Profile 不得包含 API Key。".to_string());
     }

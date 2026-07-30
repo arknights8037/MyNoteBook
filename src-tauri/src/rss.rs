@@ -27,29 +27,29 @@ const USER_AGENT: &str = concat!("MyNoteBook/", env!("CARGO_PKG_VERSION"), " RSS
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RssFetchInput {
-    url: String,
-    etag: Option<String>,
-    last_modified: Option<String>,
-    after_published_at: Option<i64>,
-    limit: usize,
+pub(crate) struct RssFetchInput {
+    pub(crate) url: String,
+    pub(crate) etag: Option<String>,
+    pub(crate) last_modified: Option<String>,
+    pub(crate) after_published_at: Option<i64>,
+    pub(crate) limit: usize,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct RemoteRssEntry {
-    remote_id: String,
-    article_url: Option<String>,
-    title: String,
-    author: String,
-    published_at: i64,
-    updated_at: Option<i64>,
-    preview: String,
-    body_text: String,
-    content_source: String,
-    article_fetched_at: Option<i64>,
-    article_fetch_error: Option<String>,
-    categories: Vec<String>,
+pub(crate) struct RemoteRssEntry {
+    pub(crate) remote_id: String,
+    pub(crate) article_url: Option<String>,
+    pub(crate) title: String,
+    pub(crate) author: String,
+    pub(crate) published_at: i64,
+    pub(crate) updated_at: Option<i64>,
+    pub(crate) preview: String,
+    pub(crate) body_text: String,
+    pub(crate) content_source: String,
+    pub(crate) article_fetched_at: Option<i64>,
+    pub(crate) article_fetch_error: Option<String>,
+    pub(crate) categories: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -69,16 +69,16 @@ pub struct RssArticleFetchResult {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RssFetchResult {
-    not_modified: bool,
-    effective_url: String,
-    feed_title: Option<String>,
-    feed_description: Option<String>,
-    site_url: Option<String>,
-    feed_type: Option<String>,
-    etag: Option<String>,
-    last_modified: Option<String>,
-    entries: Vec<RemoteRssEntry>,
+pub(crate) struct RssFetchResult {
+    pub(crate) not_modified: bool,
+    pub(crate) effective_url: String,
+    pub(crate) feed_title: Option<String>,
+    pub(crate) feed_description: Option<String>,
+    pub(crate) site_url: Option<String>,
+    pub(crate) feed_type: Option<String>,
+    pub(crate) etag: Option<String>,
+    pub(crate) last_modified: Option<String>,
+    pub(crate) entries: Vec<RemoteRssEntry>,
 }
 
 #[tauri::command]

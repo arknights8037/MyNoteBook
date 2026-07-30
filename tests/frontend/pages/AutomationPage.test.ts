@@ -54,7 +54,7 @@ describe('AutomationPage', () => {
     const runsTab = wrapper.findAll('[role="tab"]').find((tab) => tab.text().includes('运行记录'))
     await runsTab?.trigger('click')
     expect(wrapper.get('.surface-title-bar h1').text()).toBe('运行记录')
-    expect(wrapper.get('.automation-run-row').text()).toContain('等待执行器')
+    expect(wrapper.get('.automation-run-row').text()).toContain('等待后台 Agent')
   })
 })
 

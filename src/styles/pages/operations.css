@@ -282,6 +282,14 @@
   font-size: var(--font-size-small);
 }
 
+.automation-run-row > p {
+  grid-column: 2 / -1;
+  margin: -4px 0 10px;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
 .automation-run-row code,
 .audit-row code {
   overflow: hidden;

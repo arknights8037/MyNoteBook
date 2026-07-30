@@ -103,8 +103,8 @@ impl DatabaseMutation {
                 2,
             ),
             Self::CreateAutomationTask => (
-                "INSERT INTO automation_tasks (id, name, instruction, trigger_type, trigger_config_json, document_id, enabled, next_run_at, last_run_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                11,
+                "INSERT INTO automation_tasks (id, name, instruction, trigger_type, trigger_config_json, source_type, source_config_json, source_cursor_at, document_id, enabled, next_run_at, last_run_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                14,
             ),
             Self::SetAutomationTaskEnabled => (
                 "UPDATE automation_tasks SET enabled = ?, next_run_at = ?, updated_at = ? WHERE id = ?",

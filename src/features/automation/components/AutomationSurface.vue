@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { CalendarClock, CirclePlay, Plus, RefreshCw, Trash2 } from '@lucide/vue'
-import { computed, onMounted, ref } from 'vue'
+import { listen } from '@tauri-apps/api/event'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import type {
   AutomationRun,
+  AutomationSourceType,
   AutomationTask,
   AutomationTriggerType,
 } from '@/models/automation/automation'
@@ -29,6 +31,7 @@ const error = ref('')
 const draftName = ref('')
 const draftInstruction = ref('')
 const draftTrigger = ref<AutomationTriggerType>('manual')
+const draftSource = ref<AutomationSourceType>('document')
 const draftIntervalMinutes = ref(60)
 const draftDailyTime = ref('09:00')
 const bindCurrentDocument = ref(true)
@@ -46,6 +49,11 @@ const triggerOptions = [
   { label: '按间隔', value: 'interval' },
   { label: '每天定时', value: 'daily' },
 ]
+const sourceOptions = [
+  { label: '当前页面与知识', value: 'document' },
+  { label: 'RSS 新增内容', value: 'rss' },
+]
+let unlistenQueue: (() => void) | null = null
 
 async function load(): Promise<void> {
   loading.value = true
@@ -84,6 +92,7 @@ async function createTask(): Promise<void> {
     instruction: draftInstruction.value,
     triggerType: draftTrigger.value,
     triggerConfig,
+    sourceType: draftSource.value,
     documentId: bindCurrentDocument.value ? props.currentDocumentId : null,
   })
   loading.value = false
@@ -132,15 +141,37 @@ function triggerLabel(task: AutomationTask): string {
 
 function runStatusLabel(status: AutomationRun['status']): string {
   return {
-    queued: '等待执行器',
-    running: '运行中',
+    queued: '等待后台 Agent',
+    running: 'Agent 执行中',
+    waiting_approval: '等待审批',
     completed: '已完成',
     failed: '失败',
     cancelled: '已取消',
   }[status]
 }
 
-onMounted(load)
+function sourceLabel(task: AutomationTask): string {
+  return task.sourceType === 'rss' ? 'RSS 新增内容' : '当前页面与知识'
+}
+
+function runSummary(run: AutomationRun): string {
+  if (run.error) return run.error
+  if (!run.outputJson) return run.nextAttemptAt ? `将在 ${formatTime(run.nextAttemptAt)} 重试` : ''
+  try {
+    const parsed = JSON.parse(run.outputJson) as { summary?: unknown }
+    return typeof parsed.summary === 'string' ? parsed.summary : run.outputJson
+  } catch {
+    return run.outputJson
+  }
+}
+
+onMounted(async () => {
+  await load()
+  if (Reflect.has(globalThis, '__TAURI_INTERNALS__')) {
+    unlistenQueue = await listen('automation://queue-changed', () => void load())
+  }
+})
+onBeforeUnmount(() => unlistenQueue?.())
 </script>
 
 <template>
@@ -216,6 +247,10 @@ onMounted(load)
             <span>触发方式</span>
             <NSelect v-model:value="draftTrigger" :options="triggerOptions" />
           </label>
+          <label>
+            <span>输入来源</span>
+            <NSelect v-model:value="draftSource" :options="sourceOptions" />
+          </label>
           <label v-if="draftTrigger === 'interval'">
             <span>间隔分钟</span>
             <input v-model.number="draftIntervalMinutes" type="number" min="5" max="10080" />
@@ -236,7 +271,7 @@ onMounted(load)
         <footer>
           <label class="operations-check">
             <input v-model="bindCurrentDocument" type="checkbox" />
-            <span>绑定当前页面：{{ currentDocumentTitle || '未命名页面' }}</span>
+            <span>Agent 上下文页面：{{ currentDocumentTitle || '未命名页面' }}</span>
           </label>
           <NButton type="primary" :loading="loading" @click="createTask">
             <template #icon
@@ -268,14 +303,18 @@ onMounted(load)
               </span>
             </header>
             <p>{{ task.instruction }}</p>
-            <small>{{ triggerLabel(task) }} · 下次：{{ formatTime(task.nextRunAt) }}</small>
+            <small
+              >{{ sourceLabel(task) }} · {{ triggerLabel(task) }} · 下次：{{
+                formatTime(task.nextRunAt)
+              }}</small
+            >
           </div>
           <div class="automation-row__actions">
             <NButton size="small" secondary :disabled="!task.enabled" @click="enqueueTask(task)">
               <template #icon
                 ><NIcon :size="14"><CirclePlay /></NIcon
               ></template>
-              入队
+              立即运行
             </NButton>
             <NButton
               size="small"
@@ -304,6 +343,7 @@ onMounted(load)
           <strong>{{ run.automationName || '已删除的自动化' }}</strong>
           <small>{{ run.triggerSource }} · {{ formatTime(run.queuedAt) }}</small>
           <code>{{ run.id }}</code>
+          <p v-if="runSummary(run)">{{ runSummary(run) }}</p>
         </div>
       </section>
     </div>

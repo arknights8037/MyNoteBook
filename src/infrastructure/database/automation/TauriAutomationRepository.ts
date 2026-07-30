@@ -1,6 +1,7 @@
 import type {
   AutomationRun,
   AutomationRunStatus,
+  AutomationSourceType,
   AutomationTask,
   AutomationTriggerType,
   CreateAutomationInput,
@@ -17,6 +18,9 @@ interface AutomationTaskRow extends Record<string, unknown> {
   instruction: string
   trigger_type: string
   trigger_config_json: string
+  source_type: string
+  source_config_json: string
+  source_cursor_at: number | null
   document_id: string | null
   enabled: number
   next_run_at: number | null
@@ -37,6 +41,12 @@ interface AutomationRunRow extends Record<string, unknown> {
   queued_at: number
   started_at: number | null
   completed_at: number | null
+  run_id: string | null
+  agent_task_id: string | null
+  attempt_count: number
+  next_attempt_at: number | null
+  dead_lettered_at: number | null
+  last_failure_kind: string | null
 }
 
 export class TauriAutomationRepository implements AutomationRepository {
@@ -75,6 +85,9 @@ export class TauriAutomationRepository implements AutomationRepository {
       instruction: input.instruction.trim(),
       triggerType: input.triggerType,
       triggerConfig: normalizeAutomationTriggerConfig(input.triggerType, input.triggerConfig),
+      sourceType: input.sourceType ?? 'document',
+      sourceConfig: input.sourceConfig ?? {},
+      sourceCursorAt: null,
       documentId: input.documentId ?? null,
       enabled: input.enabled ?? true,
       nextRunAt: null,
@@ -92,6 +105,9 @@ export class TauriAutomationRepository implements AutomationRepository {
         task.instruction,
         task.triggerType,
         JSON.stringify(task.triggerConfig),
+        task.sourceType,
+        JSON.stringify(task.sourceConfig),
+        task.sourceCursorAt,
         task.documentId,
         task.enabled ? 1 : 0,
         task.nextRunAt,
@@ -242,6 +258,9 @@ function mapTaskRow(row: AutomationTaskRow): AutomationTask {
       triggerType,
       parseJsonObject(row.trigger_config_json),
     ),
+    sourceType: mapValue(row.source_type, ['document', 'rss'], 'document') as AutomationSourceType,
+    sourceConfig: parseJsonObject(row.source_config_json),
+    sourceCursorAt: row.source_cursor_at,
     documentId: row.document_id,
     enabled: Boolean(row.enabled),
     nextRunAt: row.next_run_at,
@@ -259,7 +278,7 @@ function mapRunRow(row: AutomationRunRow): AutomationRun {
     triggerSource: mapValue(row.trigger_source, ['manual', 'schedule', 'retry'], 'manual'),
     status: mapValue(
       row.status,
-      ['queued', 'running', 'completed', 'failed', 'cancelled'],
+      ['queued', 'running', 'waiting_approval', 'completed', 'failed', 'cancelled'],
       'failed',
     ),
     inputJson: row.input_json,
@@ -268,6 +287,12 @@ function mapRunRow(row: AutomationRunRow): AutomationRun {
     queuedAt: row.queued_at,
     startedAt: row.started_at,
     completedAt: row.completed_at,
+    runId: row.run_id,
+    agentTaskId: row.agent_task_id,
+    attemptCount: row.attempt_count,
+    nextAttemptAt: row.next_attempt_at,
+    deadLetteredAt: row.dead_lettered_at,
+    lastFailureKind: row.last_failure_kind,
   }
 }
 

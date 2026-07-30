@@ -15,7 +15,9 @@ const loading = ref(true)
 const error = ref('')
 
 const counts = computed(() => ({
-  running: runs.value.filter((run) => run.status === 'running' || run.status === 'queued').length,
+  running: runs.value.filter((run) =>
+    ['running', 'queued', 'waiting_approval'].includes(run.status),
+  ).length,
   completed: runs.value.filter((run) => run.status === 'completed').length,
   failed: runs.value.filter((run) => run.status === 'failed').length,
 }))
@@ -23,6 +25,7 @@ const counts = computed(() => ({
 const statusLabels: Record<AutomationRunStatus, string> = {
   queued: '排队中',
   running: '运行中',
+  waiting_approval: '等待审批',
   completed: '已完成',
   failed: '失败',
   cancelled: '已取消',

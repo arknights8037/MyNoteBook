@@ -30,6 +30,7 @@ impl RetryPolicy {
 }
 
 pub(crate) const A2A_RETRY_POLICY: RetryPolicy = RetryPolicy::new(3, 5_000, 5 * 60 * 1_000);
+pub(crate) const AUTOMATION_RETRY_POLICY: RetryPolicy = RetryPolicy::new(3, 5_000, 5 * 60 * 1_000);
 pub(crate) const TIMER_RETRY_POLICY: RetryPolicy = RetryPolicy::new(5, 5_000, 5 * 60 * 1_000);
 #[allow(dead_code)] // Activated by the Rust-owned Phase 5 Outbox dispatcher.
 pub(crate) const OUTBOX_RETRY_POLICY: RetryPolicy = RetryPolicy::new(8, 5_000, 15 * 60 * 1_000);

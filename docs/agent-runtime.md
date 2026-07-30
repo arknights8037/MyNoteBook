@@ -263,7 +263,7 @@ Run lifecycle、Plan snapshot、运行级事件和 Step/tool timeline 会绑定�
 
 - `/research` 已绑定 Research Mode、结构化结果与 Candidate 确认闭环。`/review` 已绑定 Review Mode、`review-result` v1 contract、Cognitive Session 和只读 issue UI；来源 revision/block 会在结果边界重新验证，失效来源产生 stale/outdated finding。Review run 不具备写提案权限，只有用户明确处理单项 issue 时才另起 `/edit` 运行进入现有 Patch 确认链。
 - `/learn` 已绑定 Learning Mode、`learning-turn` v1 contract 与多轮 Cognitive Session。首次解释题由本地状态机生成且不请求 Provider；后续普通回复按 conversation 恢复 `waiting_user` session，将用户回复保存为 Attempt 后再更新理解状态、提示层级和下一问题。Learning 运行没有文档或正式知识写权限，临时候选理解记录只保存在结果消息中。
-- 自动化有定义和运行队列，但没有后台无人值守模型调度器。
+- 自动化的手动、间隔和每日触发已接入 Rust watcher 与生产 sidecar；当前只运行只读 Agent，并支持文档上下文或 RSS 增量输入、lease、重试、Dead Letter 和重启恢复。IM/邮件收纳、外部委派触发与真实外部动作尚未接入。
 - 普通 Agent Run 没有 durable checkpoint/resume；应用重启后不能从中间 tool step 恢复。Learning Session 的跨 run 继续和待确认 Patch 的恢复不等同于恢复同一个 Run。
 - 默认 Runtime 的任务规划、模型循环、工具调度和标准 Patch 终态编译均由 Rust 托管 sidecar 承载；Vue 负责用户交互、事件投影和 Diff 审阅。A2A 自动调度、审批/修订 Workflow、Cognitive Session 终态和 Research candidate 业务投影均由 Rust/sidecar 完成，可在主窗口隐藏时继续。显式退出进程仍会停止任务，普通 Run 也没有 durable checkpoint/resume。
 - A2A 请求使用持久 lease、attempt 和 `run_id` fencing；Worker 活动事件续租，迟到的旧 Run 终态不能覆盖新尝试，显式可重试错误按指数退避最多尝试三次，耗尽后写入 Dead Letter。Research candidate/source/validation、Cognitive Session、AgentTask 和请求终态在同一事务提交。应用启动会保留 Supervisor 仍持有的 Run，并把无活动所有者的 `running` 请求作为新 run 重排；该机制采用可审计的 at-least-once 业务恢复，不恢复旧模型循环的中间 tool step，也不承诺未进入受控事务/Outbox 的外部副作用 exactly-once。

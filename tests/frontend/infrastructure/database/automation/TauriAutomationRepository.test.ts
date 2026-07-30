@@ -44,6 +44,8 @@ describe('automation and audit repositories', () => {
       CREATE TABLE automation_tasks (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, instruction TEXT NOT NULL,
         trigger_type TEXT NOT NULL, trigger_config_json TEXT NOT NULL,
+        source_type TEXT NOT NULL DEFAULT 'document', source_config_json TEXT NOT NULL DEFAULT '{}',
+        source_cursor_at INTEGER,
         document_id TEXT, enabled INTEGER NOT NULL, next_run_at INTEGER,
         last_run_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
       );
@@ -52,7 +54,10 @@ describe('automation and audit repositories', () => {
         status TEXT NOT NULL, input_json TEXT NOT NULL, output_json TEXT, error TEXT,
         schedule_next_run_at INTEGER, queued_at INTEGER NOT NULL,
         started_at INTEGER, completed_at INTEGER,
-        correlation_id TEXT, causation_id TEXT, task_run_id TEXT
+        correlation_id TEXT, causation_id TEXT, task_run_id TEXT,
+        run_id TEXT, agent_task_id TEXT, source_cursor_at INTEGER,
+        lease_owner TEXT, lease_expires_at INTEGER, attempt_count INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at INTEGER, dead_lettered_at INTEGER, last_failure_kind TEXT
       );
       CREATE UNIQUE INDEX idx_automation_runs_active ON automation_runs(automation_id)
       WHERE automation_id IS NOT NULL AND status IN ('queued', 'running');
@@ -166,6 +171,12 @@ describe('automation and audit repositories', () => {
       queuedAt: 200,
       startedAt: null,
       completedAt: null,
+      runId: null,
+      agentTaskId: null,
+      attemptCount: 0,
+      nextAttemptAt: null,
+      deadLetteredAt: null,
+      lastFailureKind: null,
     }
     expect((await repository.enqueueRun(run, 500)).ok).toBe(true)
     const runs = await repository.listRuns()
@@ -195,6 +206,12 @@ describe('automation and audit repositories', () => {
         queuedAt: 200,
         startedAt: null,
         completedAt: null,
+        runId: null,
+        agentTaskId: null,
+        attemptCount: 0,
+        nextAttemptAt: null,
+        deadLetteredAt: null,
+        lastFailureKind: null,
       },
       null,
     )

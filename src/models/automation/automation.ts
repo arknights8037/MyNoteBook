@@ -1,5 +1,12 @@
 export type AutomationTriggerType = 'manual' | 'interval' | 'daily'
-export type AutomationRunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+export type AutomationSourceType = 'document' | 'rss'
+export type AutomationRunStatus =
+  | 'queued'
+  | 'running'
+  | 'waiting_approval'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
 export type AutomationTriggerSource = 'manual' | 'schedule' | 'retry'
 
 export interface AutomationTriggerConfig {
@@ -13,6 +20,9 @@ export interface AutomationTask {
   instruction: string
   triggerType: AutomationTriggerType
   triggerConfig: AutomationTriggerConfig
+  sourceType: AutomationSourceType
+  sourceConfig: Record<string, unknown>
+  sourceCursorAt: number | null
   documentId: string | null
   enabled: boolean
   nextRunAt: number | null
@@ -33,6 +43,12 @@ export interface AutomationRun {
   queuedAt: number
   startedAt: number | null
   completedAt: number | null
+  runId: string | null
+  agentTaskId: string | null
+  attemptCount: number
+  nextAttemptAt: number | null
+  deadLetteredAt: number | null
+  lastFailureKind: string | null
 }
 
 export interface CreateAutomationInput {
@@ -41,6 +57,8 @@ export interface CreateAutomationInput {
   instruction: string
   triggerType: AutomationTriggerType
   triggerConfig?: AutomationTriggerConfig
+  sourceType?: AutomationSourceType
+  sourceConfig?: Record<string, unknown>
   documentId?: string | null
   enabled?: boolean
   createdAt?: number

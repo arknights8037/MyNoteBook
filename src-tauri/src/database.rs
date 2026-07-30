@@ -1396,11 +1396,27 @@ mod tests {
                available_at, lease_until, lease_owner, last_error, published_at, created_at \
              FROM outbox_messages_p5; \
              DROP TABLE outbox_messages_p5; \
-             CREATE INDEX idx_outbox_delivery \
-               ON outbox_messages(status, available_at ASC, created_at ASC); \
-             DROP TABLE workflow_timers; \
-             DROP TABLE workflow_wait_conditions; \
-             DELETE FROM _sqlx_migrations WHERE version IN (39, 40, 41);",
+              CREATE INDEX idx_outbox_delivery \
+                ON outbox_messages(status, available_at ASC, created_at ASC); \
+              DROP TABLE workflow_timers; \
+              DROP TABLE workflow_wait_conditions; \
+              DROP INDEX idx_automation_runs_runtime_lease; \
+              DROP INDEX idx_automation_runs_runtime_queue; \
+              DROP INDEX idx_automation_runs_run_id; \
+              DROP TRIGGER automation_task_run_after_status; \
+              ALTER TABLE automation_tasks DROP COLUMN source_cursor_at; \
+              ALTER TABLE automation_tasks DROP COLUMN source_config_json; \
+              ALTER TABLE automation_tasks DROP COLUMN source_type; \
+              ALTER TABLE automation_runs DROP COLUMN last_failure_kind; \
+              ALTER TABLE automation_runs DROP COLUMN dead_lettered_at; \
+              ALTER TABLE automation_runs DROP COLUMN next_attempt_at; \
+              ALTER TABLE automation_runs DROP COLUMN attempt_count; \
+              ALTER TABLE automation_runs DROP COLUMN lease_expires_at; \
+              ALTER TABLE automation_runs DROP COLUMN lease_owner; \
+              ALTER TABLE automation_runs DROP COLUMN source_cursor_at; \
+              ALTER TABLE automation_runs DROP COLUMN agent_task_id; \
+              ALTER TABLE automation_runs DROP COLUMN run_id; \
+              DELETE FROM _sqlx_migrations WHERE version IN (39, 40, 41, 42);",
         )
         .execute(pool.as_ref())
         .await
@@ -1426,7 +1442,7 @@ mod tests {
                 .fetch_one(upgraded.as_ref())
                 .await
                 .expect("existing document");
-        assert_eq!(version, 41);
+        assert_eq!(version, 42);
         assert_eq!(existing, 1);
         assert!(table_exists(upgraded.as_ref(), "workflow_wait_conditions")
             .await

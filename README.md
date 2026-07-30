@@ -46,7 +46,7 @@ Agent Work 按项目保存作业区和对话。一次运行会冻结实际使用
 
 ### 不是另一个自动化平台
 
-系统不承诺把复杂工作全部交给 AI。人负责目标、判断和责任；Agent 负责搜集、整理、执行和跟进。当前“自动化任务”提供任务定义、定时指针和运行队列，但不在后台无人值守地唤醒模型。
+系统不承诺把复杂工作全部交给 AI。人负责目标、判断和责任；Agent 负责搜集、整理、执行和跟进。当前“自动化任务”可由手动、间隔或每日计划触发 Rust 后台只读 Agent；首个信息来源为 RSS，正式修改和外部动作仍需后续审批式 Workflow。
 
 ### 不是另一个文档编辑器
 
@@ -90,7 +90,7 @@ Research 结果可以形成待确认的知识候选，Review 问题可以转入�
 | **文档与视图** | 编辑结构化文档，管理文档树、思维导图、表格、UML/流程图和 Slidev 幻灯片；为 Agent 提供稳定 Block、选区和 revision                                                |
 | **知识控制**   | 管理知识资产、规则、决策、证据、Research Candidate、智能视图和 Work 对象；正式知识保留来源、版本和验证状态                                                      |
 | **插件技能**   | 管理 Skills、MCP Server、Tools、Resources 和对外 MCP 暴露；未信任或可写工具需要授权                                                                             |
-| **自动化任务** | 创建绑定页面的手动、间隔或每日任务，维护调度指针、运行队列和状态；当前不包含后台模型执行器                                                                      |
+| **自动化任务** | 创建绑定页面或 RSS 输入的手动、间隔、每日任务；Rust 后台领取队列并运行只读 Agent，保存摘要、重试和失败终态                                                      |
 | **审计记录**   | 汇总 Agent Task、Tool Call、Patch、Automation Run、TaskRun、Verification、ChangeSet、Approval、Delegation 和 View 刷新                                          |
 
 ## Agent Work 与 Work 闭环
@@ -125,9 +125,9 @@ Agent Work 是用户看见和控制任务的工作台，Work 是任务结果进�
 
 ## 运行时演进方向
 
-当前生产 Agent Runtime 仍运行在 Vue/WebView 中，由 `AgentRuntimeClient` 通过 Runtime Port 驱动 `AiSdkAgentRuntimeAdapter`，Adapter 内部使用 AI SDK `ToolLoopAgent`；应用没有后台 Worker、Node sidecar、托盘常驻或 daemon。Rust SQLx 与 TypeScript `plugin-sql` 目前也都会访问 SQLite，因此 Rust 尚不是严格的单一数据库进程所有者。
+当前生产 Agent Runtime 已迁入 Rust 托管的自包含 Node sidecar，并由 Rust Supervisor 负责请求、工具 RPC、运行终态和后台恢复；主窗口关闭时应用隐藏到托盘，A2A、Durable Timer 与自动化 Run 可以继续。Rust 是 SQLite 唯一连接与写入所有者，WebView 只调用固定 mutation 和只读 query。显式退出 Tauri 进程后任务仍会停止，当前不是系统 daemon。
 
-既定方向是逐步让 Rust Core 成为 SQLite、连接器、凭据、Workflow 状态和副作用的唯一所有者，并把 Agent Runtime 放到可替换的 Worker 边界。Node Worker 不直接访问 SQLite。现有 Patch → Diff → 人工确认 → Rust transaction → rollback 链路保持不变。PI 只是需要通过纵向原型决策门的候选 Runtime 实现，目前并未采用。
+Rust Core 继续收敛连接器、Workflow 状态和外部副作用；Node Worker 不直接访问 SQLite。现有 Patch → Diff → 人工确认 → Rust transaction → rollback 链路保持不变。Phase 2 已决定保留 AI SDK 作为生产 Runtime，PI 只保留为可替换 Worker adapter 的评估证据。
 
 阶段依赖、Runtime v1 契约、AI SDK/PI 决策门和退出条件统一见 [后续开发路线图](docs/roadmap.md)。
 

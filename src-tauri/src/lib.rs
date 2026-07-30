@@ -81,6 +81,7 @@ mod agent_tools;
 mod agent_worker_supervisor;
 mod ai_models;
 mod ai_proxy;
+mod automation_runtime;
 mod cognitive_sessions;
 mod database;
 mod database_mutations;

@@ -1,6 +1,6 @@
 # 后续开发路线图
 
-本文是 MyNoteBook 未完成工程工作的权威排序，已按 2026-07-30 代码与 migration `0001`–`0041` 复核。当前架构事实见 [系统架构](architecture.md)，生产 Agent 行为见 [Agent Runtime](agent-runtime.md)，PI 评审输入见 [PI 接入资料](pi-integration-high-value.md)。
+本文是 MyNoteBook 未完成工程工作的权威排序，已按 2026-07-30 代码与 migration `0001`–`0042` 复核。当前架构事实见 [系统架构](architecture.md)，生产 Agent 行为见 [Agent Runtime](agent-runtime.md)，PI 评审输入见 [PI 接入资料](pi-integration-high-value.md)。
 
 路线图按依赖、交付物和退出条件推进，不承诺未经验证的日历日期。以下标签必须严格区分：
 
@@ -346,7 +346,7 @@ Agent 遇到长期等待时返回终态 `SuspendRequest`，当前 Run 随即结�
 
 Phase 4 的 durable timer、lease、outbox 和托盘运行稳定。
 
-P4.5 已提供 `DomainEventEnvelopeV1` 与 `ExternalActionRequestV1/ResultV1` 契约脚手架，但没有启用任何真实外部动作。Phase 5 必须继续由 Rust Action Gateway 持有审批、幂等、fencing 和投递终态。
+P4.5 已提供 `DomainEventEnvelopeV1` 与 `ExternalActionRequestV1/ResultV1` 契约脚手架，但没有启用任何真实外部动作。Phase 5 第一纵切已接通手动/间隔/每日自动化、Rust 队列领取、只读 Sidecar Agent、RSS 运行前同步、来源游标、lease/retry/Dead Letter 和结果投影。后续仍必须由 Rust Action Gateway 持有审批、幂等、fencing 和外部投递终态。
 
 ### 退出条件
 

@@ -1,6 +1,7 @@
 import {
   calculateNextAutomationRun,
   type AutomationRun,
+  type AutomationSourceType,
   type AutomationTask,
   type AutomationTriggerConfig,
   type AutomationTriggerSource,
@@ -14,6 +15,7 @@ export interface CreateAutomationCommand {
   instruction: string
   triggerType: AutomationTriggerType
   triggerConfig?: AutomationTriggerConfig
+  sourceType?: AutomationSourceType
   documentId?: string | null
   enabled?: boolean
 }
@@ -75,12 +77,19 @@ export class AutomationService {
       inputJson: JSON.stringify({
         instruction: task.instruction,
         documentId: task.documentId,
+        sourceType: task.sourceType,
       }),
       outputJson: null,
       error: null,
       queuedAt,
       startedAt: null,
       completedAt: null,
+      runId: null,
+      agentTaskId: null,
+      attemptCount: 0,
+      nextAttemptAt: null,
+      deadLetteredAt: null,
+      lastFailureKind: null,
     }
     const nextRunAt = calculateNextAutomationRun(task.triggerType, task.triggerConfig, queuedAt)
     return this.repository.enqueueRun(run, nextRunAt)
