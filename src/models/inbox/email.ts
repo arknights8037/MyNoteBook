@@ -38,6 +38,17 @@ export interface EmailMessage {
   syncedAt: number
 }
 
+export interface EmailBlockedSender {
+  accountId: string
+  senderAddress: string
+  createdAt: number
+}
+
+export interface EmailSenderBlockResult {
+  sender: EmailBlockedSender
+  removedCount: number
+}
+
 export interface RemoteEmailMessage {
   remoteUid: number
   messageId: string | null

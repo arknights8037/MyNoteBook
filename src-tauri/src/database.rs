@@ -1418,7 +1418,10 @@ mod tests {
               ALTER TABLE automation_runs DROP COLUMN source_cursor_at; \
               ALTER TABLE automation_runs DROP COLUMN agent_task_id; \
               ALTER TABLE automation_runs DROP COLUMN run_id; \
-              DELETE FROM _sqlx_migrations WHERE version IN (39, 40, 41, 42, 43);",
+              DROP TRIGGER cleanup_email_messages_after_sender_reblock; \
+              DROP TRIGGER cleanup_email_messages_after_sender_block; \
+              DROP TABLE email_blocked_senders; \
+              DELETE FROM _sqlx_migrations WHERE version IN (39, 40, 41, 42, 43, 44, 45);",
         )
         .execute(pool.as_ref())
         .await
@@ -1444,7 +1447,7 @@ mod tests {
                 .fetch_one(upgraded.as_ref())
                 .await
                 .expect("existing document");
-        assert_eq!(version, 43);
+        assert_eq!(version, 45);
         assert_eq!(existing, 1);
         assert!(table_exists(upgraded.as_ref(), "workflow_wait_conditions")
             .await
@@ -1458,6 +1461,9 @@ mod tests {
         assert!(table_exists(upgraded.as_ref(), "signal_action_receipts")
             .await
             .expect("signal action receipt table"));
+        assert!(table_exists(upgraded.as_ref(), "email_blocked_senders")
+            .await
+            .expect("email blocked senders table"));
         assert!(
             column_exists(upgraded.as_ref(), "domain_events", "deduplication_key")
                 .await

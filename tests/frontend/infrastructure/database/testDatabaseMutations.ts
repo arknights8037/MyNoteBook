@@ -55,6 +55,11 @@ export const TEST_DATABASE_MUTATIONS: Partial<Record<DatabaseMutation, string>> 
   upsertEmailMessage:
     'INSERT INTO email_messages (id, account_id, mailbox, remote_uid, message_id, subject, from_name, from_address, to_json, received_at, preview, body_text, attachment_count, server_is_read, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(account_id, mailbox, remote_uid) DO UPDATE SET message_id = excluded.message_id, subject = excluded.subject, from_name = excluded.from_name, from_address = excluded.from_address, to_json = excluded.to_json, received_at = excluded.received_at, preview = excluded.preview, body_text = excluded.body_text, attachment_count = excluded.attachment_count, server_is_read = excluded.server_is_read, synced_at = excluded.synced_at',
   setEmailMessageStatus: 'UPDATE email_messages SET processing_status = ? WHERE id = ?',
+  deleteEmailMessage: 'DELETE FROM email_messages WHERE id = ?',
+  blockEmailSender:
+    'INSERT INTO email_blocked_senders (account_id, sender_address, created_at) VALUES (?, ?, ?) ON CONFLICT(account_id, sender_address) DO UPDATE SET created_at = excluded.created_at',
+  unblockEmailSender:
+    'DELETE FROM email_blocked_senders WHERE account_id = ? AND sender_address = ? COLLATE NOCASE',
   createImConnector:
     "INSERT INTO im_connectors (id, provider, display_name, source_category, client_id, enabled, runtime_status, last_connected_at, last_event_at, last_error, created_at, updated_at) VALUES (?, 'dingtalk', ?, ?, ?, 1, 'stopped', NULL, NULL, NULL, ?, ?)",
   deleteImConnector: 'DELETE FROM im_connectors WHERE id = ?',
