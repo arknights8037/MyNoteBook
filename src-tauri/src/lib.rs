@@ -189,6 +189,7 @@ pub fn run() {
             mcp::list_mcp_servers,
             mcp::import_mcp_config,
             mcp::import_mcp_config_text,
+            mcp::install_qoder_bridge,
             mcp::set_mcp_server_enabled,
             mcp::set_mcp_server_trusted,
             mcp::remove_mcp_server,

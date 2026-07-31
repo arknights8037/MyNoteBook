@@ -32,4 +32,14 @@ describe('TauriMcpClient', () => {
       input: { dataDirectory: 'D:\\notebook', content },
     })
   })
+
+  it('installs the Qoder bridge for an explicitly selected workspace', async () => {
+    const client = new TauriMcpClient(async () => 'D:\\notebook')
+
+    await client.installQoderBridge('F:\\project')
+
+    expect(invoke).toHaveBeenCalledWith('install_qoder_bridge', {
+      input: { dataDirectory: 'D:\\notebook', workspace: 'F:\\project' },
+    })
+  })
 })

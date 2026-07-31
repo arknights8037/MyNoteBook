@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { open } from '@tauri-apps/plugin-dialog'
 import {
+  Bot,
   Cable,
   CheckCircle2,
   ClipboardPaste,
@@ -101,6 +102,26 @@ async function chooseConfig(): Promise<void> {
     message.success(`已导入 MCP 配置，共 ${servers.value.length} 个服务`)
   } catch (importError) {
     error.value = errorMessage(importError)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function installQoderBridge(): Promise<void> {
+  const selected = await open({
+    title: '选择允许 Qoder 操作的项目目录',
+    multiple: false,
+    directory: true,
+  })
+  if (typeof selected !== 'string' || !selected.trim()) return
+  loading.value = true
+  error.value = ''
+  try {
+    servers.value = await props.client.installQoderBridge(selected)
+    selectedServerId.value = 'qoder-agent'
+    message.success('Qoder Agent 桥接器已添加；首次调用仍需确认')
+  } catch (installError) {
+    error.value = errorMessage(installError)
   } finally {
     loading.value = false
   }
@@ -294,6 +315,12 @@ onMounted(() => void loadServers())
         ></template>
         新建
       </NButton>
+      <NButton secondary :disabled="!isNative" :loading="loading" @click="installQoderBridge">
+        <template #icon
+          ><NIcon :size="15"><Bot /></NIcon
+        ></template>
+        Qoder 桥接
+      </NButton>
     </div>
 
     <p v-if="error" class="skill-error" role="alert"><TriangleAlert :size="15" />{{ error }}</p>
@@ -360,6 +387,9 @@ onMounted(() => void loadServers())
             <span
               ><strong>信任策略</strong
               >{{ selectedServer.trusted ? '自动批准工具调用' : '每次调用需确认' }}</span
+            >
+            <span v-if="selectedServer.timeoutSeconds"
+              ><strong>调用超时</strong>{{ selectedServer.timeoutSeconds }} 秒</span
             >
           </div>
           <div class="mcp-detail__actions">
