@@ -97,6 +97,44 @@ mynotebook-agent submit --database-url $env:MYNOTEBOOK_DATABASE_URL `
 
 命令行客户端提供与 MCP 工具对应的快捷命令：`mynotebook-agent research|review|learning --prompt <text>`。这些命令只提交请求；使用 `get` 轮询结果。
 
+## Qoder Agent MCP 桥接
+
+`src-tauri/src/bin/qoder-mcp-bridge.rs` 将本机 Qoder CN CLI 的 Print 模式包装为 stdio MCP Server。它提供：
+
+- `qoder_status`：只读检查 Qoder 版本、Git Bash、允许的工作区和超时策略。
+- `delegate_task`：在受限工作区内执行任务。默认的 `read_only` 使用 `dont_ask` 且仅开放 Read/Grep/Glob；显式选择 `workspace_write` 才会使用 `auto`，不提供 `bypass_permissions`/YOLO。
+
+在 **插件技能 → MCP Client** 中点击 **Qoder 桥接** 并选择项目目录即可添加。配置默认启用但不标记为可信，因此 `delegate_task` 仍需由 MyNoteBook 的 MCP 授权层确认。桥接器会把所选目录同时设为默认工作区和唯一允许根目录；工具参数不能切换到根目录之外。
+
+开发构建：
+
+```powershell
+pnpm build:qoder-bridge
+```
+
+桥接器按顺序从 `QODERCLI_EXECUTABLE`、当前用户的 `~/.qoder-cn/bin/qoderclicn/qoderclicn.exe` 和 `PATH` 定位 CLI。Windows 下会优先使用 `QODER_BRIDGE_GIT_BASH_PATH` / `QODERCN_GIT_BASH_PATH`，否则根据 `git.exe` 自动推断 Git Bash。
+
+手工导入时可以使用：
+
+```json
+{
+  "mcpServers": {
+    "qoder-agent": {
+      "command": "C:\\path\\to\\qoder-mcp-bridge.exe",
+      "cwd": "F:\\project",
+      "timeoutSeconds": 1800,
+      "env": {
+        "QODER_BRIDGE_WORKSPACE": "F:\\project",
+        "QODER_BRIDGE_ALLOWED_ROOTS_JSON": "[\"F:\\\\project\"]",
+        "QODER_BRIDGE_TASK_TIMEOUT_SECONDS": "1800"
+      }
+    }
+  }
+}
+```
+
+`timeoutSeconds` 只调整该 MCP 服务的工具调用超时，初始化、工具发现和其他服务仍使用默认的 30 秒限制；最大允许值为 3600 秒。取消 Agent 工具调用时，MCP 会断开桥接进程，桥接器使用 `kill_on_drop` 终止仍在运行的 Qoder 子进程。
+
 通信请求生成的修改在进入 `awaiting_review` 前必须通过 Runtime 批级约束：一次提案可以包含多个已读取文档，但每个文档只分组一次，且该文档内的 edit targets 必须互不重叠。`get_agent_request` 只暴露已编译并通过约束的内部 Patch；`decide_agent_request` 不承担修复或排序歧义 Patch 的职责。批准多文档提案时，Rust 在同一个 SQLite transaction 中校验并写入全部目标，任一失败都会回滚整批。
 
 ## 委托完成封装

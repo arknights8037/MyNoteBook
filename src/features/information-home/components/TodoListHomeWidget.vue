@@ -4,7 +4,14 @@ import { onMounted, ref, watch } from 'vue'
 
 import type { InformationHomeTodoItem } from '@/models/home/informationHome'
 
-const props = defineProps<{ items: InformationHomeTodoItem[]; editing: boolean }>()
+const props = withDefaults(
+  defineProps<{
+    items: InformationHomeTodoItem[]
+    editing: boolean
+    persistenceState?: 'idle' | 'saving' | 'saved' | 'error'
+  }>(),
+  { persistenceState: 'idle' },
+)
 const emit = defineEmits<{
   update: [items: InformationHomeTodoItem[]]
   metrics: [items: Array<{ value: number; label: string }>]
@@ -20,7 +27,7 @@ function publishMetrics(): void {
 
 function addItem(): void {
   const value = title.value.trim()
-  if (!value || props.editing) return
+  if (!value || props.editing || props.persistenceState === 'saving') return
   emit('update', [
     ...props.items,
     {
@@ -34,7 +41,7 @@ function addItem(): void {
 }
 
 function toggleItem(item: InformationHomeTodoItem): void {
-  if (props.editing) return
+  if (props.editing || props.persistenceState === 'saving') return
   emit(
     'update',
     props.items.map((candidate) =>
@@ -44,7 +51,7 @@ function toggleItem(item: InformationHomeTodoItem): void {
 }
 
 function removeItem(id: string): void {
-  if (props.editing) return
+  if (props.editing || props.persistenceState === 'saving') return
   emit(
     'update',
     props.items.filter((item) => item.id !== id),
@@ -62,11 +69,15 @@ watch(() => props.items, publishMetrics, { deep: true })
         v-model="title"
         type="text"
         maxlength="160"
-        :disabled="editing"
+        :disabled="editing || persistenceState === 'saving'"
         placeholder="添加待办事项…"
         aria-label="待办内容"
       />
-      <button type="submit" :disabled="editing || !title.trim()" aria-label="添加待办">
+      <button
+        type="submit"
+        :disabled="editing || persistenceState === 'saving' || !title.trim()"
+        aria-label="添加待办"
+      >
         <Plus :size="15" />
       </button>
     </form>
@@ -76,7 +87,7 @@ watch(() => props.items, publishMetrics, { deep: true })
         <button
           type="button"
           class="home-list-widget__check"
-          :disabled="editing"
+          :disabled="editing || persistenceState === 'saving'"
           :aria-label="item.completed ? '恢复待办' : '完成待办'"
           @click="toggleItem(item)"
         >
@@ -86,7 +97,7 @@ watch(() => props.items, publishMetrics, { deep: true })
         <button
           type="button"
           class="home-list-widget__remove"
-          :disabled="editing"
+          :disabled="editing || persistenceState === 'saving'"
           aria-label="删除待办"
           @click="removeItem(item.id)"
         >
@@ -94,5 +105,20 @@ watch(() => props.items, publishMetrics, { deep: true })
         </button>
       </li>
     </ul>
+    <p
+      v-if="persistenceState !== 'idle'"
+      class="home-system-feedback"
+      :class="`is-${persistenceState}`"
+      role="status"
+      aria-live="polite"
+    >
+      {{
+        persistenceState === 'saving'
+          ? '正在写入本地待办…'
+          : persistenceState === 'saved'
+            ? '已写入本地待办'
+            : '待办写入失败，已恢复原数据'
+      }}
+    </p>
   </div>
 </template>

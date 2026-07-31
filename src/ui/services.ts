@@ -2,6 +2,7 @@ import { inject, type InjectionKey } from 'vue'
 
 export interface MessageService {
   success: (text: string) => void
+  warning?: (text: string) => void
   error: (text: string) => void
 }
 
@@ -24,6 +25,7 @@ export const dialogServiceKey: InjectionKey<DialogService> = Symbol('dialog-serv
 
 const noopMessageService: MessageService = {
   success: () => undefined,
+  warning: () => undefined,
   error: () => undefined,
 }
 

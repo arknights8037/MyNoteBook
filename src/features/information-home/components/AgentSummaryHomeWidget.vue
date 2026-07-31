@@ -6,12 +6,16 @@ import type { InformationHomeSummary } from '@/models/home/informationHome'
 import { renderAiMarkdown } from '@/services/ai/AiMarkdownRenderer'
 import { buildSignalResultDigest } from '@/services/home/SignalResultDigestService'
 
-const props = defineProps<{
-  summaries: InformationHomeSummary[]
-  generating: boolean
-  autoEnabled: boolean
-  intervalMinutes: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    summaries: InformationHomeSummary[]
+    generating: boolean
+    autoEnabled: boolean
+    intervalMinutes: number
+    settingsState?: 'idle' | 'saving' | 'saved' | 'error'
+  }>(),
+  { settingsState: 'idle' },
+)
 const emit = defineEmits<{
   generate: []
   toggleAuto: []
@@ -34,11 +38,17 @@ const rendered = computed(() => renderAiMarkdown(digest.value.narrativeMarkdown)
           type="button"
           :class="{ 'is-active': autoEnabled }"
           :aria-pressed="autoEnabled"
+          :disabled="settingsState === 'saving'"
           @click="emit('toggleAuto')"
         >
           自动摘要 {{ autoEnabled ? '已开' : '已关' }}
         </button>
-        <button type="button" title="调整自动摘要间隔" @click="emit('changeInterval')">
+        <button
+          type="button"
+          title="调整自动摘要间隔"
+          :disabled="settingsState === 'saving'"
+          @click="emit('changeInterval')"
+        >
           {{
             intervalMinutes >= 1440
               ? `${Math.round(intervalMinutes / 1440)} 天`
@@ -46,10 +56,25 @@ const rendered = computed(() => renderAiMarkdown(digest.value.narrativeMarkdown)
           }}
         </button>
         <button type="button" :disabled="generating" @click="emit('generate')">
-          {{ generating ? '已提交…' : '处理相关更新' }}
+          {{ generating ? '系统处理中…' : '处理相关更新' }}
         </button>
       </div>
     </header>
+    <p
+      v-if="settingsState !== 'idle'"
+      class="home-system-feedback"
+      :class="`is-${settingsState}`"
+      role="status"
+      aria-live="polite"
+    >
+      {{
+        settingsState === 'saving'
+          ? '正在更新系统摘要设置…'
+          : settingsState === 'saved'
+            ? '系统摘要设置已生效'
+            : '系统摘要设置更新失败'
+      }}
+    </p>
     <p
       v-if="digest.latestResult?.status === 'failed'"
       class="dashboard-widget-state dashboard-widget-state--error"

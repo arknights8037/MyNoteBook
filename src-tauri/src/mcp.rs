@@ -22,6 +22,8 @@ use crate::agent_cancellation::ToolCancellationGuard;
 const CONFIG_FILE: &str = "mcp-servers.json";
 const MCP_TIMEOUT: Duration = Duration::from_secs(30);
 const MCP_CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_MCP_TOOL_TIMEOUT_SECONDS: u64 = 3600;
+const QODER_BRIDGE_TOOL_TIMEOUT_SECONDS: u64 = 1800;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,6 +46,8 @@ pub struct McpServerConfig {
     pub url: Option<String>,
     #[serde(default)]
     pub headers: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u64>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -77,6 +81,13 @@ pub struct ImportMcpConfigInput {
 pub struct ImportMcpConfigTextInput {
     pub data_directory: String,
     pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallQoderBridgeInput {
+    pub data_directory: String,
+    pub workspace: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,6 +180,53 @@ pub fn import_mcp_config_text(
     import_mcp_source(&input.data_directory, &input.content)
 }
 
+#[tauri::command]
+pub fn install_qoder_bridge(
+    input: InstallQoderBridgeInput,
+) -> Result<Vec<McpServerConfig>, String> {
+    let workspace = Path::new(input.workspace.trim())
+        .canonicalize()
+        .map_err(|error| format!("Qoder 工作区不存在或不可访问：{error}"))?;
+    if !workspace.is_dir() {
+        return Err("Qoder 工作区必须是目录。".to_string());
+    }
+    let executable = qoder_bridge_executable()?;
+    let workspace_text = workspace.to_string_lossy().to_string();
+    let allowed_roots = serde_json::to_string(&[&workspace_text]).map_err(mcp_error)?;
+    let mut store = load_store(&input.data_directory)?;
+    let server = McpServerConfig {
+        id: "qoder-agent".to_string(),
+        name: "Qoder Agent".to_string(),
+        transport: "stdio".to_string(),
+        enabled: true,
+        trusted: false,
+        command: Some(executable.to_string_lossy().to_string()),
+        args: Vec::new(),
+        env: HashMap::from([
+            ("QODER_BRIDGE_WORKSPACE".to_string(), workspace_text.clone()),
+            ("QODER_BRIDGE_ALLOWED_ROOTS_JSON".to_string(), allowed_roots),
+            (
+                "QODER_BRIDGE_TASK_TIMEOUT_SECONDS".to_string(),
+                QODER_BRIDGE_TOOL_TIMEOUT_SECONDS.to_string(),
+            ),
+        ]),
+        cwd: Some(workspace_text),
+        url: None,
+        headers: HashMap::new(),
+        timeout_seconds: Some(QODER_BRIDGE_TOOL_TIMEOUT_SECONDS),
+    };
+    if let Some(existing) = store.servers.iter_mut().find(|item| item.id == server.id) {
+        *existing = server;
+    } else {
+        store.servers.push(server);
+    }
+    store
+        .servers
+        .sort_by(|left, right| left.name.cmp(&right.name));
+    save_store(&input.data_directory, &store)?;
+    Ok(store.servers)
+}
+
 pub(crate) fn create_mcp_server_draft(
     data_directory: &str,
     name: &str,
@@ -209,6 +267,7 @@ pub(crate) fn create_mcp_server_draft(
                     .filter(|value| !value.is_empty()),
                 url: None,
                 headers: HashMap::new(),
+                timeout_seconds: None,
             }
         }
         "http" => {
@@ -236,6 +295,7 @@ pub(crate) fn create_mcp_server_draft(
                 cwd: None,
                 url: Some(url),
                 headers: HashMap::new(),
+                timeout_seconds: None,
             }
         }
         _ => return Err("MCP transport 必须是 stdio 或 http。".to_string()),
@@ -529,7 +589,7 @@ async fn call_server_tool(
                 .await
                 .map_err(|_| "MCP stdio 初始化超时。".to_string())?
                 .map_err(mcp_error)?;
-            let result = timeout(MCP_TIMEOUT, client.peer().call_tool(params))
+            let result = timeout(mcp_tool_timeout(server), client.peer().call_tool(params))
                 .await
                 .map_err(|_| "MCP 工具调用超时。".to_string())?
                 .map_err(mcp_error)?;
@@ -542,7 +602,7 @@ async fn call_server_tool(
                 .await
                 .map_err(|_| "MCP HTTP 初始化超时。".to_string())?
                 .map_err(mcp_error)?;
-            let result = timeout(MCP_TIMEOUT, client.peer().call_tool(params))
+            let result = timeout(mcp_tool_timeout(server), client.peer().call_tool(params))
                 .await
                 .map_err(|_| "MCP 工具调用超时。".to_string())?
                 .map_err(mcp_error)?;
@@ -637,6 +697,11 @@ fn parse_imported_servers(value: Value) -> Result<Vec<McpServerConfig>, String> 
             cwd: string_field(raw, "cwd"),
             url,
             headers: string_map(raw.get("headers")),
+            timeout_seconds: raw
+                .get("timeoutSeconds")
+                .or_else(|| raw.get("timeout_seconds"))
+                .and_then(Value::as_u64)
+                .map(|value| value.clamp(1, MAX_MCP_TOOL_TIMEOUT_SECONDS)),
         });
     }
     if servers.is_empty() {
@@ -747,6 +812,35 @@ fn unique_id(mut id: String, used: &mut HashSet<String>) -> String {
 
 fn mcp_error(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+fn mcp_tool_timeout(server: &McpServerConfig) -> Duration {
+    Duration::from_secs(
+        server
+            .timeout_seconds
+            .unwrap_or(MCP_TIMEOUT.as_secs())
+            .clamp(1, MAX_MCP_TOOL_TIMEOUT_SECONDS),
+    )
+}
+
+fn qoder_bridge_executable() -> Result<PathBuf, String> {
+    let current =
+        std::env::current_exe().map_err(|error| format!("无法定位应用可执行目录：{error}"))?;
+    let directory = current
+        .parent()
+        .ok_or_else(|| "无法定位应用可执行目录。".to_string())?;
+    let candidate = directory.join(if cfg!(windows) {
+        "qoder-mcp-bridge.exe"
+    } else {
+        "qoder-mcp-bridge"
+    });
+    if !candidate.is_file() {
+        return Err(format!(
+            "未找到 Qoder MCP 桥接器：{}。请先执行 pnpm build:qoder-bridge。",
+            candidate.display()
+        ));
+    }
+    Ok(candidate)
 }
 
 #[cfg(test)]
@@ -881,6 +975,7 @@ mod tests {
                 cwd: None,
                 url: Some(format!("http://{address}/mcp")),
                 headers: HashMap::from([("X-Smoke".to_string(), "g0".to_string())]),
+                timeout_seconds: None,
             },
             handle,
         )
@@ -890,7 +985,12 @@ mod tests {
     fn parses_common_stdio_and_http_config() {
         let servers = parse_imported_servers(serde_json::json!({
             "mcpServers": {
-                "filesystem": { "command": "npx", "args": ["-y", "server"], "disabled": true },
+                "filesystem": {
+                    "command": "npx",
+                    "args": ["-y", "server"],
+                    "disabled": true,
+                    "timeoutSeconds": 7200
+                },
                 "remote api": { "url": "https://example.com/mcp", "headers": { "X-Key": "secret" } }
             }
         }))
@@ -898,6 +998,10 @@ mod tests {
         assert_eq!(servers.len(), 2);
         assert_eq!(servers[0].transport, "stdio");
         assert!(!servers[0].enabled);
+        assert_eq!(
+            servers[0].timeout_seconds,
+            Some(MAX_MCP_TOOL_TIMEOUT_SECONDS)
+        );
         assert_eq!(servers[1].id, "remote-api");
         assert_eq!(servers[1].transport, "http");
     }
@@ -1002,6 +1106,7 @@ mod tests {
             cwd: None,
             url: None,
             headers: HashMap::new(),
+            timeout_seconds: None,
         };
 
         let tools = list_server_tools(&server).await.unwrap();

@@ -35,6 +35,28 @@ describe('RssNewsHomeWidget', () => {
     expect(wrapper.text()).not.toContain('Rust toolchain update')
     wrapper.unmount()
   })
+
+  it('keeps a hot item visible until the RSS system confirms its new status', async () => {
+    let resolveStatus: (value: ReturnType<typeof ok>) => void = () => undefined
+    rssService.listSources.mockResolvedValue(ok([source]))
+    rssService.listEntries.mockResolvedValue(ok([entry]))
+    rssService.setEntryStatus.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveStatus = resolve
+      }),
+    )
+    const wrapper = mount(RssNewsHomeWidget, { props: { limit: 8, summary } })
+    await flushPromises()
+
+    await wrapper.get('button[aria-label="标记为已处理"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.dashboard-widget-list li').attributes('aria-busy')).toBe('true')
+    expect(wrapper.text()).toContain('正在向 RSS 系统提交处理结果')
+
+    resolveStatus(ok({ ...entry, processingStatus: 'done' }))
+    await flushPromises()
+    expect(wrapper.find('.dashboard-widget-list').exists()).toBe(false)
+  })
 })
 
 const source: RssSource = {

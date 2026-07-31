@@ -1,9 +1,25 @@
 <script setup lang="ts">
-import { Archive, Check, Inbox, Mail, Paperclip, RefreshCw, RotateCcw } from '@lucide/vue'
+import {
+  Ban,
+  Check,
+  EyeOff,
+  Inbox,
+  Mail,
+  Paperclip,
+  RefreshCw,
+  RotateCcw,
+  ShieldOff,
+  Trash2,
+} from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 
 import { createEmailService } from '@/app/composition/emailServiceFactory'
-import type { EmailAccount, EmailMessage, EmailProcessingStatus } from '@/models/inbox/email'
+import type {
+  EmailAccount,
+  EmailBlockedSender,
+  EmailMessage,
+  EmailProcessingStatus,
+} from '@/models/inbox/email'
 import type { EmailService } from '@/services/inbox/EmailService'
 import { publishSignalRefresh } from '@/services/agent/SignalAgentService'
 import { useMessage } from '@/ui/services'
@@ -14,11 +30,17 @@ const native = Reflect.has(globalThis, '__TAURI_INTERNALS__')
 const notify = useMessage()
 const accounts = ref<EmailAccount[]>([])
 const messages = ref<EmailMessage[]>([])
+const blockedSenders = ref<EmailBlockedSender[]>([])
 const selectedId = ref('')
 const loading = ref(false)
 const syncing = ref(false)
 const categoryFilter = ref('all')
 const error = ref('')
+const showBlockedSenders = ref(false)
+const activeOperation = ref<{
+  kind: 'status' | 'delete' | 'block' | 'unblock'
+  key: string
+} | null>(null)
 let servicePromise: Promise<EmailService> | null = null
 
 const service = () => (servicePromise ??= createEmailService())
@@ -65,23 +87,27 @@ const latestCursorAt = computed(() =>
     null,
   ),
 )
+const operating = computed(() => activeOperation.value !== null)
 
 async function load(): Promise<void> {
   if (!native) return
   loading.value = true
   error.value = ''
-  const [accountResult, messageResult] = await Promise.all([
+  const [accountResult, messageResult, blockedResult] = await Promise.all([
     (await service()).listAccounts(),
     (await service()).listMessages({
       status: props.mode === 'pending' ? 'pending' : undefined,
       limit: 200,
     }),
+    (await service()).listBlockedSenders(),
   ])
   loading.value = false
   if (!accountResult.ok) return void (error.value = accountResult.error.message)
   if (!messageResult.ok) return void (error.value = messageResult.error.message)
+  if (!blockedResult.ok) return void (error.value = blockedResult.error.message)
   accounts.value = accountResult.value
   messages.value = messageResult.value
+  blockedSenders.value = blockedResult.value
   const requested = props.targetId
   if (requested && visibleMessages.value.some((message) => message.id === requested))
     selectedId.value = requested
@@ -117,21 +143,126 @@ async function syncAll(): Promise<void> {
 }
 
 async function setStatus(message: EmailMessage, status: EmailProcessingStatus): Promise<void> {
-  const result = await (await service()).setMessageStatus(message.id, status)
-  if (!result.ok) return void (error.value = result.error.message)
-  if (props.mode === 'pending' && status !== 'pending') {
-    messages.value = messages.value.filter((candidate) => candidate.id !== message.id)
-    selectedId.value = messages.value[0]?.id ?? ''
-  } else {
-    messages.value = messages.value.map((candidate) =>
-      candidate.id === message.id ? result.value : candidate,
+  if (operating.value) return
+  activeOperation.value = { kind: 'status', key: message.id }
+  error.value = ''
+  try {
+    const result = await (await service()).setMessageStatus(message.id, status)
+    if (!result.ok) return void (error.value = result.error.message)
+    if (props.mode === 'pending' && status !== 'pending') {
+      removeVisibleMessages((candidate) => candidate.id === message.id)
+    } else {
+      messages.value = messages.value.map((candidate) =>
+        candidate.id === message.id ? result.value : candidate,
+      )
+    }
+    notify.success(status === 'archived' ? '邮件已忽略' : '邮件状态已更新')
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : String(failure)
+  } finally {
+    activeOperation.value = null
+  }
+}
+
+async function deleteMessage(message: EmailMessage): Promise<void> {
+  if (
+    operating.value ||
+    !globalThis.confirm(
+      `删除邮件“${message.subject || '无主题'}”的本地副本？服务器邮件不会被删除。`,
     )
+  )
+    return
+  activeOperation.value = { kind: 'delete', key: message.id }
+  error.value = ''
+  try {
+    const result = await (await service()).deleteMessage(message.id)
+    if (!result.ok) return void (error.value = result.error.message)
+    removeVisibleMessages((candidate) => candidate.id === message.id)
+    notify.success('本地邮件已删除')
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : String(failure)
+  } finally {
+    activeOperation.value = null
+  }
+}
+
+async function blockSender(message: EmailMessage): Promise<void> {
+  const senderAddress = message.fromAddress.trim().toLocaleLowerCase()
+  if (!senderAddress) return void (error.value = '该邮件没有可用于屏蔽的发件地址。')
+  if (
+    operating.value ||
+    !globalThis.confirm(
+      `屏蔽来源 ${senderAddress}？该来源的本地邮件会被清理，后续同步也不会再入库。`,
+    )
+  )
+    return
+  activeOperation.value = { kind: 'block', key: `${message.accountId}:${senderAddress}` }
+  error.value = ''
+  try {
+    const result = await (await service()).blockSender(message.accountId, senderAddress)
+    if (!result.ok) return void (error.value = result.error.message)
+    blockedSenders.value = [
+      result.value.sender,
+      ...blockedSenders.value.filter(
+        (sender) =>
+          !(
+            sender.accountId === result.value.sender.accountId &&
+            sender.senderAddress === result.value.sender.senderAddress
+          ),
+      ),
+    ]
+    removeVisibleMessages(
+      (candidate) =>
+        candidate.accountId === message.accountId &&
+        candidate.fromAddress.trim().toLocaleLowerCase() === senderAddress,
+    )
+    notify.success(
+      result.value.removedCount
+        ? `已屏蔽来源并清理 ${result.value.removedCount} 封本地邮件`
+        : '邮件来源已加入屏蔽列表',
+    )
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : String(failure)
+  } finally {
+    activeOperation.value = null
+  }
+}
+
+async function unblockSender(sender: EmailBlockedSender): Promise<void> {
+  if (operating.value) return
+  activeOperation.value = {
+    kind: 'unblock',
+    key: `${sender.accountId}:${sender.senderAddress}`,
+  }
+  error.value = ''
+  try {
+    const result = await (await service()).unblockSender(sender.accountId, sender.senderAddress)
+    if (!result.ok) return void (error.value = result.error.message)
+    blockedSenders.value = blockedSenders.value.filter(
+      (candidate) =>
+        !(
+          candidate.accountId === sender.accountId &&
+          candidate.senderAddress === sender.senderAddress
+        ),
+    )
+    notify.success('已解除来源屏蔽，后续新邮件可以再次同步')
+  } catch (failure) {
+    error.value = failure instanceof Error ? failure.message : String(failure)
+  } finally {
+    activeOperation.value = null
+  }
+}
+
+function removeVisibleMessages(predicate: (message: EmailMessage) => boolean): void {
+  messages.value = messages.value.filter((message) => !predicate(message))
+  if (!visibleMessages.value.some((message) => message.id === selectedId.value)) {
+    selectedId.value = visibleMessages.value[0]?.id ?? ''
   }
 }
 
 function processingLabel(status: EmailProcessingStatus): string {
   if (status === 'done') return '已处理'
-  if (status === 'archived') return '已归档'
+  if (status === 'archived') return '已忽略'
   return '待处理'
 }
 
@@ -204,6 +335,15 @@ watch(categoryFilter, () => {
           ></span
         >
         <span v-else>尚未完成同步</span>
+        <button
+          type="button"
+          :class="{ 'is-active': showBlockedSenders }"
+          :aria-expanded="showBlockedSenders"
+          @click="showBlockedSenders = !showBlockedSenders"
+        >
+          <ShieldOff :size="15" />屏蔽列表
+          <strong v-if="blockedSenders.length">{{ blockedSenders.length }}</strong>
+        </button>
         <button type="button" :disabled="!native || syncing || !accounts.length" @click="syncAll">
           <RefreshCw :class="{ 'is-spinning': syncing }" :size="15" />{{
             syncing ? '同步中' : '同步邮箱'
@@ -223,6 +363,33 @@ watch(categoryFilter, () => {
         {{ category === 'all' ? '全部来源' : category }}
       </button>
     </nav>
+    <section v-if="showBlockedSenders" class="email-blocked-senders" aria-label="邮件来源屏蔽列表">
+      <header>
+        <div>
+          <strong>已屏蔽来源</strong>
+          <small>只影响本地入库，不会修改服务器邮箱规则。</small>
+        </div>
+        <span>{{ blockedSenders.length }} 个来源</span>
+      </header>
+      <p v-if="!blockedSenders.length">暂无被屏蔽的邮件来源。</p>
+      <div v-else>
+        <article
+          v-for="sender in blockedSenders"
+          :key="`${sender.accountId}:${sender.senderAddress}`"
+        >
+          <Ban :size="15" />
+          <span>
+            <strong>{{ sender.senderAddress }}</strong>
+            <small
+              >{{ accountName(sender.accountId) }} · {{ formatFullTime(sender.createdAt) }}</small
+            >
+          </span>
+          <button type="button" :disabled="operating" @click="unblockSender(sender)">
+            <RotateCcw :size="13" />解除屏蔽
+          </button>
+        </article>
+      </div>
+    </section>
     <div v-if="loading" class="inbox-empty-state"><span>正在读取本地邮件…</span></div>
     <div v-else-if="!accounts.length" class="inbox-empty-state">
       <span class="inbox-empty-state__icon"><Mail :size="25" /></span>
@@ -265,7 +432,7 @@ watch(categoryFilter, () => {
           </span>
         </button>
       </div>
-      <article v-if="selected" class="email-message-detail">
+      <article v-if="selected" class="email-message-detail" :aria-busy="operating">
         <header>
           <div>
             <span
@@ -287,6 +454,7 @@ watch(categoryFilter, () => {
             <button
               v-if="selected.processingStatus !== 'pending'"
               type="button"
+              :disabled="operating"
               @click="setStatus(selected, 'pending')"
             >
               <RotateCcw :size="14" />恢复待处理
@@ -294,6 +462,7 @@ watch(categoryFilter, () => {
             <button
               v-if="selected.processingStatus !== 'done'"
               type="button"
+              :disabled="operating"
               @click="setStatus(selected, 'done')"
             >
               <Check :size="14" />标记已处理
@@ -301,12 +470,41 @@ watch(categoryFilter, () => {
             <button
               v-if="selected.processingStatus !== 'archived'"
               type="button"
+              :disabled="operating"
               @click="setStatus(selected, 'archived')"
             >
-              <Archive :size="14" />归档
+              <EyeOff :size="14" />忽略
+            </button>
+            <button
+              type="button"
+              :disabled="operating || !selected.fromAddress.trim()"
+              title="屏蔽后，该来源的后续邮件将不再保存到本地"
+              @click="blockSender(selected)"
+            >
+              <Ban :size="14" />屏蔽来源
+            </button>
+            <button
+              type="button"
+              class="is-danger"
+              :disabled="operating"
+              title="仅删除本地副本"
+              @click="deleteMessage(selected)"
+            >
+              <Trash2 :size="14" />删除本地
             </button>
           </div>
         </header>
+        <p v-if="activeOperation" class="email-message-detail__operation" role="status">
+          {{
+            activeOperation.kind === 'delete'
+              ? '正在删除本地邮件…'
+              : activeOperation.kind === 'block'
+                ? '正在写入来源屏蔽规则…'
+                : activeOperation.kind === 'unblock'
+                  ? '正在解除来源屏蔽…'
+                  : '正在更新邮件状态…'
+          }}
+        </p>
         <dl>
           <dt>状态</dt>
           <dd>

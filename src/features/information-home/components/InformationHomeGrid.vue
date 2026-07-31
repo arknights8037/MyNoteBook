@@ -9,19 +9,29 @@ import type {
 } from '@/models/home/informationHome'
 import InformationHomeWidgetHost from './InformationHomeWidgetHost.vue'
 
+type PersistenceState = 'idle' | 'saving' | 'saved' | 'error'
 type BrowserElement = InstanceType<typeof globalThis.HTMLElement>
 type BrowserResizeObserver = InstanceType<typeof globalThis.ResizeObserver>
 type BrowserPointerEvent = InstanceType<typeof globalThis.PointerEvent>
 
-const props = defineProps<{
-  widgets: InformationHomeWidget[]
-  editing: boolean
-  summaries: InformationHomeSummary[]
-  rssSummary: InformationHomeSummary | null
-  generatingSummary: boolean
-  autoSummaryEnabled: boolean
-  summaryIntervalMinutes: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    widgets: InformationHomeWidget[]
+    editing: boolean
+    summaries: InformationHomeSummary[]
+    rssSummary?: InformationHomeSummary | null
+    generatingSummary: boolean
+    autoSummaryEnabled: boolean
+    summaryIntervalMinutes: number
+    widgetSettingsStates?: Record<string, PersistenceState>
+    summarySettingsState?: PersistenceState
+  }>(),
+  {
+    rssSummary: null,
+    widgetSettingsStates: () => ({}),
+    summarySettingsState: 'idle',
+  },
+)
 const emit = defineEmits<{
   layout: [positions: Record<string, InformationHomeGridPosition>, target: 'desktop' | 'compact']
   copy: [id: string]
@@ -220,6 +230,8 @@ onBeforeUnmount(() => {
           :generating-summary="generatingSummary"
           :auto-summary-enabled="autoSummaryEnabled"
           :summary-interval-minutes="summaryIntervalMinutes"
+          :settings-state="widgetSettingsStates[widget.id] ?? 'idle'"
+          :summary-settings-state="summarySettingsState"
           @copy="emit('copy', widget.id)"
           @remove="emit('remove', widget.id)"
           @open-email="emit('openEmail', $event)"

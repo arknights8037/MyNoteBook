@@ -1,5 +1,6 @@
 import type {
   EmailAccount,
+  EmailBlockedSender,
   EmailMessage,
   EmailProcessingStatus,
   RemoteEmailMessage,
@@ -37,4 +38,8 @@ export interface EmailRepository {
     limit?: number
   }): Promise<AppResult<EmailMessage[]>>
   setMessageStatus(id: string, status: EmailProcessingStatus): Promise<AppResult<EmailMessage>>
+  deleteMessage(id: string): Promise<AppResult<void>>
+  listBlockedSenders(accountId?: string): Promise<AppResult<EmailBlockedSender[]>>
+  blockSender(sender: EmailBlockedSender): Promise<AppResult<number>>
+  unblockSender(accountId: string, senderAddress: string): Promise<AppResult<void>>
 }

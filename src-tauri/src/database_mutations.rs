@@ -40,6 +40,9 @@ pub enum DatabaseMutation {
     UpdateEmailCategory,
     UpsertEmailMessage,
     SetEmailMessageStatus,
+    DeleteEmailMessage,
+    BlockEmailSender,
+    UnblockEmailSender,
     CreateImConnector,
     DeleteImConnector,
     UpdateImCategory,
@@ -184,6 +187,15 @@ impl DatabaseMutation {
             Self::SetEmailMessageStatus => {
                 ("UPDATE email_messages SET processing_status = ? WHERE id = ?", 2)
             }
+            Self::DeleteEmailMessage => ("DELETE FROM email_messages WHERE id = ?", 1),
+            Self::BlockEmailSender => (
+                "INSERT INTO email_blocked_senders (account_id, sender_address, created_at) VALUES (?, ?, ?) ON CONFLICT(account_id, sender_address) DO UPDATE SET created_at = excluded.created_at",
+                3,
+            ),
+            Self::UnblockEmailSender => (
+                "DELETE FROM email_blocked_senders WHERE account_id = ? AND sender_address = ? COLLATE NOCASE",
+                2,
+            ),
             Self::CreateImConnector => (
                 "INSERT INTO im_connectors (id, provider, display_name, source_category, client_id, enabled, runtime_status, last_connected_at, last_event_at, last_error, created_at, updated_at) VALUES (?, 'dingtalk', ?, ?, ?, 1, 'stopped', NULL, NULL, NULL, ?, ?)",
                 6,

@@ -18,16 +18,22 @@ import TodoListHomeWidget from './TodoListHomeWidget.vue'
 import LocalEnvironmentPanel from '@/features/integrations/environment/components/LocalEnvironmentPanel.vue'
 
 type BrowserMouseEvent = InstanceType<typeof globalThis.MouseEvent>
+type PersistenceState = 'idle' | 'saving' | 'saved' | 'error'
 
-const props = defineProps<{
-  widget: InformationHomeWidget
-  editing: boolean
-  summaries: InformationHomeSummary[]
-  rssSummary?: InformationHomeSummary | null
-  generatingSummary: boolean
-  autoSummaryEnabled: boolean
-  summaryIntervalMinutes: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    widget: InformationHomeWidget
+    editing: boolean
+    summaries: InformationHomeSummary[]
+    rssSummary?: InformationHomeSummary | null
+    generatingSummary: boolean
+    autoSummaryEnabled: boolean
+    summaryIntervalMinutes: number
+    settingsState?: PersistenceState
+    summarySettingsState?: PersistenceState
+  }>(),
+  { rssSummary: null, settingsState: 'idle', summarySettingsState: 'idle' },
+)
 const emit = defineEmits<{
   copy: []
   remove: []
@@ -63,6 +69,13 @@ const emptyTodoItems: InformationHomeTodoItem[] = []
 const emptyCalendarEvents: InformationHomeCalendarEvent[] = []
 const todoItems = computed(() => props.widget.settings.todos ?? emptyTodoItems)
 const calendarEvents = computed(() => props.widget.settings.events ?? emptyCalendarEvents)
+const frameSystemState = computed<PersistenceState>(() => {
+  if (props.widget.widgetType === 'agent-summary') {
+    if (props.generatingSummary) return 'saving'
+    return props.summarySettingsState
+  }
+  return props.settingsState
+})
 
 onErrorCaptured((error) => {
   renderError.value = error instanceof Error ? error.message : String(error)
@@ -131,6 +144,7 @@ function removeWidget(): void {
     :editing="editing"
     :refreshing="refreshing"
     :refreshable="widget.widgetType !== 'agent-summary'"
+    :system-state="frameSystemState"
     @copy="emit('copy')"
     @remove="emit('remove')"
     @refresh="refresh"
@@ -170,6 +184,7 @@ function removeWidget(): void {
       :generating="generatingSummary"
       :auto-enabled="autoSummaryEnabled"
       :interval-minutes="summaryIntervalMinutes"
+      :settings-state="summarySettingsState"
       @generate="emit('generateSummary')"
       @toggle-auto="emit('toggleAutoSummary')"
       @change-interval="emit('changeSummaryInterval')"
@@ -179,6 +194,7 @@ function removeWidget(): void {
       v-else-if="widget.widgetType === 'todo-list'"
       :items="todoItems"
       :editing="editing"
+      :persistence-state="settingsState"
       @metrics="updateMetrics"
       @update="emit('updateSettings', { ...widget.settings, todos: $event })"
     />
@@ -186,6 +202,7 @@ function removeWidget(): void {
       v-else-if="widget.widgetType === 'calendar'"
       :events="calendarEvents"
       :editing="editing"
+      :persistence-state="settingsState"
       @metrics="updateMetrics"
       @update="emit('updateSettings', { ...widget.settings, events: $event })"
     />

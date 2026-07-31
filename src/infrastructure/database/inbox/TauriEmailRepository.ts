@@ -1,5 +1,6 @@
 import type {
   EmailAccount,
+  EmailBlockedSender,
   EmailMessage,
   EmailProcessingStatus,
   RemoteEmailMessage,
@@ -45,6 +46,12 @@ interface EmailMessageRow extends Record<string, unknown> {
   server_is_read: number
   processing_status: EmailProcessingStatus
   synced_at: number
+}
+
+interface EmailBlockedSenderRow extends Record<string, unknown> {
+  account_id: string
+  sender_address: string
+  created_at: number
 }
 
 export class TauriEmailRepository implements EmailRepository {
@@ -151,7 +158,13 @@ export class TauriEmailRepository implements EmailRepository {
     syncedAt: number,
   ): Promise<AppResult<number>> {
     try {
-      for (const message of messages) {
+      const blocked = await this.listBlockedSenders(account.id)
+      if (!blocked.ok) return blocked
+      const blockedAddresses = new Set(blocked.value.map((sender) => sender.senderAddress))
+      const acceptedMessages = messages.filter(
+        (message) => !blockedAddresses.has(message.fromAddress.trim().toLocaleLowerCase()),
+      )
+      for (const message of acceptedMessages) {
         await this.sql.mutate('upsertEmailMessage', [
           `${account.id}:${account.mailbox}:${message.remoteUid}`,
           account.id,
@@ -170,7 +183,7 @@ export class TauriEmailRepository implements EmailRepository {
           syncedAt,
         ])
       }
-      return ok(messages.length)
+      return ok(acceptedMessages.length)
     } catch (error) {
       return err(normalizeError(error, '无法保存同步邮件。'))
     }
@@ -220,6 +233,64 @@ export class TauriEmailRepository implements EmailRepository {
       return rows[0] ? ok(mapMessage(rows[0])) : err({ code: 'not-found', message: '邮件不存在。' })
     } catch (error) {
       return err(normalizeError(error, '无法更新邮件处理状态。'))
+    }
+  }
+
+  async deleteMessage(id: string): Promise<AppResult<void>> {
+    try {
+      const result = await this.sql.mutate('deleteEmailMessage', [id])
+      return result.rowsAffected === 1
+        ? ok(undefined)
+        : err({ code: 'not-found', message: '邮件不存在。' })
+    } catch (error) {
+      return err(normalizeError(error, '无法删除本地邮件。'))
+    }
+  }
+
+  async listBlockedSenders(accountId?: string): Promise<AppResult<EmailBlockedSender[]>> {
+    try {
+      const rows = await this.sql.select<EmailBlockedSenderRow>(
+        `SELECT * FROM email_blocked_senders ${accountId ? 'WHERE account_id = ?' : ''}
+         ORDER BY created_at DESC, sender_address ASC`,
+        accountId ? [accountId] : [],
+      )
+      return ok(
+        rows.map((row) => ({
+          accountId: row.account_id,
+          senderAddress: row.sender_address,
+          createdAt: Number(row.created_at),
+        })),
+      )
+    } catch (error) {
+      return err(normalizeError(error, '无法读取邮件屏蔽列表。'))
+    }
+  }
+
+  async blockSender(sender: EmailBlockedSender): Promise<AppResult<number>> {
+    try {
+      const rows = await this.sql.select<{ count: number }>(
+        'SELECT COUNT(*) count FROM email_messages WHERE account_id = ? AND from_address = ? COLLATE NOCASE',
+        [sender.accountId, sender.senderAddress],
+      )
+      await this.sql.mutate('blockEmailSender', [
+        sender.accountId,
+        sender.senderAddress,
+        sender.createdAt,
+      ])
+      return ok(Number(rows[0]?.count ?? 0))
+    } catch (error) {
+      return err(normalizeError(error, '无法屏蔽邮件来源。'))
+    }
+  }
+
+  async unblockSender(accountId: string, senderAddress: string): Promise<AppResult<void>> {
+    try {
+      const result = await this.sql.mutate('unblockEmailSender', [accountId, senderAddress])
+      return result.rowsAffected === 1
+        ? ok(undefined)
+        : err({ code: 'not-found', message: '该邮件来源不在屏蔽列表中。' })
+    } catch (error) {
+      return err(normalizeError(error, '无法解除邮件来源屏蔽。'))
     }
   }
 }

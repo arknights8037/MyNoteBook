@@ -25,6 +25,8 @@ const snapshot = ref<Awaited<ReturnType<typeof getLocalEnvironmentSnapshot>> | n
 const loading = ref(false)
 const error = ref('')
 const copiedId = ref('')
+const copyingId = ref('')
+const copyError = ref('')
 
 const availableRuntimes = computed(() =>
   (snapshot.value?.runtimes ?? []).filter((runtime) => runtime.available),
@@ -37,6 +39,7 @@ async function load(): Promise<void> {
   }
   loading.value = true
   error.value = ''
+  copyError.value = ''
   try {
     snapshot.value = await getLocalEnvironmentSnapshot()
   } catch (value) {
@@ -56,11 +59,21 @@ function runtimeIcon(runtime: LocalRuntime) {
 }
 
 async function copyValue(id: string, value: string): Promise<void> {
-  await globalThis.navigator.clipboard.writeText(value)
-  copiedId.value = id
-  globalThis.setTimeout(() => {
-    if (copiedId.value === id) copiedId.value = ''
-  }, 1400)
+  if (copyingId.value) return
+  copyingId.value = id
+  copyError.value = ''
+  try {
+    await globalThis.navigator.clipboard.writeText(value)
+    copiedId.value = id
+    globalThis.setTimeout(() => {
+      if (copiedId.value === id) copiedId.value = ''
+    }, 1400)
+  } catch (value) {
+    copyError.value =
+      value instanceof Error ? `系统剪贴板写入失败：${value.message}` : '系统剪贴板写入失败。'
+  } finally {
+    copyingId.value = ''
+  }
 }
 
 function copyVariable(item: LocalEnvironmentVariable): Promise<void> {
@@ -131,6 +144,7 @@ defineExpose({ refresh: load })
             <button
               type="button"
               :aria-label="`复制 ${runtime.name} 路径`"
+              :disabled="Boolean(copyingId)"
               @click="copyValue(runtime.id, runtime.executable)"
             >
               <Check v-if="copiedId === runtime.id" :size="14" />
@@ -155,7 +169,12 @@ defineExpose({ refresh: load })
               >
               <code :title="item.value">{{ item.value }}</code>
             </div>
-            <button type="button" :aria-label="`复制 ${item.label}`" @click="copyVariable(item)">
+            <button
+              type="button"
+              :aria-label="`复制 ${item.label}`"
+              :disabled="Boolean(copyingId)"
+              @click="copyVariable(item)"
+            >
               <Check v-if="copiedId === item.name" :size="14" />
               <Clipboard v-else :size="14" />
             </button>
@@ -163,6 +182,17 @@ defineExpose({ refresh: load })
         </div>
       </section>
     </template>
+    <p v-if="copyError" class="local-environment__clipboard-status is-error" role="alert">
+      {{ copyError }}
+    </p>
+    <p
+      v-else-if="copyingId"
+      class="local-environment__clipboard-status"
+      role="status"
+      aria-live="polite"
+    >
+      正在写入系统剪贴板…
+    </p>
 
     <footer v-if="!compact">
       <ShieldCheck :size="14" />

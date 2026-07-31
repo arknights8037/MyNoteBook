@@ -223,9 +223,25 @@
 }
 
 .email-inbox-panel__toolbar button:not(:disabled):hover,
-.email-message-detail button:hover {
+.email-message-detail button:not(:disabled):hover {
   border-color: var(--color-text-primary);
   color: var(--color-text-primary);
+}
+
+.email-inbox-panel__toolbar button.is-active {
+  border-color: var(--color-agent-accent);
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-agent-accent) 12%, var(--color-bg-elevated));
+}
+
+.email-inbox-panel__toolbar button > strong {
+  min-width: 16px;
+  border-radius: 999px;
+  padding: 1px 4px;
+  color: var(--color-agent-accent-contrast, #111);
+  background: var(--color-agent-accent);
+  font-size: 9px;
+  text-align: center;
 }
 
 .email-inbox-panel__toolbar button:focus-visible,
@@ -235,7 +251,9 @@
   outline-offset: -3px;
 }
 
-.email-inbox-panel__toolbar button:disabled {
+.email-inbox-panel__toolbar button:disabled,
+.email-message-detail button:disabled,
+.email-blocked-senders button:disabled {
   opacity: 0.45;
   cursor: default;
 }
@@ -276,6 +294,121 @@
   background: var(--color-bg-elevated);
 }
 
+.rss-source-filter-panel {
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  padding: 9px 11px;
+  background: var(--color-bg-subtle);
+}
+
+.rss-source-filter-panel .inbox-source-filters {
+  align-items: center;
+}
+
+.rss-source-filter-panel .inbox-source-filters > strong {
+  width: 42px;
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-caption);
+}
+
+.email-blocked-senders {
+  display: grid;
+  gap: 9px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 7px;
+  padding: 11px 13px;
+  background: var(--color-bg-elevated);
+}
+
+.email-blocked-senders > header,
+.email-blocked-senders article {
+  display: flex;
+  align-items: center;
+}
+
+.email-blocked-senders > header {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.email-blocked-senders > header > div,
+.email-blocked-senders article > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.email-blocked-senders > header strong {
+  font-size: var(--font-size-small);
+}
+
+.email-blocked-senders > header small,
+.email-blocked-senders > header > span,
+.email-blocked-senders > p,
+.email-blocked-senders article small {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+}
+
+.email-blocked-senders > p {
+  margin: 0;
+  padding: 8px 0 2px;
+}
+
+.email-blocked-senders > div {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+}
+
+.email-blocked-senders article {
+  min-width: 0;
+  gap: 9px;
+  padding: 8px 10px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-subtle);
+}
+
+.email-blocked-senders article + article {
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.email-blocked-senders article > svg {
+  flex: 0 0 auto;
+  color: var(--color-status-warning, #d98a00);
+}
+
+.email-blocked-senders article > span {
+  flex: 1;
+}
+
+.email-blocked-senders article strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.email-blocked-senders article button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 5px;
+  padding: 5px 7px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-elevated);
+  font: inherit;
+  font-size: var(--font-size-micro);
+  cursor: pointer;
+}
+
 .rss-insight-panel {
   display: grid;
   gap: 10px;
@@ -312,14 +445,14 @@
 .rss-insight-panel > header span,
 .rss-insight-panel__hot > strong {
   gap: 5px;
-  font-size: var(--font-size-caption);
+  font-size: var(--font-size-small);
 }
 
 .rss-insight-panel > header small,
 .rss-insight-panel > p,
 .rss-insight-panel__hot button small {
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-micro);
+  font-size: var(--font-size-caption);
 }
 
 .rss-insight-panel > header button,
@@ -353,8 +486,8 @@
 
 .rss-insight-panel .markdown-preview {
   color: var(--color-text-secondary);
-  font-size: var(--font-size-caption);
-  line-height: 1.6;
+  font-size: var(--font-size-body);
+  line-height: 1.75;
 }
 
 .rss-insight-panel .markdown-preview > :first-child,
@@ -381,11 +514,24 @@
   background: var(--color-bg-hover);
 }
 
-.rss-insight-panel__hot button span,
-.rss-insight-panel__hot button small {
+.rss-insight-panel__hot button span {
   overflow: hidden;
+  font-size: var(--font-size-small);
+  font-weight: 680;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.rss-insight-panel__hot button small {
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.rss-insight-panel__hot button small strong {
+  color: var(--color-text-secondary);
 }
 
 @media (max-width: 900px) {
@@ -653,6 +799,21 @@
   justify-content: flex-end;
   gap: 5px;
 }
+
+.email-message-detail__actions button.is-danger:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--color-status-error) 64%, var(--color-border-subtle));
+  color: var(--color-status-error);
+  background: color-mix(in srgb, var(--color-status-error) 7%, var(--color-bg-elevated));
+}
+
+.email-message-detail__operation {
+  margin: 10px 0 0;
+  border-left: 2px solid var(--color-agent-accent);
+  padding: 6px 8px;
+  color: var(--color-agent-accent);
+  background: var(--color-bg-subtle);
+  font-size: var(--font-size-micro);
+}
 .email-message-detail dl {
   display: grid;
   max-width: 800px;
@@ -709,6 +870,25 @@
   line-height: 1.85;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.rss-entry-detail h2 {
+  font-size: clamp(24px, 2.4vw, 32px);
+}
+
+.rss-entry-detail .email-message-detail__sender strong {
+  font-size: var(--font-size-body);
+}
+
+.rss-entry-detail .email-message-detail__sender small,
+.rss-entry-detail dl,
+.rss-entry-detail dt {
+  font-size: var(--font-size-caption);
+}
+
+.rss-entry-detail .email-message-detail__body pre {
+  font-size: clamp(16px, 1.15vw, 18px);
+  line-height: 1.9;
 }
 
 .im-inbox-panel .email-inbox-panel__sync i {

@@ -12,7 +12,14 @@ interface CalendarDay {
   today: boolean
 }
 
-const props = defineProps<{ events: InformationHomeCalendarEvent[]; editing: boolean }>()
+const props = withDefaults(
+  defineProps<{
+    events: InformationHomeCalendarEvent[]
+    editing: boolean
+    persistenceState?: 'idle' | 'saving' | 'saved' | 'error'
+  }>(),
+  { persistenceState: 'idle' },
+)
 const emit = defineEmits<{
   update: [events: InformationHomeCalendarEvent[]]
   metrics: [items: Array<{ value: number; label: string }>]
@@ -59,7 +66,7 @@ function moveMonth(offset: number): void {
 
 function addEvent(): void {
   const value = eventTitle.value.trim()
-  if (!value || !eventDate.value || props.editing) return
+  if (!value || !eventDate.value || props.editing || props.persistenceState === 'saving') return
   emit('update', [
     ...props.events,
     {
@@ -72,7 +79,7 @@ function addEvent(): void {
 }
 
 function removeEvent(id: string): void {
-  if (props.editing) return
+  if (props.editing || props.persistenceState === 'saving') return
   emit(
     'update',
     props.events.filter((event) => event.id !== id),
@@ -125,7 +132,7 @@ watch(() => props.events, publishMetrics, { deep: true })
           {{ event.title }}
           <button
             type="button"
-            :disabled="editing"
+            :disabled="editing || persistenceState === 'saving'"
             :aria-label="`删除日程：${event.title}`"
             @click="removeEvent(event.id)"
           >
@@ -135,18 +142,42 @@ watch(() => props.events, publishMetrics, { deep: true })
       </div>
     </div>
     <form class="home-calendar-widget__composer" @submit.prevent="addEvent">
-      <input v-model="eventDate" type="date" :disabled="editing" aria-label="日程日期" />
+      <input
+        v-model="eventDate"
+        type="date"
+        :disabled="editing || persistenceState === 'saving'"
+        aria-label="日程日期"
+      />
       <input
         v-model="eventTitle"
         type="text"
         maxlength="160"
-        :disabled="editing"
+        :disabled="editing || persistenceState === 'saving'"
         placeholder="添加日程…"
         aria-label="日程内容"
       />
-      <button type="submit" :disabled="editing || !eventTitle.trim()" aria-label="添加日程">
+      <button
+        type="submit"
+        :disabled="editing || persistenceState === 'saving' || !eventTitle.trim()"
+        aria-label="添加日程"
+      >
         <Plus :size="15" />
       </button>
     </form>
+    <p
+      v-if="persistenceState !== 'idle'"
+      class="home-system-feedback"
+      :class="`is-${persistenceState}`"
+      role="status"
+      aria-live="polite"
+    >
+      {{
+        persistenceState === 'saving'
+          ? '正在写入本地日程…'
+          : persistenceState === 'saved'
+            ? '已写入本地日程'
+            : '日程写入失败，已恢复原数据'
+      }}
+    </p>
   </div>
 </template>

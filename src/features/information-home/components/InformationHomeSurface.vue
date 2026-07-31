@@ -24,6 +24,7 @@ import {
 import InformationHomeGrid from './InformationHomeGrid.vue'
 
 type BrowserMouseEvent = InstanceType<typeof globalThis.MouseEvent>
+type PersistenceState = 'idle' | 'saving' | 'saved' | 'error'
 
 const props = defineProps<{
   aiSettings: AiSettings
@@ -49,6 +50,8 @@ const undoStack = ref<InformationHomePayload[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const settingsSaving = ref(false)
+const widgetSettingsStates = ref<Record<string, PersistenceState>>({})
+const summarySettingsState = ref<PersistenceState>('idle')
 const generatingSummary = ref(false)
 const error = ref('')
 let servicePromise: Promise<InformationHomeService> | null = null
@@ -57,6 +60,9 @@ let lastSignalUpdateAt: number | null = null
 let silentRefreshTimer: ReturnType<typeof globalThis.setTimeout> | null = null
 let settingsSaveQueue = Promise.resolve()
 let pendingSettingsSaves = 0
+const pendingWidgetSettingsSaves = new Map<string, number>()
+const widgetFeedbackTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>()
+let summaryFeedbackTimer: ReturnType<typeof globalThis.setTimeout> | null = null
 
 const HOME_MUTATION_TOOLS = new Set(['upsert_personal_todo', 'upsert_personal_calendar_event'])
 
@@ -236,26 +242,64 @@ function updateWidgetSettings(id: string, settings: InformationHomeWidget['setti
   draft.value = next
   const queuedPayload = clone(next)
   pendingSettingsSaves += 1
+  pendingWidgetSettingsSaves.set(id, (pendingWidgetSettingsSaves.get(id) ?? 0) + 1)
   settingsSaving.value = true
+  setWidgetSettingsState(id, 'saving')
   settingsSaveQueue = settingsSaveQueue
     .then(() => persistWidgetSettings(queuedPayload))
+    .then((saved) => {
+      const remaining = Math.max(0, (pendingWidgetSettingsSaves.get(id) ?? 1) - 1)
+      if (remaining > 0) {
+        pendingWidgetSettingsSaves.set(id, remaining)
+        setWidgetSettingsState(id, 'saving')
+      } else {
+        pendingWidgetSettingsSaves.delete(id)
+        setWidgetSettingsState(id, saved ? 'saved' : 'error')
+      }
+    })
     .finally(() => {
       pendingSettingsSaves -= 1
       settingsSaving.value = pendingSettingsSaves > 0
     })
 }
 
-async function persistWidgetSettings(payload: InformationHomePayload): Promise<void> {
-  if (!home.value) return
-  const result = await (await service()).savePayload(home.value, payload)
-  if (!result.ok) {
-    error.value = result.error.message
-    draft.value = clone(home.value.payload)
-    return
+function setWidgetSettingsState(id: string, state: PersistenceState): void {
+  const timer = widgetFeedbackTimers.get(id)
+  if (timer != null) {
+    globalThis.clearTimeout(timer)
+    widgetFeedbackTimers.delete(id)
   }
-  home.value = result.value
-  if (JSON.stringify(draft.value) === JSON.stringify(payload)) {
-    draft.value = clone(result.value.payload)
+  widgetSettingsStates.value = { ...widgetSettingsStates.value, [id]: state }
+  if (state !== 'saved') return
+  widgetFeedbackTimers.set(
+    id,
+    globalThis.setTimeout(() => {
+      if (widgetSettingsStates.value[id] === 'saved') {
+        widgetSettingsStates.value = { ...widgetSettingsStates.value, [id]: 'idle' }
+      }
+      widgetFeedbackTimers.delete(id)
+    }, 1800),
+  )
+}
+
+async function persistWidgetSettings(payload: InformationHomePayload): Promise<boolean> {
+  if (!home.value) return false
+  try {
+    const result = await (await service()).savePayload(home.value, payload)
+    if (!result.ok) {
+      error.value = result.error.message
+      draft.value = clone(home.value.payload)
+      return false
+    }
+    home.value = result.value
+    if (JSON.stringify(draft.value) === JSON.stringify(payload)) {
+      draft.value = clone(result.value.payload)
+    }
+    return true
+  } catch (value) {
+    error.value = value instanceof Error ? value.message : String(value)
+    draft.value = clone(home.value.payload)
+    return false
   }
 }
 
@@ -298,16 +342,12 @@ async function generateSummary(trigger: 'manual' | 'auto' = 'manual'): Promise<v
 }
 
 async function toggleAutoSummary(): Promise<void> {
-  if (!home.value) return
-  const result = await (
-    await service()
-  ).updateSummarySettings(!home.value.autoSummaryEnabled, home.value.summaryIntervalMinutes)
-  if (!result.ok) return void (error.value = result.error.message)
-  home.value = result.value
+  if (!home.value || summarySettingsState.value === 'saving') return
+  await persistSummarySettings(!home.value.autoSummaryEnabled, home.value.summaryIntervalMinutes)
 }
 
 async function changeSummaryInterval(): Promise<void> {
-  if (!home.value) return
+  if (!home.value || summarySettingsState.value === 'saving') return
   const value = globalThis.prompt(
     '自动摘要最短间隔（分钟，30–10080）',
     String(home.value.summaryIntervalMinutes),
@@ -315,11 +355,34 @@ async function changeSummaryInterval(): Promise<void> {
   if (value == null) return
   const minutes = Number(value)
   if (!Number.isFinite(minutes)) return void (error.value = '请输入有效的分钟数。')
-  const result = await (
-    await service()
-  ).updateSummarySettings(home.value.autoSummaryEnabled, minutes)
-  if (!result.ok) return void (error.value = result.error.message)
-  home.value = result.value
+  await persistSummarySettings(home.value.autoSummaryEnabled, minutes)
+}
+
+async function persistSummarySettings(enabled: boolean, minutes: number): Promise<void> {
+  if (!home.value) return
+  if (summaryFeedbackTimer != null) {
+    globalThis.clearTimeout(summaryFeedbackTimer)
+    summaryFeedbackTimer = null
+  }
+  summarySettingsState.value = 'saving'
+  error.value = ''
+  try {
+    const result = await (await service()).updateSummarySettings(enabled, minutes)
+    if (!result.ok) {
+      error.value = result.error.message
+      summarySettingsState.value = 'error'
+      return
+    }
+    home.value = result.value
+    summarySettingsState.value = 'saved'
+    summaryFeedbackTimer = globalThis.setTimeout(() => {
+      if (summarySettingsState.value === 'saved') summarySettingsState.value = 'idle'
+      summaryFeedbackTimer = null
+    }, 1800)
+  } catch (value) {
+    error.value = value instanceof Error ? value.message : String(value)
+    summarySettingsState.value = 'error'
+  }
 }
 
 function createWidget(
@@ -374,6 +437,9 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   if (silentRefreshTimer != null) globalThis.clearTimeout(silentRefreshTimer)
+  if (summaryFeedbackTimer != null) globalThis.clearTimeout(summaryFeedbackTimer)
+  widgetFeedbackTimers.forEach((timer) => globalThis.clearTimeout(timer))
+  widgetFeedbackTimers.clear()
   unlistenSignalAgent?.()
 })
 </script>
@@ -494,6 +560,8 @@ onBeforeUnmount(() => {
         :generating-summary="generatingSummary"
         :auto-summary-enabled="home?.autoSummaryEnabled ?? false"
         :summary-interval-minutes="home?.summaryIntervalMinutes ?? 360"
+        :widget-settings-states="widgetSettingsStates"
+        :summary-settings-state="summarySettingsState"
         @layout="updateLayout"
         @copy="copyWidget"
         @remove="removeWidget"

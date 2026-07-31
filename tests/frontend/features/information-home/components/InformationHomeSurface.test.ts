@@ -228,4 +228,61 @@ describe('InformationHomeSurface', () => {
     await flushPromises()
     wrapper.unmount()
   })
+
+  it('reports a widget change as saved only after system persistence succeeds', async () => {
+    Reflect.set(globalThis, '__TAURI_INTERNALS__', { transformCallback: vi.fn() })
+    homeService.getOrCreate.mockResolvedValue(ok(home))
+    homeService.listSummaries.mockResolvedValue(ok([]))
+    let resolveSave: (value: ReturnType<typeof ok>) => void = () => undefined
+    homeService.savePayload.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSave = resolve
+      }),
+    )
+    const { default: InformationHomeSurface } =
+      await import('@/features/information-home/components/InformationHomeSurface.vue')
+    const wrapper = mount(InformationHomeSurface, {
+      props: {
+        aiSettings: {} as never,
+        ensureAiSecretLoaded: vi.fn(async () => false),
+      },
+      global: {
+        stubs: {
+          InformationHomeGrid: {
+            name: 'InformationHomeGrid',
+            props: ['widgetSettingsStates'],
+            emits: ['updateSettings'],
+            template:
+              "<button data-test=\"persist-widget\" @click=\"$emit('updateSettings', 'home-widget-test', { title: '已持久化' })\">persist</button>",
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-test="persist-widget"]').trigger('click')
+    await flushPromises()
+    expect(
+      wrapper.getComponent({ name: 'InformationHomeGrid' }).props('widgetSettingsStates'),
+    ).toMatchObject({ 'home-widget-test': 'saving' })
+
+    resolveSave(
+      ok({
+        ...home,
+        payload: {
+          ...home.payload,
+          widgets: home.payload.widgets.map((widget) =>
+            widget.id === 'home-widget-test'
+              ? { ...widget, settings: { title: '已持久化' } }
+              : widget,
+          ),
+        },
+      }),
+    )
+    await flushPromises()
+    expect(
+      wrapper.getComponent({ name: 'InformationHomeGrid' }).props('widgetSettingsStates'),
+    ).toMatchObject({ 'home-widget-test': 'saved' })
+    wrapper.unmount()
+  })
 })

@@ -4,8 +4,10 @@ import {
   validateEmailAccountInput,
   type CreateEmailAccountInput,
   type EmailAccount,
+  type EmailBlockedSender,
   type EmailConnectionInput,
   type EmailProcessingStatus,
+  type EmailSenderBlockResult,
   type RemoteEmailMessage,
 } from '@/models/inbox/email'
 import { err, normalizeError, ok, type AppResult } from '@/models/shared/result'
@@ -143,6 +145,39 @@ export class EmailService {
     return this.repository.setMessageStatus(id, status)
   }
 
+  deleteMessage(id: string) {
+    return this.repository.deleteMessage(id)
+  }
+
+  listBlockedSenders(accountId?: string) {
+    return this.repository.listBlockedSenders(accountId)
+  }
+
+  async blockSender(
+    accountId: string,
+    senderAddress: string,
+  ): Promise<AppResult<EmailSenderBlockResult>> {
+    const normalized = normalizeSenderAddress(senderAddress)
+    if (!normalized)
+      return err({ code: 'validation-error', message: '该邮件没有可用于屏蔽的发件地址。' })
+    const sender: EmailBlockedSender = {
+      accountId,
+      senderAddress: normalized,
+      createdAt: this.now(),
+    }
+    const blocked = await this.repository.blockSender(sender)
+    return blocked.ok ? ok({ sender, removedCount: blocked.value }) : blocked
+  }
+
+  unblockSender(accountId: string, senderAddress: string) {
+    const normalized = normalizeSenderAddress(senderAddress)
+    if (!normalized)
+      return Promise.resolve(
+        err({ code: 'validation-error', message: '该屏蔽来源的发件地址无效。' }),
+      )
+    return this.repository.unblockSender(accountId, normalized)
+  }
+
   updateCategory(id: string, sourceCategory: string) {
     const normalized = sourceCategory.trim()
     if (!normalized || normalized.length > 80)
@@ -151,6 +186,11 @@ export class EmailService {
       )
     return this.repository.updateCategory(id, normalized, this.now())
   }
+}
+
+function normalizeSenderAddress(value: string): string {
+  const normalized = value.trim().toLocaleLowerCase()
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) && normalized.length <= 320 ? normalized : ''
 }
 
 function toConnectionInput(input: CreateEmailAccountInput): EmailConnectionInput {

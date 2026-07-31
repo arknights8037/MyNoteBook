@@ -137,6 +137,10 @@
   background: var(--color-status-warning);
 }
 
+.ui-toast--warning {
+  border-left-color: var(--color-status-warning);
+}
+
 .save-status--saving .save-status__dot {
   background: var(--color-status-info);
 }

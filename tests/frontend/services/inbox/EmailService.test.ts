@@ -82,6 +82,35 @@ describe('EmailService', () => {
       updatedAt: 30,
     })
   })
+
+  it('normalizes and persists a sender block through the repository', async () => {
+    const repository = createRepository()
+    repository.blockSender.mockResolvedValue(ok(3))
+    const service = new EmailService(
+      repository,
+      () => 'unused',
+      () => 40,
+    )
+
+    const result = await service.blockSender('email-account-1', ' Alice@Example.COM ')
+
+    expect(repository.blockSender).toHaveBeenCalledWith({
+      accountId: 'email-account-1',
+      senderAddress: 'alice@example.com',
+      createdAt: 40,
+    })
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        sender: {
+          accountId: 'email-account-1',
+          senderAddress: 'alice@example.com',
+          createdAt: 40,
+        },
+        removedCount: 3,
+      },
+    })
+  })
 })
 
 function createRepository() {
@@ -94,6 +123,10 @@ function createRepository() {
     upsertMessages: vi.fn(async (_account, messages) => ok(messages.length)),
     listMessages: vi.fn(async () => ok([])),
     setMessageStatus: vi.fn(),
+    deleteMessage: vi.fn(async () => ok(undefined)),
+    listBlockedSenders: vi.fn(async () => ok([])),
+    blockSender: vi.fn(async () => ok(0)),
+    unblockSender: vi.fn(async () => ok(undefined)),
     updateCategory: vi.fn(),
   } satisfies EmailRepository
 }

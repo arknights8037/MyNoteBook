@@ -52,6 +52,21 @@ describe('TauriEmailRepository', () => {
         'utf8',
       ),
     )
+    client.database.exec(
+      readFileSync(
+        join(process.cwd(), 'src-tauri/migrations/0044_add_email_sender_blocks.sql'),
+        'utf8',
+      ),
+    )
+    client.database.exec(
+      readFileSync(
+        join(
+          process.cwd(),
+          'src-tauri/migrations/0045_cleanup_messages_after_email_sender_block.sql',
+        ),
+        'utf8',
+      ),
+    )
     const repository = new TauriEmailRepository(client)
     expect(
       client.database
@@ -129,6 +144,31 @@ describe('TauriEmailRepository', () => {
       ok: true,
       value: { lastSyncedAt: 5, syncCursorAt: 2, lastRemoteUid: 42 },
     })
+    expect(
+      await repository.blockSender({
+        accountId: account.id,
+        senderAddress: 'alice@example.com',
+        createdAt: 6,
+      }),
+    ).toEqual({ ok: true, value: 1 })
+    expect(await repository.listBlockedSenders()).toMatchObject({
+      ok: true,
+      value: [{ accountId: account.id, senderAddress: 'alice@example.com' }],
+    })
+    expect(await repository.upsertMessages(account, [remote], 7)).toEqual({ ok: true, value: 0 })
+    expect(await repository.listMessages()).toEqual({ ok: true, value: [] })
+    expect(await repository.unblockSender(account.id, 'alice@example.com')).toEqual({
+      ok: true,
+      value: undefined,
+    })
+    expect(await repository.upsertMessages(account, [remote], 8)).toEqual({ ok: true, value: 1 })
+    const restored = await repository.listMessages()
+    if (!restored.ok) throw new Error('expected restored message')
+    expect(await repository.deleteMessage(restored.value[0]!.id)).toEqual({
+      ok: true,
+      value: undefined,
+    })
+    expect(await repository.listMessages()).toEqual({ ok: true, value: [] })
     await repository.deleteAccount(account.id)
     expect(await repository.listMessages()).toEqual({ ok: true, value: [] })
   })

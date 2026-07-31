@@ -36,6 +36,7 @@ const selectedId = ref('')
 const loading = ref(false)
 const syncing = ref(false)
 const categoryFilter = ref('all')
+const sourceFilter = ref('all')
 const extractingId = ref('')
 const generatingSummary = ref(false)
 const error = ref('')
@@ -44,6 +45,8 @@ const summaries = ref<InformationHomeSummary[]>([])
 let servicePromise: Promise<RssService> | null = null
 let homeServicePromise: Promise<InformationHomeService> | null = null
 let unlistenSignalAgent: UnlistenFn | null = null
+let lastSignalUpdateAt = 0
+let loadRevision = 0
 
 const service = () => (servicePromise ??= createRssService())
 const homeService = () => (homeServicePromise ??= createInformationHomeService())
@@ -61,17 +64,21 @@ const automaticSummaryDue = computed(
     Date.now() - rssInsight.value.summary.generatedAt >= home.value.summaryIntervalMinutes * 60_000,
 )
 const visibleEntries = computed(() =>
-  categoryFilter.value === 'all'
-    ? entries.value
-    : entries.value.filter(
-        (entry) =>
-          sources.value.find((source) => source.id === entry.sourceId)?.sourceCategory ===
-          categoryFilter.value,
-      ),
+  entries.value.filter((entry) => {
+    const source = sources.value.find((candidate) => candidate.id === entry.sourceId)
+    return (
+      (categoryFilter.value === 'all' || source?.sourceCategory === categoryFilter.value) &&
+      (sourceFilter.value === 'all' || entry.sourceId === sourceFilter.value)
+    )
+  }),
 )
 const categoryOptions = computed(() => [
   'all',
-  ...new Set(sources.value.map((source) => source.sourceCategory)),
+  ...new Set(sources.value.map((source) => source.sourceCategory).filter(Boolean)),
+])
+const sourceOptions = computed(() => [
+  { value: 'all', label: '全部来源' },
+  ...sources.value.map((source) => ({ value: source.id, label: source.displayName })),
 ])
 const selected = computed(
   () => visibleEntries.value.find((entry) => entry.id === selectedId.value) ?? null,
@@ -101,9 +108,10 @@ const latestCursorAt = computed(() =>
   ),
 )
 
-async function load(): Promise<void> {
+async function load(options: { silent?: boolean } = {}): Promise<void> {
   if (!native) return
-  loading.value = true
+  const revision = ++loadRevision
+  if (!options.silent) loading.value = true
   error.value = ''
   const [sourceResult, entryResult, homeResult, summaryResult] = await Promise.all([
     (await service()).listSources(),
@@ -114,6 +122,7 @@ async function load(): Promise<void> {
     (await homeService()).getOrCreate(),
     (await homeService()).listSummaries(20),
   ])
+  if (revision !== loadRevision) return
   loading.value = false
   if (!sourceResult.ok) return void (error.value = sourceResult.error.message)
   if (!entryResult.ok) return void (error.value = entryResult.error.message)
@@ -140,7 +149,7 @@ async function syncAll(): Promise<void> {
       if (result.ok) imported += result.value
       else syncError = result.error.message
     }
-    await load()
+    await load({ silent: true })
     if (home.value?.autoSummaryEnabled && imported > 0 && automaticSummaryDue.value)
       await generateRssSummary('auto', refreshStartedAt, imported)
     if (syncError) error.value = syncError
@@ -185,9 +194,20 @@ async function toggleAutoSummary(): Promise<void> {
 async function openHotEntry(entryId: string): Promise<void> {
   if (!visibleEntries.value.some((entry) => entry.id === entryId)) {
     categoryFilter.value = 'all'
+    sourceFilter.value = 'all'
     await nextTick()
   }
   selectedId.value = entryId
+}
+
+function selectCategory(category: string): void {
+  categoryFilter.value = category
+  sourceFilter.value = 'all'
+}
+
+function selectSource(sourceId: string): void {
+  sourceFilter.value = sourceId
+  categoryFilter.value = 'all'
 }
 
 async function setStatus(entry: RssEntry, status: RssProcessingStatus): Promise<void> {
@@ -276,7 +296,10 @@ onMounted(async () => {
     }>('signal-agent://changed', ({ payload }) => {
       if (typeof payload.queuedCount === 'number' && typeof payload.runningCount === 'number')
         generatingSummary.value = payload.queuedCount + payload.runningCount > 0
-      if (payload.latestUpdateAt) void load()
+      if (payload.latestUpdateAt && payload.latestUpdateAt > lastSignalUpdateAt) {
+        lastSignalUpdateAt = payload.latestUpdateAt
+        void load({ silent: true })
+      }
     })
 })
 onBeforeUnmount(() => unlistenSignalAgent?.())
@@ -291,7 +314,7 @@ watch(
       selectedId.value = targetId
   },
 )
-watch(categoryFilter, () => {
+watch([categoryFilter, sourceFilter], () => {
   selectedId.value = visibleEntries.value[0]?.id ?? ''
 })
 </script>
@@ -369,23 +392,49 @@ watch(categoryFilter, () => {
             @click="openHotEntry(item.entryId)"
           >
             <span>{{ item.title }}</span
-            ><small>{{ item.reason }}</small>
+            ><small
+              ><strong>{{ sourceName(item.entry?.sourceId ?? '') }}</strong> ·
+              {{ item.reason }}</small
+            >
           </button>
         </div>
       </div>
       <p v-else>尚无 RSS 速览。可立即生成；开启自动总结后，新条目同步完成时会自动研判。</p>
     </section>
-    <nav v-if="categoryOptions.length > 2" class="inbox-source-filters" aria-label="RSS 来源分类">
-      <button
-        v-for="category in categoryOptions"
-        :key="category"
-        type="button"
-        :class="{ 'is-active': categoryFilter === category }"
-        @click="categoryFilter = category"
+    <section
+      v-if="categoryOptions.length > 2 || sourceOptions.length > 2"
+      class="rss-source-filter-panel"
+      aria-label="RSS 条目筛选"
+    >
+      <nav
+        v-if="categoryOptions.length > 2"
+        class="inbox-source-filters"
+        aria-label="按来源分类筛选"
       >
-        {{ category === 'all' ? '全部来源' : category }}
-      </button>
-    </nav>
+        <strong>分类</strong>
+        <button
+          v-for="category in categoryOptions"
+          :key="category"
+          type="button"
+          :class="{ 'is-active': categoryFilter === category }"
+          @click="selectCategory(category)"
+        >
+          {{ category === 'all' ? '全部分类' : category }}
+        </button>
+      </nav>
+      <nav v-if="sourceOptions.length > 2" class="inbox-source-filters" aria-label="按订阅源筛选">
+        <strong>来源</strong>
+        <button
+          v-for="source in sourceOptions"
+          :key="source.value"
+          type="button"
+          :class="{ 'is-active': sourceFilter === source.value }"
+          @click="selectSource(source.value)"
+        >
+          {{ source.label }}
+        </button>
+      </nav>
+    </section>
     <div v-if="loading" class="inbox-empty-state"><span>正在读取本地 RSS…</span></div>
     <div v-else-if="!sources.length" class="inbox-empty-state">
       <span class="inbox-empty-state__icon"><Rss :size="25" /></span>
@@ -433,8 +482,11 @@ watch(categoryFilter, () => {
             <div class="email-message-detail__sender">
               <span><Rss :size="15" /></span>
               <p>
-                <strong>{{ selected.author || selectedSource?.displayName || 'RSS 来源' }}</strong
-                ><small>{{ selectedSource?.siteUrl || selectedSource?.feedUrl }}</small>
+                <strong>{{ selectedSource?.displayName || 'RSS 来源' }}</strong
+                ><small
+                  >{{ selectedSource?.sourceCategory || '未分类'
+                  }}<template v-if="selected.author"> · 作者 {{ selected.author }}</template></small
+                >
               </p>
             </div>
           </div>
@@ -488,6 +540,10 @@ watch(categoryFilter, () => {
           </dd>
           <dt>来源</dt>
           <dd>{{ selectedSource?.displayName || 'RSS' }}</dd>
+          <dt>来源分类</dt>
+          <dd>{{ selectedSource?.sourceCategory || '未分类' }}</dd>
+          <dt>订阅地址</dt>
+          <dd>{{ selectedSource?.feedUrl || '—' }}</dd>
           <dt>作者</dt>
           <dd>{{ selected.author || '—' }}</dd>
           <dt>发布时间</dt>
