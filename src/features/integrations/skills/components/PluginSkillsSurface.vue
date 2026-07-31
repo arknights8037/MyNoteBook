@@ -12,6 +12,7 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  Laptop,
   MessageCircle,
   PackagePlus,
   Plus,
@@ -44,6 +45,7 @@ import type { McpClientPort } from '@/services/ports/McpClientPort'
 import EmailAccountPanel from '@/features/integrations/email/components/EmailAccountPanel.vue'
 import RssSourcePanel from '@/features/integrations/rss/components/RssSourcePanel.vue'
 import DingTalkConnectorPanel from '@/features/integrations/dingtalk/components/DingTalkConnectorPanel.vue'
+import LocalEnvironmentPanel from '@/features/integrations/environment/components/LocalEnvironmentPanel.vue'
 import SurfaceTitleBar from '@/features/workspace/components/SurfaceTitleBar.vue'
 import { getWorkspaceSectionMeta } from '@/features/workspace/workspaceSections'
 
@@ -60,9 +62,9 @@ const fileContent = ref('')
 const fileDraft = ref('')
 const query = ref('')
 const filter = ref<'all' | 'enabled' | 'invalid'>('all')
-const activeTab = defineModel<'connections' | 'skills' | 'mcp' | 'mcp-server' | 'builtin'>('tab', {
-  default: 'connections',
-})
+const activeTab = defineModel<
+  'connections' | 'environment' | 'skills' | 'mcp' | 'mcp-server' | 'builtin'
+>('tab', { default: 'connections' })
 const filterOptions: Array<{ value: 'all' | 'enabled' | 'invalid'; label: string }> = [
   { value: 'all', label: '全部' },
   { value: 'enabled', label: '已启用' },
@@ -100,6 +102,12 @@ const extensionTabs = computed(() => [
     label: '连接器',
     count: null,
     icon: Cable,
+  },
+  {
+    id: 'environment' as const,
+    label: '本地环境',
+    count: null,
+    icon: Laptop,
   },
   {
     id: 'skills' as const,
@@ -390,6 +398,26 @@ onMounted(() => void loadSkills())
     </SurfaceTitleBar>
 
     <div class="plugin-skills-page__content">
+      <section class="extension-context-card" aria-label="当前扩展区域说明">
+        <div>
+          <span><component :is="activeMeta.icon" :size="19" /></span>
+          <div>
+            <small>连接与扩展 / {{ activeMeta.label }}</small>
+            <strong>{{ activeMeta.description }}</strong>
+          </div>
+        </div>
+        <p>
+          {{
+            activeTab === 'connections'
+              ? '先连接信息来源，再到统一收件箱处理新内容。'
+              : activeTab === 'environment'
+                ? '确认 Agent、MCP 与工具链实际继承的本机运行上下文。'
+                : activeTab === 'skills'
+                  ? '启用的 Skill 会在下一次 Agent 任务中生效。'
+                  : '变更只影响当前设备，可随时返回这里检查状态。'
+          }}
+        </p>
+      </section>
       <nav v-if="!contextNavigation" class="surface-tabs" role="tablist" aria-label="扩展类型">
         <button
           v-for="tab in extensionTabs"
@@ -431,6 +459,7 @@ onMounted(() => void loadSkills())
           <button type="button" @click="activeTab = 'mcp'">打开 MCP Client</button>
         </aside>
       </section>
+      <LocalEnvironmentPanel v-else-if="activeTab === 'environment'" />
       <McpServersPanel v-else-if="activeTab === 'mcp'" ref="mcpPanel" :client="mcpClient" />
       <McpServerExposurePanel
         v-else-if="activeTab === 'mcp-server'"

@@ -19,6 +19,18 @@ const rssService = vi.hoisted(() => ({
   listSources: vi.fn(async () => ({ ok: true, value: [] })),
   listEntries: vi.fn(async () => ({ ok: true, value: [] })),
 }))
+const tauriEvent = vi.hoisted(() => ({
+  listener: null as null | ((event: { payload: Record<string, unknown> }) => void),
+  listen: vi.fn(),
+  unlisten: vi.fn(),
+}))
+
+tauriEvent.listen.mockImplementation(
+  async (_eventName: string, listener: (event: { payload: Record<string, unknown> }) => void) => {
+    tauriEvent.listener = listener
+    return tauriEvent.unlisten
+  },
+)
 
 vi.mock('@/app/composition/informationHomeServiceFactory', () => ({
   createInformationHomeService: vi.fn(async () => homeService),
@@ -29,12 +41,17 @@ vi.mock('@/app/composition/emailServiceFactory', () => ({
 vi.mock('@/app/composition/rssServiceFactory', () => ({
   createRssService: vi.fn(async () => rssService),
 }))
+vi.mock('@tauri-apps/api/event', () => ({ listen: tauriEvent.listen }))
 
 describe('InformationHomeSurface', () => {
-  afterEach(() => Reflect.deleteProperty(globalThis, '__TAURI_INTERNALS__'))
+  afterEach(() => {
+    tauriEvent.listener = null
+    vi.clearAllMocks()
+    Reflect.deleteProperty(globalThis, '__TAURI_INTERNALS__')
+  })
 
   it('keeps management actions in the menu and only save/cancel at the bottom', async () => {
-    Reflect.set(globalThis, '__TAURI_INTERNALS__', {})
+    Reflect.set(globalThis, '__TAURI_INTERNALS__', { transformCallback: vi.fn() })
     homeService.getOrCreate.mockResolvedValue(ok(home))
     homeService.listSummaries.mockResolvedValue(ok([]))
     const { default: InformationHomeSurface } =
@@ -90,7 +107,7 @@ describe('InformationHomeSurface', () => {
   })
 
   it('enters a reversible edit session when a widget requests removal', async () => {
-    Reflect.set(globalThis, '__TAURI_INTERNALS__', {})
+    Reflect.set(globalThis, '__TAURI_INTERNALS__', { transformCallback: vi.fn() })
     homeService.getOrCreate.mockResolvedValue(ok(home))
     homeService.listSummaries.mockResolvedValue(ok([]))
     const { default: InformationHomeSurface } =
@@ -123,7 +140,7 @@ describe('InformationHomeSurface', () => {
   })
 
   it('commits the final grid layout into the controlled draft', async () => {
-    Reflect.set(globalThis, '__TAURI_INTERNALS__', {})
+    Reflect.set(globalThis, '__TAURI_INTERNALS__', { transformCallback: vi.fn() })
     homeService.getOrCreate.mockResolvedValue(ok(home))
     homeService.listSummaries.mockResolvedValue(ok([]))
     const { default: InformationHomeSurface } =
@@ -167,6 +184,48 @@ describe('InformationHomeSurface', () => {
       .props('widgets') as typeof home.payload.widgets
     expect(compactWidgets[0]?.layout.compact).toMatchObject({ x: 0, w: 6, h: 6 })
     expect(wrapper.find('.information-home-controls').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('refreshes mutations in the background without unmounting the home grid', async () => {
+    Reflect.set(globalThis, '__TAURI_INTERNALS__', { transformCallback: vi.fn() })
+    homeService.getOrCreate.mockResolvedValue(ok(home))
+    homeService.listSummaries.mockResolvedValue(ok([]))
+    const { default: InformationHomeSurface } =
+      await import('@/features/information-home/components/InformationHomeSurface.vue')
+    const wrapper = mount(InformationHomeSurface, {
+      props: {
+        aiSettings: {} as never,
+        ensureAiSecretLoaded: vi.fn(async () => false),
+      },
+      global: {
+        stubs: {
+          InformationHomeGrid: { template: '<div data-test="home-grid" />' },
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(tauriEvent.listener).toBeTypeOf('function')
+    tauriEvent.listener?.({ payload: { toolName: 'read_personal_organizer' } })
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 150))
+    expect(homeService.getOrCreate).toHaveBeenCalledTimes(1)
+
+    let resolveReload: (value: unknown) => void = () => undefined
+    const pendingReload = new Promise((resolve) => {
+      resolveReload = resolve
+    })
+    homeService.getOrCreate.mockReturnValueOnce(pendingReload)
+    tauriEvent.listener?.({ payload: { toolName: 'upsert_personal_todo' } })
+    tauriEvent.listener?.({ payload: { toolName: 'upsert_personal_todo' } })
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 150))
+
+    expect(homeService.getOrCreate).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[data-test="home-grid"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('正在加载信息首页')
+
+    resolveReload(ok(home))
+    await flushPromises()
     wrapper.unmount()
   })
 })

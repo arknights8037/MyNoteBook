@@ -16,6 +16,7 @@ import {
 } from '@/models/home/informationHome'
 import { publishSignalRefresh } from '@/services/agent/SignalAgentService'
 import type { InformationHomeService } from '@/services/home/InformationHomeService'
+import { findLatestRssInsight } from '@/services/inbox/RssInsightService'
 import {
   getInformationHomeWidgetDefinition,
   INFORMATION_HOME_WIDGET_REGISTRY,
@@ -31,6 +32,12 @@ const props = defineProps<{
 const emit = defineEmits<{ openInbox: [section: 'email' | 'rss', id?: string] }>()
 
 const native = Reflect.has(globalThis, '__TAURI_INTERNALS__')
+const canListenToTauriEvents =
+  typeof Reflect.get(globalThis, '__TAURI_INTERNALS__') === 'object' &&
+  typeof Reflect.get(
+    Reflect.get(globalThis, '__TAURI_INTERNALS__') as object,
+    'transformCallback',
+  ) === 'function'
 const home = ref<InformationHome | null>(null)
 const draft = ref<InformationHomePayload>(createDefaultInformationHomePayload(createId))
 const summaries = ref<InformationHomeSummary[]>([])
@@ -47,27 +54,41 @@ const error = ref('')
 let servicePromise: Promise<InformationHomeService> | null = null
 let unlistenSignalAgent: UnlistenFn | null = null
 let lastSignalUpdateAt: number | null = null
+let silentRefreshTimer: ReturnType<typeof globalThis.setTimeout> | null = null
 let settingsSaveQueue = Promise.resolve()
 let pendingSettingsSaves = 0
 
+const HOME_MUTATION_TOOLS = new Set(['upsert_personal_todo', 'upsert_personal_calendar_event'])
+
 const service = () => (servicePromise ??= createInformationHomeService())
 const latestSummary = computed(() => summaries.value[0] ?? null)
+const latestRssSummary = computed(
+  () => summaries.value.find((summary) => findLatestRssInsight([summary]) !== null) ?? null,
+)
 const dirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(home.value?.payload))
 
-async function load(): Promise<void> {
+async function load(showLoading = true): Promise<void> {
   if (!native) return
-  loading.value = true
+  if (showLoading) loading.value = true
   error.value = ''
   const [homeResult, summaryResult] = await Promise.all([
     (await service()).getOrCreate(),
     (await service()).listSummaries(20),
   ])
-  loading.value = false
+  if (showLoading) loading.value = false
   if (!homeResult.ok) return void (error.value = homeResult.error.message)
   if (!summaryResult.ok) return void (error.value = summaryResult.error.message)
   home.value = homeResult.value
   summaries.value = summaryResult.value
   if (!editing.value || !dirty.value) draft.value = clone(homeResult.value.payload)
+}
+
+function scheduleSilentRefresh(): void {
+  if (silentRefreshTimer != null) return
+  silentRefreshTimer = globalThis.setTimeout(() => {
+    silentRefreshTimer = null
+    void load(false)
+  }, 120)
 }
 
 function beginEdit(): void {
@@ -333,7 +354,7 @@ function clone<T>(value: T): T {
 
 onMounted(async () => {
   await load()
-  if (native)
+  if (canListenToTauriEvents)
     unlistenSignalAgent = await listen<{
       latestUpdateAt?: number
       queuedCount?: number
@@ -342,13 +363,17 @@ onMounted(async () => {
     }>('signal-agent://changed', ({ payload }) => {
       if (typeof payload.queuedCount === 'number' && typeof payload.runningCount === 'number')
         generatingSummary.value = payload.queuedCount + payload.runningCount > 0
-      if (payload.toolName) return void load()
+      if (payload.toolName) {
+        if (HOME_MUTATION_TOOLS.has(payload.toolName)) scheduleSilentRefresh()
+        return
+      }
       if (!payload.latestUpdateAt || payload.latestUpdateAt === lastSignalUpdateAt) return
       lastSignalUpdateAt = payload.latestUpdateAt
-      void load()
+      scheduleSilentRefresh()
     })
 })
 onBeforeUnmount(() => {
+  if (silentRefreshTimer != null) globalThis.clearTimeout(silentRefreshTimer)
   unlistenSignalAgent?.()
 })
 </script>
@@ -464,7 +489,8 @@ onBeforeUnmount(() => {
       <InformationHomeGrid
         :widgets="draft.widgets"
         :editing="editing"
-        :summary="latestSummary"
+        :summaries="summaries"
+        :rss-summary="latestRssSummary"
         :generating-summary="generatingSummary"
         :auto-summary-enabled="home?.autoSummaryEnabled ?? false"
         :summary-interval-minutes="home?.summaryIntervalMinutes ?? 360"

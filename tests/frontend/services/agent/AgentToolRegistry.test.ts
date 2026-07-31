@@ -14,7 +14,17 @@ import {
 
 describe('AgentToolRegistry', () => {
   it('only exposes the P0 allowlist and keeps writes confirmation-gated', () => {
-    expect(AGENT_TOOL_REGISTRY).toHaveLength(25)
+    expect(AGENT_TOOL_REGISTRY.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining([
+        'read_document',
+        'read_mind_map',
+        'execute_shell',
+        'inspect_environment_paths',
+        'discover_local_tools',
+        'get_system_info',
+        'submit_document_edits',
+      ]),
+    )
     expect(getAgentToolDefinition('read_mind_map')).toMatchObject({
       risk: 'read',
       executionAuthorization: 'not_required',

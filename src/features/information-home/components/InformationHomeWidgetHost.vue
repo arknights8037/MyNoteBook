@@ -15,13 +15,15 @@ import CalendarHomeWidget from './CalendarHomeWidget.vue'
 import EmailActionsHomeWidget from './EmailActionsHomeWidget.vue'
 import RssNewsHomeWidget from './RssNewsHomeWidget.vue'
 import TodoListHomeWidget from './TodoListHomeWidget.vue'
+import LocalEnvironmentPanel from '@/features/integrations/environment/components/LocalEnvironmentPanel.vue'
 
 type BrowserMouseEvent = InstanceType<typeof globalThis.MouseEvent>
 
 const props = defineProps<{
   widget: InformationHomeWidget
   editing: boolean
-  summary: InformationHomeSummary | null
+  summaries: InformationHomeSummary[]
+  rssSummary?: InformationHomeSummary | null
   generatingSummary: boolean
   autoSummaryEnabled: boolean
   summaryIntervalMinutes: number
@@ -40,6 +42,7 @@ const emit = defineEmits<{
 
 const emailWidget = ref<InstanceType<typeof EmailActionsHomeWidget> | null>(null)
 const rssWidget = ref<InstanceType<typeof RssNewsHomeWidget> | null>(null)
+const environmentWidget = ref<InstanceType<typeof LocalEnvironmentPanel> | null>(null)
 const refreshing = ref(false)
 const renderError = ref('')
 const metrics = ref<Array<{ value: number; label: string }>>([])
@@ -70,6 +73,7 @@ function refresh(): void {
   renderError.value = ''
   if (props.widget.widgetType === 'email-actions') void emailWidget.value?.refresh()
   if (props.widget.widgetType === 'rss-news') void rssWidget.value?.refresh()
+  if (props.widget.widgetType === 'local-environment') void environmentWidget.value?.refresh()
 }
 
 function selectSize(size: { w: number; h: number }, close = true): void {
@@ -146,6 +150,7 @@ function removeWidget(): void {
       v-else-if="widget.widgetType === 'email-actions'"
       ref="emailWidget"
       :limit="widget.query.limit"
+      :summaries="summaries"
       @open="emit('openEmail', $event)"
       @refreshing="refreshing = $event"
       @metrics="updateMetrics"
@@ -154,19 +159,21 @@ function removeWidget(): void {
       v-else-if="widget.widgetType === 'rss-news'"
       ref="rssWidget"
       :limit="widget.query.limit"
+      :summary="rssSummary ?? null"
       @open="emit('openRss', $event)"
       @refreshing="refreshing = $event"
       @metrics="updateMetrics"
     />
     <AgentSummaryHomeWidget
       v-else-if="widget.widgetType === 'agent-summary'"
-      :summary="summary"
+      :summaries="summaries"
       :generating="generatingSummary"
       :auto-enabled="autoSummaryEnabled"
       :interval-minutes="summaryIntervalMinutes"
       @generate="emit('generateSummary')"
       @toggle-auto="emit('toggleAutoSummary')"
       @change-interval="emit('changeSummaryInterval')"
+      @open-email="emit('openEmail', $event)"
     />
     <TodoListHomeWidget
       v-else-if="widget.widgetType === 'todo-list'"
@@ -176,12 +183,13 @@ function removeWidget(): void {
       @update="emit('updateSettings', { ...widget.settings, todos: $event })"
     />
     <CalendarHomeWidget
-      v-else
+      v-else-if="widget.widgetType === 'calendar'"
       :events="calendarEvents"
       :editing="editing"
       @metrics="updateMetrics"
       @update="emit('updateSettings', { ...widget.settings, events: $event })"
     />
+    <LocalEnvironmentPanel v-else ref="environmentWidget" compact />
   </DashboardWidgetFrame>
   <Teleport to="body">
     <div

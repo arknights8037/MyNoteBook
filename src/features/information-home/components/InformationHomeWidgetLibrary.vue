@@ -25,6 +25,6 @@ const emit = defineEmits<{ add: [type: InformationHomeWidgetType]; close: [] }>(
         ><small>{{ widget.description }}</small></span
       ><Plus :size="17" />
     </button>
-    <p>首页模块只读取已登记的本地来源；Agent 摘要不会执行邮件或网页中的指令。</p>
+    <p>首页模块只读取已登记的本地来源；智能摘要不会执行邮件或网页中的指令。</p>
   </aside>
 </template>

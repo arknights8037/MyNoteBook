@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import { BookOpenCheck, Database, ListChecks, ShieldCheck } from '@lucide/vue'
+import {
+  BookOpenCheck,
+  CheckCircle2,
+  Clock3,
+  Database,
+  ListChecks,
+  RefreshCw,
+  Route,
+  ShieldCheck,
+} from '@lucide/vue'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { computed, onMounted, ref } from 'vue'
 
@@ -72,6 +81,14 @@ const activeTab = defineModel<'knowledge' | 'assets' | 'views' | 'tasks'>('tab',
   default: 'assets',
 })
 const activeMeta = computed(() => getWorkspaceSectionMeta('knowledge', activeTab.value))
+const effectiveObjectCount = computed(
+  () =>
+    objects.value.filter((item) => item.status === 'active' || item.status === 'approved').length,
+)
+const pendingObjectCount = computed(
+  () =>
+    objects.value.filter((item) => item.status === 'candidate' || item.status === 'draft').length,
+)
 const cliExportPath = ref('')
 const cliSubmissionPath = ref('')
 const cliCapabilityToken = ref('')
@@ -325,6 +342,37 @@ onMounted(load)
     <SurfaceTitleBar :title="activeMeta.label" :icon="activeMeta.icon" />
     <div class="operations-page__content p1-domain-grid">
       <p v-if="error" class="operations-error" role="alert">{{ error }}</p>
+      <section class="knowledge-control-overview" aria-label="知识控制概览">
+        <div class="knowledge-control-overview__intro">
+          <span><Route :size="20" /></span>
+          <div>
+            <small>知识工作流 / {{ activeMeta.label }}</small>
+            <strong>{{ activeMeta.description }}</strong>
+            <p>从原始资料到可执行规则，每一步都保留来源与人工确认边界。</p>
+          </div>
+          <button type="button" :disabled="loading" @click="load">
+            <RefreshCw :size="14" :class="{ 'is-spinning': loading }" />刷新
+          </button>
+        </div>
+        <div class="knowledge-control-overview__metrics">
+          <span
+            ><Database :size="15" /><strong>{{ assets.length }}</strong
+            ><small>来源资产</small></span
+          >
+          <span
+            ><CheckCircle2 :size="15" /><strong>{{ effectiveObjectCount }}</strong
+            ><small>已确认知识</small></span
+          >
+          <span
+            ><Clock3 :size="15" /><strong>{{ pendingObjectCount }}</strong
+            ><small>等待确认</small></span
+          >
+          <span
+            ><BookOpenCheck :size="15" /><strong>{{ views.length }}</strong
+            ><small>智能视图</small></span
+          >
+        </div>
+      </section>
       <nav v-if="!contextNavigation" class="surface-tabs" role="tablist" aria-label="知识中心功能">
         <button
           type="button"

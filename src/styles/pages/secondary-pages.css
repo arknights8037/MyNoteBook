@@ -104,6 +104,380 @@
   padding: 20px 0 64px;
 }
 
+.extension-context-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 11px;
+  padding: 13px 15px;
+  background:
+    linear-gradient(
+      110deg,
+      color-mix(in srgb, var(--color-agent-accent) 7%, transparent),
+      transparent 60%
+    ),
+    var(--color-bg-elevated);
+}
+
+.extension-context-card > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+}
+
+.extension-context-card > div > span {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--color-agent-accent);
+  background: var(--color-agent-thinking-bg);
+}
+
+.extension-context-card > div > div {
+  display: grid;
+  gap: 3px;
+}
+
+.extension-context-card small,
+.extension-context-card p {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+}
+
+.extension-context-card strong {
+  font-size: var(--font-size-body-large);
+}
+
+.extension-context-card p {
+  max-width: 360px;
+  margin: 0;
+  line-height: 1.55;
+  text-align: right;
+}
+
+.local-environment {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 12px;
+  padding: 18px;
+  background: var(--color-bg-elevated);
+}
+
+.local-environment__header,
+.local-environment__heading,
+.local-environment__header > button,
+.local-environment__identity > div,
+.local-environment__runtime-section > header,
+.local-environment__paths > header,
+.local-environment__runtimes article,
+.local-environment__paths article,
+.local-environment footer {
+  display: flex;
+  align-items: center;
+}
+
+.local-environment__header {
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.local-environment__heading {
+  min-width: 0;
+  gap: 11px;
+}
+
+.local-environment__heading > span {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--color-agent-accent);
+  background: var(--color-agent-thinking-bg);
+}
+
+.local-environment__heading h2,
+.local-environment__heading p {
+  margin: 0;
+}
+
+.local-environment__heading h2 {
+  font-size: var(--font-size-title-large);
+}
+
+.local-environment__heading p {
+  margin-top: 3px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-small);
+}
+
+.local-environment__header > button {
+  gap: 6px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 7px;
+  padding: 7px 9px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-elevated);
+  font: inherit;
+  font-size: var(--font-size-micro);
+  cursor: pointer;
+}
+
+.local-environment__identity {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 9px;
+  background: var(--color-bg-subtle);
+}
+
+.local-environment__identity > div {
+  min-width: 0;
+  gap: 9px;
+  padding: 10px 12px;
+  color: var(--color-agent-accent);
+}
+
+.local-environment__identity > div + div {
+  border-left: 1px solid var(--color-border-subtle);
+}
+
+.local-environment__identity span,
+.local-environment__runtime-section > header > div,
+.local-environment__paths > header > div,
+.local-environment__runtimes article > div,
+.local-environment__runtimes article > div > span,
+.local-environment__paths article > div,
+.local-environment__paths article > div > span {
+  display: grid;
+  min-width: 0;
+}
+
+.local-environment__identity small,
+.local-environment__runtime-section small,
+.local-environment__paths small {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+}
+
+.local-environment__identity strong {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-environment__runtime-section,
+.local-environment__paths {
+  display: grid;
+  gap: 9px;
+}
+
+.local-environment__runtime-section > header,
+.local-environment__paths > header {
+  justify-content: space-between;
+}
+
+.local-environment__runtime-section > header > div,
+.local-environment__paths > header > div {
+  gap: 2px;
+}
+
+.local-environment__runtime-section > header strong,
+.local-environment__paths > header strong {
+  font-size: var(--font-size-small);
+}
+
+.local-environment__runtimes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.local-environment__runtimes article {
+  min-width: 0;
+  align-items: flex-start;
+  gap: 9px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 9px;
+  padding: 11px;
+  background: var(--color-bg-subtle);
+}
+
+.local-environment__runtimes article > span {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--color-agent-accent);
+  background: var(--color-agent-thinking-bg);
+}
+
+.local-environment__runtimes article > div {
+  flex: 1;
+  gap: 4px;
+}
+
+.local-environment__runtimes article > div > span,
+.local-environment__paths article > div > span {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 7px;
+}
+
+.local-environment__runtimes article > div > span strong {
+  font-size: var(--font-size-small);
+}
+
+.local-environment__runtimes code,
+.local-environment__paths code {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-monospace, 'SFMono-Regular', Consolas, monospace);
+  font-size: var(--font-size-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-environment__runtimes article > button,
+.local-environment__paths article > button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  padding: 0;
+  color: var(--color-text-tertiary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.local-environment__runtimes article > button,
+.local-environment__paths article > button {
+  opacity: 0;
+}
+
+.local-environment__runtimes article:hover > button,
+.local-environment__paths article:hover > button,
+.local-environment__runtimes article > button:focus-visible,
+.local-environment__paths article > button:focus-visible {
+  opacity: 1;
+}
+
+.local-environment__runtimes article > button:hover,
+.local-environment__paths article > button:hover {
+  color: var(--color-agent-accent);
+  background: var(--color-agent-thinking-bg);
+}
+
+.local-environment__paths > div {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 9px;
+}
+
+.local-environment__paths article {
+  min-width: 0;
+  grid-template-columns: 12px minmax(0, 1fr) 28px;
+  align-items: start;
+  gap: 8px;
+  padding: 9px 11px;
+}
+
+.local-environment__paths article + article {
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.local-environment__paths article:hover {
+  background: var(--color-bg-subtle);
+}
+
+.local-environment__paths article > div {
+  gap: 4px;
+}
+
+.local-environment__paths article > div > span strong {
+  font-size: var(--font-size-small);
+}
+
+.local-environment__bullet {
+  width: 5px;
+  height: 5px;
+  margin: 7px auto 0;
+  border-radius: 50%;
+  background: var(--color-status-success);
+}
+
+.local-environment__state {
+  margin: 0;
+  padding: 20px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-small);
+  text-align: center;
+}
+
+.local-environment__state.is-error {
+  color: var(--color-status-error);
+}
+
+.local-environment footer {
+  gap: 6px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+}
+
+.local-environment--compact {
+  height: 100%;
+  align-content: start;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+
+.local-environment--compact .local-environment__runtimes {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 760px) {
+  .extension-context-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .extension-context-card p {
+    text-align: left;
+  }
+
+  .local-environment__identity {
+    grid-template-columns: 1fr;
+  }
+
+  .local-environment__identity > div + div {
+    border-top: 1px solid var(--color-border-subtle);
+    border-left: 0;
+  }
+
+  .local-environment__runtimes,
+  .local-environment--compact .local-environment__runtimes {
+    grid-template-columns: 1fr;
+  }
+}
+
 .connector-catalog {
   display: grid;
   gap: 14px;

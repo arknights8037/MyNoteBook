@@ -4,6 +4,7 @@ export type InformationHomeWidgetType =
   | 'agent-summary'
   | 'todo-list'
   | 'calendar'
+  | 'local-environment'
 
 export interface InformationHomeTodoItem {
   id: string
@@ -78,6 +79,7 @@ export const INFORMATION_HOME_WIDGET_TYPES = new Set<InformationHomeWidgetType>(
   'agent-summary',
   'todo-list',
   'calendar',
+  'local-environment',
 ])
 
 export function createDefaultInformationHomePayload(
@@ -91,6 +93,14 @@ export function createDefaultInformationHomePayload(
       createWidget(createId, 'agent-summary', {
         x: 0,
         y: 5,
+        w: 12,
+        h: 4,
+        minW: 6,
+        minH: 3,
+      }),
+      createWidget(createId, 'local-environment', {
+        x: 0,
+        y: 9,
         w: 12,
         h: 4,
         minW: 6,
@@ -166,6 +176,7 @@ export function defaultWidgetSize(type: InformationHomeWidgetType) {
   if (type === 'rss-news') return { w: 7, h: 5, minW: 4, minH: 3 }
   if (type === 'agent-summary') return { w: 12, h: 4, minW: 6, minH: 3 }
   if (type === 'todo-list') return { w: 5, h: 5, minW: 4, minH: 3 }
+  if (type === 'local-environment') return { w: 12, h: 4, minW: 6, minH: 3 }
   return { w: 7, h: 6, minW: 5, minH: 5 }
 }
 

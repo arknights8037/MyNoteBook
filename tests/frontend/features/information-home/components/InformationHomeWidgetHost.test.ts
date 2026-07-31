@@ -26,7 +26,7 @@ describe('InformationHomeWidgetHost', () => {
       props: {
         widget,
         editing: true,
-        summary: null,
+        summaries: [],
         generatingSummary: false,
         autoSummaryEnabled: false,
         summaryIntervalMinutes: 360,
@@ -107,7 +107,7 @@ describe('InformationHomeWidgetHost', () => {
       props: {
         widget,
         editing: false,
-        summary: null,
+        summaries: [],
         generatingSummary: false,
         autoSummaryEnabled: false,
         summaryIntervalMinutes: 360,

@@ -91,6 +91,7 @@ mod document_core;
 mod domain_events;
 mod email;
 mod governance;
+mod local_environment;
 mod mcp;
 pub mod mcp_server_exposure;
 mod reliability;
@@ -164,6 +165,7 @@ pub fn run() {
         .manage(workflow_timers::DurableTimerSchedulerState::default())
         .invoke_handler(tauri::generate_handler![
             storage::get_system_fonts,
+            local_environment::get_local_environment_snapshot,
             storage::get_default_data_directory,
             database::prepare_database,
             database_mutations::execute_database_mutation,

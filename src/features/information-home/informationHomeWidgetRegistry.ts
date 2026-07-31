@@ -25,9 +25,9 @@ export const INFORMATION_HOME_WIDGET_REGISTRY: readonly InformationHomeWidgetDef
   },
   {
     type: 'agent-summary',
-    title: 'Agent 信息摘要',
-    description: '将当前邮件事项和 RSS 新闻整理成只读行动摘要。',
-    source: '本地信号 + 当前 AI Provider',
+    title: '智能事件摘要',
+    description: '汇总系统事件处理结果，并提供原始条目的定位入口。',
+    source: '本地事件处理结果',
     defaultSize: { w: 12, h: 4, minW: 6, minH: 3 },
   },
   {
@@ -43,6 +43,13 @@ export const INFORMATION_HOME_WIDGET_REGISTRY: readonly InformationHomeWidgetDef
     description: '按月查看并维护信息首页中的本地日程。',
     source: '信息首页本地日程',
     defaultSize: { w: 7, h: 6, minW: 5, minH: 5 },
+  },
+  {
+    type: 'local-environment',
+    title: '本地环境',
+    description: '快速浏览设备、系统架构与关键环境变量。',
+    source: '本机安全环境白名单',
+    defaultSize: { w: 12, h: 4, minW: 6, minH: 3 },
   },
 ] as const
 

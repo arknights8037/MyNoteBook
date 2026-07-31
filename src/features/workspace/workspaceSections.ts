@@ -11,6 +11,7 @@ import {
   History,
   Inbox,
   Keyboard,
+  Laptop,
   ListChecks,
   Mail,
   MessageCircle,
@@ -56,6 +57,7 @@ export const WORKSPACE_SECTIONS: Record<WorkspaceSectionSurface, WorkspaceSectio
   ],
   plugins: [
     { id: 'connections', label: '连接器', description: 'RSS、消息与邮件来源', icon: Cable },
+    { id: 'environment', label: '本地环境', description: '设备、路径与工具链上下文', icon: Laptop },
     { id: 'skills', label: 'Skills', description: 'Agent 工作技能', icon: Code2 },
     { id: 'mcp', label: 'MCP Client', description: '连接工具与数据源', icon: Boxes },
     { id: 'mcp-server', label: 'MCP Server', description: '对外工具策略', icon: ServerCog },
