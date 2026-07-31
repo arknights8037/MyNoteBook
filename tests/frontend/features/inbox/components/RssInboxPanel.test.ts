@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createInformationHome } from '@/models/home/informationHome'
 import { ok } from '@/models/shared/result'
@@ -17,7 +17,13 @@ const homeService = vi.hoisted(() => ({
   listSummaries: vi.fn(),
   updateSummarySettings: vi.fn(),
 }))
+const tauriEvent = vi.hoisted(() => ({
+  handler: null as null | ((event: { payload: Record<string, number> }) => void),
+  listen: vi.fn(),
+  unlisten: vi.fn(),
+}))
 
+vi.mock('@tauri-apps/api/event', () => ({ listen: tauriEvent.listen }))
 vi.mock('@/app/composition/rssServiceFactory', () => ({
   createRssService: vi.fn(async () => rssService),
 }))
@@ -30,6 +36,14 @@ vi.mock('@/ui/services', () => ({
 }))
 
 describe('RssInboxPanel', () => {
+  beforeEach(() => {
+    tauriEvent.handler = null
+    tauriEvent.listen.mockImplementation(async (_event, handler) => {
+      tauriEvent.handler = handler
+      return tauriEvent.unlisten
+    })
+  })
+
   afterEach(() => Reflect.deleteProperty(globalThis, '__TAURI_INTERNALS__'))
 
   it('shows structured hot entries and submits an RSS-scoped summary', async () => {
@@ -69,6 +83,37 @@ describe('RssInboxPanel', () => {
     expect(publishSignalRefresh).toHaveBeenCalledWith(
       expect.objectContaining({ scope: 'rss', triggerSource: 'manual' }),
     )
+    wrapper.unmount()
+  })
+
+  it('refreshes repeated Agent updates silently and only once per update timestamp', async () => {
+    Reflect.set(globalThis, '__TAURI_INTERNALS__', { transformCallback: vi.fn() })
+    const home = createInformationHome((prefix) => `${prefix}-test`, 1)
+    rssService.listSources.mockResolvedValue(ok([source]))
+    rssService.listEntries.mockResolvedValue(ok([entry]))
+    homeService.getOrCreate.mockResolvedValue(ok(home))
+    homeService.listSummaries.mockResolvedValue(ok([]))
+    const { default: RssInboxPanel } = await import('@/features/inbox/components/RssInboxPanel.vue')
+    const wrapper = mount(RssInboxPanel, { props: { mode: 'rss' } })
+    await flushPromises()
+
+    let resolveEntries: (value: ReturnType<typeof ok>) => void = () => undefined
+    rssService.listEntries.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveEntries = resolve
+      }),
+    )
+    tauriEvent.handler?.({ payload: { latestUpdateAt: 10, queuedCount: 0, runningCount: 0 } })
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.rss-inbox-layout').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('正在读取本地 RSS')
+    tauriEvent.handler?.({ payload: { latestUpdateAt: 10, queuedCount: 0, runningCount: 0 } })
+    expect(rssService.listEntries).toHaveBeenCalledTimes(2)
+
+    resolveEntries(ok([entry]))
+    await flushPromises()
+    expect(wrapper.find('.rss-inbox-layout').exists()).toBe(true)
     wrapper.unmount()
   })
 })

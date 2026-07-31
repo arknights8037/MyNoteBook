@@ -15,6 +15,7 @@ import {
 } from 'reka-ui'
 import { onBeforeUnmount, provide, ref } from 'vue'
 
+import AutomationNotificationBridge from '@/features/automation/components/AutomationNotificationBridge.vue'
 import {
   dialogServiceKey,
   messageServiceKey,
@@ -26,7 +27,7 @@ import {
 interface ToastMessage {
   id: number
   text: string
-  type: 'success' | 'error'
+  type: 'success' | 'warning' | 'error'
   open: boolean
 }
 
@@ -59,6 +60,7 @@ function removeToast(id: number): void {
 
 const messageService: MessageService = {
   success: (text) => notify('success', text),
+  warning: (text) => notify('warning', text),
   error: (text) => notify('error', text),
 }
 
@@ -105,6 +107,7 @@ provide(dialogServiceKey, dialogService)
     <TooltipProvider :delay-duration="280">
       <ToastProvider :duration="2600">
         <slot />
+        <AutomationNotificationBridge />
         <ToastRoot
           v-for="toast in messages"
           :key="toast.id"

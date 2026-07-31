@@ -44,6 +44,8 @@ const summaries = ref<InformationHomeSummary[]>([])
 let servicePromise: Promise<RssService> | null = null
 let homeServicePromise: Promise<InformationHomeService> | null = null
 let unlistenSignalAgent: UnlistenFn | null = null
+let lastSignalUpdateAt = 0
+let loadRevision = 0
 
 const service = () => (servicePromise ??= createRssService())
 const homeService = () => (homeServicePromise ??= createInformationHomeService())
@@ -101,9 +103,10 @@ const latestCursorAt = computed(() =>
   ),
 )
 
-async function load(): Promise<void> {
+async function load(options: { silent?: boolean } = {}): Promise<void> {
   if (!native) return
-  loading.value = true
+  const revision = ++loadRevision
+  if (!options.silent) loading.value = true
   error.value = ''
   const [sourceResult, entryResult, homeResult, summaryResult] = await Promise.all([
     (await service()).listSources(),
@@ -114,6 +117,7 @@ async function load(): Promise<void> {
     (await homeService()).getOrCreate(),
     (await homeService()).listSummaries(20),
   ])
+  if (revision !== loadRevision) return
   loading.value = false
   if (!sourceResult.ok) return void (error.value = sourceResult.error.message)
   if (!entryResult.ok) return void (error.value = entryResult.error.message)
@@ -140,7 +144,7 @@ async function syncAll(): Promise<void> {
       if (result.ok) imported += result.value
       else syncError = result.error.message
     }
-    await load()
+    await load({ silent: true })
     if (home.value?.autoSummaryEnabled && imported > 0 && automaticSummaryDue.value)
       await generateRssSummary('auto', refreshStartedAt, imported)
     if (syncError) error.value = syncError
@@ -276,7 +280,10 @@ onMounted(async () => {
     }>('signal-agent://changed', ({ payload }) => {
       if (typeof payload.queuedCount === 'number' && typeof payload.runningCount === 'number')
         generatingSummary.value = payload.queuedCount + payload.runningCount > 0
-      if (payload.latestUpdateAt) void load()
+      if (payload.latestUpdateAt && payload.latestUpdateAt > lastSignalUpdateAt) {
+        lastSignalUpdateAt = payload.latestUpdateAt
+        void load({ silent: true })
+      }
     })
 })
 onBeforeUnmount(() => unlistenSignalAgent?.())
