@@ -42,6 +42,21 @@ describe('planSidecarRun', () => {
     )
   })
 
+  it('includes prior conversation context in the frozen Runtime context', async () => {
+    const planned = await planSidecarRun({
+      ...submission(),
+      objective: '尝试完成刚刚我给你的任务',
+      conversationContext: [
+        '同一对话的延续上下文：',
+        '用户：',
+        '创建一个随机数生成器网页，并把结果写入测试分组的新文档。',
+      ].join('\n\n'),
+    })
+
+    expect(planned.request.compiledContext).toContain('同一对话的延续上下文')
+    expect(planned.request.compiledContext).toContain('创建一个随机数生成器网页')
+  })
+
   it('gives signal runs autonomous read access and only local organizer writes', async () => {
     const planned = await planSidecarRun({ ...submission(), intent: 'signal' })
     const toolNames = planned.request.toolManifest.map((tool) => tool.name)

@@ -346,12 +346,9 @@ export function useAgentRun(options: UseAgentRunOptions) {
             targetBlocks: editPlan?.targetBlocks,
             document: options.document,
           })
-      if (!sidecarOwned) {
-        const conversationContext =
-          compileConversationContinuationContext(priorConversationMessages)
-        if (conversationContext) {
-          context.text += `\n\n${conversationContext}`
-        }
+      const conversationContext = compileConversationContinuationContext(priorConversationMessages)
+      if (!sidecarOwned && conversationContext) {
+        context.text += `\n\n${conversationContext}`
       }
       sources = context.sources
       assistantMessage.sources = sources
@@ -813,6 +810,7 @@ export function useAgentRun(options: UseAgentRunOptions) {
                           snapshot.workspace?.conversationId ?? editPlan.task.sessionId,
                       },
                       objective: snapshot.prompt,
+                      ...(conversationContext ? { conversationContext } : {}),
                       intent: agentIntent,
                       systemInstructions: systemPrompt,
                       skillInstructions: skillPrompt.instructions,

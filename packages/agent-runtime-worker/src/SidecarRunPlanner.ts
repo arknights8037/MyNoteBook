@@ -142,19 +142,29 @@ function compileContext(
   submission: AgentSidecarSubmissionV1,
   targetBlocks: SelectedBlock[],
 ): string {
-  if (submission.explicitTargets.length > 0) {
-    return [
-      `当前 Agent 项目：${submission.workspace.projectName || '未分组项目'}`,
-      `项目工作区根范围：${submission.workspace.rootDocumentIds.join('、') || '未限制'}`,
-      '显式目标：',
-      ...submission.explicitTargets.map((target) =>
-        [
-          `- ${target.title}（${target.kind}，id=${target.id}，revision=${target.revision ?? '未知'}）`,
-          target.content?.trim() || '（未提供预载内容，需要使用只读工具获取。）',
-        ].join('\n'),
-      ),
-    ].join('\n\n')
-  }
+  const workspaceContext =
+    submission.explicitTargets.length > 0
+      ? [
+          `当前 Agent 项目：${submission.workspace.projectName || '未分组项目'}`,
+          `项目工作区根范围：${submission.workspace.rootDocumentIds.join('、') || '未限制'}`,
+          '显式目标：',
+          ...submission.explicitTargets.map((target) =>
+            [
+              `- ${target.title}（${target.kind}，id=${target.id}，revision=${target.revision ?? '未知'}）`,
+              target.content?.trim() || '（未提供预载内容，需要使用只读工具获取。）',
+            ].join('\n'),
+          ),
+        ].join('\n\n')
+      : compileDocumentContext(submission, targetBlocks)
+  return [workspaceContext, submission.conversationContext?.trim() ?? '']
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function compileDocumentContext(
+  submission: AgentSidecarSubmissionV1,
+  targetBlocks: SelectedBlock[],
+): string {
   const text = submission.document.markdown || submission.document.text
   return [
     `当前 Agent 项目：${submission.workspace.projectName || '未分组项目'}`,

@@ -179,6 +179,33 @@ describe('useAgentRun', () => {
     expect(sidecarAcknowledgeRun).toHaveBeenCalledTimes(1)
   })
 
+  it('passes prior conversation context to the Rust-owned sidecar', async () => {
+    const settings = ref(createAiSettings('openai'))
+    settings.value.model = 'sidecar-model'
+    const run = createRun(
+      settings,
+      snapshot(),
+      async () => true,
+      'agent',
+      '尝试完成刚刚我给你的任务',
+      [],
+      undefined,
+      { runtimeOwner: 'rust_worker', runtimeDataDirectory: () => 'C:/data' },
+    )
+    run.messages.value.push(
+      message('previous-user', 'user', '创建一个随机数生成器网页，并把结果写入测试分组的新文档。'),
+      message('previous-assistant', 'assistant', '当前环境无法调用 qoder。'),
+    )
+
+    await run.workflow.run()
+
+    expect(sidecarStartRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationContext: expect.stringContaining('创建一个随机数生成器网页'),
+      }),
+    )
+  })
+
   it('freezes Cognitive finalization state for Rust terminal recovery', async () => {
     sidecarStartRun.mockResolvedValueOnce({
       output: JSON.stringify({

@@ -258,6 +258,7 @@ export interface AgentSidecarSubmissionV1 {
     conversationId: string
   }
   objective: string
+  conversationContext?: string
   intent: AgentRunIntent
   systemInstructions: string
   skillInstructions?: string
