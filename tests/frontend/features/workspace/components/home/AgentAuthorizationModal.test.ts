@@ -18,14 +18,17 @@ describe('AgentAuthorizationModal', () => {
       global: {
         stubs: {
           NModal: { template: '<section><slot /><slot name="footer" /></section>' },
-        NButton: { template: '<button><slot /></button>' },
-        Teleport: true,
-      },
+          NButton: { template: '<button><slot /></button>' },
+          Teleport: true,
+        },
       },
     })
 
     expect(wrapper.text()).toContain('新页面放在哪里？')
     expect(wrapper.text()).toContain('这会影响文档层级。')
+    expect(wrapper.get('.agent-authorization-modal__progress').text()).toContain('现场已保留')
+    expect(wrapper.get('.agent-authorization-modal__progress').text()).toContain('从当前步骤继续')
+    expect(wrapper.get('.agent-authorization-modal__resume-note').text()).toContain('原地恢复')
 
     await wrapper.get('.agent-authorization-modal__option').trigger('click')
 

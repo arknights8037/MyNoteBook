@@ -74,9 +74,22 @@ const showRuntimeState = computed(
 const runtimeMessageId = computed(
   () => [...props.messages].reverse().find((message) => message.role === 'assistant')?.id ?? null,
 )
+const conversationTurnByMessageId = computed(() => {
+  const turns = new Map<string, number>()
+  let turn = 0
+  for (const message of props.messages) {
+    if (message.role === 'user') turn += 1
+    turns.set(message.id, Math.max(turn, 1))
+  }
+  return turns
+})
 
 function isAssistantMessage(chatMessage: AiChatMessage): boolean {
   return chatMessage.role === 'assistant'
+}
+
+function getConversationTurn(chatMessage: AiChatMessage): number {
+  return conversationTurnByMessageId.value.get(chatMessage.id) ?? 1
 }
 
 function isRuntimeHostMessage(chatMessage: AiChatMessage): boolean {
@@ -182,7 +195,7 @@ watch(
     >
       <header>
         <span>{{ chatMessage.role === 'user' ? '你' : 'AI' }}</span>
-        <em>{{ chatMessage.mode }}</em>
+        <em>对话第 {{ getConversationTurn(chatMessage) }} 轮 · {{ chatMessage.mode }}</em>
       </header>
       <AiAgentRuntimeTrace
         v-if="isRuntimeHostMessage(chatMessage)"

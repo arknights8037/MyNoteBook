@@ -86,6 +86,8 @@ describe('AgentPatchReviewModal', () => {
     expect(wrapper.find('.agent-patch-backdrop').exists()).toBe(true)
     expect(wrapper.find('.ui-dialog-overlay').exists()).toBe(false)
     expect(wrapper.get('aside[aria-label="Agent 修改审阅"]').text()).toContain('修改尚未写入')
+    expect(wrapper.get('.agent-patch-panel__progress').text()).toContain('Agent 执行完成')
+    expect(wrapper.get('.agent-patch-panel__progress').text()).toContain('等待安全写入')
 
     await wrapper.get('button[aria-label="收起修改审阅"]').trigger('click')
     expect(wrapper.emitted('update:show')).toEqual([[false]])
@@ -172,5 +174,6 @@ describe('AgentPatchReviewModal', () => {
     const confirm = wrapper.get('.agent-patch-panel__footer .ui-button--primary')
     expect(confirm.attributes('disabled')).toBeDefined()
     expect(confirm.text()).toContain('创建中')
+    expect(wrapper.get('.agent-patch-panel__progress').text()).toContain('正在安全写入')
   })
 })
