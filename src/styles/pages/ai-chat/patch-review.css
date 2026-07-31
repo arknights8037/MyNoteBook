@@ -7,7 +7,7 @@
   display: grid;
   width: var(--workspace-agent-width, 440px);
   min-width: 360px;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   overflow: hidden;
   max-height: 100%;
   color: var(--color-text-primary);
@@ -105,6 +105,62 @@
   background: color-mix(in srgb, var(--color-agent-suggestion-bg) 64%, transparent);
   font-size: var(--font-size-small);
   line-height: 1.5;
+}
+
+.agent-patch-panel__progress {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 10px 16px 0;
+  list-style: none;
+}
+
+.agent-patch-panel__progress li {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+  font-weight: 620;
+}
+
+.agent-patch-panel__progress li:not(:last-child)::after {
+  position: absolute;
+  right: 5px;
+  left: 28px;
+  height: 1px;
+  background: var(--color-border-subtle);
+  content: '';
+}
+
+.agent-patch-panel__progress li > span {
+  z-index: 1;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--color-border-default);
+  border-radius: 999px;
+  background: var(--color-bg-elevated);
+  font-size: 10px;
+  font-weight: 720;
+}
+
+.agent-patch-panel__progress--completed {
+  color: var(--color-status-success) !important;
+}
+
+.agent-patch-panel__progress--active {
+  color: var(--color-agent-accent) !important;
+}
+
+.agent-patch-panel__progress--active > span {
+  border-color: var(--color-agent-accent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-agent-accent) 10%, transparent);
 }
 
 .agent-patch-panel__notice > svg {
@@ -597,6 +653,10 @@
 
   .agent-patch-panel__footer > button:not(.ui-button) {
     display: none;
+  }
+
+  .agent-patch-panel__progress li {
+    font-size: 0;
   }
 }
 

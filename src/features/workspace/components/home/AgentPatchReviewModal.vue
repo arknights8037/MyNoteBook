@@ -77,6 +77,17 @@ function isCreationPatch(patch: BlockPatch): boolean {
         </button>
       </header>
 
+      <ol class="agent-patch-panel__progress" aria-label="Agent 写入流程">
+        <li class="agent-patch-panel__progress--completed"><span>✓</span>Agent 执行完成</li>
+        <li :class="{ 'agent-patch-panel__progress--completed': applying }">
+          <span>{{ applying ? '✓' : '2' }}</span
+          >审阅并确认
+        </li>
+        <li :class="{ 'agent-patch-panel__progress--active': applying }">
+          <span>3</span>{{ applying ? '正在安全写入' : '等待安全写入' }}
+        </li>
+      </ol>
+
       <div class="agent-patch-panel__notice">
         <ShieldCheck :size="15" />
         <span

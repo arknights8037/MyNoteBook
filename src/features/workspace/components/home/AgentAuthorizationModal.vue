@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { CirclePause, CornerDownRight, ShieldQuestion } from '@lucide/vue'
 import { computed, ref, watch } from 'vue'
 
 import { NButton, NModal } from '@/ui'
@@ -38,8 +39,22 @@ function answer(value: string): void {
 <template>
   <NModal v-model:show="visible" title="Agent 需要你的决策" class="agent-authorization-modal">
     <section class="ai-authorizer-card ai-authorizer-card--modal" aria-label="等待授权人回答">
+      <header>
+        <span><ShieldQuestion :size="18" aria-hidden="true" /></span>
+        <div>
+          <strong>执行已暂停在当前步骤</strong>
+          <small>你的回答会成为下一轮的明确约束</small>
+        </div>
+      </header>
       <p>{{ request.question }}</p>
-      <small v-if="request.context" class="ai-authorizer-card__context">{{ request.context }}</small>
+      <small v-if="request.context" class="ai-authorizer-card__context">{{
+        request.context
+      }}</small>
+      <ol class="agent-authorization-modal__progress" aria-label="授权处理进度">
+        <li class="agent-authorization-modal__progress--completed"><span>✓</span>现场已保留</li>
+        <li class="agent-authorization-modal__progress--active"><span>2</span>等待你的决定</li>
+        <li><span>3</span>从当前步骤继续</li>
+      </ol>
       <div v-if="request.options.length" class="ai-authorizer-options">
         <NButton
           v-for="option in request.options"
@@ -62,10 +77,18 @@ function answer(value: string): void {
           继续执行
         </NButton>
       </div>
+      <p class="agent-authorization-modal__resume-note">
+        <CirclePause :size="14" aria-hidden="true" />
+        Agent 不会在后台绕过此问题；选择后会原地恢复，无需重新提交任务。
+        <CornerDownRight :size="13" aria-hidden="true" />
+      </p>
     </section>
     <template #footer>
-      <div class="modal-actions">
-        <NButton class="agent-authorization-modal__cancel" @click="emit('cancel')">取消任务</NButton>
+      <div class="modal-actions agent-authorization-modal__footer">
+        <small>取消任务会保留当前对话和已完成的工具记录。</small>
+        <NButton class="agent-authorization-modal__cancel" @click="emit('cancel')"
+          >取消任务</NButton
+        >
       </div>
     </template>
   </NModal>

@@ -275,6 +275,30 @@ describe('AiChatPanel runtime visibility', () => {
     expect(loops[0]!.text()).toContain('执行了 1.5 秒')
     expect(loops[0]!.get('.ai-agent-loop__trace').attributes('open')).toBeUndefined()
     expect(loops[1]!.get('.ai-agent-loop__trace').attributes('open')).toBe('')
+    const headers = wrapper.findAll('.ai-chat-message > header em')
+    expect(headers[0]!.text()).toContain('对话第 1 轮')
+    expect(headers[2]!.text()).toContain('对话第 2 轮')
+  })
+
+  it('shows an explicit waiting state for external Agent delegation', () => {
+    const state = runtimeState('running')
+    state.rounds = 2
+    state.toolCalls[0] = {
+      ...state.toolCalls[0]!,
+      toolName: 'mcp__qoder__execute_task',
+      argumentsJson: JSON.stringify({ prompt: '创建随机数生成器网页' }),
+      startedAt: Date.now() - 20_000,
+    }
+    const wrapper = createWrapper(state)
+
+    const waiting = wrapper.get('.ai-agent-external-wait--delegated')
+    expect(waiting.text()).toContain('外部 Agent 委派')
+    expect(waiting.text()).toContain('Qoder')
+    expect(waiting.text()).toContain('返回后本任务会自动继续')
+    expect(wrapper.get('.ai-agent-loop__phase-copy').text()).toContain('正在等待 Qoder')
+    expect(wrapper.get('.ai-agent-progress').text()).toContain('执行与协作')
+    expect(wrapper.get('.ai-agent-rounds').text()).toContain('Agent 轮次')
+    expect(wrapper.findAll('.ai-agent-rounds li')).toHaveLength(2)
   })
 
   it('renders MCP web search results as links and keeps raw JSON secondary', () => {
@@ -642,7 +666,9 @@ describe('AiChatPanel runtime visibility', () => {
     await wrapper.get('button[aria-label="配置项目：Runtime"]').trigger('click')
     await wrapper.get('input[aria-label="筛选项目文档分组"]').setValue('工具协议')
     expect(wrapper.findAll('.ai-chat-workspace-settings fieldset > label')).toHaveLength(1)
-    expect(wrapper.get('.ai-chat-workspace-settings fieldset > label').text()).toContain('Agent MVP')
+    expect(wrapper.get('.ai-chat-workspace-settings fieldset > label').text()).toContain(
+      'Agent MVP',
+    )
 
     await wrapper.get('.ai-chat-workspace-settings input[type="checkbox"]').setValue(true)
     expect(wrapper.emitted('update-workspace')?.at(-1)).toEqual(['project-1', ['group-agent']])

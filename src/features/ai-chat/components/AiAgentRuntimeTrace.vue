@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import {
   Activity,
+  Bot,
   ChevronDown,
   ChevronRight,
+  Clock3,
   CircleCheck,
   CircleX,
   CornerDownRight,
@@ -43,9 +45,7 @@ function toggleDetailWorkspace(): void {
   detailWorkspaceOpen.value = !detailWorkspaceOpen.value
 }
 
-function handleDetailWorkspaceKeydown(
-  event: InstanceType<typeof globalThis.KeyboardEvent>,
-): void {
+function handleDetailWorkspaceKeydown(event: InstanceType<typeof globalThis.KeyboardEvent>): void {
   if (event.key === 'Escape' && detailWorkspaceOpen.value) detailWorkspaceOpen.value = false
 }
 
@@ -63,7 +63,11 @@ const timelineEvents = computed<AgentTimelineEvent[]>(() => {
     id: `tool:${call.id}`,
     kind: 'tool' as const,
     status:
-      call.status === 'running' ? ('running' as const) : call.status === 'completed' ? ('completed' as const) : ('failed' as const),
+      call.status === 'running'
+        ? ('running' as const)
+        : call.status === 'completed'
+          ? ('completed' as const)
+          : ('failed' as const),
     detail: summarizeToolResult(call),
     occurredAt: call.startedAt,
     completedAt: call.completedAt,
@@ -112,6 +116,97 @@ const runtimeMeta = computed(() => getRuntimeMeta(props.state))
 const runtimeSummaryText = computed(() => getRuntimeSummaryText(props.state))
 const isTraceInitiallyOpen = computed(() => isRuntimeTraceInitiallyOpen(props.state))
 const hasTimeline = computed(() => timelineEvents.value.length > 0)
+const activeToolCall = computed(
+  () =>
+    [...props.state.toolCalls]
+      .reverse()
+      .find((call) => call.status === 'running' || call.status === 'pending') ?? null,
+)
+const externalActivity = computed(() => {
+  const call = activeToolCall.value
+  if (!call?.toolName.startsWith('mcp__')) return null
+  const delegated = /(?:qoder|agent_run|delegate|delegation|execute_task|run_task)/i.test(
+    call.toolName,
+  )
+  return {
+    call,
+    delegated,
+    label: getToolLabel(call.toolName),
+    elapsed: formatToolDuration(call.startedAt, call.completedAt),
+    hint: getExternalWaitHint(call.startedAt, delegated),
+  }
+})
+const currentRound = computed(() => {
+  const timelineRound = timelineEvents.value.reduce(
+    (maximum, event) => Math.max(maximum, event.stepNumber ?? 0),
+    0,
+  )
+  return Math.max(props.state.rounds, timelineRound, props.active ? 1 : 0)
+})
+const visibleRounds = computed(() => {
+  const count = currentRound.value
+  if (count <= 0) return []
+  const first = Math.max(1, count - 7)
+  return Array.from({ length: count - first + 1 }, (_, index) => first + index)
+})
+const progressStages = computed(() => {
+  const failed = props.state.status === 'failed'
+  const completed = props.state.status === 'completed'
+  const stageIndex =
+    completed || props.state.phase === 'finalizing'
+      ? 2
+      : props.state.phase === 'preparing' || props.state.phase === 'planning'
+        ? 0
+        : 1
+  return ['理解任务', '执行与协作', '整理结果'].map((label, index) => ({
+    label,
+    status: completed
+      ? 'completed'
+      : failed && index === stageIndex
+        ? 'failed'
+        : index < stageIndex
+          ? 'completed'
+          : index === stageIndex
+            ? 'active'
+            : 'pending',
+  }))
+})
+const phasePresentation = computed(() => {
+  if (externalActivity.value) {
+    return {
+      label: externalActivity.value.delegated
+        ? `正在等待 ${externalActivity.value.label} 返回`
+        : `正在调用 ${externalActivity.value.label}`,
+      detail: externalActivity.value.hint,
+    }
+  }
+  if (props.state.status === 'waiting_authorizer') {
+    return { label: '执行已暂停，等待你的决定', detail: '回答后会从当前步骤继续，不会重新开始。' }
+  }
+  if (props.state.status === 'completed') {
+    return { label: '任务已完成', detail: props.state.summary?.trim() || props.state.detail }
+  }
+  if (props.state.status === 'failed') {
+    return { label: '任务执行失败', detail: props.state.detail || '可查看时间线定位失败步骤。' }
+  }
+  if (props.state.status === 'cancelled') {
+    return { label: '任务已停止', detail: props.state.detail || '执行现场已保存到当前对话。' }
+  }
+  if (props.state.phase === 'preparing') {
+    return { label: '正在准备运行环境', detail: props.state.detail || '正在冻结本次任务上下文。' }
+  }
+  if (props.state.phase === 'planning') {
+    return { label: '正在理解任务并规划下一步', detail: props.state.detail || props.step }
+  }
+  if (props.state.phase === 'finalizing') {
+    return { label: '正在整理结果', detail: props.state.detail || '正在生成最终回答或修改提案。' }
+  }
+  const call = activeToolCall.value
+  return {
+    label: call ? `正在执行 ${getToolLabel(call.toolName)}` : props.state.detail || props.step,
+    detail: call ? '工具结果返回后，Agent 会自动进入下一轮判断。' : 'Agent 正在继续执行。',
+  }
+})
 
 function getRuntimeMeta(state: AgentRuntimeViewState): string {
   const items = [runtimeStatusLabel(state.status)]
@@ -161,6 +256,19 @@ function formatToolDuration(startedAt: number, completedAt: number | null): stri
   return formatDuration(startedAt, completedAt ?? runtimeClock.value)
 }
 
+function getExternalWaitHint(startedAt: number, delegated: boolean): string {
+  const elapsed = Math.max(0, runtimeClock.value - startedAt)
+  if (elapsed < 15_000)
+    return delegated ? '已提交外部任务，正在等待对方开始处理。' : '正在等待外部服务响应。'
+  if (elapsed < 60_000)
+    return delegated
+      ? '外部 Agent 正在独立执行，返回后本任务会自动继续。'
+      : '外部服务仍在处理，结果返回后会自动继续。'
+  return delegated
+    ? '外部任务耗时较长，但仍在执行；你可以展开查看委派输入或停止任务。'
+    : '外部服务响应较慢；你可以继续等待或停止本次任务。'
+}
+
 function getToolLabel(toolName: string): string {
   const labels: Record<string, string> = {
     get_current_document: '读取当前页面',
@@ -199,6 +307,9 @@ function formatMcpToolLabel(toolName: string): string {
     web_search_advanced_exa: '高级网页搜索',
     web_fetch_exa: '读取网页',
     agent_run: '运行研究 Agent',
+    execute_task: '执行委派任务',
+    run_task: '执行委派任务',
+    get_status: '查询任务状态',
   }
   const serverLabel = server
     .split('_')
@@ -317,13 +428,10 @@ watch(
   { immediate: true },
 )
 
-watch(
-  detailWorkspaceOpen,
-  (open) => {
-    if (open) globalThis.addEventListener('keydown', handleDetailWorkspaceKeydown)
-    else globalThis.removeEventListener('keydown', handleDetailWorkspaceKeydown)
-  },
-)
+watch(detailWorkspaceOpen, (open) => {
+  if (open) globalThis.addEventListener('keydown', handleDetailWorkspaceKeydown)
+  else globalThis.removeEventListener('keydown', handleDetailWorkspaceKeydown)
+})
 
 onBeforeUnmount(() => {
   if (runtimeClockTimer) globalThis.clearInterval(runtimeClockTimer)
@@ -343,230 +451,267 @@ onBeforeUnmount(() => {
       :aria-modal="detailWorkspaceOpen ? 'true' : undefined"
       aria-label="Agent 运行轨迹"
     >
-    <header class="ai-agent-loop__header">
-      <span class="ai-agent-loop__identity"><Activity :size="14" /> Agent loop</span>
-      <small>{{ runtimeMeta }} · {{ providerLabel }} / {{ model }}</small>
-      <span class="ai-agent-loop__actions">
-        <button
-          v-if="hasTimeline"
-          type="button"
-          class="ai-agent-loop__expand"
-          :aria-label="detailWorkspaceOpen ? '退出宽视图' : '在宽视图中展开运行详情'"
-          :title="detailWorkspaceOpen ? '退出宽视图' : '展开运行详情'"
-          @click="toggleDetailWorkspace"
-        >
-          <Minimize2 v-if="detailWorkspaceOpen" :size="13" />
-          <Maximize2 v-else :size="13" />
-        </button>
-        <button
-          v-if="active"
-          type="button"
-          aria-label="停止 Agent"
-          title="停止 Agent"
-          @click="emit('stop')"
-        >
-          <Square :size="12" fill="currentColor" />
-        </button>
-      </span>
-    </header>
-
-    <details
-      v-if="hasTimeline"
-      class="ai-agent-loop__trace"
-      :open="detailWorkspaceOpen || isTraceInitiallyOpen"
-    >
-      <summary class="ai-agent-loop__trace-summary">
-        <span>
-          <CircleCheck v-if="state.status === 'completed'" :size="14" aria-hidden="true" />
-          <LoaderCircle
-            v-else-if="active"
-            :size="14"
-            class="ai-agent-tool-list__spinner"
-            aria-hidden="true"
-          />
-          <CircleX v-else :size="14" aria-hidden="true" />
-        </span>
-        <span>
-          <strong>{{ active ? '实时执行过程' : '执行摘要' }}</strong>
-          <small>{{ runtimeSummaryText }}</small>
-        </span>
-        <ChevronDown :size="14" aria-hidden="true" />
-      </summary>
-      <ol class="ai-agent-tool-list ai-agent-timeline">
-        <li
-          v-for="item in timelineItems"
-          :key="item.event.id"
-          :class="[
-            `ai-agent-tool-list__item--${item.event.status}`,
-            `ai-agent-timeline__item--${item.event.kind}`,
-            { 'ai-agent-timeline__decision': item.event.kind === 'decision' },
-            { 'ai-agent-timeline__summary': item.event.kind === 'summary' },
-          ]"
-        >
-          <details
-            v-if="item.toolCall"
-            class="ai-agent-tool-step"
-            :open="item.toolCall.status === 'failed'"
+      <header class="ai-agent-loop__header">
+        <span class="ai-agent-loop__identity"><Activity :size="14" /> Agent loop</span>
+        <small>{{ runtimeMeta }} · {{ providerLabel }} / {{ model }}</small>
+        <span class="ai-agent-loop__actions">
+          <button
+            v-if="hasTimeline"
+            type="button"
+            class="ai-agent-loop__expand"
+            :aria-label="detailWorkspaceOpen ? '退出宽视图' : '在宽视图中展开运行详情'"
+            :title="detailWorkspaceOpen ? '退出宽视图' : '展开运行详情'"
+            @click="toggleDetailWorkspace"
           >
-            <summary>
+            <Minimize2 v-if="detailWorkspaceOpen" :size="13" />
+            <Maximize2 v-else :size="13" />
+          </button>
+          <button
+            v-if="active"
+            type="button"
+            aria-label="停止 Agent"
+            title="停止 Agent"
+            @click="emit('stop')"
+          >
+            <Square :size="12" fill="currentColor" />
+          </button>
+        </span>
+      </header>
+
+      <ol class="ai-agent-progress" aria-label="Agent 执行阶段">
+        <li
+          v-for="(stage, index) in progressStages"
+          :key="stage.label"
+          :class="`ai-agent-progress__stage--${stage.status}`"
+        >
+          <span>{{ stage.status === 'completed' ? '✓' : index + 1 }}</span>
+          <strong>{{ stage.label }}</strong>
+        </li>
+      </ol>
+
+      <section
+        v-if="externalActivity"
+        class="ai-agent-external-wait"
+        :class="{ 'ai-agent-external-wait--delegated': externalActivity.delegated }"
+        role="status"
+        aria-live="polite"
+      >
+        <span class="ai-agent-external-wait__icon">
+          <Bot v-if="externalActivity.delegated" :size="17" aria-hidden="true" />
+          <Activity v-else :size="17" aria-hidden="true" />
+        </span>
+        <span class="ai-agent-external-wait__copy">
+          <small>{{ externalActivity.delegated ? '外部 Agent 委派' : '外部 MCP 服务' }}</small>
+          <strong>{{ externalActivity.label }}</strong>
+          <span>{{ externalActivity.hint }}</span>
+        </span>
+        <time><Clock3 :size="12" />{{ externalActivity.elapsed }}</time>
+        <span class="ai-agent-external-wait__progress" aria-hidden="true"></span>
+      </section>
+
+      <div v-if="visibleRounds.length" class="ai-agent-rounds" aria-label="Agent 内部轮次">
+        <span>Agent 轮次</span>
+        <ol>
+          <li
+            v-for="round in visibleRounds"
+            :key="round"
+            :class="{
+              'ai-agent-rounds__item--current': round === currentRound && active,
+              'ai-agent-rounds__item--completed': round < currentRound || !active,
+            }"
+          >
+            {{ round }}
+          </li>
+        </ol>
+        <small>每轮都会根据上一轮工具结果决定下一步</small>
+      </div>
+
+      <details
+        v-if="hasTimeline"
+        class="ai-agent-loop__trace"
+        :open="detailWorkspaceOpen || isTraceInitiallyOpen"
+      >
+        <summary class="ai-agent-loop__trace-summary">
+          <span>
+            <CircleCheck v-if="state.status === 'completed'" :size="14" aria-hidden="true" />
+            <LoaderCircle
+              v-else-if="active"
+              :size="14"
+              class="ai-agent-tool-list__spinner"
+              aria-hidden="true"
+            />
+            <CircleX v-else :size="14" aria-hidden="true" />
+          </span>
+          <span>
+            <strong>{{ active ? '实时执行过程' : '执行摘要' }}</strong>
+            <small>{{ runtimeSummaryText }}</small>
+          </span>
+          <ChevronDown :size="14" aria-hidden="true" />
+        </summary>
+        <ol class="ai-agent-tool-list ai-agent-timeline">
+          <li
+            v-for="item in timelineItems"
+            :key="item.event.id"
+            :class="[
+              `ai-agent-tool-list__item--${item.event.status}`,
+              `ai-agent-timeline__item--${item.event.kind}`,
+              { 'ai-agent-timeline__decision': item.event.kind === 'decision' },
+              { 'ai-agent-timeline__summary': item.event.kind === 'summary' },
+            ]"
+          >
+            <details
+              v-if="item.toolCall"
+              class="ai-agent-tool-step"
+              :open="item.toolCall.status === 'failed'"
+            >
+              <summary>
+                <span class="ai-agent-tool-step__marker" aria-hidden="true">
+                  <LoaderCircle
+                    v-if="item.toolCall.status === 'running'"
+                    :size="13"
+                    class="ai-agent-tool-list__spinner"
+                  />
+                  <CircleCheck v-else-if="item.toolCall.status === 'completed'" :size="13" />
+                  <CircleX v-else :size="13" />
+                </span>
+                <span class="ai-agent-tool-step__copy">
+                  <strong>
+                    <span class="ai-agent-timeline__kind">工具</span>
+                    {{ item.toolLabel }}
+                  </strong>
+                  <small>{{ item.argumentsSummary }}</small>
+                </span>
+                <span class="ai-agent-tool-step__status">{{ item.resultSummary }}</span>
+                <time>{{
+                  formatToolDuration(
+                    item.toolCall.startedAt ?? item.event.occurredAt,
+                    item.toolCall.completedAt ?? item.event.completedAt,
+                  )
+                }}</time>
+                <ChevronDown :size="13" class="ai-agent-tool-step__chevron" aria-hidden="true" />
+              </summary>
+              <div class="ai-agent-tool-step__details">
+                <section v-if="item.inputFields.length" class="ai-agent-tool-step__section">
+                  <strong>输入</strong>
+                  <dl class="ai-agent-tool-step__fields">
+                    <template v-for="field in item.inputFields" :key="field.label">
+                      <dt>{{ field.label }}</dt>
+                      <dd>{{ field.value }}</dd>
+                    </template>
+                  </dl>
+                </section>
+                <template v-if="item.toolCall.error">
+                  <section class="ai-agent-tool-step__section">
+                    <strong>错误</strong>
+                    <p class="ai-agent-tool-list__error">
+                      {{ item.toolCall.error }}
+                    </p>
+                  </section>
+                </template>
+                <section
+                  v-else-if="item.resultItems.length || item.resultText"
+                  class="ai-agent-tool-step__section"
+                >
+                  <strong>结果</strong>
+                  <p v-if="item.resultText">
+                    {{ item.resultText }}
+                  </p>
+                  <ul v-if="item.resultItems.length" class="ai-agent-tool-results">
+                    <li
+                      v-for="resultItem in item.resultItems"
+                      :key="`${resultItem.documentId ?? resultItem.url ?? ''}:${resultItem.title}`"
+                    >
+                      <button
+                        v-if="resultItem.documentId"
+                        type="button"
+                        class="ai-agent-tool-results__document"
+                        @click="emit('open-source', resultItem.documentId, resultItem.blockId)"
+                      >
+                        <FileText :size="13" aria-hidden="true" />
+                        <span>{{ resultItem.title }}</span>
+                        <ChevronRight :size="12" aria-hidden="true" />
+                      </button>
+                      <a
+                        v-else-if="resultItem.url"
+                        :href="resultItem.url"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <span>{{ resultItem.title }}</span>
+                        <ExternalLink :size="12" aria-hidden="true" />
+                      </a>
+                      <strong v-else>{{ resultItem.title }}</strong>
+                      <p v-if="resultItem.description">{{ resultItem.description }}</p>
+                      <small v-if="resultItem.documentId">
+                        知识库文档{{ resultItem.blockId ? ' · 已定位内容块' : '' }}
+                      </small>
+                      <small v-else-if="resultItem.url">{{ resultItem.url }}</small>
+                    </li>
+                  </ul>
+                </section>
+                <details class="ai-agent-tool-step__raw">
+                  <summary>原始数据</summary>
+                  <span>工具</span>
+                  <code>{{ item.toolCall.toolName }}</code>
+                  <template v-if="formatToolDetail(item.toolCall.argumentsJson)">
+                    <span>输入 JSON</span>
+                    <pre>{{ formatToolDetail(item.toolCall.argumentsJson) }}</pre>
+                  </template>
+                  <template v-if="formatToolDetail(item.toolCall.resultJson)">
+                    <span>输出 JSON</span>
+                    <pre>{{ formatToolDetail(item.toolCall.resultJson) }}</pre>
+                  </template>
+                </details>
+              </div>
+            </details>
+            <div v-if="item.toolCall && item.resultPreview" class="ai-agent-tool-step__preview">
+              <CornerDownRight :size="12" aria-hidden="true" />
+              <span><b>输出</b>{{ item.resultPreview }}</span>
+            </div>
+            <div v-if="!item.toolCall" class="ai-agent-timeline__step">
               <span class="ai-agent-tool-step__marker" aria-hidden="true">
                 <LoaderCircle
-                  v-if="item.toolCall.status === 'running'"
+                  v-if="item.event.status === 'running'"
                   :size="13"
                   class="ai-agent-tool-list__spinner"
                 />
-                <CircleCheck
-                  v-else-if="item.toolCall.status === 'completed'"
-                  :size="13"
-                />
+                <CircleCheck v-else-if="item.event.status === 'completed'" :size="13" />
                 <CircleX v-else :size="13" />
               </span>
-              <span class="ai-agent-tool-step__copy">
+              <div class="ai-agent-timeline__copy">
                 <strong>
-                  <span class="ai-agent-timeline__kind">工具</span>
-                  {{ item.toolLabel }}
+                  <span class="ai-agent-timeline__kind">{{ item.eventLabel }}</span>
+                  {{ item.stepTitle }}
                 </strong>
-                <small>{{ item.argumentsSummary }}</small>
-              </span>
-              <span class="ai-agent-tool-step__status">{{ item.resultSummary }}</span>
-              <time>{{
-                formatToolDuration(
-                  item.toolCall.startedAt ?? item.event.occurredAt,
-                  item.toolCall.completedAt ?? item.event.completedAt,
-                )
-              }}</time>
-              <ChevronDown :size="13" class="ai-agent-tool-step__chevron" aria-hidden="true" />
-            </summary>
-            <div class="ai-agent-tool-step__details">
-              <section
-                v-if="item.inputFields.length"
-                class="ai-agent-tool-step__section"
-              >
-                <strong>输入</strong>
-                <dl class="ai-agent-tool-step__fields">
-                  <template
-                    v-for="field in item.inputFields"
-                    :key="field.label"
-                  >
-                    <dt>{{ field.label }}</dt>
-                    <dd>{{ field.value }}</dd>
-                  </template>
-                </dl>
-              </section>
-              <template v-if="item.toolCall.error">
-                <section class="ai-agent-tool-step__section">
-                  <strong>错误</strong>
-                  <p class="ai-agent-tool-list__error">
-                    {{ item.toolCall.error }}
+                <span class="ai-agent-timeline__narrative">
+                  <p v-for="paragraph in item.paragraphs" :key="paragraph">
+                    {{ paragraph }}
                   </p>
-                </section>
-              </template>
-              <section
-                v-else-if="item.resultItems.length || item.resultText"
-                class="ai-agent-tool-step__section"
-              >
-                <strong>结果</strong>
-                <p v-if="item.resultText">
-                  {{ item.resultText }}
-                </p>
-                <ul
-                  v-if="item.resultItems.length"
-                  class="ai-agent-tool-results"
-                >
-                  <li
-                    v-for="resultItem in item.resultItems"
-                    :key="`${resultItem.documentId ?? resultItem.url ?? ''}:${resultItem.title}`"
-                  >
-                    <button
-                      v-if="resultItem.documentId"
-                      type="button"
-                      class="ai-agent-tool-results__document"
-                      @click="emit('open-source', resultItem.documentId, resultItem.blockId)"
-                    >
-                      <FileText :size="13" aria-hidden="true" />
-                      <span>{{ resultItem.title }}</span>
-                      <ChevronRight :size="12" aria-hidden="true" />
-                    </button>
-                    <a v-else-if="resultItem.url" :href="resultItem.url" target="_blank" rel="noreferrer">
-                      <span>{{ resultItem.title }}</span>
-                      <ExternalLink :size="12" aria-hidden="true" />
-                    </a>
-                    <strong v-else>{{ resultItem.title }}</strong>
-                    <p v-if="resultItem.description">{{ resultItem.description }}</p>
-                    <small v-if="resultItem.documentId">
-                      知识库文档{{ resultItem.blockId ? ' · 已定位内容块' : '' }}
-                    </small>
-                    <small v-else-if="resultItem.url">{{ resultItem.url }}</small>
-                  </li>
-                </ul>
-              </section>
-              <details class="ai-agent-tool-step__raw">
-                <summary>原始数据</summary>
-                <span>工具</span>
-                <code>{{ item.toolCall.toolName }}</code>
-                <template
-                  v-if="formatToolDetail(item.toolCall.argumentsJson)"
-                >
-                  <span>输入 JSON</span>
-                  <pre>{{ formatToolDetail(item.toolCall.argumentsJson) }}</pre>
-                </template>
-                <template
-                  v-if="formatToolDetail(item.toolCall.resultJson)"
-                >
-                  <span>输出 JSON</span>
-                  <pre>{{ formatToolDetail(item.toolCall.resultJson) }}</pre>
-                </template>
-              </details>
+                </span>
+              </div>
             </div>
-          </details>
-          <div
-            v-if="item.toolCall && item.resultPreview"
-            class="ai-agent-tool-step__preview"
-          >
-            <CornerDownRight :size="12" aria-hidden="true" />
-            <span><b>输出</b>{{ item.resultPreview }}</span>
-          </div>
-          <div v-if="!item.toolCall" class="ai-agent-timeline__step">
-            <span class="ai-agent-tool-step__marker" aria-hidden="true">
-              <LoaderCircle
-                v-if="item.event.status === 'running'"
-                :size="13"
-                class="ai-agent-tool-list__spinner"
-              />
-              <CircleCheck v-else-if="item.event.status === 'completed'" :size="13" />
-              <CircleX v-else :size="13" />
-            </span>
-            <div class="ai-agent-timeline__copy">
-              <strong>
-                <span class="ai-agent-timeline__kind">{{ item.eventLabel }}</span>
-                {{ item.stepTitle }}
-              </strong>
-              <span class="ai-agent-timeline__narrative">
-                <p v-for="paragraph in item.paragraphs" :key="paragraph">
-                  {{ paragraph }}
-                </p>
-              </span>
-            </div>
-          </div>
-        </li>
-      </ol>
-    </details>
+          </li>
+        </ol>
+      </details>
 
-    <div class="ai-agent-loop__phase">
-      <span
-        v-if="state.status === 'running' || state.status === 'waiting_authorizer'"
-        class="ai-agent-runbar__pulse"
-        aria-hidden="true"
-      ></span>
-      <CircleCheck
-        v-else-if="state.status === 'completed'"
-        :size="14"
-        class="ai-agent-loop__success"
-        aria-hidden="true"
-      />
-      <CircleX v-else :size="14" class="ai-agent-loop__error" aria-hidden="true" />
-      <strong>{{ state.detail || step || '正在分析上下文' }}</strong>
-    </div>
+      <div class="ai-agent-loop__phase" aria-live="polite">
+        <span
+          v-if="state.status === 'running' || state.status === 'waiting_authorizer'"
+          class="ai-agent-runbar__pulse"
+          aria-hidden="true"
+        ></span>
+        <CircleCheck
+          v-else-if="state.status === 'completed'"
+          :size="14"
+          class="ai-agent-loop__success"
+          aria-hidden="true"
+        />
+        <CircleX v-else :size="14" class="ai-agent-loop__error" aria-hidden="true" />
+        <span class="ai-agent-loop__phase-copy">
+          <strong>{{ phasePresentation.label || '正在分析上下文' }}</strong>
+          <small>{{ phasePresentation.detail }}</small>
+        </span>
+      </div>
     </section>
   </Teleport>
 </template>
