@@ -75,6 +75,7 @@ describe('RssInboxPanel', () => {
 
     expect(wrapper.get('.rss-insight-panel').text()).toContain('多个来源聚焦工具链更新')
     expect(wrapper.get('.rss-insight-panel__hot').text()).toContain('近期集中发布')
+    expect(wrapper.get('.rss-insight-panel__hot').text()).toContain('工程周报')
     const generate = wrapper
       .findAll('button')
       .find((button) => button.text().includes('生成本期速览'))
@@ -83,6 +84,41 @@ describe('RssInboxPanel', () => {
     expect(publishSignalRefresh).toHaveBeenCalledWith(
       expect.objectContaining({ scope: 'rss', triggerSource: 'manual' }),
     )
+    wrapper.unmount()
+  })
+
+  it('filters entries by category or subscription source and exposes source metadata', async () => {
+    Reflect.set(globalThis, '__TAURI_INTERNALS__', {})
+    const home = createInformationHome((prefix) => `${prefix}-test`, 1)
+    rssService.listSources.mockResolvedValue(ok([source, productSource]))
+    rssService.listEntries.mockResolvedValue(ok([entry, productEntry]))
+    homeService.getOrCreate.mockResolvedValue(ok(home))
+    homeService.listSummaries.mockResolvedValue(ok([]))
+    const { default: RssInboxPanel } = await import('@/features/inbox/components/RssInboxPanel.vue')
+    const wrapper = mount(RssInboxPanel, { props: { mode: 'rss' } })
+    await flushPromises()
+
+    const categoryFilters = wrapper.get('[aria-label="按来源分类筛选"]')
+    expect(categoryFilters.text()).toContain('技术')
+    expect(categoryFilters.text()).toContain('产品')
+    await categoryFilters
+      .findAll('button')
+      .find((button) => button.text() === '技术')
+      ?.trigger('click')
+    expect(wrapper.get('.rss-entry-list').text()).toContain(entry.title)
+    expect(wrapper.get('.rss-entry-list').text()).not.toContain(productEntry.title)
+
+    const sourceFilters = wrapper.get('[aria-label="按订阅源筛选"]')
+    await sourceFilters
+      .findAll('button')
+      .find((button) => button.text() === productSource.displayName)
+      ?.trigger('click')
+    expect(wrapper.get('.rss-entry-list').text()).toContain(productEntry.title)
+    expect(wrapper.get('.rss-entry-list').text()).not.toContain(entry.title)
+    const detail = wrapper.get('.rss-entry-detail')
+    expect(detail.text()).toContain(productSource.displayName)
+    expect(detail.text()).toContain(productSource.sourceCategory)
+    expect(detail.text()).toContain(productSource.feedUrl)
     wrapper.unmount()
   })
 
@@ -96,6 +132,7 @@ describe('RssInboxPanel', () => {
     const { default: RssInboxPanel } = await import('@/features/inbox/components/RssInboxPanel.vue')
     const wrapper = mount(RssInboxPanel, { props: { mode: 'rss' } })
     await flushPromises()
+    const initialLoadCount = rssService.listEntries.mock.calls.length
 
     let resolveEntries: (value: ReturnType<typeof ok>) => void = () => undefined
     rssService.listEntries.mockReturnValueOnce(
@@ -104,12 +141,14 @@ describe('RssInboxPanel', () => {
       }),
     )
     tauriEvent.handler?.({ payload: { latestUpdateAt: 10, queuedCount: 0, runningCount: 0 } })
-    await wrapper.vm.$nextTick()
+    await vi.waitFor(() =>
+      expect(rssService.listEntries).toHaveBeenCalledTimes(initialLoadCount + 1),
+    )
 
     expect(wrapper.find('.rss-inbox-layout').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('正在读取本地 RSS')
     tauriEvent.handler?.({ payload: { latestUpdateAt: 10, queuedCount: 0, runningCount: 0 } })
-    expect(rssService.listEntries).toHaveBeenCalledTimes(2)
+    expect(rssService.listEntries).toHaveBeenCalledTimes(initialLoadCount + 1)
 
     resolveEntries(ok([entry]))
     await flushPromises()
@@ -152,4 +191,22 @@ const entry = {
   categories: ['技术'],
   processingStatus: 'pending',
   syncedAt: 2,
+}
+
+const productSource = {
+  ...source,
+  id: 'source-2',
+  displayName: '产品观察',
+  feedUrl: 'https://product.example.com/feed',
+  siteUrl: 'https://product.example.com',
+  sourceCategory: '产品',
+}
+
+const productEntry = {
+  ...entry,
+  id: 'entry-2',
+  sourceId: productSource.id,
+  remoteId: 'remote-2',
+  title: '新产品发布',
+  author: '产品团队',
 }
