@@ -26,6 +26,25 @@ describe('AgentSummaryHomeWidget', () => {
     await wrapper.get('.home-agent-summary__email-briefs > button').trigger('click')
     expect(wrapper.emitted('openEmail')).toEqual([['account-1:INBOX:123']])
   })
+
+  it('waits for system confirmation before summary settings can be submitted again', () => {
+    const wrapper = mount(AgentSummaryHomeWidget, {
+      props: {
+        summaries: [],
+        generating: false,
+        autoEnabled: true,
+        intervalMinutes: 360,
+        settingsState: 'saving',
+      },
+    })
+
+    expect(wrapper.get('[role="status"]').text()).toContain('正在更新系统摘要设置')
+    expect(
+      wrapper
+        .findAll('header button')
+        .filter((button) => button.attributes('disabled') !== undefined),
+    ).toHaveLength(2)
+  })
 })
 
 const eventSummary: InformationHomeSummary = {

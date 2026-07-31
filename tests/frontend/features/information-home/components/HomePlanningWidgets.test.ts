@@ -30,4 +30,23 @@ describe('information home planning widgets', () => {
       { title: '项目复盘', date: '2026-07-31' },
     ])
   })
+
+  it('locks planning actions until the local system write finishes', async () => {
+    const todo = mount(TodoListHomeWidget, {
+      props: { items: [], editing: false, persistenceState: 'saving' },
+    })
+    const calendar = mount(CalendarHomeWidget, {
+      props: { events: [], editing: false, persistenceState: 'saving' },
+    })
+
+    expect(todo.get('[role="status"]').text()).toContain('正在写入本地待办')
+    expect(todo.get('input[aria-label="待办内容"]').attributes('disabled')).toBeDefined()
+    expect(calendar.get('[role="status"]').text()).toContain('正在写入本地日程')
+    expect(calendar.get('input[aria-label="日程内容"]').attributes('disabled')).toBeDefined()
+
+    await todo.setProps({ persistenceState: 'saved' })
+    await calendar.setProps({ persistenceState: 'error' })
+    expect(todo.get('[role="status"]').text()).toContain('已写入本地待办')
+    expect(calendar.get('[role="status"]').text()).toContain('已恢复原数据')
+  })
 })

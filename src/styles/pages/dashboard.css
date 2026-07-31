@@ -298,15 +298,35 @@
   font: inherit;
   font-size: var(--font-size-caption);
   cursor: pointer;
+  transition:
+    color 130ms ease,
+    border-color 130ms ease,
+    background-color 130ms ease,
+    box-shadow 130ms ease,
+    transform 90ms ease;
 }
 
-.dashboard-toolbar button:hover,
-.dashboard-widget-frame button:hover,
-.dashboard-widget-library button:hover {
+.dashboard-toolbar button:not(:disabled):hover,
+.dashboard-widget-frame button:not(:disabled):hover,
+.dashboard-widget-library button:not(:disabled):hover {
   color: var(--color-text-primary);
   border-color: var(--color-border-strong);
 }
-.dashboard-toolbar button:disabled {
+.dashboard-toolbar button:focus-visible,
+.dashboard-widget-frame button:focus-visible,
+.dashboard-widget-library button:focus-visible,
+.home-widget-size-menu button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-agent-accent) 72%, transparent);
+  outline-offset: 2px;
+}
+.dashboard-toolbar button:not(:disabled):active,
+.dashboard-widget-frame button:not(:disabled):active,
+.dashboard-widget-library button:not(:disabled):active {
+  transform: translateY(1px) scale(0.97);
+}
+.dashboard-toolbar button:disabled,
+.dashboard-widget-frame button:disabled,
+.dashboard-widget-library button:disabled {
   opacity: 0.42;
   cursor: default;
 }
@@ -332,6 +352,7 @@
 }
 
 .dashboard-widget-frame {
+  position: relative;
   display: flex;
   width: 100%;
   height: 100%;
@@ -342,6 +363,60 @@
   border-radius: 11px;
   background: color-mix(in srgb, var(--color-bg-elevated) 96%, var(--color-agent-accent) 4%);
   box-shadow: 0 8px 28px rgba(23, 20, 16, 0.05);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+@media (hover: hover) {
+  .dashboard-surface:not(.dashboard-surface--editing) .dashboard-widget-frame:hover {
+    border-color: color-mix(in srgb, var(--color-agent-accent) 24%, var(--color-border-subtle));
+    box-shadow: 0 12px 34px rgba(23, 20, 16, 0.09);
+    transform: translateY(-1px);
+  }
+}
+
+.dashboard-widget-frame:focus-within {
+  border-color: color-mix(in srgb, var(--color-agent-accent) 42%, var(--color-border-subtle));
+  box-shadow:
+    0 10px 30px rgba(23, 20, 16, 0.08),
+    0 0 0 2px color-mix(in srgb, var(--color-agent-accent) 12%, transparent);
+}
+
+.dashboard-widget-frame::before {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 12px;
+  left: 12px;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  content: '';
+  opacity: 0;
+  transform: scaleX(0.3);
+  transition:
+    opacity 150ms ease,
+    transform 180ms ease;
+}
+
+.dashboard-widget-frame.is-system-working::before {
+  background: var(--color-agent-accent);
+  opacity: 1;
+  transform: scaleX(1);
+  animation: dashboard-system-working 1.1s ease-in-out infinite alternate;
+}
+
+.dashboard-widget-frame.is-system-saved::before {
+  background: var(--color-status-success);
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.dashboard-widget-frame.is-system-error::before {
+  background: var(--color-status-error);
+  opacity: 1;
+  transform: scaleX(1);
 }
 
 .dashboard-surface--editing .dashboard-widget-frame {
@@ -593,6 +668,22 @@
   gap: 8px;
   padding: 7px 5px;
   background: var(--color-bg-elevated);
+  transition:
+    background-color 130ms ease,
+    box-shadow 130ms ease,
+    opacity 130ms ease,
+    transform 130ms ease;
+}
+.dashboard-widget-list li:hover,
+.dashboard-widget-list li:focus-within {
+  position: relative;
+  z-index: 1;
+  background: color-mix(in srgb, var(--color-bg-hover) 82%, var(--color-bg-elevated));
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-agent-accent) 54%, transparent);
+}
+.dashboard-widget-list li.is-processing {
+  opacity: 0.66;
+  background: var(--color-bg-subtle);
 }
 .dashboard-widget-list__main {
   display: grid;
@@ -693,7 +784,7 @@
 }
 
 .home-list-widget {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
 }
 
@@ -747,6 +838,16 @@
   min-height: 34px;
   border-bottom: 1px solid var(--color-border-subtle);
   font-size: var(--font-size-micro);
+  transition:
+    background-color 130ms ease,
+    padding 130ms ease;
+}
+
+.home-list-widget__items li:hover,
+.home-list-widget__items li:focus-within {
+  padding-right: 3px;
+  padding-left: 3px;
+  background: var(--color-bg-hover);
 }
 
 .home-list-widget__items li.is-completed > span {
@@ -785,7 +886,7 @@
 
 .home-calendar-widget {
   height: 100%;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   gap: 6px;
 }
 
@@ -826,6 +927,17 @@
   overflow: hidden;
   padding: 3px;
   background: var(--color-bg-elevated);
+  transition:
+    background-color 130ms ease,
+    box-shadow 130ms ease;
+}
+
+.home-calendar-widget__grid > div:hover,
+.home-calendar-widget__grid > div:focus-within {
+  position: relative;
+  z-index: 1;
+  background: var(--color-bg-hover);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-agent-accent) 28%, transparent);
 }
 
 .home-calendar-widget__grid > div.is-outside {
@@ -916,6 +1028,29 @@
 .home-agent-summary__content {
   min-height: 0;
   overflow: auto;
+}
+
+.home-system-feedback {
+  min-height: 18px;
+  margin: 0;
+  border-radius: 5px;
+  padding: 3px 7px;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-subtle);
+  font-size: var(--font-size-micro);
+  line-height: 1.4;
+}
+
+.home-system-feedback.is-saving {
+  color: var(--color-agent-accent);
+}
+
+.home-system-feedback.is-saved {
+  color: var(--color-status-success);
+}
+
+.home-system-feedback.is-error {
+  color: var(--color-status-error);
 }
 
 .home-agent-summary__meta {
@@ -1129,6 +1264,29 @@
 @keyframes dashboard-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes dashboard-system-working {
+  from {
+    opacity: 0.45;
+    transform: scaleX(0.45);
+  }
+  to {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-widget-frame,
+  .dashboard-widget-frame::before,
+  .dashboard-widget-frame button,
+  .dashboard-widget-list li,
+  .home-list-widget__items li,
+  .home-calendar-widget__grid > div {
+    animation: none !important;
+    transition: none !important;
   }
 }
 

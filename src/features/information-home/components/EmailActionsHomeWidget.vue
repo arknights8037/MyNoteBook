@@ -60,6 +60,7 @@ async function refresh(): Promise<void> {
 }
 
 async function setStatus(message: EmailMessage, status: EmailProcessingStatus): Promise<void> {
+  if (processingId.value) return
   processingId.value = message.id
   error.value = ''
   try {
@@ -67,6 +68,8 @@ async function setStatus(message: EmailMessage, status: EmailProcessingStatus): 
     if (!result.ok) return void (error.value = result.error.message)
     messages.value = messages.value.filter((candidate) => candidate.id !== message.id)
     publishMetrics()
+  } catch (value) {
+    error.value = value instanceof Error ? value.message : String(value)
   } finally {
     processingId.value = ''
   }
@@ -88,7 +91,12 @@ onMounted(() => void refresh())
       正在等待自动处理生成中文邮件简报…
     </p>
     <ul v-else class="dashboard-widget-list">
-      <li v-for="item in visible" :key="item.id">
+      <li
+        v-for="item in visible"
+        :key="item.id"
+        :class="{ 'is-processing': processingId === item.id }"
+        :aria-busy="processingId === item.id"
+      >
         <span class="dashboard-status-dot dashboard-status-dot--pending" />
         <span class="dashboard-widget-list__main"
           ><strong>{{ briefByMessageId.get(item.id)?.title }}</strong
@@ -101,6 +109,7 @@ onMounted(() => void refresh())
               type="button"
               title="前往处理"
               aria-label="前往处理"
+              :disabled="processingId === item.id"
               @click="emit('open', item.id)"
             >
               <ArrowUpRight :size="13" />
@@ -127,6 +136,9 @@ onMounted(() => void refresh())
         </span>
       </li>
     </ul>
+    <p v-if="processingId" class="home-system-feedback is-saving" role="status">
+      正在向邮件系统提交处理结果…
+    </p>
     <button type="button" class="home-signal-widget__open" @click="emit('open', undefined)">
       打开邮件收件箱
     </button>

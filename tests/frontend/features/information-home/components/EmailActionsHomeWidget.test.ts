@@ -24,6 +24,12 @@ describe('EmailActionsHomeWidget', () => {
   })
 
   it('opens the selected message and removes it after processing', async () => {
+    let resolveStatus: (value: ReturnType<typeof ok>) => void = () => undefined
+    service.setMessageStatus.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveStatus = resolve
+      }),
+    )
     const wrapper = mount(EmailActionsHomeWidget, { props: { limit: 8, summaries: [summary] } })
     await flushPromises()
 
@@ -34,6 +40,12 @@ describe('EmailActionsHomeWidget', () => {
     expect(wrapper.emitted('open')).toEqual([[message.id]])
 
     await wrapper.get('button[aria-label="标记为已处理"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.dashboard-widget-list li').attributes('aria-busy')).toBe('true')
+    expect(wrapper.text()).toContain('正在向邮件系统提交处理结果')
+    expect(wrapper.find('.dashboard-widget-list').exists()).toBe(true)
+
+    resolveStatus(ok({ ...message, processingStatus: 'done' }))
     await flushPromises()
     expect(service.setMessageStatus).toHaveBeenCalledWith(message.id, 'done')
     expect(wrapper.find('.dashboard-widget-list').exists()).toBe(false)

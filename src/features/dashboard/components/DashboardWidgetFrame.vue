@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { Copy, GripHorizontal, RefreshCw, Trash2 } from '@lucide/vue'
 
-defineProps<{
-  title: string
-  source: string
-  editing: boolean
-  refreshing?: boolean
-  refreshable?: boolean
-}>()
+withDefaults(
+  defineProps<{
+    title: string
+    source: string
+    editing: boolean
+    refreshing?: boolean
+    refreshable?: boolean
+    systemState?: 'idle' | 'saving' | 'saved' | 'error'
+  }>(),
+  { refreshing: false, refreshable: true, systemState: 'idle' },
+)
 
 const emit = defineEmits<{
   copy: []
@@ -17,7 +21,15 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <article class="dashboard-widget-frame">
+  <article
+    class="dashboard-widget-frame"
+    :class="{
+      'is-system-working': refreshing || systemState === 'saving',
+      'is-system-saved': systemState === 'saved',
+      'is-system-error': systemState === 'error',
+    }"
+    :aria-busy="refreshing || systemState === 'saving'"
+  >
     <header class="dashboard-widget-frame__header">
       <div class="dashboard-widget-frame__heading">
         <GripHorizontal v-if="editing" class="dashboard-widget-frame__drag-handle" :size="16" />
@@ -34,7 +46,8 @@ const emit = defineEmits<{
         <button
           v-if="refreshable !== false"
           type="button"
-          aria-label="刷新组件"
+          :aria-label="refreshing ? '正在从系统刷新组件' : '刷新组件'"
+          :title="refreshing ? '正在从系统读取' : '从系统重新读取'"
           :disabled="refreshing"
           @click="emit('refresh')"
         >

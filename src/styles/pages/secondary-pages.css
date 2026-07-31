@@ -229,6 +229,17 @@
   font: inherit;
   font-size: var(--font-size-micro);
   cursor: pointer;
+  transition:
+    color 130ms ease,
+    border-color 130ms ease,
+    background-color 130ms ease,
+    transform 90ms ease;
+}
+
+.local-environment__header > button:not(:disabled):hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
+  background: var(--color-bg-hover);
 }
 
 .local-environment__identity {
@@ -312,6 +323,19 @@
   border-radius: 9px;
   padding: 11px;
   background: var(--color-bg-subtle);
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+.local-environment__runtimes article:hover,
+.local-environment__runtimes article:focus-within {
+  border-color: color-mix(in srgb, var(--color-agent-accent) 32%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-bg-subtle) 88%, var(--color-agent-accent));
+  box-shadow: 0 7px 18px rgba(23, 20, 16, 0.07);
+  transform: translateY(-1px);
 }
 
 .local-environment__runtimes article > span {
@@ -363,6 +387,11 @@
   color: var(--color-text-tertiary);
   background: transparent;
   cursor: pointer;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    opacity 120ms ease,
+    transform 90ms ease;
 }
 
 .local-environment__runtimes article > button,
@@ -381,6 +410,24 @@
 .local-environment__paths article > button:hover {
   color: var(--color-agent-accent);
   background: var(--color-agent-thinking-bg);
+}
+
+.local-environment__header > button:focus-visible,
+.local-environment__runtimes article > button:focus-visible,
+.local-environment__paths article > button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-agent-accent) 72%, transparent);
+  outline-offset: 2px;
+}
+
+.local-environment__header > button:not(:disabled):active,
+.local-environment__runtimes article > button:not(:disabled):active,
+.local-environment__paths article > button:not(:disabled):active {
+  transform: translateY(1px) scale(0.96);
+}
+
+.local-environment button:disabled {
+  opacity: 0.42;
+  cursor: default;
 }
 
 .local-environment__paths > div {
@@ -434,6 +481,20 @@
   color: var(--color-status-error);
 }
 
+.local-environment__clipboard-status {
+  margin: 0;
+  border-radius: 7px;
+  padding: 7px 9px;
+  color: var(--color-agent-accent);
+  background: var(--color-agent-thinking-bg);
+  font-size: var(--font-size-micro);
+}
+
+.local-environment__clipboard-status.is-error {
+  color: var(--color-status-error);
+  background: color-mix(in srgb, var(--color-status-error) 8%, transparent);
+}
+
 .local-environment footer {
   gap: 6px;
   color: var(--color-text-tertiary);
@@ -451,6 +512,15 @@
 
 .local-environment--compact .local-environment__runtimes {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .local-environment__header > button,
+  .local-environment__runtimes article,
+  .local-environment__runtimes article > button,
+  .local-environment__paths article > button {
+    transition: none !important;
+  }
 }
 
 @media (max-width: 760px) {

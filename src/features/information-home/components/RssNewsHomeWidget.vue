@@ -64,6 +64,7 @@ async function refresh(): Promise<void> {
 }
 
 async function setStatus(entry: RssEntry, status: RssProcessingStatus): Promise<void> {
+  if (processingId.value) return
   processingId.value = entry.id
   error.value = ''
   try {
@@ -71,6 +72,8 @@ async function setStatus(entry: RssEntry, status: RssProcessingStatus): Promise<
     if (!result.ok) return void (error.value = result.error.message)
     entries.value = entries.value.filter((candidate) => candidate.id !== entry.id)
     publishMetrics()
+  } catch (value) {
+    error.value = value instanceof Error ? value.message : String(value)
   } finally {
     processingId.value = ''
   }
@@ -95,7 +98,13 @@ onMounted(() => void refresh())
       正在等待自动研判生成中文热点条目…
     </p>
     <ul v-else class="dashboard-widget-list">
-      <li v-for="item in orderedEntries" :key="item.id" class="is-rss-hot">
+      <li
+        v-for="item in orderedEntries"
+        :key="item.id"
+        class="is-rss-hot"
+        :class="{ 'is-processing': processingId === item.id }"
+        :aria-busy="processingId === item.id"
+      >
         <span
           class="dashboard-status-dot"
           :class="`dashboard-status-dot--${item.processingStatus}`"
@@ -113,6 +122,7 @@ onMounted(() => void refresh())
               type="button"
               title="前往处理"
               aria-label="前往处理"
+              :disabled="processingId === item.id"
               @click="emit('open', item.id)"
             >
               <ArrowUpRight :size="13" />
@@ -139,6 +149,9 @@ onMounted(() => void refresh())
         </span>
       </li>
     </ul>
+    <p v-if="processingId" class="home-system-feedback is-saving" role="status">
+      正在向 RSS 系统提交处理结果…
+    </p>
     <button type="button" class="home-signal-widget__open" @click="emit('open', undefined)">
       打开 RSS 收件箱
     </button>
