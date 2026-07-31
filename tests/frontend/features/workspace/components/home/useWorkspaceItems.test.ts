@@ -88,6 +88,28 @@ describe('useWorkspaceItems', () => {
     expect(controller.activeWorkspaceViewId.value).toBe('dashboard-1')
   })
 
+  it('exposes drag state used by the workspace sidebar render', () => {
+    const controller = createController()
+    const dataTransfer = {
+      effectAllowed: 'none',
+      setData: vi.fn(),
+    }
+
+    controller.handleMindMapDragStart({ dataTransfer } as unknown as DragEvent, 'map-1')
+    expect(controller.draggedMindMapId.value).toBe('map-1')
+    expect(dataTransfer.setData).toHaveBeenCalledWith(
+      'application/x-my-notebook-mind-map',
+      'map-1',
+    )
+
+    controller.handleWorkspaceViewDragStart({ dataTransfer } as unknown as DragEvent, 'view-1')
+    expect(controller.draggedWorkspaceViewId.value).toBe('view-1')
+
+    controller.handleWorkspacePageDragEnd()
+    expect(controller.draggedMindMapId.value).toBeNull()
+    expect(controller.draggedWorkspaceViewId.value).toBeNull()
+  })
+
   it('deletes all non-document items belonging to a removed hierarchy', async () => {
     const deleteMindMap = vi.fn(async () => ok(undefined))
     const deleteWorkspaceView = vi.fn(async () => ok(undefined))

@@ -375,6 +375,7 @@ pub fn remove_mcp_server(input: McpServerMutationInput) -> Result<(), String> {
 #[tauri::command]
 pub async fn list_mcp_tools(input: ListMcpToolsInput) -> Result<Vec<McpToolDescriptor>, String> {
     let store = load_store(&input.data_directory)?;
+    let strict_server = input.server_id.is_some();
     let servers: Vec<_> = store
         .servers
         .into_iter()
@@ -387,8 +388,22 @@ pub async fn list_mcp_tools(input: ListMcpToolsInput) -> Result<Vec<McpToolDescr
         })
         .collect();
     let mut descriptors = Vec::new();
+    let mut failures = Vec::new();
     for server in servers {
-        let tools = list_server_tools(&server).await?;
+        let tools = match list_server_tools(&server).await {
+            Ok(tools) => tools,
+            Err(error) => {
+                if strict_server {
+                    return Err(error);
+                }
+                eprintln!(
+                    "[mcp] 跳过不可用服务 {} ({}): {}",
+                    server.name, server.id, error
+                );
+                failures.push(error);
+                continue;
+            }
+        };
         descriptors.extend(tools.into_iter().map(|tool| {
             let read_only = tool
                 .annotations
@@ -409,6 +424,9 @@ pub async fn list_mcp_tools(input: ListMcpToolsInput) -> Result<Vec<McpToolDescr
                 server_trusted: server.trusted,
             }
         }));
+    }
+    if descriptors.is_empty() && !failures.is_empty() {
+        return Err(failures.join("\n"));
     }
     Ok(descriptors)
 }
@@ -487,8 +505,8 @@ async fn list_server_resources(
         "stdio" => {
             let mut client = timeout(MCP_TIMEOUT, ().serve(stdio_transport(server)?))
                 .await
-                .map_err(|_| "MCP stdio 初始化超时。".to_string())?
-                .map_err(mcp_error)?;
+                .map_err(|_| mcp_initialization_timeout(server))?
+                .map_err(|error| mcp_initialization_error(server, error))?;
             let resources = timeout(MCP_TIMEOUT, client.peer().list_all_resources())
                 .await
                 .map_err(|_| "MCP Resource 发现超时。".to_string())?
@@ -499,8 +517,8 @@ async fn list_server_resources(
         "http" => {
             let mut client = timeout(MCP_TIMEOUT, ().serve(http_transport(server)?))
                 .await
-                .map_err(|_| "MCP HTTP 初始化超时。".to_string())?
-                .map_err(mcp_error)?;
+                .map_err(|_| mcp_initialization_timeout(server))?
+                .map_err(|error| mcp_initialization_error(server, error))?;
             let resources = timeout(MCP_TIMEOUT, client.peer().list_all_resources())
                 .await
                 .map_err(|_| "MCP Resource 发现超时。".to_string())?
@@ -518,8 +536,8 @@ async fn read_server_resource(server: &McpServerConfig, uri: &str) -> Result<Val
         "stdio" => {
             let mut client = timeout(MCP_TIMEOUT, ().serve(stdio_transport(server)?))
                 .await
-                .map_err(|_| "MCP stdio 初始化超时。".to_string())?
-                .map_err(mcp_error)?;
+                .map_err(|_| mcp_initialization_timeout(server))?
+                .map_err(|error| mcp_initialization_error(server, error))?;
             let result = timeout(MCP_TIMEOUT, client.peer().read_resource(params.clone()))
                 .await
                 .map_err(|_| "MCP Resource 读取超时。".to_string())?
@@ -530,8 +548,8 @@ async fn read_server_resource(server: &McpServerConfig, uri: &str) -> Result<Val
         "http" => {
             let mut client = timeout(MCP_TIMEOUT, ().serve(http_transport(server)?))
                 .await
-                .map_err(|_| "MCP HTTP 初始化超时。".to_string())?
-                .map_err(mcp_error)?;
+                .map_err(|_| mcp_initialization_timeout(server))?
+                .map_err(|error| mcp_initialization_error(server, error))?;
             let result = timeout(MCP_TIMEOUT, client.peer().read_resource(params))
                 .await
                 .map_err(|_| "MCP Resource 读取超时。".to_string())?
@@ -550,8 +568,8 @@ async fn list_server_tools(server: &McpServerConfig) -> Result<Vec<rmcp::model::
             let transport = stdio_transport(server)?;
             let mut client = timeout(MCP_TIMEOUT, ().serve(transport))
                 .await
-                .map_err(|_| "MCP stdio 初始化超时。".to_string())?
-                .map_err(mcp_error)?;
+                .map_err(|_| mcp_initialization_timeout(server))?
+                .map_err(|error| mcp_initialization_error(server, error))?;
             let tools = timeout(MCP_TIMEOUT, client.peer().list_all_tools())
                 .await
                 .map_err(|_| "MCP 工具发现超时。".to_string())?
@@ -563,8 +581,8 @@ async fn list_server_tools(server: &McpServerConfig) -> Result<Vec<rmcp::model::
             let transport = http_transport(server)?;
             let mut client = timeout(MCP_TIMEOUT, ().serve(transport))
                 .await
-                .map_err(|_| "MCP HTTP 初始化超时。".to_string())?
-                .map_err(mcp_error)?;
+                .map_err(|_| mcp_initialization_timeout(server))?
+                .map_err(|error| mcp_initialization_error(server, error))?;
             let tools = timeout(MCP_TIMEOUT, client.peer().list_all_tools())
                 .await
                 .map_err(|_| "MCP 工具发现超时。".to_string())?
@@ -587,8 +605,8 @@ async fn call_server_tool(
             let transport = stdio_transport(server)?;
             let mut client = timeout(MCP_TIMEOUT, ().serve(transport))
                 .await
-                .map_err(|_| "MCP stdio 初始化超时。".to_string())?
-                .map_err(mcp_error)?;
+                .map_err(|_| mcp_initialization_timeout(server))?
+                .map_err(|error| mcp_initialization_error(server, error))?;
             let result = timeout(mcp_tool_timeout(server), client.peer().call_tool(params))
                 .await
                 .map_err(|_| "MCP 工具调用超时。".to_string())?
@@ -600,8 +618,8 @@ async fn call_server_tool(
             let transport = http_transport(server)?;
             let mut client = timeout(MCP_TIMEOUT, ().serve(transport))
                 .await
-                .map_err(|_| "MCP HTTP 初始化超时。".to_string())?
-                .map_err(mcp_error)?;
+                .map_err(|_| mcp_initialization_timeout(server))?
+                .map_err(|error| mcp_initialization_error(server, error))?;
             let result = timeout(mcp_tool_timeout(server), client.peer().call_tool(params))
                 .await
                 .map_err(|_| "MCP 工具调用超时。".to_string())?
@@ -629,7 +647,7 @@ fn stdio_transport(server: &McpServerConfig) -> Result<TokioChildProcess, String
     {
         command.current_dir(cwd);
     }
-    TokioChildProcess::new(command).map_err(|error| format!("无法启动 MCP 服务：{error}"))
+    TokioChildProcess::new(command).map_err(|error| mcp_initialization_error(server, error))
 }
 
 fn http_transport(
@@ -812,6 +830,43 @@ fn unique_id(mut id: String, used: &mut HashSet<String>) -> String {
 
 fn mcp_error(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+fn mcp_initialization_error(server: &McpServerConfig, error: impl std::fmt::Display) -> String {
+    let raw_error = error.to_string();
+    eprintln!(
+        "[mcp] 服务 {} ({}) 初始化失败: {}",
+        server.name, server.id, raw_error
+    );
+    if server.transport == "http" {
+        let endpoint = server.url.as_deref().unwrap_or("未配置地址");
+        return format!(
+            "MCP 服务“{}”初始化失败：无法连接 {}。请检查网络、代理或服务状态。",
+            server.name, endpoint
+        );
+    }
+    let command = server.command.as_deref().unwrap_or("未配置命令");
+    format!(
+        "MCP 服务“{}”初始化失败：无法启动 {}。请确认命令、工作目录和运行环境可用。",
+        server.name, command
+    )
+}
+
+fn mcp_initialization_timeout(server: &McpServerConfig) -> String {
+    if server.transport == "http" {
+        let endpoint = server.url.as_deref().unwrap_or("未配置地址");
+        return format!(
+            "MCP 服务“{}”初始化超时：{} 未在 {} 秒内响应。请检查网络、代理或服务状态。",
+            server.name,
+            endpoint,
+            MCP_TIMEOUT.as_secs()
+        );
+    }
+    format!(
+        "MCP 服务“{}”初始化超时：本地服务未在 {} 秒内就绪。请检查启动命令和运行环境。",
+        server.name,
+        MCP_TIMEOUT.as_secs()
+    )
 }
 
 fn mcp_tool_timeout(server: &McpServerConfig) -> Duration {
@@ -1087,6 +1142,103 @@ mod tests {
         )
         .is_err());
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn skips_one_unavailable_server_during_combined_tool_discovery() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test-fixtures")
+            .join("mcp-stdio-server.mjs");
+        let directory = std::env::temp_dir().join(format!(
+            "mynotebook-mcp-partial-discovery-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let offline = McpServerConfig {
+            id: "offline-local".to_string(),
+            name: "Offline Local".to_string(),
+            transport: "stdio".to_string(),
+            enabled: true,
+            trusted: true,
+            command: Some("definitely-missing-mcp-command".to_string()),
+            args: Vec::new(),
+            env: HashMap::new(),
+            cwd: None,
+            url: None,
+            headers: HashMap::new(),
+            timeout_seconds: None,
+        };
+        let fixture_server = McpServerConfig {
+            id: "fixture".to_string(),
+            name: "Fixture".to_string(),
+            transport: "stdio".to_string(),
+            enabled: true,
+            trusted: true,
+            command: Some("node".to_string()),
+            args: vec![fixture.to_string_lossy().to_string()],
+            env: HashMap::new(),
+            cwd: None,
+            url: None,
+            headers: HashMap::new(),
+            timeout_seconds: None,
+        };
+        save_store(
+            directory.to_str().unwrap(),
+            &McpConfigStore {
+                version: store_version(),
+                servers: vec![offline, fixture_server],
+            },
+        )
+        .unwrap();
+
+        let tools = list_mcp_tools(ListMcpToolsInput {
+            data_directory: directory.to_string_lossy().to_string(),
+            server_id: None,
+        })
+        .await
+        .expect("working MCP server should remain available");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].server_id, "fixture");
+        assert_eq!(tools[0].name, "echo");
+
+        let error = list_mcp_tools(ListMcpToolsInput {
+            data_directory: directory.to_string_lossy().to_string(),
+            server_id: Some("offline-local".to_string()),
+        })
+        .await
+        .expect_err("explicit unavailable server should report its failure");
+        assert!(error.contains("MCP 服务“Offline Local”初始化失败"));
+        assert!(error.contains("确认命令、工作目录和运行环境"));
+        assert!(!error.contains("WorkerTransport"));
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn formats_http_initialization_errors_for_people_not_transport_workers() {
+        let server = McpServerConfig {
+            id: "exa".to_string(),
+            name: "Exa".to_string(),
+            transport: "http".to_string(),
+            enabled: true,
+            trusted: true,
+            command: None,
+            args: Vec::new(),
+            env: HashMap::new(),
+            cwd: None,
+            url: Some("https://mcp.exa.ai/mcp".to_string()),
+            headers: HashMap::new(),
+            timeout_seconds: None,
+        };
+
+        let error = mcp_initialization_error(&server, "WorkerTransport request failed");
+        assert!(error.contains("MCP 服务“Exa”初始化失败"));
+        assert!(error.contains("https://mcp.exa.ai/mcp"));
+        assert!(error.contains("检查网络、代理或服务状态"));
+        assert!(!error.contains("WorkerTransport"));
     }
 
     #[tokio::test]
