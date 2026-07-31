@@ -11,6 +11,7 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "build:qoder-bridge": "node scripts/build-qoder-mcp-bridge.mjs",
     "typecheck": "vue-tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",

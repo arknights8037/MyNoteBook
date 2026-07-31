@@ -28,6 +28,12 @@ export class TauriMcpClient implements McpClientPort {
     })
   }
 
+  async installQoderBridge(workspace: string): Promise<McpServerConfig[]> {
+    return invoke('install_qoder_bridge', {
+      input: { dataDirectory: await this.dataDirectory(), workspace },
+    })
+  }
+
   async setServerEnabled(serverId: string, enabled: boolean): Promise<McpServerConfig> {
     return invoke('set_mcp_server_enabled', {
       input: { dataDirectory: await this.dataDirectory(), serverId, enabled },

@@ -9,6 +9,7 @@ export interface McpClientPort {
   listServers(): Promise<McpServerConfig[]>
   importConfig(sourcePath: string): Promise<McpServerConfig[]>
   importConfigText(content: string): Promise<McpServerConfig[]>
+  installQoderBridge(workspace: string): Promise<McpServerConfig[]>
   setServerEnabled(serverId: string, enabled: boolean): Promise<McpServerConfig>
   setServerTrusted(serverId: string, trusted: boolean): Promise<McpServerConfig>
   removeServer(serverId: string): Promise<void>

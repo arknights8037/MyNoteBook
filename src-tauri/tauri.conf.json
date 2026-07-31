@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.local.mynotebook",
   "build": {
-    "beforeDevCommand": "pnpm --filter @mynotebook/agent-runtime-worker build:sidecar && pnpm dev",
+    "beforeDevCommand": "pnpm --filter @mynotebook/agent-runtime-worker build:sidecar && pnpm build:qoder-bridge && pnpm dev",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "pnpm build && pnpm --filter @mynotebook/agent-runtime-worker build:sidecar",
+    "beforeBuildCommand": "pnpm build && pnpm --filter @mynotebook/agent-runtime-worker build:sidecar && pnpm build:qoder-bridge -- --release",
     "frontendDist": "../dist"
   },
   "app": {
@@ -66,7 +66,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/agent-runtime-worker"],
+    "externalBin": ["binaries/agent-runtime-worker", "binaries/qoder-mcp-bridge"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

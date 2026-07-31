@@ -18,6 +18,7 @@ export interface McpServerConfig {
   cwd?: string
   url?: string
   headers: Record<string, string>
+  timeoutSeconds?: number
 }
 
 export interface McpToolDescriptor {
