@@ -117,7 +117,7 @@ export function restrictToolsForIntent(policy: ExecutionPolicy, intent: AgentRun
     return
   }
   if (intent === 'create') {
-    policy.allowedTools = [...sharedReadTools, 'create_document', 'create_group']
+    policy.allowedTools = [...sharedReadTools, 'create_document', 'create_group', 'mcp:*']
   }
 }
 

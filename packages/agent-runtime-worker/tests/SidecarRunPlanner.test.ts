@@ -57,6 +57,25 @@ describe('planSidecarRun', () => {
     expect(planned.request.compiledContext).toContain('创建一个随机数生成器网页')
   })
 
+  it('keeps MCP tools visible for document creation tasks', async () => {
+    const planned = await planSidecarRun({
+      ...submission(),
+      objective: '调用 Qoder 创建网页，再把结果写入新文档',
+      intent: 'create',
+      externalTools: [qoderMcpTool()],
+    })
+
+    expect(planned.request.executionPolicy.allowedTools).toContain('mcp:*')
+    expect(planned.request.toolManifest).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'mcp__qoder__execute_task',
+          source: expect.objectContaining({ kind: 'mcp', serverId: 'qoder' }),
+        }),
+      ]),
+    )
+  })
+
   it('gives signal runs autonomous read access and only local organizer writes', async () => {
     const planned = await planSidecarRun({ ...submission(), intent: 'signal' })
     const toolNames = planned.request.toolManifest.map((tool) => tool.name)
@@ -155,5 +174,28 @@ function submission() {
     explicitTargets: [],
     correlationId: 'correlation-1',
     causationId: null,
+  }
+}
+
+function qoderMcpTool() {
+  return {
+    serverId: 'qoder',
+    serverName: 'Qoder',
+    name: 'execute_task',
+    runtimeName: 'mcp__qoder__execute_task',
+    description: 'Delegate a coding task to Qoder.',
+    inputSchema: {
+      type: 'object',
+      properties: { prompt: { type: 'string' } },
+      required: ['prompt'],
+    },
+    readOnly: false,
+    serverTrusted: true,
+    executionAuthorization: 'required' as const,
+    mutationApproval: 'not_required' as const,
+    externalActionApproval: 'not_required' as const,
+    maxCallsPerRun: 8,
+    tags: ['external.may_write' as const],
+    presentation: { label: 'Qoder task', category: 'external' as const },
   }
 }

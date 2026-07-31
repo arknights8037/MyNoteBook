@@ -360,7 +360,7 @@ function restrictPolicyForIntent(
     return
   }
   if (intent === 'create') {
-    policy.allowedTools = [...sharedReadTools, 'create_document', 'create_group']
+    policy.allowedTools = [...sharedReadTools, 'create_document', 'create_group', 'mcp:*']
   }
 }
 

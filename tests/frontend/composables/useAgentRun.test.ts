@@ -1216,6 +1216,32 @@ describe('useAgentRun', () => {
     expect(callMcpTool).toHaveBeenCalledOnce()
     expect(run.workflow.runtimeState.value.status).toBe('completed')
   })
+
+  it('keeps MCP tools available when the task also creates a document', async () => {
+    listMcpTools.mockResolvedValue([mcpTool(true, false)])
+    agentLoop.mockImplementation(async (input) => {
+      expect(input.executionPolicy.allowedTools).toContain('mcp:*')
+      expect(input.externalTools).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ runtimeName: expect.stringContaining('mcp__') }),
+        ]),
+      )
+      return noChangeAgentResult(1)
+    })
+    const settings = ref(createAiSettings('openai'))
+    settings.value.model = 'test-model'
+    const run = createRun(
+      settings,
+      snapshot(),
+      async () => true,
+      'agent',
+      '调用 Qoder 创建网页，再创建一个新文档记录结果',
+    )
+
+    await run.workflow.run()
+
+    expect(agentLoop).toHaveBeenCalledOnce()
+  })
 })
 
 describe('approved knowledge retrieval', () => {
