@@ -409,13 +409,14 @@ fn remove_file_if_present(path: &Path) -> Result<(), String> {
 
 fn retry_file_operation(mut operation: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {
     let mut last_error = None;
-    for _ in 0..20 {
+    for attempt in 0_u64..40 {
         match operation() {
             Ok(()) => return Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Err(error),
             Err(error) => last_error = Some(error),
         }
-        std::thread::sleep(Duration::from_millis(10));
+        let delay_ms = 10_u64.saturating_mul(attempt + 1).min(100);
+        std::thread::sleep(Duration::from_millis(delay_ms));
     }
     Err(last_error.expect("file operation must record an error"))
 }
