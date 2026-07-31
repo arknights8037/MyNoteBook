@@ -567,11 +567,14 @@
 .connector-catalog > div {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  align-items: start;
   gap: 10px;
 }
 
 .email-account-panel {
   display: grid;
+  align-content: start;
+  align-self: start;
   gap: 10px;
   border: 1px solid var(--color-border-subtle);
   border-radius: 10px;
@@ -600,12 +603,11 @@
 .email-account-panel > header small,
 .email-account-list__main small,
 .email-account-list__main > span {
+  min-width: 0;
+  overflow: hidden;
   color: var(--color-text-tertiary);
   font-size: var(--font-size-micro);
-}
-
-.rss-source-panel .email-account-list__main small {
-  overflow: hidden;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -621,6 +623,7 @@
 
 .email-account-list {
   display: grid;
+  align-content: start;
   gap: 1px;
   overflow: hidden;
   border: 1px solid var(--color-border-subtle);
@@ -629,6 +632,8 @@
 }
 
 .email-account-list article {
+  min-height: 64px;
+  align-self: start;
   gap: 10px;
   padding: 10px 11px;
   background: var(--color-bg-elevated);
@@ -649,6 +654,7 @@
   display: grid;
   min-width: 0;
   flex: 1;
+  align-content: center;
   gap: 2px;
 }
 
@@ -682,6 +688,8 @@
 
 .email-account-list__actions {
   display: flex;
+  flex: 0 0 auto;
+  align-self: center;
   gap: 3px;
 }
 
