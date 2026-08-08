@@ -370,6 +370,14 @@ P4.5 的 envelope 脚手架已经收敛为上述生产 Workflow 与 Action Gatew
 
 ## 10. Phase 6：Headless Core
 
+### 实施状态（进行中）
+
+- 已建立独立无 Tauri Headless Core 进程入口。Desktop 可发现或拉起 Core，但不会因窗口关闭或 Desktop 退出主动终止 Core。
+- v1 控制面只监听随机 `127.0.0.1` 端口，使用每实例 CSPRNG 凭证、磁盘 endpoint 身份、健康检查和 major/minor 协商；凭证不进入 WebView snapshot。
+- 当前只完成控制进程与协议地基，数据库、Event、Workflow、Connector、Action 和 Worker Supervisor 尚未迁入 Core，因此本阶段尚未达到退出条件，也不宣称已经实现进程级 SQLite 唯一所有权。
+
+实现事实、威胁边界与迁移顺序见 [Headless Core 进程与本地协议](headless-core.md)。
+
 ### 目标
 
 只有托盘模式和 Workflow 稳定后，才把 Core 从桌面进程生命周期中进一步拆出。
