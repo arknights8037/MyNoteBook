@@ -285,10 +285,14 @@ function handlePointerDown(event: InstanceType<typeof globalThis.PointerEvent>):
 function closeContextMenuAfterPrimaryAction(): void {
   contextMenuOpen.value = false
   // Reka handles the same pointer event after this capture handler and may publish
-  // its previous open state again. Reassert the user intent after the event settles.
+  // its previous open state again. Reassert the user intent after both the current
+  // microtask checkpoint and Reka's deferred dismiss processing have settled.
   globalThis.queueMicrotask(() => {
     contextMenuOpen.value = false
   })
+  globalThis.setTimeout(() => {
+    contextMenuOpen.value = false
+  }, 0)
 }
 
 function handlePrimaryClick(event: InstanceType<typeof globalThis.MouseEvent>): void {

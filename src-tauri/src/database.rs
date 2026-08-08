@@ -369,12 +369,25 @@ fn restore_database_backup(database_path: &Path, backup_path: &Path) -> Result<(
         .map_err(database_error)?
         .as_nanos();
     let restore_path = database_path.with_file_name(format!("editor-restore-{timestamp}.db"));
-    fs::copy(backup_path, &restore_path).map_err(database_error)?;
-    fs::OpenOptions::new()
-        .write(true)
-        .open(&restore_path)
-        .and_then(|file| file.sync_all())
-        .map_err(database_error)?;
+    retry_file_operation(|| fs::copy(backup_path, &restore_path).map(|_| ())).map_err(|error| {
+        database_error(format!(
+            "复制升级前备份到恢复暂存文件失败（{} -> {}）：{error}",
+            backup_path.display(),
+            restore_path.display()
+        ))
+    })?;
+    retry_file_operation(|| {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&restore_path)
+            .and_then(|file| file.sync_all())
+    })
+    .map_err(|error| {
+        database_error(format!(
+            "同步恢复暂存文件失败（{}）：{error}",
+            restore_path.display()
+        ))
+    })?;
 
     for sidecar in [
         database_path.with_extension("db-wal"),
@@ -405,13 +418,13 @@ fn remove_file_if_present(path: &Path) -> Result<(), String> {
 
 fn retry_file_operation(mut operation: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {
     let mut last_error = None;
-    for attempt in 0_u64..40 {
+    for attempt in 0_u64..80 {
         match operation() {
             Ok(()) => return Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Err(error),
             Err(error) => last_error = Some(error),
         }
-        let delay_ms = 10_u64.saturating_mul(attempt + 1).min(100);
+        let delay_ms = 10_u64.saturating_mul(attempt + 1).min(250);
         std::thread::sleep(Duration::from_millis(delay_ms));
     }
     Err(last_error.expect("file operation must record an error"))
