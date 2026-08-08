@@ -298,7 +298,6 @@ pub(crate) async fn get_workflow_timer_snapshot(
     post_authenticated(endpoint, "/v1/timer/snapshot", &()).await
 }
 
-#[allow(dead_code)] // Protocol observability endpoint; not yet projected into the Desktop UI.
 pub(crate) async fn get_workflow_scanner_snapshot(
     endpoint: &CoreEndpointDescriptor,
 ) -> Result<crate::workflow_runtime::WorkflowScannerSnapshot, String> {

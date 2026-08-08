@@ -96,7 +96,7 @@ Knowledge Object 可锚定 document/block/revision。Context Compiler 已读取�
 - `automation_runtime.rs`：Core 拥有自动化到期入队；Desktop 仍负责原子领取、文档/RSS 输入冻结、只读 Sidecar Agent 提交、来源游标、lease/retry/Dead Letter 和依赖 Worker 的恢复。
 - `signal_runtime.rs`：Core 消费相关更新领域事件并持久化 Signal Run；Desktop 仍冻结邮件/RSS/IM/会议与个人工作上下文、提交自主 `signal` Agent，并持有本地待办/日历写入的权限、幂等和依赖 Worker 的恢复边界。
 - `workflow_timers.rs`：运行于 Headless Core 的绝对 UTC Durable Timer、等待条件、lease/retry/Dead Letter 与 Domain Event/Outbox 原子触发；Desktop 侧仅保留脱敏快照事件投影。
-- `workflow_runtime.rs`：Work Item/Workflow/attempt 状态转换和续接事务；Headless Core scanner 负责 correlation Event、已满足等待、Automation/Signal ingress 与 Action lease 恢复，具体 Run 启动仍由尚未迁移的 Desktop Runtime 调度。
+- `workflow_runtime.rs`：Work Item/Workflow/attempt 状态转换和续接事务；Headless Core scanner 负责 correlation Event、已满足等待、Automation/Signal ingress 与 Action lease 恢复，并向 Desktop 投影脱敏健康与累计处理快照；具体 Run 启动仍由尚未迁移的 Desktop Runtime 调度。
 - `reliability.rs`：A2A、自动化、Timer 与 Rust Outbox dispatcher 共享的有界 RetryPolicy、lease clamp 和 UTC clock。
 - `ai_models.rs` / `ai_proxy.rs`：Provider 模型列表、请求代理、流式响应和敏感信息边界。
 - `work.rs`：TaskRun、Verifier、ChangeSet 和 Approval 的原子状态变更。

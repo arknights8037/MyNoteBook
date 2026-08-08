@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{
     sync::{Mutex, RwLock},
     task::JoinHandle,
@@ -12,6 +13,20 @@ use tokio::{
 };
 
 use crate::database;
+
+const WORKFLOW_SCANNER_STATUS_EVENT: &str = "workflow-scanner://status";
+
+pub(crate) struct WorkflowScannerProjectionState {
+    task: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Default for WorkflowScannerProjectionState {
+    fn default() -> Self {
+        Self {
+            task: Mutex::new(None),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -48,6 +63,69 @@ impl Default for WorkflowScannerSnapshot {
             automation_enqueued_count: 0,
             signal_enqueued_count: 0,
             action_recovered_count: 0,
+        }
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn get_workflow_scanner_snapshot(
+    app: AppHandle,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
+) -> Result<WorkflowScannerSnapshot, String> {
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::get_workflow_scanner_snapshot(&endpoint).await
+}
+
+pub(crate) async fn ensure_snapshot_projection(
+    app: &AppHandle,
+    state: &WorkflowScannerProjectionState,
+) -> Result<(), String> {
+    let mut task = state.task.lock().await;
+    if task.as_ref().is_some_and(|task| !task.is_finished()) {
+        return Ok(());
+    }
+    if let Some(existing) = task.take() {
+        existing.abort();
+    }
+    let app = app.clone();
+    *task = Some(tokio::spawn(async move {
+        run_scanner_snapshot_projection(app).await;
+    }));
+    Ok(())
+}
+
+async fn run_scanner_snapshot_projection(app: AppHandle) {
+    let mut ticker = tokio::time::interval(Duration::from_secs(1));
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    loop {
+        ticker.tick().await;
+        let core_state = app.state::<crate::core_supervisor::HeadlessCoreSupervisorState>();
+        let snapshot = match crate::core_supervisor::active_endpoint(&app, core_state.inner()).await
+        {
+            Ok(endpoint) => crate::core_server::get_workflow_scanner_snapshot(&endpoint).await,
+            Err(error) => Err(error),
+        };
+        match snapshot {
+            Ok(snapshot) => {
+                let _ = app.emit(WORKFLOW_SCANNER_STATUS_EVENT, snapshot);
+            }
+            Err(error) => {
+                let _ = app.emit(
+                    WORKFLOW_SCANNER_STATUS_EVENT,
+                    WorkflowScannerSnapshot::degraded(error),
+                );
+            }
+        }
+    }
+}
+
+impl WorkflowScannerSnapshot {
+    fn degraded(error: String) -> Self {
+        Self {
+            status: WorkflowScannerStatus::Degraded,
+            last_tick_at: Some(crate::reliability::now_millis()),
+            last_error: Some(error.chars().take(1_000).collect()),
+            ..Self::default()
         }
     }
 }

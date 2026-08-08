@@ -1,6 +1,6 @@
 # Headless Core 进程与本地协议
 
-本文记录 Phase 6 的当前实现事实、协议安全边界和后续迁移顺序。Phase 6 尚未完成；当前已落地独立 Core 控制进程、Desktop 发现协议、WebView 数据库 prepare/query/mutation catalog、不依赖 Desktop 生命周期的 Durable Timer、Workflow Event/已满足等待续接，以及 Automation/Signal ingress 与 Action 过期 lease 恢复扫描。Workflow Run 执行调度、Connector、Action handler 和其他 Rust 数据库所有权仍在后续迁移中。
+本文记录 Phase 6 的当前实现事实、协议安全边界和后续迁移顺序。Phase 6 尚未完成；当前已落地独立 Core 控制进程、Desktop 发现协议、WebView 数据库 prepare/query/mutation catalog、不依赖 Desktop 生命周期的 Durable Timer、Workflow Event/已满足等待续接，以及 Automation/Signal ingress 与 Action 过期 lease 恢复扫描。Desktop 后台运行面板通过受控命令和事件订阅这些 Core scanner 的脱敏状态，不接触 endpoint 凭证。Workflow Run 执行调度、Connector、Action handler 和其他 Rust 数据库所有权仍在后续迁移中。
 
 ## 当前进程拓扑
 
@@ -35,20 +35,20 @@ Core 只绑定 `127.0.0.1:0`，启动后在应用用户配置目录的 `headless
 
 当前控制面提供：
 
-| 路由                                  | 用途                                                         |
-| ------------------------------------- | ------------------------------------------------------------ |
-| `GET /v1/health`                      | 校验实例身份、PID、角色和协议版本                            |
-| `POST /v1/handshake`                  | 校验 major，协商双方支持的 minor                             |
-| `POST /v1/shutdown`                   | 受凭证保护的显式维护关闭；Desktop 退出不调用                 |
-| `POST /v1/database/prepare`           | 创建或升级数据库，并启动该目录的 Core 后台运行时              |
-| `POST /v1/database/query`             | 执行 WebView catalog 的只读查询                              |
-| `POST /v1/database/mutation`          | 执行封闭 mutation catalog                                    |
-| `POST /v1/database/close-read-pool`   | 关闭指定目录的 Core 只读池                                   |
-| `POST /v1/database/close-pool`        | 停止匹配的 Core 后台运行时并关闭指定目录的 Core 读写池        |
-| `POST /v1/timer/snapshot`             | 返回 Core 持有的 Timer 健康与积压快照                        |
-| `POST /v1/workflow/snapshot`          | 返回 Workflow/Automation/Signal/Action scanner 健康与累计处理快照 |
-| `POST /v1/runtime/quiesce`            | 中止并等待全部 Core 后台任务，用于数据目录迁移                |
-| `POST /v1/runtime/resume`             | 在迁移成功的目标目录或失败回滚的原目录恢复原有 Core 后台任务   |
+| 路由                                | 用途                                                              |
+| ----------------------------------- | ----------------------------------------------------------------- |
+| `GET /v1/health`                    | 校验实例身份、PID、角色和协议版本                                 |
+| `POST /v1/handshake`                | 校验 major，协商双方支持的 minor                                  |
+| `POST /v1/shutdown`                 | 受凭证保护的显式维护关闭；Desktop 退出不调用                      |
+| `POST /v1/database/prepare`         | 创建或升级数据库，并启动该目录的 Core 后台运行时                  |
+| `POST /v1/database/query`           | 执行 WebView catalog 的只读查询                                   |
+| `POST /v1/database/mutation`        | 执行封闭 mutation catalog                                         |
+| `POST /v1/database/close-read-pool` | 关闭指定目录的 Core 只读池                                        |
+| `POST /v1/database/close-pool`      | 停止匹配的 Core 后台运行时并关闭指定目录的 Core 读写池            |
+| `POST /v1/timer/snapshot`           | 返回 Core 持有的 Timer 健康与积压快照                             |
+| `POST /v1/workflow/snapshot`        | 返回 Workflow/Automation/Signal/Action scanner 健康与累计处理快照 |
+| `POST /v1/runtime/quiesce`          | 中止并等待全部 Core 后台任务，用于数据目录迁移                    |
+| `POST /v1/runtime/resume`           | 在迁移成功的目标目录或失败回滚的原目录恢复原有 Core 后台任务      |
 
 major 不一致必须拒绝连接；Core minor 低于 Desktop 所需 minor 时同样拒绝，较旧 Desktop 可连接较新 Core。Desktop 发现不兼容实例后使用旧 endpoint 的受权 shutdown 完成替换，不能让缺少新路由的旧 Core 继续服务。endpoint 中的实例身份必须与在线响应一致，不能只信任 PID 或磁盘文件。
 

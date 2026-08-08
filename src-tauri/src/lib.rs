@@ -178,6 +178,7 @@ pub fn run() {
         .manage(agent_worker_supervisor::AgentWorkerSupervisorState::default())
         .manage(agent_request_watcher::AgentRequestWatcherState::default())
         .manage(workflow_timers::DurableTimerProjectionState::default())
+        .manage(workflow_runtime::WorkflowScannerProjectionState::default())
         .invoke_handler(tauri::generate_handler![
             storage::get_system_fonts,
             local_environment::get_local_environment_snapshot,
@@ -261,6 +262,7 @@ pub fn run() {
             agent_request_watcher::settle_agent_request,
             signal_runtime::publish_signal_refresh_event,
             workflow_timers::get_workflow_timer_snapshot,
+            workflow_runtime::get_workflow_scanner_snapshot,
             work::commit_result_verification,
             work::decide_change_set,
             work::record_authorization,
