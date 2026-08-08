@@ -24,7 +24,7 @@ use tokio::{
 };
 
 pub const CORE_PROTOCOL_MAJOR: u16 = 1;
-pub const CORE_PROTOCOL_MINOR: u16 = 7;
+pub const CORE_PROTOCOL_MINOR: u16 = 8;
 pub const CORE_ENDPOINT_FILENAME: &str = "endpoint-v1.json";
 const CORE_LOCK_FILENAME: &str = "instance-v1.lock";
 const HEADLESS_CORE_FLAG: &str = "--mynotebook-headless-core";
@@ -82,7 +82,8 @@ struct CoreServerState {
     workflow_scanner: crate::workflow_runtime::CoreWorkflowScannerState,
     outbox: crate::outbox_dispatcher::CoreOutboxDispatcherState,
     connectors: crate::dingtalk::CoreDingTalkConnectorState,
-    worker: crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState,
+    worker: Arc<crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState>,
+    scheduler: crate::agent_request_watcher::CoreBackgroundSchedulerState,
 }
 
 #[derive(Clone, Debug)]
@@ -122,6 +123,7 @@ pub(crate) struct CoreRuntimeQuiesceResponse {
     pub(crate) connectors_were_running: bool,
     pub(crate) worker_was_running: bool,
     pub(crate) worker_data_directory: Option<String>,
+    pub(crate) scheduler_was_running: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -134,6 +136,13 @@ struct CoreRuntimeResumeRequest {
     connectors_should_run: bool,
     worker_should_run: bool,
     worker_data_directory: Option<String>,
+    scheduler_should_run: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SchedulerReconcileRequest {
+    directory: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -405,6 +414,27 @@ pub(crate) async fn reconcile_connectors(
     .await
 }
 
+pub(crate) async fn get_background_scheduler_snapshot(
+    endpoint: &CoreEndpointDescriptor,
+) -> Result<crate::agent_request_watcher::CoreBackgroundSchedulerSnapshot, String> {
+    post_authenticated(endpoint, "/v1/scheduler/snapshot", &()).await
+}
+
+pub(crate) async fn reconcile_background_scheduler(
+    endpoint: &CoreEndpointDescriptor,
+    directory: &Path,
+) -> Result<(), String> {
+    post_authenticated::<_, bool>(
+        endpoint,
+        "/v1/scheduler/reconcile",
+        &SchedulerReconcileRequest {
+            directory: directory.to_string_lossy().into_owned(),
+        },
+    )
+    .await
+    .map(|_| ())
+}
+
 pub(crate) async fn get_worker_projection(
     endpoint: &CoreEndpointDescriptor,
     after_sequence: u64,
@@ -550,6 +580,7 @@ pub(crate) async fn resume_background_runtime(
             connectors_should_run: snapshot.connectors_were_running,
             worker_should_run: snapshot.worker_was_running,
             worker_data_directory: snapshot.worker_data_directory.clone(),
+            scheduler_should_run: snapshot.scheduler_was_running,
         },
     )
     .await
@@ -648,6 +679,12 @@ async fn run_headless_core_with_context(
     write_endpoint(endpoint_directory, &endpoint)?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let (event_bus, _) = broadcast::channel(256);
+    let worker = Arc::new(
+        crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState::new(
+            process_context.app_local_data_directory.clone(),
+            process_context.resource_directory.clone(),
+        ),
+    );
     let state = Arc::new(CoreServerState {
         endpoint: endpoint.clone(),
         shutdown: Mutex::new(Some(shutdown_tx)),
@@ -657,10 +694,10 @@ async fn run_headless_core_with_context(
         connectors: crate::dingtalk::CoreDingTalkConnectorState::new(
             process_context.app_local_data_directory.clone(),
         ),
-        worker: crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState::new(
-            process_context.app_local_data_directory,
-            process_context.resource_directory,
-        ),
+        scheduler: crate::agent_request_watcher::CoreBackgroundSchedulerState::new(Arc::clone(
+            &worker,
+        )),
+        worker,
     });
     let router = Router::new()
         .route("/v1/health", get(health))
@@ -679,6 +716,8 @@ async fn run_headless_core_with_context(
         .route("/v1/outbox/snapshot", post(outbox_snapshot))
         .route("/v1/connectors/snapshot", post(connector_snapshot))
         .route("/v1/connectors/reconcile", post(connector_reconcile))
+        .route("/v1/scheduler/snapshot", post(scheduler_snapshot))
+        .route("/v1/scheduler/reconcile", post(scheduler_reconcile))
         .route("/v1/worker/projection", post(worker_projection))
         .route("/v1/worker/start", post(worker_start))
         .route("/v1/worker/run", post(worker_start_run))
@@ -700,6 +739,7 @@ async fn run_headless_core_with_context(
         })
         .await
         .map_err(|error| format!("Headless Core server 异常退出：{error}"));
+    state.scheduler.shutdown().await;
     let _ = state.worker.shutdown("Headless Core shutting down.").await;
     state.connectors.shutdown().await;
     state.outbox.shutdown().await;
@@ -797,6 +837,13 @@ async fn database_prepare(
         state.timers.quiesce().await;
         return Err(internal_api_error(error));
     }
+    if let Err(error) = state.scheduler.ensure_for_directory(&directory).await {
+        state.connectors.quiesce().await;
+        state.outbox.quiesce().await;
+        state.workflow_scanner.quiesce().await;
+        state.timers.quiesce().await;
+        return Err(internal_api_error(error));
+    }
     Ok(Json(preparation))
 }
 
@@ -865,6 +912,7 @@ async fn database_close_pool(
 ) -> Result<Json<bool>, (StatusCode, String)> {
     authorize_api(&headers, &state.endpoint.credential)?;
     let directory = normalize_database_directory(&request.directory)?;
+    state.scheduler.quiesce_if_directory(&directory).await;
     state.connectors.quiesce_if_directory(&directory).await;
     state.outbox.quiesce_if_directory(&directory).await;
     state.timers.quiesce_if_directory(&directory).await;
@@ -923,6 +971,30 @@ async fn connector_reconcile(
         .await
         .map(Json)
         .map_err(internal_api_error)
+}
+
+async fn scheduler_snapshot(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+) -> Result<Json<crate::agent_request_watcher::CoreBackgroundSchedulerSnapshot>, (StatusCode, String)>
+{
+    authorize_api(&headers, &state.endpoint.credential)?;
+    Ok(Json(state.scheduler.snapshot().await))
+}
+
+async fn scheduler_reconcile(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<SchedulerReconcileRequest>,
+) -> Result<Json<bool>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    let directory = normalize_database_directory(&request.directory)?;
+    state
+        .scheduler
+        .ensure_for_directory(&directory)
+        .await
+        .map_err(internal_api_error)?;
+    Ok(Json(true))
 }
 
 async fn worker_projection(
@@ -1062,7 +1134,23 @@ async fn runtime_quiesce(
     headers: HeaderMap,
 ) -> Result<Json<CoreRuntimeQuiesceResponse>, (StatusCode, String)> {
     authorize_api(&headers, &state.endpoint.credential)?;
-    let worker = state.worker.quiesce().await.map_err(internal_api_error)?;
+    let scheduler = state.scheduler.quiesce().await;
+    let worker = match state.worker.quiesce().await {
+        Ok(worker) => worker,
+        Err(error) => {
+            if scheduler.was_running {
+                if let Some(directory) = scheduler.data_directory.as_deref() {
+                    if let Err(resume_error) = state.scheduler.ensure_for_directory(directory).await
+                    {
+                        return Err(internal_api_error(format!(
+                            "{error}；恢复 Core 后台调度失败：{resume_error}"
+                        )));
+                    }
+                }
+            }
+            return Err(internal_api_error(error));
+        }
+    };
     let connectors = state.connectors.quiesce().await;
     let outbox = state.outbox.quiesce().await;
     let timer = state.timers.quiesce().await;
@@ -1074,6 +1162,7 @@ async fn runtime_quiesce(
         connectors_were_running: connectors.was_running,
         worker_was_running: worker.was_running,
         worker_data_directory: worker.data_directory,
+        scheduler_was_running: scheduler.was_running,
     }))
 }
 
@@ -1144,6 +1233,24 @@ async fn runtime_resume(
     }
     if request.connectors_should_run {
         if let Err(error) = state.connectors.ensure_for_directory(&directory).await {
+            if outbox_started {
+                state.outbox.quiesce().await;
+            }
+            if workflow_started {
+                state.workflow_scanner.quiesce().await;
+            }
+            if timer_started {
+                state.timers.quiesce().await;
+            }
+            if worker_started {
+                let _ = state.worker.shutdown("Core runtime resume rollback.").await;
+            }
+            return Err(internal_api_error(error));
+        }
+    }
+    if request.scheduler_should_run {
+        if let Err(error) = state.scheduler.ensure_for_directory(&directory).await {
+            state.connectors.quiesce().await;
             if outbox_started {
                 state.outbox.quiesce().await;
             }
@@ -1601,12 +1708,22 @@ mod tests {
             outbox_published,
             "Headless Core should publish durable Outbox messages"
         );
-        let outbox_snapshot = serde_json::to_value(
-            get_outbox_dispatcher_snapshot(&endpoint)
-                .await
-                .expect("read Core Outbox snapshot"),
-        )
-        .expect("serialize Core Outbox snapshot");
+        let outbox_snapshot = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let snapshot = serde_json::to_value(
+                    get_outbox_dispatcher_snapshot(&endpoint)
+                        .await
+                        .expect("read Core Outbox snapshot"),
+                )
+                .expect("serialize Core Outbox snapshot");
+                if snapshot["publishedCount"].as_u64().unwrap_or(0) >= 2 {
+                    break snapshot;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("Core Outbox snapshot should catch up with durable status");
         assert_eq!(outbox_snapshot["status"], "running");
         assert!(outbox_snapshot["publishedCount"].as_u64().unwrap_or(0) >= 2);
         let connector_snapshot = serde_json::to_value(
@@ -1625,6 +1742,14 @@ mod tests {
         .expect("serialize Core Worker projection");
         assert_eq!(worker_projection["snapshot"]["status"], "stopped");
         assert_eq!(worker_projection["events"], serde_json::json!([]));
+        let scheduler_snapshot = serde_json::to_value(
+            get_background_scheduler_snapshot(&endpoint)
+                .await
+                .expect("read Core scheduler snapshot"),
+        )
+        .expect("serialize Core scheduler snapshot");
+        assert_eq!(scheduler_snapshot["status"], "running");
+        assert!(scheduler_snapshot["tickCount"].as_u64().unwrap_or(0) >= 1);
         let runtime_migration = quiesce_background_runtime(&endpoint)
             .await
             .expect("quiesce Core background runtime");
@@ -1633,6 +1758,7 @@ mod tests {
         assert!(runtime_migration.outbox_was_running);
         assert!(runtime_migration.connectors_were_running);
         assert!(!runtime_migration.worker_was_running);
+        assert!(runtime_migration.scheduler_was_running);
         let paused_snapshot = serde_json::to_value(
             get_workflow_timer_snapshot(&endpoint)
                 .await
@@ -1661,6 +1787,13 @@ mod tests {
         )
         .expect("serialize paused Core Connector snapshot");
         assert_eq!(paused_connector_snapshot["status"], "paused");
+        let paused_scheduler_snapshot = serde_json::to_value(
+            get_background_scheduler_snapshot(&endpoint)
+                .await
+                .expect("read paused Core scheduler snapshot"),
+        )
+        .expect("serialize paused Core scheduler snapshot");
+        assert_eq!(paused_scheduler_snapshot["status"], "paused");
         resume_background_runtime(&endpoint, &database_directory, &runtime_migration)
             .await
             .expect("resume Core background runtime");
@@ -1692,6 +1825,56 @@ mod tests {
         )
         .expect("serialize resumed Core Connector snapshot");
         assert_eq!(resumed_connector_snapshot["status"], "running");
+        let resumed_scheduler_snapshot = serde_json::to_value(
+            get_background_scheduler_snapshot(&endpoint)
+                .await
+                .expect("read resumed Core scheduler snapshot"),
+        )
+        .expect("serialize resumed Core scheduler snapshot");
+        assert_eq!(resumed_scheduler_snapshot["status"], "running");
+        let create_view = |id: &str, sort_order: i64| {
+            execute_database_mutation(
+                &endpoint,
+                &database_directory,
+                crate::database_mutations::DatabaseMutation::CreateWorkspaceView,
+                vec![
+                    Value::from(id.to_string()),
+                    Value::Null,
+                    Value::from(sort_order),
+                    Value::from("dashboard"),
+                    Value::from(format!("并发视图 {sort_order}")),
+                    Value::from("{}"),
+                    Value::from(now_millis()),
+                    Value::from(now_millis()),
+                ],
+            )
+        };
+        let (first_write, second_write) = tokio::join!(
+            create_view("core-concurrent-view-1", 1),
+            create_view("core-concurrent-view-2", 2)
+        );
+        assert_eq!(
+            first_write
+                .expect("first concurrent Core mutation")
+                .rows_affected,
+            1
+        );
+        assert_eq!(
+            second_write
+                .expect("second concurrent Core mutation")
+                .rows_affected,
+            1
+        );
+        let concurrent_rows = execute_database_query(
+            &endpoint,
+            &database_directory,
+            "SELECT COUNT(*) AS count FROM workspace_views WHERE id LIKE 'core-concurrent-view-%'"
+                .to_string(),
+            Vec::new(),
+        )
+        .await
+        .expect("query concurrent Core mutations");
+        assert_eq!(concurrent_rows[0]["count"], 2);
         let mutation = execute_database_mutation(
             &endpoint,
             &database_directory,

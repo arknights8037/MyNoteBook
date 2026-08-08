@@ -20,10 +20,18 @@ fn headless_core_process_runs_without_tauri_and_accepts_authenticated_shutdown()
             .as_millis()
     ));
     std::fs::create_dir_all(&directory).expect("create endpoint directory");
+    let app_local_data_directory = directory.join("local-data");
+    let resource_directory = directory.join("resources");
+    std::fs::create_dir_all(&app_local_data_directory).expect("create app local data directory");
+    std::fs::create_dir_all(&resource_directory).expect("create resource directory");
     let mut child = Command::new(env!("CARGO_BIN_EXE_my-notebook"))
         .arg("--mynotebook-headless-core")
         .arg("--endpoint-directory")
         .arg(&directory)
+        .arg("--app-local-data-directory")
+        .arg(&app_local_data_directory)
+        .arg("--resource-directory")
+        .arg(&resource_directory)
         .spawn()
         .expect("spawn Headless Core process");
     let endpoint_path = directory.join("endpoint-v1.json");

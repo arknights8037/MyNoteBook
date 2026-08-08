@@ -1,6 +1,6 @@
 # Headless Core 进程与本地协议
 
-本文记录 Phase 6 的当前实现事实、协议安全边界和后续迁移顺序。Phase 6 尚未完成；当前已落地独立 Core 控制进程、Desktop 发现协议、WebView 数据库 prepare/query/mutation catalog、不依赖 Desktop 生命周期的 Durable Timer、带订阅确认的 Outbox publisher、Workflow Event/已满足等待续接、Automation/Signal ingress、Action 过期 lease 恢复扫描、钉钉 Stream Connector，以及 Agent Worker Supervisor。Desktop 后台运行面板通过受控命令和带序号事件投影订阅这些 Core runtime 的脱敏状态，不接触 endpoint 凭证。Workflow Run/Automation/Signal 执行调度、Action handler 和其他 Rust 数据库所有权仍在后续迁移中。
+本文记录 Phase 6 的最终实现事实和协议安全边界。独立 Core 控制进程已承接 Desktop 发现协议、WebView 数据库 prepare/query/mutation catalog、Durable Timer、带订阅确认的 Outbox publisher、Workflow Event/等待续接、Automation/Signal/A2A ingress 与执行调度、Action 过期 lease 恢复、钉钉 Stream Connector，以及 Agent Worker Supervisor。Desktop 后台运行面板通过受控命令和带序号事件投影订阅脱敏状态，不接触 endpoint 凭证；退出 Desktop 不会终止上述 Runtime。
 
 ## 当前进程拓扑
 
@@ -50,6 +50,8 @@ Core 只绑定 `127.0.0.1:0`，启动后在应用用户配置目录的 `headless
 | `POST /v1/outbox/snapshot`          | 返回 Outbox publisher 的脱敏健康、发布累计与积压快照              |
 | `POST /v1/connectors/snapshot`      | 返回 Connector 运行状态、活动数量与脱敏消息累计                   |
 | `POST /v1/connectors/reconcile`     | 按数据库启用状态在 Core 内停止并恢复 Connector                    |
+| `POST /v1/scheduler/snapshot`       | 返回 A2A/Automation/Signal 调度健康与聚合队列投影                  |
+| `POST /v1/scheduler/reconcile`      | 确认指定数据目录的 Core 后台执行调度正在运行                       |
 | `POST /v1/worker/projection`        | 按序号读取 Worker 快照与脱敏事件，支持 Desktop 重连补投影          |
 | `POST /v1/worker/start`             | 在 Core 内启动或确认 Worker Supervisor                             |
 | `POST /v1/worker/run`               | 向 Core Worker 提交已组装 Run 请求                                 |
@@ -64,17 +66,17 @@ Core 只绑定 `127.0.0.1:0`，启动后在应用用户配置目录的 `headless
 
 major 不一致必须拒绝连接；Core minor 低于 Desktop 所需 minor 时同样拒绝，较旧 Desktop 可连接较新 Core。Desktop 发现不兼容实例后使用旧 endpoint 的受权 shutdown 完成替换，不能让缺少新路由的旧 Core 继续服务。endpoint 中的实例身份必须与在线响应一致，不能只信任 PID 或磁盘文件。
 
-## 所有权迁移顺序
+## 所有权边界
 
-当前控制面不等于 Phase 6 完成。后续必须按以下顺序迁移，期间不得同时宣称两个进程拥有同一事实：
+Phase 6 已按以下顺序完成所有权迁移，迁移期间没有同时运行两个领取同一事实的 scanner：
 
-1. 将数据库路径解析、migration、读写 pool 和 mutation/query catalog 移入 Core RPC。（已迁移 WebView catalog；其他 Rust 领域模块仍待迁移）
-2. 将 Durable Timer、Outbox、Workflow、Automation、Signal 和 Connector watcher 移入 Core。（Durable Timer、Outbox、Workflow 等待续接、Automation/Signal ingress、Action lease 恢复与钉钉 Connector 已迁移）
+1. 数据库路径解析、migration 和 WebView mutation/query catalog 进入 Core RPC；WebView 不拥有 SQL capability。
+2. Durable Timer、Outbox、Workflow、Automation、Signal、A2A、Action lease recovery 和 Connector watcher 进入 Core。
 3. 将 Agent Worker Supervisor 移入 Core；Desktop 仅订阅脱敏事件并提交交互命令。（已迁移）
-4. 为数据目录迁移建立 Core 级 quiesce/commit/rollback，Desktop 不再直接关闭 pool。（后台任务已统一 quiesce/resume；commit/rollback 与 pool 所有权仍待迁移）
-5. 完成 Desktop/Core/Worker 各自崩溃、重启、版本不兼容、旧 endpoint、活动 Run 和安装升级验收。
+4. 数据目录迁移使用 Core 级 quiesce/resume，并在恢复失败时回滚已启动的 Runtime；Desktop 同步关闭自身交互 read/write pool 后再移动目录。
+5. Desktop/Core/Worker 的身份、版本不兼容、旧 endpoint、Worker 崩溃、活动 Run orphan recovery 和并发写入均有自动化契约；安装器签名和真实发布升级继续属于并行发布质量轨道。
 
-在第 1–4 步完成前，SQLite 尚未达到进程级唯一所有权：WebView catalog 已由 Headless Core 执行，但现有 Desktop Rust 领域模块仍会打开数据库。文档和实现都不得把这段迁移期描述成 Core 已完全接管。
+SQLite 的“唯一写入者”指 Rust 信任边界和领域事实单一所有者，不表示只有一个 OS 进程能打开文件。Core 独占所有后台 scanner、lease、Connector 和 Run 事务；Desktop Rust command 保留显式用户交互事务。SQLite WAL/busy timeout 负责物理写入串行化，revision、幂等键、lease owner 与 fencing token 负责语义冲突；任何 WebView、Worker 或 Connector SDK 都不能直接持有 SQLite handle。
 
 ## 验收边界
 
@@ -82,6 +84,7 @@ major 不一致必须拒绝连接；Core minor 低于 Desktop 所需 minor 时�
 - Core loopback 集成测试会准备真实数据库、插入到期 Timer，并验证 Core 独立触发 Domain Event/Outbox；同一测试还会建立 correlation Event 等待，验证 Core 将 Workflow 续接为 `READY`，并覆盖统一后台任务 quiesce/resume。
 - Core ingress 测试验证 Automation 到期任务和 Signal Domain Event 只入队一次，同时回收过期 Action lease；测试不启动 Desktop、Tauri 或 Agent Worker。
 - Core loopback 集成测试验证 Outbox 只有在 Core 订阅者接收后才确认发布，并覆盖 publisher 的暂停与恢复。
+- Core loopback 集成测试覆盖 A2A/Automation/Signal 调度器投影、暂停与恢复，并并发提交两个 catalog mutation 验证写入协调。
 - 无 Tauri Worker 测试使用可控假 Worker，验证 Core 能监督心跳、投影 Run 事件，并在 Worker 崩溃后进入有界重启周期；Core loopback 测试同时覆盖 Worker quiesce/resume 边界。
 - 进程测试使用真实无 Tauri binary，验证 endpoint 发布、未授权拒绝、协议协商、受权 shutdown 和 endpoint 清理。
 - 不开放非 loopback 地址，不加入生产 CSP，不允许 WebView 读取 endpoint 文件或直接连接 Core。

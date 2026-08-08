@@ -1,7 +1,5 @@
-use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
-use tauri::{AppHandle, Emitter};
 
 use crate::{
     agent_request_watcher, database,
@@ -9,19 +7,8 @@ use crate::{
     reliability::{now_millis, AUTOMATION_RETRY_POLICY},
 };
 
-const AUTOMATION_EVENT: &str = "automation://queue-changed";
 const AUTOMATION_LEASE_MS: i64 = 60 * 60 * 1_000;
 const DAY_MS: i64 = 24 * 60 * 60 * 1_000;
-
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-struct AutomationQueueSnapshot {
-    queued_count: i64,
-    running_count: i64,
-    waiting_approval_count: i64,
-    latest_update_at: Option<i64>,
-    occurred_at: i64,
-}
 
 struct ClaimedAutomationRun {
     id: String,
@@ -37,16 +24,16 @@ struct ClaimedAutomationRun {
     workflow: crate::workflow_runtime::WorkflowBinding,
 }
 
-pub(crate) async fn tick(
-    app: &AppHandle,
+pub(crate) async fn tick_in_core(
+    worker: &crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState,
     connection: &SqlitePool,
-    data_directory: Option<String>,
+    data_directory: &str,
     profile: Option<&Value>,
 ) -> Result<(), String> {
     if let Some(profile) = profile {
-        dispatch_next_run(app, connection, data_directory, profile).await?;
+        dispatch_next_run_in_core(worker, connection, data_directory, profile).await?;
     }
-    emit_snapshot(app, connection).await
+    Ok(())
 }
 
 pub(crate) async fn recover_orphaned_runs(
@@ -310,10 +297,10 @@ pub(crate) async fn settle_run(
     Ok(true)
 }
 
-async fn dispatch_next_run(
-    app: &AppHandle,
+async fn dispatch_next_run_in_core(
+    worker: &crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState,
     connection: &SqlitePool,
-    data_directory: Option<String>,
+    data_directory: &str,
     profile: &Value,
 ) -> Result<(), String> {
     if sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM automation_runs WHERE status = 'running'")
@@ -335,13 +322,9 @@ async fn dispatch_next_run(
             return Ok(());
         }
     };
-    if let Err(error) = crate::agent_worker_supervisor::start_background_orchestration(
-        app,
-        data_directory,
-        submission,
-        recovery,
-    )
-    .await
+    if let Err(error) = worker
+        .start_background_orchestration(data_directory.to_string(), submission, recovery)
+        .await
     {
         schedule_failure(connection, &claimed.id, None, &error, true).await?;
     }
@@ -1015,32 +998,6 @@ async fn is_current_run(
     .await
     .map_err(database::database_error)?
     .is_some_and(|value| value.0 == "running" && value.1.as_deref() == Some(run_id)))
-}
-
-async fn emit_snapshot(app: &AppHandle, connection: &SqlitePool) -> Result<(), String> {
-    let row = sqlx::query(
-        "SELECT SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued_count, \
-                SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running_count, \
-                SUM(CASE WHEN status = 'waiting_approval' THEN 1 ELSE 0 END) AS waiting_approval_count, \
-                MAX(COALESCE(completed_at, started_at, queued_at)) AS latest_update_at \
-         FROM automation_runs",
-    )
-    .fetch_one(connection)
-    .await
-    .map_err(database::database_error)?;
-    app.emit(
-        AUTOMATION_EVENT,
-        AutomationQueueSnapshot {
-            queued_count: row.try_get::<i64, _>("queued_count").unwrap_or(0),
-            running_count: row.try_get::<i64, _>("running_count").unwrap_or(0),
-            waiting_approval_count: row.try_get::<i64, _>("waiting_approval_count").unwrap_or(0),
-            latest_update_at: row
-                .try_get::<Option<i64>, _>("latest_update_at")
-                .unwrap_or(None),
-            occurred_at: now_millis(),
-        },
-    )
-    .map_err(|error| format!("无法发送自动化队列事件：{error}"))
 }
 
 fn calculate_next_run(

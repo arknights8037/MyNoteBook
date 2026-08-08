@@ -6,7 +6,7 @@
 
 MyNoteBook 的产品类别是本地优先的 AI 桌面工作中枢。它通过收集、理解、组织、委派、表达和沉淀的持续循环，为知识工作保留可继续的上下文。当前技术实现由 Vue 3 + Tiptap 前端、Tauri/Rust 桌面壳和 SQLite 本地存储组成，是单机桌面应用，不是 React 应用，也不是由多个服务组成的分布式系统。
 
-生产 Agent Runtime 使用真实 AI SDK Node sidecar、Headless Core 内的 Rust Supervisor/dispatcher、Tauri Runtime Adapter 和自包含 SEA `externalBin`。`useAgentRun` 仅冻结交互输入、订阅事件、授权/取消与 UI projection；它不再为 sidecar 路径组装 Task、Context Bundle、ExecutionPolicy、Tool Manifest 或 `AgentRunRequestV1`。关闭主窗口会隐藏到托盘，Core watcher/sidecar 与 Durable Timer 在无窗口时继续运行。Phase 6 已增加独立 Headless Core 控制进程和带随机凭证的 loopback 协议；WebView 数据库 catalog、Durable Timer、Outbox publisher、Workflow 等待续接、Automation/Signal ingress、Action lease 恢复、钉钉 Connector 与 Worker Supervisor 已迁入该进程，但其他 Rust 领域数据库访问和 Workflow Run/Automation/Signal 执行调度尚未迁移，显式退出 Desktop 仍会停止这些剩余调度循环。Rust 是 SQLite 唯一写入者，WebView 不持有 SQLite handle 或 SQL capability。
+生产 Agent Runtime 使用真实 AI SDK Node sidecar、Headless Core 内的 Rust Supervisor/dispatcher、Tauri Runtime Adapter 和自包含 SEA `externalBin`。`useAgentRun` 仅冻结交互输入、订阅事件、授权/取消与 UI projection；它不再为 sidecar 路径组装 Task、Context Bundle、ExecutionPolicy、Tool Manifest 或 `AgentRunRequestV1`。关闭主窗口会隐藏到托盘，Core watcher/sidecar 与 Durable Timer 在无窗口时继续运行。Phase 6 的独立 Headless Core 控制进程通过带随机凭证的 loopback 协议拥有 WebView 数据库 catalog、Durable Timer、Outbox publisher、Workflow 等待续接、Automation/Signal/A2A 执行调度、Action lease 恢复、钉钉 Connector 与 Worker Supervisor；显式退出 Desktop 不会停止这些业务 Runtime。Rust 是 SQLite 唯一写入信任边界，WebView 不持有 SQLite handle 或 SQL capability；Core 后台写入与仍位于 Desktop Rust command 的用户交互事务通过 SQLite WAL、短事务和领域 fencing 并发，任何事实仍只有一个领域所有者。
 
 产品愿景不能改变当前事实边界：尚未实现的信息来源、后台能力和外部应用接入必须明确标记为未来方向；Agent、View 和模型输出不能被宣传或实现为绕过用户判断的第二事实源。
 
@@ -96,7 +96,7 @@ Knowledge Object 可锚定 document/block/revision。Context Compiler 已读取�
 - `automation_runtime.rs`：Core 拥有自动化到期入队；Desktop 仍负责原子领取、文档/RSS 输入冻结、只读 Sidecar Agent 提交、来源游标、lease/retry/Dead Letter 和依赖 Worker 的恢复。
 - `signal_runtime.rs`：Core 消费相关更新领域事件并持久化 Signal Run；Desktop 仍冻结邮件/RSS/IM/会议与个人工作上下文、提交自主 `signal` Agent，并持有本地待办/日历写入的权限、幂等和依赖 Worker 的恢复边界。
 - `workflow_timers.rs`：运行于 Headless Core 的绝对 UTC Durable Timer、等待条件、lease/retry/Dead Letter 与 Domain Event/Outbox 原子触发；Desktop 侧仅保留脱敏快照事件投影。
-- `workflow_runtime.rs`：Work Item/Workflow/attempt 状态转换和续接事务；Headless Core scanner 负责 correlation Event、已满足等待、Automation/Signal ingress 与 Action lease 恢复，并向 Desktop 投影脱敏健康与累计处理快照；具体 Run 启动仍由尚未迁移的 Desktop Runtime 调度。
+- `workflow_runtime.rs`：Work Item/Workflow/attempt 状态转换和续接事务；Headless Core scanner 负责 correlation Event、已满足等待、Automation/Signal ingress 与 Action lease 恢复，Core scheduler 负责 A2A/Automation/Signal Run 启动，并向 Desktop 投影脱敏健康与累计处理快照。
 - `reliability.rs`：A2A、自动化、Timer 与 Rust Outbox dispatcher 共享的有界 RetryPolicy、lease clamp 和 UTC clock。
 - `ai_models.rs` / `ai_proxy.rs`：Provider 模型列表、请求代理、流式响应和敏感信息边界。
 - `work.rs`：TaskRun、Verifier、ChangeSet 和 Approval 的原子状态变更。

@@ -207,6 +207,20 @@ impl CoreAgentWorkerSupervisorState {
         }
     }
 
+    pub(crate) async fn active_run_ids(&self) -> Vec<String> {
+        self.host.state.snapshot.read().await.active_run_ids.clone()
+    }
+
+    pub(crate) async fn start_background_orchestration(
+        &self,
+        data_directory: String,
+        submission: Value,
+        recovery_context: Value,
+    ) -> Result<(), String> {
+        self.start_orchestration(data_directory, submission, Some(recovery_context))
+            .await
+    }
+
     pub(crate) async fn start_worker(
         &self,
         data_directory: String,
@@ -584,25 +598,6 @@ pub(crate) async fn start_agent_sidecar_orchestration(
         &directory,
         input.submission,
         input.recovery_context,
-    )
-    .await
-}
-
-pub(crate) async fn start_background_orchestration(
-    app: &AppHandle,
-    data_directory: Option<String>,
-    submission: Value,
-    recovery_context: Value,
-) -> Result<(), String> {
-    let directory = database::configured_data_directory(app, data_directory)
-        .map_err(database::database_error)?;
-    let core_state = app.state::<crate::core_supervisor::HeadlessCoreSupervisorState>();
-    let endpoint = crate::core_supervisor::active_endpoint(app, core_state.inner()).await?;
-    crate::core_server::start_core_worker_orchestration(
-        &endpoint,
-        &directory,
-        submission,
-        Some(recovery_context),
     )
     .await
 }

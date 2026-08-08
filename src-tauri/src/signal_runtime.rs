@@ -109,16 +109,16 @@ pub(crate) async fn publish_signal_refresh_event(
     Ok(json!({ "eventId": event_id, "status": "accepted" }))
 }
 
-pub(crate) async fn tick(
-    app: &AppHandle,
+pub(crate) async fn tick_in_core(
+    worker: &crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState,
     connection: &SqlitePool,
-    data_directory: Option<String>,
+    data_directory: &str,
     profile: Option<&Value>,
 ) -> Result<(), String> {
     if let Some(profile) = profile {
-        dispatch_next_run(app, connection, data_directory, profile).await?;
+        dispatch_next_run_in_core(worker, connection, data_directory, profile).await?;
     }
-    emit_snapshot(app, connection).await
+    Ok(())
 }
 
 pub(crate) async fn recover_orphaned_runs(
@@ -427,10 +427,10 @@ async fn execute_personal_organizer_tool_inner(
     Ok((result, event_id.to_string()))
 }
 
-async fn dispatch_next_run(
-    app: &AppHandle,
+async fn dispatch_next_run_in_core(
+    worker: &crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState,
     connection: &SqlitePool,
-    data_directory: Option<String>,
+    data_directory: &str,
     profile: &Value,
 ) -> Result<(), String> {
     if sqlx::query_scalar::<_, i64>(
@@ -448,13 +448,9 @@ async fn dispatch_next_run(
     };
     match build_submission(connection, &claimed, profile).await {
         Ok((submission, recovery)) => {
-            if let Err(error) = crate::agent_worker_supervisor::start_background_orchestration(
-                app,
-                data_directory,
-                submission,
-                recovery,
-            )
-            .await
+            if let Err(error) = worker
+                .start_background_orchestration(data_directory.to_string(), submission, recovery)
+                .await
             {
                 schedule_failure(connection, &claimed.id, None, &error, true).await?;
             }
