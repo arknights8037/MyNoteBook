@@ -5,6 +5,7 @@ import AgentRuntimeOperationsPanel from '@/features/knowledge-control/components
 import type { AgentWorkerSnapshot } from '@/infrastructure/runtime/AgentWorkerSnapshotClient'
 import type { AgentCommunicationRequest } from '@/repositories/agent/AgentCommunicationRepository'
 import type { WorkflowTimerSnapshot } from '@/infrastructure/runtime/WorkflowTimerSnapshotClient'
+import type { WorkflowScannerSnapshot } from '@/infrastructure/runtime/WorkflowScannerSnapshotClient'
 
 const snapshot: AgentWorkerSnapshot = {
   status: 'running',
@@ -40,6 +41,18 @@ const timerSnapshot: WorkflowTimerSnapshot = {
   dueCount: 1,
   deadLetterCount: 1,
   maxLagMs: 250,
+}
+
+const workflowSnapshot: WorkflowScannerSnapshot = {
+  status: 'running',
+  lastTickAt: 10_000,
+  lastSuccessAt: 10_000,
+  lastError: null,
+  resumedEventWaitCount: 2,
+  resumedSatisfiedWaitCount: 3,
+  automationEnqueuedCount: 4,
+  signalEnqueuedCount: 5,
+  actionRecoveredCount: 6,
 }
 
 function request(overrides: Partial<AgentCommunicationRequest>): AgentCommunicationRequest {
@@ -91,11 +104,13 @@ describe('AgentRuntimeOperationsPanel', () => {
     let workerListener: ((value: AgentWorkerSnapshot) => void) | null = null
     let queueListener: (() => void) | null = null
     let timerListener: ((value: WorkflowTimerSnapshot) => void) | null = null
+    let workflowListener: ((value: WorkflowScannerSnapshot) => void) | null = null
     const wrapper = mount(AgentRuntimeOperationsPanel, {
       props: {
         getSnapshot,
         getRequests,
         getTimerSnapshot: async () => timerSnapshot,
+        getWorkflowSnapshot: async () => workflowSnapshot,
         subscribeSnapshot: async (listener) => {
           workerListener = listener
           return vi.fn()
@@ -106,6 +121,10 @@ describe('AgentRuntimeOperationsPanel', () => {
         },
         subscribeTimerSnapshot: async (listener) => {
           timerListener = listener
+          return vi.fn()
+        },
+        subscribeWorkflowSnapshot: async (listener) => {
+          workflowListener = listener
           return vi.fn()
         },
       },
@@ -120,6 +139,8 @@ describe('AgentRuntimeOperationsPanel', () => {
     expect(wrapper.text()).toContain('Worker 异常退出：worker exited')
     expect(wrapper.text()).toContain('Durable Timer')
     expect(wrapper.text()).toContain('250ms')
+    expect(wrapper.text()).toContain('Workflow Scanner')
+    expect(wrapper.text()).toContain('Action 恢复6')
 
     workerListener?.({ ...snapshot, status: 'restarting', activeRuns: [] })
     await wrapper.vm.$nextTick()
@@ -129,6 +150,14 @@ describe('AgentRuntimeOperationsPanel', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.text()).toContain('运行降级')
     expect(wrapper.text()).toContain('database busy')
+
+    workflowListener?.({
+      ...workflowSnapshot,
+      status: 'degraded',
+      lastError: 'workflow scanner failed',
+    })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('workflow scanner failed')
 
     queueListener?.()
     await flushPromises()

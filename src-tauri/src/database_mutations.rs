@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{query::Query, sqlite::SqliteArguments, Sqlite, SqlitePool};
-use tauri::AppHandle;
+use tauri::{AppHandle, State};
 
-use crate::database::{database_error, open_database};
+use crate::database::{configured_data_directory, database_error};
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DatabaseMutation {
     UpsertAsset,
@@ -304,29 +304,38 @@ impl DatabaseMutation {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecuteDatabaseMutationInput {
-    data_directory: Option<String>,
-    mutation: DatabaseMutation,
+    pub(crate) data_directory: Option<String>,
+    pub(crate) mutation: DatabaseMutation,
     #[serde(default)]
-    values: Vec<Value>,
+    pub(crate) values: Vec<Value>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecuteDatabaseMutationResult {
-    rows_affected: u64,
-    last_insert_id: i64,
+    pub(crate) rows_affected: u64,
+    pub(crate) last_insert_id: i64,
 }
 
 #[tauri::command]
 pub async fn execute_database_mutation(
     app: AppHandle,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     input: ExecuteDatabaseMutationInput,
 ) -> Result<ExecuteDatabaseMutationResult, String> {
-    let pool = open_database(&app, input.data_directory).await?;
-    execute_database_mutation_in_pool(pool.as_ref(), input.mutation, input.values).await
+    let directory =
+        configured_data_directory(&app, input.data_directory).map_err(database_error)?;
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::execute_database_mutation(
+        &endpoint,
+        &directory,
+        input.mutation,
+        input.values,
+    )
+    .await
 }
 
-async fn execute_database_mutation_in_pool(
+pub(crate) async fn execute_database_mutation_in_pool(
     pool: &SqlitePool,
     mutation: DatabaseMutation,
     values: Vec<Value>,

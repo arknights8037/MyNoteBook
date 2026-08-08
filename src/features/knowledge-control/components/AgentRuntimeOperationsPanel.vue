@@ -18,6 +18,11 @@ import {
   subscribeWorkflowTimerSnapshot,
   type WorkflowTimerSnapshot,
 } from '@/infrastructure/runtime/WorkflowTimerSnapshotClient'
+import {
+  getWorkflowScannerSnapshot,
+  subscribeWorkflowScannerSnapshot,
+  type WorkflowScannerSnapshot,
+} from '@/infrastructure/runtime/WorkflowScannerSnapshotClient'
 import { NButton, NIcon, NTooltip } from '@/ui'
 
 type SubscribeSnapshot = (listener: (snapshot: AgentWorkerSnapshot) => void) => Promise<() => void>
@@ -26,6 +31,9 @@ type SubscribeQueue = (
 ) => Promise<() => void>
 type SubscribeTimerSnapshot = (
   listener: (snapshot: WorkflowTimerSnapshot) => void,
+) => Promise<() => void>
+type SubscribeWorkflowSnapshot = (
+  listener: (snapshot: WorkflowScannerSnapshot) => void,
 ) => Promise<() => void>
 
 let requestsLoader: Promise<() => Promise<AgentCommunicationRequest[]>> | null = null
@@ -41,14 +49,17 @@ const props = defineProps<{
   getSnapshot?: () => Promise<AgentWorkerSnapshot>
   getRequests?: () => Promise<AgentCommunicationRequest[]>
   getTimerSnapshot?: () => Promise<WorkflowTimerSnapshot>
+  getWorkflowSnapshot?: () => Promise<WorkflowScannerSnapshot>
   subscribeSnapshot?: SubscribeSnapshot
   subscribeQueue?: SubscribeQueue
   subscribeTimerSnapshot?: SubscribeTimerSnapshot
+  subscribeWorkflowSnapshot?: SubscribeWorkflowSnapshot
 }>()
 
 const snapshot = ref<AgentWorkerSnapshot | null>(null)
 const requests = ref<AgentCommunicationRequest[]>([])
 const timerSnapshot = ref<WorkflowTimerSnapshot | null>(null)
+const workflowSnapshot = ref<WorkflowScannerSnapshot | null>(null)
 const loading = ref(false)
 const error = ref('')
 const unlisteners: Array<() => void> = []
@@ -75,6 +86,7 @@ const timerLabels: Record<WorkflowTimerSnapshot['status'], string> = {
   paused: '已暂停',
   degraded: '运行降级',
 }
+const workflowLabels: Record<WorkflowScannerSnapshot['status'], string> = timerLabels
 const requestLabels: Record<AgentCommunicationRequest['status'], string> = {
   queued: '排队中',
   running: '运行中',
@@ -102,14 +114,18 @@ async function refresh(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    const [nextSnapshot, nextRequests, nextTimerSnapshot] = await Promise.all([
-      (props.getSnapshot ?? getAgentWorkerSnapshot)(),
-      (props.getRequests ?? loadRecentRequests)(),
-      (props.getTimerSnapshot ?? getWorkflowTimerSnapshot)(),
-    ])
+    const [nextSnapshot, nextRequests, nextTimerSnapshot, nextWorkflowSnapshot] = await Promise.all(
+      [
+        (props.getSnapshot ?? getAgentWorkerSnapshot)(),
+        (props.getRequests ?? loadRecentRequests)(),
+        (props.getTimerSnapshot ?? getWorkflowTimerSnapshot)(),
+        (props.getWorkflowSnapshot ?? getWorkflowScannerSnapshot)(),
+      ],
+    )
     snapshot.value = nextSnapshot
     requests.value = nextRequests
     timerSnapshot.value = nextTimerSnapshot
+    workflowSnapshot.value = nextWorkflowSnapshot
   } catch (refreshError) {
     error.value = refreshError instanceof Error ? refreshError.message : String(refreshError)
   } finally {
@@ -156,6 +172,9 @@ onMounted(async () => {
     (props.subscribeQueue ?? listenAgentRequestQueue)(() => void refresh()),
     (props.subscribeTimerSnapshot ?? subscribeWorkflowTimerSnapshot)((nextSnapshot) => {
       timerSnapshot.value = nextSnapshot
+    }),
+    (props.subscribeWorkflowSnapshot ?? subscribeWorkflowScannerSnapshot)((nextSnapshot) => {
+      workflowSnapshot.value = nextSnapshot
     }),
   ])
   for (const subscription of subscriptions) {
@@ -263,6 +282,38 @@ onBeforeUnmount(() => {
     <div v-if="timerSnapshot?.lastError" class="agent-runtime-alert">
       <TriangleAlert :size="15" />
       <span>{{ timerSnapshot.lastError }}</span>
+    </div>
+
+    <div class="agent-timer-summary" aria-label="Workflow Scanner 运行摘要">
+      <div>
+        <span>Workflow Scanner</span>
+        <strong :class="`is-${workflowSnapshot?.status ?? 'stopped'}`">
+          {{ workflowSnapshot ? workflowLabels[workflowSnapshot.status] : '读取中' }}
+        </strong>
+        <small v-if="workflowSnapshot">
+          最近成功 {{ formatTime(workflowSnapshot.lastSuccessAt) }}
+        </small>
+      </div>
+      <div>
+        <span>事件续接</span><strong>{{ workflowSnapshot?.resumedEventWaitCount ?? 0 }}</strong>
+      </div>
+      <div>
+        <span>等待续接</span><strong>{{ workflowSnapshot?.resumedSatisfiedWaitCount ?? 0 }}</strong>
+      </div>
+      <div>
+        <span>自动化入队</span><strong>{{ workflowSnapshot?.automationEnqueuedCount ?? 0 }}</strong>
+      </div>
+      <div>
+        <span>Signal 入队</span><strong>{{ workflowSnapshot?.signalEnqueuedCount ?? 0 }}</strong>
+      </div>
+      <div>
+        <span>Action 恢复</span><strong>{{ workflowSnapshot?.actionRecoveredCount ?? 0 }}</strong>
+      </div>
+    </div>
+
+    <div v-if="workflowSnapshot?.lastError" class="agent-runtime-alert">
+      <TriangleAlert :size="15" />
+      <span>{{ workflowSnapshot.lastError }}</span>
     </div>
 
     <div v-if="snapshot?.activeRuns.length" class="agent-runtime-active-runs">

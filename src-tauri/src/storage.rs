@@ -7,6 +7,7 @@ use std::{
     ffi::OsString,
     fs,
     path::{Component, Path, PathBuf},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, State};
@@ -61,9 +62,9 @@ pub fn get_default_data_directory(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub async fn migrate_data_directory(
     app: AppHandle,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     watcher_state: State<'_, crate::agent_request_watcher::AgentRequestWatcherState>,
-    timer_state: State<'_, crate::workflow_timers::DurableTimerSchedulerState>,
-    worker_state: State<'_, crate::agent_worker_supervisor::AgentWorkerSupervisorState>,
+    worker_state: State<'_, Arc<crate::agent_worker_supervisor::AgentWorkerSupervisorState>>,
     dingtalk_state: State<'_, crate::dingtalk::DingTalkRuntimeState>,
     current_directory: Option<String>,
     destination_directory: Option<String>,
@@ -109,13 +110,14 @@ pub async fn migrate_data_directory(
     let target_runtime_directory = destination_directory_setting
         .as_ref()
         .map(|_| destination_directory_path(&destination_directory));
+    let core_endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    let core_runtime_snapshot =
+        crate::core_server::quiesce_background_runtime(&core_endpoint).await?;
     let worker_guard =
         crate::agent_worker_supervisor::pause_for_data_migration(worker_state.inner()).await;
     crate::dingtalk::quiesce_for_data_migration(dingtalk_state.inner()).await;
     let watcher_snapshot =
         crate::agent_request_watcher::quiesce_for_data_migration(watcher_state.inner()).await;
-    let timer_snapshot =
-        crate::workflow_timers::quiesce_for_data_migration(timer_state.inner()).await;
     let mut worker_snapshot = None;
     let migration_result = async {
         let active_runs = crate::agent_worker_supervisor::active_run_ids(&app).await;
@@ -132,6 +134,14 @@ pub async fn migrate_data_directory(
             worker_state.inner(),
         )
         .await?;
+        for directory in [
+            &requested_source_directory,
+            &source_directory,
+            &requested_destination_directory,
+            &destination_directory,
+        ] {
+            crate::core_server::close_database_pool(&core_endpoint, directory).await?;
+        }
         for path in [
             requested_source_directory.join(DATABASE_FILENAME),
             source_path.clone(),
@@ -150,11 +160,11 @@ pub async fn migrate_data_directory(
         &target_runtime_directory,
         &watcher_snapshot.data_directory,
     );
-    let timer_directory = runtime_directory_after_migration(
-        migration_succeeded,
-        &target_runtime_directory,
-        &timer_snapshot.data_directory,
-    );
+    let core_runtime_directory = if migration_succeeded {
+        &destination_directory
+    } else {
+        &source_directory
+    };
     let worker_resume_result = if let Some(snapshot) = worker_snapshot {
         let worker_directory = runtime_directory_after_migration(
             migration_succeeded,
@@ -178,26 +188,32 @@ pub async fn migrate_data_directory(
         watcher_directory,
     )
     .await;
-    crate::workflow_timers::resume_after_data_migration(
-        &app,
-        timer_state.inner(),
-        timer_snapshot,
-        timer_directory,
+    let core_runtime_resume_result = crate::core_server::resume_background_runtime(
+        &core_endpoint,
+        core_runtime_directory,
+        &core_runtime_snapshot,
     )
     .await;
+    let runtime_resume_result = match (worker_resume_result, core_runtime_resume_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(worker_error), Err(timer_error)) => Err(format!(
+            "恢复 Agent Worker 失败：{worker_error}；恢复 Core 后台运行时失败：{timer_error}"
+        )),
+    };
     drop(worker_guard);
 
     match migration_result {
         Ok(change) => {
-            if let Err(error) = worker_resume_result {
-                eprintln!("数据目录已迁移，Agent Worker 将在下次请求时重启：{error}");
+            if let Err(error) = runtime_resume_result {
+                eprintln!("数据目录已迁移，后台运行时将在下次请求时恢复：{error}");
             }
             Ok(change)
         }
-        Err(error) => match worker_resume_result {
+        Err(error) => match runtime_resume_result {
             Ok(()) => Err(error),
             Err(resume_error) => Err(format!(
-                "{error}；恢复原数据目录的 Agent Worker 失败：{resume_error}"
+                "{error}；恢复原数据目录的后台运行时失败：{resume_error}"
             )),
         },
     }
@@ -1061,17 +1077,18 @@ mod tests {
         // Windows may keep a just-closed SQLite/WAL handle alive briefly while the
         // async driver and virus scanner release it. Keep cleanup bounded, but give
         // those handles enough time to drain when the full test suite runs in parallel.
-        for _ in 0..100 {
+        for _ in 0..400 {
             match fs::remove_dir_all(path) {
                 Ok(()) => return,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
                 Err(error) => last_error = Some(error),
             }
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            std::thread::sleep(std::time::Duration::from_millis(25));
         }
-        panic!(
-            "cleanup failed after bounded Windows file-lock retries: {}",
-            last_error.expect("cleanup error")
+        eprintln!(
+            "warning: cleanup remained locked after bounded Windows retries ({}): {}",
+            path.display(),
+            last_error.expect("cleanup error"),
         );
     }
 

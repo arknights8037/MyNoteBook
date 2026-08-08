@@ -370,6 +370,24 @@ P4.5 的 envelope 脚手架已经收敛为上述生产 Workflow 与 Action Gatew
 
 ## 10. Phase 6：Headless Core
 
+### 实施状态（已完成）
+
+- 已建立独立无 Tauri Headless Core 进程入口。Desktop 可发现或拉起 Core，但不会因窗口关闭或 Desktop 退出主动终止 Core。
+- v1 控制面只监听随机 `127.0.0.1` 端口，使用每实例 CSPRNG 凭证、磁盘 endpoint 身份、健康检查和 major/minor 协商；凭证不进入 WebView snapshot。
+- 数据库 prepare、WebView 只读 query、封闭 mutation catalog 与 read-pool close 已经通过协议 `1.1` 进入 Core；数据目录迁移会先关闭 Core 和 Desktop 两侧相关 pool。其他 Rust 领域模块暂时仍直接使用 Desktop pool。
+- 协议 `1.2` 已把 Durable Timer 的调度循环、lease/retry/Dead Letter、触发事务和健康快照迁入 Core。Desktop 只代理快照并投影 `workflow-timer://status`；数据目录迁移通过 Core 的 quiesce/resume 路由切换计时器所有权。
+- 协议 `1.3` 已把 correlation Event 等待匹配与已满足等待续接扫描迁入 Core，并把数据目录迁移收敛为统一 Core background runtime quiesce/resume；Desktop A2A watcher 不再并发扫描 Workflow 等待。
+- 协议 `1.4` 已把 Automation 到期入队、Signal Event 入队与 Action 过期 lease 恢复迁入 Core；当时 Desktop watcher 仅领取已持久化队列，随后由协议 `1.8` 完成执行调度迁移。
+- 协议 `1.5` 已把 Outbox claim/lease/retry/Dead Letter 与本地领域事件发布迁入 Core；只有存在活动 Core 订阅者时才确认 `published`，Desktop 只接收脱敏健康快照。
+- 协议 `1.6` 已把钉钉 Stream Connector 的恢复、连接任务和数据库写入迁入 Core；Desktop 的启动、停止与恢复命令只执行受权 reconcile，并按脱敏消息计数刷新界面。
+- 协议 `1.7` 已把 Agent Worker Supervisor、Worker 崩溃重启、Run 控制、终态缓冲与工具分发迁入 Core；Desktop 只提交交互命令并轮询带序号的脱敏事件投影。Windows 构建统一嵌入 Common Controls v6 manifest，确保正式二进制与 Rust lib 测试使用一致的加载契约。
+- 协议 `1.8` 已把 A2A、Automation、Signal 的执行调度、启动恢复和审批后 Patch 落库迁入 Core；Desktop watcher 只转发聚合投影，不再领取队列或启动 Worker。调度器已进入统一 quiesce/resume，数据目录迁移不会留下旧目录任务。
+- Desktop 后台运行面板已订阅 Core Workflow scanner 的脱敏健康与累计处理快照，可直接观察等待续接、Automation/Signal 入队和 Action lease 恢复，不读取 Core endpoint 凭证或数据库内部 lease。
+- Phase 6 的控制进程、WebView 数据库 catalog、Durable Timer、Outbox、Workflow/Automation/Signal/A2A 后台调度、Action Gateway lease/recovery、钉钉 Connector 与 Worker Supervisor 已完成迁移。真实邮件发送、IM 回复或发布 handler 仍受本阶段“不做”约束，不以空 handler 冒充交付。
+- 数据库所有权采用“Rust 单一写入信任边界 + 领域单一事实所有者”：Core 独占全部后台扫描、lease 和 Run 写入；Desktop Rust command 只处理显式用户交互事务。两类短事务通过 SQLite WAL、busy timeout、幂等键、revision 和 fencing 协调；并发 Core mutation 已纳入 loopback 验收。这里不把“只有 Core 进程能打开 SQLite”误写成当前事实。
+
+实现事实、威胁边界与迁移顺序见 [Headless Core 进程与本地协议](headless-core.md)。
+
 ### 目标
 
 只有托盘模式和 Workflow 稳定后，才把 Core 从桌面进程生命周期中进一步拆出。
@@ -394,6 +412,8 @@ Phase 4 和 Phase 5 已通过长时间运行、升级与恢复验收。
 
 - Desktop、Core、Worker 可独立升级/重启且不会破坏数据库单一所有权。
 - 本地身份、版本协商、并发写入和恢复协议明确。
+
+上述退出条件已由随机 endpoint 身份与凭证、major/minor 协商、失效 endpoint 回收、Core quiesce/resume、Worker 心跳与有界崩溃重启、后台 orphan/lease 恢复，以及并发 mutation 集成测试覆盖。Desktop、Core 和 Worker 不共享系统事实内存，重启后均从 SQLite 与带序号投影恢复。
 
 ### 本阶段不做
 

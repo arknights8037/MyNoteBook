@@ -2,9 +2,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use tauri::{AppHandle, Emitter, State};
-use tokio::{sync::Mutex, task::JoinHandle, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc,
+    },
+};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::{
+    sync::{Mutex, RwLock},
+    task::JoinHandle,
+    time::Duration,
+};
 
 use crate::{
     database,
@@ -26,18 +36,132 @@ pub(crate) struct AgentRequestWatcherMigrationSnapshot {
     pub(crate) data_directory: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CoreBackgroundSchedulerSnapshot {
+    pub(crate) status: String,
+    pub(crate) data_directory: Option<String>,
+    pub(crate) tick_count: u64,
+    pub(crate) last_tick_at: Option<i64>,
+    pub(crate) last_error: Option<String>,
+    pub(crate) agent_request: Value,
+    pub(crate) automation: Value,
+    pub(crate) signal: Value,
+}
+
+impl Default for CoreBackgroundSchedulerSnapshot {
+    fn default() -> Self {
+        Self {
+            status: "stopped".to_string(),
+            data_directory: None,
+            tick_count: 0,
+            last_tick_at: None,
+            last_error: None,
+            agent_request: json!({
+                "actionableCount": 0,
+                "latestUpdateAt": Value::Null,
+                "occurredAt": now_millis(),
+            }),
+            automation: json!({
+                "queuedCount": 0,
+                "runningCount": 0,
+                "waitingApprovalCount": 0,
+                "latestUpdateAt": Value::Null,
+                "occurredAt": now_millis(),
+            }),
+            signal: json!({
+                "queuedCount": 0,
+                "runningCount": 0,
+                "latestUpdateAt": Value::Null,
+                "occurredAt": now_millis(),
+            }),
+        }
+    }
+}
+
+pub(crate) struct CoreBackgroundSchedulerState {
+    task: Mutex<Option<JoinHandle<()>>>,
+    data_directory: Mutex<Option<PathBuf>>,
+    snapshot: Arc<RwLock<CoreBackgroundSchedulerSnapshot>>,
+    worker: Arc<crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CoreBackgroundSchedulerMigrationSnapshot {
+    pub(crate) was_running: bool,
+    pub(crate) data_directory: Option<PathBuf>,
+}
+
+impl CoreBackgroundSchedulerState {
+    pub(crate) fn new(
+        worker: Arc<crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState>,
+    ) -> Self {
+        Self {
+            task: Mutex::new(None),
+            data_directory: Mutex::new(None),
+            snapshot: Arc::new(RwLock::new(CoreBackgroundSchedulerSnapshot::default())),
+            worker,
+        }
+    }
+
+    pub(crate) async fn ensure_for_directory(&self, directory: &Path) -> Result<(), String> {
+        let directory = directory.to_path_buf();
+        let mut task = self.task.lock().await;
+        let same_directory = self.data_directory.lock().await.as_ref() == Some(&directory);
+        if same_directory && task.as_ref().is_some_and(|task| !task.is_finished()) {
+            return Ok(());
+        }
+        if let Some(existing) = task.take() {
+            existing.abort();
+            let _ = existing.await;
+        }
+        *self.data_directory.lock().await = Some(directory.clone());
+        let worker = Arc::clone(&self.worker);
+        let snapshot = Arc::clone(&self.snapshot);
+        *task = Some(tokio::spawn(async move {
+            run_core_background_scheduler(worker, directory, snapshot).await;
+        }));
+        Ok(())
+    }
+
+    pub(crate) async fn snapshot(&self) -> CoreBackgroundSchedulerSnapshot {
+        self.snapshot.read().await.clone()
+    }
+
+    pub(crate) async fn quiesce(&self) -> CoreBackgroundSchedulerMigrationSnapshot {
+        let data_directory = self.data_directory.lock().await.clone();
+        let existing = self.task.lock().await.take();
+        let was_running = existing.as_ref().is_some_and(|task| !task.is_finished());
+        if let Some(existing) = existing {
+            existing.abort();
+            let _ = existing.await;
+        }
+        self.snapshot.write().await.status = "paused".to_string();
+        CoreBackgroundSchedulerMigrationSnapshot {
+            was_running,
+            data_directory,
+        }
+    }
+
+    pub(crate) async fn quiesce_if_directory(&self, directory: &Path) {
+        if self.data_directory.lock().await.as_deref() == Some(directory) {
+            self.quiesce().await;
+        }
+    }
+
+    pub(crate) async fn shutdown(&self) {
+        self.quiesce().await;
+        let mut snapshot = self.snapshot.write().await;
+        snapshot.status = "stopped".to_string();
+        snapshot.data_directory = None;
+        *self.data_directory.lock().await = None;
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StartAgentRequestWatcherInput {
     data_directory: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-struct AgentRequestQueueSnapshot {
-    actionable_count: i64,
-    latest_update_at: Option<i64>,
-    occurred_at: i64,
 }
 
 #[derive(Deserialize)]
@@ -224,9 +348,9 @@ pub(crate) async fn start_agent_request_watcher(
     state: State<'_, AgentRequestWatcherState>,
     input: StartAgentRequestWatcherInput,
 ) -> Result<(), String> {
-    let requested_directory = input
-        .data_directory
-        .filter(|value| !value.trim().is_empty());
+    let directory = database::configured_data_directory(&app, input.data_directory)
+        .map_err(database::database_error)?;
+    let requested_directory = Some(directory.to_string_lossy().into_owned());
     let mut task = state.task.lock().await;
     if state.migration_paused.load(Ordering::SeqCst) {
         return Err("数据目录迁移期间不能启动 Agent 请求 watcher。".to_string());
@@ -237,10 +361,14 @@ pub(crate) async fn start_agent_request_watcher(
     }
     if let Some(existing) = task.take() {
         existing.abort();
+        let _ = existing.await;
     }
+    let core_state = app.state::<crate::core_supervisor::HeadlessCoreSupervisorState>();
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::reconcile_background_scheduler(&endpoint, &directory).await?;
     *state.data_directory.lock().await = requested_directory.clone();
     *task = Some(tokio::spawn(async move {
-        watch_agent_requests(app, requested_directory).await;
+        watch_core_background_scheduler(app).await;
     }));
     Ok(())
 }
@@ -272,121 +400,222 @@ pub(crate) async fn resume_after_data_migration(
     if snapshot.was_running {
         let app = app.clone();
         *task = Some(tokio::spawn(async move {
-            watch_agent_requests(app, data_directory).await;
+            if let Ok(directory) = database::configured_data_directory(&app, data_directory) {
+                let core_state = app.state::<crate::core_supervisor::HeadlessCoreSupervisorState>();
+                if let Ok(endpoint) =
+                    crate::core_supervisor::active_endpoint(&app, core_state.inner()).await
+                {
+                    let _ =
+                        crate::core_server::reconcile_background_scheduler(&endpoint, &directory)
+                            .await;
+                }
+            }
+            watch_core_background_scheduler(app).await;
         }));
     }
     state.migration_paused.store(false, Ordering::SeqCst);
 }
 
-async fn watch_agent_requests(app: AppHandle, data_directory: Option<String>) {
-    let mut last_snapshot: Option<(i64, Option<i64>)> = None;
+async fn watch_core_background_scheduler(app: AppHandle) {
+    let mut last_projection_signature: Option<(Value, Value, Value)> = None;
+    let mut ticker = tokio::time::interval(Duration::from_millis(500));
+    loop {
+        ticker.tick().await;
+        let core_state = app.state::<crate::core_supervisor::HeadlessCoreSupervisorState>();
+        let Ok(endpoint) = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await
+        else {
+            continue;
+        };
+        let Ok(snapshot) = crate::core_server::get_background_scheduler_snapshot(&endpoint).await
+        else {
+            continue;
+        };
+        let signature = (
+            queue_projection_signature(&snapshot.agent_request),
+            queue_projection_signature(&snapshot.automation),
+            queue_projection_signature(&snapshot.signal),
+        );
+        if last_projection_signature.as_ref() != Some(&signature) {
+            let _ = app.emit(QUEUE_EVENT, snapshot.agent_request.clone());
+            let _ = app.emit("automation://queue-changed", snapshot.automation.clone());
+            let _ = app.emit("signal-agent://changed", snapshot.signal.clone());
+        }
+        last_projection_signature = Some(signature);
+    }
+}
+
+fn queue_projection_signature(projection: &Value) -> Value {
+    let mut signature = projection.clone();
+    if let Some(object) = signature.as_object_mut() {
+        object.remove("occurredAt");
+    }
+    signature
+}
+
+async fn run_core_background_scheduler(
+    worker: Arc<crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState>,
+    directory: PathBuf,
+    snapshot: Arc<RwLock<CoreBackgroundSchedulerSnapshot>>,
+) {
+    let directory_string = directory.to_string_lossy().into_owned();
+    {
+        let mut current = snapshot.write().await;
+        current.status = "running".to_string();
+        current.data_directory = Some(directory_string.clone());
+        current.last_error = None;
+    }
     let mut startup_recovered = false;
     let mut ticker = tokio::time::interval(Duration::from_secs(1));
     loop {
         ticker.tick().await;
-        let Ok(connection) = database::open_database(&app, data_directory.clone()).await else {
-            continue;
-        };
-        if !startup_recovered {
-            let active_run_ids = crate::agent_worker_supervisor::active_run_ids(&app).await;
-            if recover_orphaned_background_requests(connection.as_ref(), &active_run_ids)
+        let pool =
+            match database::get_pool_for_path(&directory.join(database::DATABASE_FILENAME), false)
                 .await
-                .is_ok()
-                && crate::automation_runtime::recover_orphaned_runs(
-                    connection.as_ref(),
-                    &active_run_ids,
-                )
-                .await
-                .is_ok()
-                && crate::signal_runtime::recover_orphaned_runs(
-                    connection.as_ref(),
-                    &active_run_ids,
-                )
-                .await
-                .is_ok()
-                && crate::action_gateway::recover_expired_actions(connection.as_ref(), now_millis())
-                    .await
-                    .is_ok()
             {
+                Ok(pool) => pool,
+                Err(error) => {
+                    record_core_scheduler_error(&snapshot, error).await;
+                    continue;
+                }
+            };
+        let mut errors = Vec::new();
+        if !startup_recovered {
+            let active_run_ids = worker.active_run_ids().await;
+            let recovered = recover_orphaned_background_requests(pool.as_ref(), &active_run_ids)
+                .await
+                .map(|_| ());
+            if let Err(error) = recovered {
+                errors.push(format!("A2A 启动恢复失败：{error}"));
+            } else if let Err(error) =
+                crate::automation_runtime::recover_orphaned_runs(pool.as_ref(), &active_run_ids)
+                    .await
+            {
+                errors.push(format!("Automation 启动恢复失败：{error}"));
+            } else if let Err(error) =
+                crate::signal_runtime::recover_orphaned_runs(pool.as_ref(), &active_run_ids).await
+            {
+                errors.push(format!("Signal 启动恢复失败：{error}"));
+            } else {
                 startup_recovered = true;
             }
         }
-        let profile = read_background_profile(connection.as_ref())
-            .await
-            .ok()
-            .flatten();
-        let now = now_millis();
-        if let Err(error) =
-            crate::workflow_runtime::consume_event_waits(connection.as_ref(), now).await
-        {
-            tauri_plugin_log::log::warn!("Workflow 事件等待扫描失败：{error}");
-        }
-        if let Err(error) =
-            crate::workflow_runtime::resume_satisfied_waits(connection.as_ref(), now).await
-        {
-            tauri_plugin_log::log::warn!("Workflow 已满足等待续接失败：{error}");
-        }
-        if let Err(error) = crate::automation_runtime::tick(
-            &app,
-            connection.as_ref(),
-            data_directory.clone(),
-            profile.as_ref(),
-        )
-        .await
-        {
-            let _ = app.emit(
-                QUEUE_EVENT,
-                json!({ "actionableCount": 0, "latestUpdateAt": Value::Null, "occurredAt": now_millis(), "error": error }),
-            );
-        }
-        if let Err(error) = crate::signal_runtime::tick(
-            &app,
-            connection.as_ref(),
-            data_directory.clone(),
-            profile.as_ref(),
-        )
-        .await
-        {
-            let _ = app.emit(
-                QUEUE_EVENT,
-                json!({ "actionableCount": 0, "latestUpdateAt": Value::Null, "occurredAt": now_millis(), "error": error }),
-            );
-        }
-        if let Err(error) =
-            dispatch_next_background_request(&app, connection.as_ref(), data_directory.clone())
-                .await
-        {
-            let _ = app.emit(
-                QUEUE_EVENT,
-                json!({ "actionableCount": 0, "latestUpdateAt": Value::Null, "occurredAt": now_millis(), "error": error }),
-            );
-        }
-        let Ok((actionable_count, latest_update_at)) =
-            read_queue_snapshot(connection.as_ref()).await
-        else {
-            continue;
+        let profile = match read_background_profile(pool.as_ref()).await {
+            Ok(profile) => profile,
+            Err(error) => {
+                errors.push(format!("读取后台 Runtime Profile 失败：{error}"));
+                None
+            }
         };
-        let signature = (actionable_count, latest_update_at);
-        if last_snapshot.as_ref() != Some(&signature) {
-            let _ = app.emit(
-                QUEUE_EVENT,
-                AgentRequestQueueSnapshot {
-                    actionable_count,
-                    latest_update_at,
-                    occurred_at: now_millis(),
-                },
-            );
+        if let Err(error) = crate::automation_runtime::tick_in_core(
+            worker.as_ref(),
+            pool.as_ref(),
+            &directory_string,
+            profile.as_ref(),
+        )
+        .await
+        {
+            errors.push(format!("Automation 调度失败：{error}"));
         }
-        last_snapshot = Some(signature);
+        if let Err(error) = crate::signal_runtime::tick_in_core(
+            worker.as_ref(),
+            pool.as_ref(),
+            &directory_string,
+            profile.as_ref(),
+        )
+        .await
+        {
+            errors.push(format!("Signal 调度失败：{error}"));
+        }
+        if let Err(error) = dispatch_next_background_request_in_core(
+            worker.as_ref(),
+            pool.as_ref(),
+            &directory_string,
+        )
+        .await
+        {
+            errors.push(format!("A2A 调度失败：{error}"));
+        }
+        match read_core_scheduler_projection(pool.as_ref()).await {
+            Ok((agent_request, automation, signal)) => {
+                let mut current = snapshot.write().await;
+                current.status = "running".to_string();
+                current.tick_count = current.tick_count.saturating_add(1);
+                current.last_tick_at = Some(now_millis());
+                current.last_error = (!errors.is_empty()).then(|| errors.join("；"));
+                current.agent_request = agent_request;
+                current.automation = automation;
+                current.signal = signal;
+            }
+            Err(error) => {
+                errors.push(format!("读取调度投影失败：{error}"));
+                record_core_scheduler_error(&snapshot, errors.join("；")).await;
+            }
+        }
     }
 }
 
-async fn dispatch_next_background_request(
-    app: &AppHandle,
+async fn record_core_scheduler_error(
+    snapshot: &Arc<RwLock<CoreBackgroundSchedulerSnapshot>>,
+    error: String,
+) {
+    let mut current = snapshot.write().await;
+    current.tick_count = current.tick_count.saturating_add(1);
+    current.last_tick_at = Some(now_millis());
+    current.last_error = Some(error);
+}
+
+async fn read_core_scheduler_projection(
     connection: &SqlitePool,
-    data_directory: Option<String>,
+) -> Result<(Value, Value, Value), String> {
+    let occurred_at = now_millis();
+    let (actionable_count, latest_update_at) = read_queue_snapshot(connection).await?;
+    let automation = sqlx::query(
+        "SELECT SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued_count, \
+                SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running_count, \
+                SUM(CASE WHEN status = 'waiting_approval' THEN 1 ELSE 0 END) AS waiting_approval_count, \
+                MAX(COALESCE(completed_at, started_at, queued_at)) AS latest_update_at \
+         FROM automation_runs",
+    )
+    .fetch_one(connection)
+    .await
+    .map_err(database::database_error)?;
+    let signal = sqlx::query(
+        "SELECT SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued_count, \
+                SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running_count, \
+                MAX(COALESCE(completed_at, started_at, queued_at)) AS latest_update_at \
+         FROM signal_agent_runs",
+    )
+    .fetch_one(connection)
+    .await
+    .map_err(database::database_error)?;
+    Ok((
+        json!({
+            "actionableCount": actionable_count,
+            "latestUpdateAt": latest_update_at,
+            "occurredAt": occurred_at,
+        }),
+        json!({
+            "queuedCount": automation.try_get::<i64, _>("queued_count").unwrap_or(0),
+            "runningCount": automation.try_get::<i64, _>("running_count").unwrap_or(0),
+            "waitingApprovalCount": automation.try_get::<i64, _>("waiting_approval_count").unwrap_or(0),
+            "latestUpdateAt": automation.try_get::<Option<i64>, _>("latest_update_at").unwrap_or(None),
+            "occurredAt": occurred_at,
+        }),
+        json!({
+            "queuedCount": signal.try_get::<i64, _>("queued_count").unwrap_or(0),
+            "runningCount": signal.try_get::<i64, _>("running_count").unwrap_or(0),
+            "latestUpdateAt": signal.try_get::<Option<i64>, _>("latest_update_at").unwrap_or(None),
+            "occurredAt": occurred_at,
+        }),
+    ))
+}
+
+async fn dispatch_next_background_request_in_core(
+    worker: &crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState,
+    connection: &SqlitePool,
+    data_directory: &str,
 ) -> Result<(), String> {
-    process_background_decision(app, connection, data_directory.clone()).await?;
+    process_background_decision_in_core(connection).await?;
     let Some(profile) = read_background_profile(connection).await? else {
         return Ok(());
     };
@@ -425,13 +654,9 @@ async fn dispatch_next_background_request(
         }
     };
     let recovery_for_failure = recovery_context.clone();
-    if let Err(error) = crate::agent_worker_supervisor::start_background_orchestration(
-        app,
-        data_directory,
-        submission,
-        recovery_context,
-    )
-    .await
+    if let Err(error) = worker
+        .start_background_orchestration(data_directory.to_string(), submission, recovery_context)
+        .await
     {
         schedule_background_failure(
             connection,
@@ -446,6 +671,44 @@ async fn dispatch_next_background_request(
         .await?;
     }
     Ok(())
+}
+
+async fn process_background_decision_in_core(connection: &SqlitePool) -> Result<(), String> {
+    let row = sqlx::query(
+        "SELECT id, status, task_id FROM agent_requests WHERE status IN ('approved', 'rejected') \
+         AND task_id IS NOT NULL ORDER BY updated_at ASC LIMIT 1",
+    )
+    .fetch_optional(connection)
+    .await
+    .map_err(database::database_error)?;
+    let Some(row) = row else {
+        return Ok(());
+    };
+    let id: String = row.try_get("id").map_err(database::database_error)?;
+    let status: String = row.try_get("status").map_err(database::database_error)?;
+    let task_id: String = row.try_get("task_id").map_err(database::database_error)?;
+    match crate::agent_repository::apply_background_patch_decision_in_pool(
+        connection,
+        &task_id,
+        status == "approved",
+    )
+    .await
+    {
+        Ok(()) => {
+            settle_request_in_pool(connection, &id, "completed", Some(&task_id), None, None).await
+        }
+        Err(error) => {
+            settle_request_in_pool(
+                connection,
+                &id,
+                "failed",
+                Some(&task_id),
+                Some(&error),
+                None,
+            )
+            .await
+        }
+    }
 }
 
 async fn recover_orphaned_background_requests(
@@ -632,48 +895,6 @@ pub(crate) async fn renew_background_lease(
         .bind(now + BACKGROUND_LEASE_MS).bind(now).bind(request_id).bind(lease_owner)
         .execute(connection).await.map_err(database::database_error)?;
     Ok(())
-}
-
-async fn process_background_decision(
-    app: &AppHandle,
-    connection: &SqlitePool,
-    data_directory: Option<String>,
-) -> Result<(), String> {
-    let row = sqlx::query(
-        "SELECT id, status, task_id FROM agent_requests WHERE status IN ('approved', 'rejected') AND task_id IS NOT NULL ORDER BY updated_at ASC LIMIT 1",
-    )
-    .fetch_optional(connection)
-    .await
-    .map_err(database::database_error)?;
-    let Some(row) = row else {
-        return Ok(());
-    };
-    let id: String = row.try_get("id").map_err(database::database_error)?;
-    let status: String = row.try_get("status").map_err(database::database_error)?;
-    let task_id: String = row.try_get("task_id").map_err(database::database_error)?;
-    match crate::agent_repository::apply_background_patch_decision(
-        app,
-        data_directory,
-        &task_id,
-        status == "approved",
-    )
-    .await
-    {
-        Ok(()) => {
-            settle_request_in_pool(connection, &id, "completed", Some(&task_id), None, None).await
-        }
-        Err(error) => {
-            settle_request_in_pool(
-                connection,
-                &id,
-                "failed",
-                Some(&task_id),
-                Some(&error),
-                None,
-            )
-            .await
-        }
-    }
 }
 
 async fn read_background_profile(connection: &SqlitePool) -> Result<Option<Value>, String> {

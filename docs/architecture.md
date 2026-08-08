@@ -1,12 +1,12 @@
 # 当前架构与模块边界
 
-本文是 MyNoteBook 当前架构的事实入口，已按 2026-07-30 代码与 migration `0001`–`0043` 复核。它描述已经存在的实现、代码所有权和必须保持的依赖方向。产品定位、工作循环与品牌原则见 [产品定位与愿景](product-positioning.md)；认知系统契约见 [认知系统集成](cognitive-system-integration.md)，未完成事项和目标边界见 [后续开发路线图](roadmap.md)。
+本文是 MyNoteBook 当前架构的事实入口，已按 2026-08-08 代码与 migration `0001`–`0046` 复核。它描述已经存在的实现、代码所有权和必须保持的依赖方向。产品定位、工作循环与品牌原则见 [产品定位与愿景](product-positioning.md)；认知系统契约见 [认知系统集成](cognitive-system-integration.md)，未完成事项和目标边界见 [后续开发路线图](roadmap.md)。
 
 ## 1. 产品与技术边界
 
 MyNoteBook 的产品类别是本地优先的 AI 桌面工作中枢。它通过收集、理解、组织、委派、表达和沉淀的持续循环，为知识工作保留可继续的上下文。当前技术实现由 Vue 3 + Tiptap 前端、Tauri/Rust 桌面壳和 SQLite 本地存储组成，是单机桌面应用，不是 React 应用，也不是由多个服务组成的分布式系统。
 
-生产 Agent Runtime 使用真实 AI SDK Node sidecar、Rust Supervisor/dispatcher、Tauri Runtime Adapter 和自包含 SEA `externalBin`。`useAgentRun` 仅冻结交互输入、订阅事件、授权/取消与 UI projection；它不再为 sidecar 路径组装 Task、Context Bundle、ExecutionPolicy、Tool Manifest 或 `AgentRunRequestV1`。关闭主窗口会隐藏到托盘，Rust watcher/sidecar 与 Durable Timer 在无窗口时继续运行；显式退出仍会停止进程，当前不是系统 daemon。Rust 是 SQLite 唯一写入者，WebView 不持有 SQLite handle 或 SQL capability。
+生产 Agent Runtime 使用真实 AI SDK Node sidecar、Headless Core 内的 Rust Supervisor/dispatcher、Tauri Runtime Adapter 和自包含 SEA `externalBin`。`useAgentRun` 仅冻结交互输入、订阅事件、授权/取消与 UI projection；它不再为 sidecar 路径组装 Task、Context Bundle、ExecutionPolicy、Tool Manifest 或 `AgentRunRequestV1`。关闭主窗口会隐藏到托盘，Core watcher/sidecar 与 Durable Timer 在无窗口时继续运行。Phase 6 的独立 Headless Core 控制进程通过带随机凭证的 loopback 协议拥有 WebView 数据库 catalog、Durable Timer、Outbox publisher、Workflow 等待续接、Automation/Signal/A2A 执行调度、Action lease 恢复、钉钉 Connector 与 Worker Supervisor；显式退出 Desktop 不会停止这些业务 Runtime。Rust 是 SQLite 唯一写入信任边界，WebView 不持有 SQLite handle 或 SQL capability；Core 后台写入与仍位于 Desktop Rust command 的用户交互事务通过 SQLite WAL、短事务和领域 fencing 并发，任何事实仍只有一个领域所有者。
 
 产品愿景不能改变当前事实边界：尚未实现的信息来源、后台能力和外部应用接入必须明确标记为未来方向；Agent、View 和模型输出不能被宣传或实现为绕过用户判断的第二事实源。
 
@@ -82,18 +82,21 @@ Knowledge Object 可锚定 document/block/revision。Context Compiler 已读取�
 ## 3. Rust 模块所有权
 
 - `lib.rs`：应用组合、插件初始化和 command 注册，不实现领域规则。
+- `core_server.rs`：无 Tauri Headless Core 进程入口、loopback endpoint、随机实例身份、健康检查、协议协商、数据库 catalog、统一后台任务生命周期和显式维护关闭。
+- `core_supervisor.rs`：Desktop 对 Headless Core 的发现/拉起与脱敏状态投影；不在 Desktop 退出时关闭 Core。
 - `database.rs`：数据库路径、连接池、迁移、旧库基线和可靠性设置。
-- `database_mutations.rs`：WebView repository 写入使用的封闭 mutation catalog、参数校验与固定 SQL。
-- `database_queries.rs`：WebView 参数化读取的只读 SQLx pool、行序列化与连接关闭边界。
+- `database_mutations.rs`：WebView repository 写入使用的封闭 mutation catalog、参数校验与固定 SQL；Tauri command 通过 Headless Core 协议执行 catalog。
+- `database_queries.rs`：WebView 参数化读取的只读 SQL、行序列化与连接关闭边界；Tauri command 通过 Headless Core 的只读 SQLx pool 执行。
 - `document_core.rs`：可信文档校验、投影生成、持久化和修复。
 - `agent_repository.rs`：Agent task、Context Bundle、Patch、事务与审计持久化。
 - `agent_tools.rs`：数据库工具、只读命令和 Rust 线性时间正则执行。
 - `agent_cancellation.rs`：按 tool call ID 取消正在运行的原生或 MCP future。
 - `agent_worker_supervisor.rs`：Phase 3 Worker 子进程身份、NDJSON 通道、heartbeat、重启、活动/待授权/待领取终态的脱敏快照、标准 proposal 的原子持久化、崩溃终态、Provider 流式代理，以及全部内置 Domain Tool/MCP 的受控分发；默认生产 Agent 由它监督。
-- `agent_request_watcher.rs`：后台 Runtime Profile、A2A lease 原子领取与自动调度、审批/修订状态机、按 `run_id` fencing 的请求/Cognitive 终态、Research candidate 原子持久化、指数退避、Dead Letter 和启动恢复扫描。
-- `automation_runtime.rs`：自动化到期入队、原子领取、文档/RSS 输入冻结、只读 Sidecar Agent 提交、来源游标、lease/retry/Dead Letter 和启动恢复。
-- `signal_runtime.rs`：消费相关更新领域事件，冻结邮件/RSS/IM/会议与个人工作上下文，提交自主 `signal` Agent，并持有本地待办/日历写入的权限、幂等和运行恢复边界。
-- `workflow_timers.rs`：绝对 UTC Durable Timer、等待条件、lease/retry/Dead Letter，以及 Domain Event/Outbox 原子触发。
+- `agent_request_watcher.rs`：Desktop 后台 Runtime Profile、A2A lease 原子领取与 Agent Worker 调度、审批/修订状态机、按 `run_id` fencing 的请求/Cognitive 终态、Research candidate 原子持久化、指数退避、Dead Letter 和依赖活动 Worker 的启动恢复；不再拥有 Workflow 等待、Automation/Signal ingress 或 Action lease 恢复扫描。
+- `automation_runtime.rs`：Core 拥有自动化到期入队；Desktop 仍负责原子领取、文档/RSS 输入冻结、只读 Sidecar Agent 提交、来源游标、lease/retry/Dead Letter 和依赖 Worker 的恢复。
+- `signal_runtime.rs`：Core 消费相关更新领域事件并持久化 Signal Run；Desktop 仍冻结邮件/RSS/IM/会议与个人工作上下文、提交自主 `signal` Agent，并持有本地待办/日历写入的权限、幂等和依赖 Worker 的恢复边界。
+- `workflow_timers.rs`：运行于 Headless Core 的绝对 UTC Durable Timer、等待条件、lease/retry/Dead Letter 与 Domain Event/Outbox 原子触发；Desktop 侧仅保留脱敏快照事件投影。
+- `workflow_runtime.rs`：Work Item/Workflow/attempt 状态转换和续接事务；Headless Core scanner 负责 correlation Event、已满足等待、Automation/Signal ingress 与 Action lease 恢复，Core scheduler 负责 A2A/Automation/Signal Run 启动，并向 Desktop 投影脱敏健康与累计处理快照。
 - `reliability.rs`：A2A、自动化、Timer 与 Rust Outbox dispatcher 共享的有界 RetryPolicy、lease clamp 和 UTC clock。
 - `ai_models.rs` / `ai_proxy.rs`：Provider 模型列表、请求代理、流式响应和敏感信息边界。
 - `work.rs`：TaskRun、Verifier、ChangeSet 和 Approval 的原子状态变更。

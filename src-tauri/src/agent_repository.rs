@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
+use sqlx::{Row, SqlitePool};
 use tauri::AppHandle;
 
 use crate::database::{database_error, open_database};
@@ -408,6 +408,14 @@ pub async fn apply_agent_document_creation(
     app: AppHandle,
     input: ApplyAgentDocumentCreationInput,
 ) -> Result<AgentTransactionResult, String> {
+    let connection = open_database(&app, input.data_directory.clone()).await?;
+    apply_agent_document_creation_in_pool(connection.as_ref(), input).await
+}
+
+async fn apply_agent_document_creation_in_pool(
+    connection: &SqlitePool,
+    input: ApplyAgentDocumentCreationInput,
+) -> Result<AgentTransactionResult, String> {
     let projection = validate_and_project_tiptap(&input.content_json, true)?;
     if input.title.trim().is_empty()
         || input.accepted_after_text.trim().is_empty()
@@ -415,7 +423,6 @@ pub async fn apply_agent_document_creation(
     {
         return Err("新文档标题和内容不能为空。".to_string());
     }
-    let connection = open_database(&app, input.data_directory).await?;
     let mut transaction = connection.begin().await.map_err(database_error)?;
     let task = sqlx::query("SELECT document_id, status FROM agent_tasks WHERE id = ? LIMIT 1")
         .bind(&input.task_id)
@@ -556,6 +563,14 @@ pub async fn apply_agent_group_creation(
     app: AppHandle,
     input: ApplyAgentGroupCreationInput,
 ) -> Result<AgentTransactionResult, String> {
+    let connection = open_database(&app, input.data_directory.clone()).await?;
+    apply_agent_group_creation_in_pool(connection.as_ref(), input).await
+}
+
+async fn apply_agent_group_creation_in_pool(
+    connection: &SqlitePool,
+    input: ApplyAgentGroupCreationInput,
+) -> Result<AgentTransactionResult, String> {
     if input.group_title.trim().is_empty() {
         return Err("新分组名称不能为空。".to_string());
     }
@@ -596,7 +611,6 @@ pub async fn apply_agent_group_creation(
         return Err("分组的初始文档确认内容不能为空。".to_string());
     }
 
-    let connection = open_database(&app, input.data_directory).await?;
     let mut transaction = connection.begin().await.map_err(database_error)?;
     let task_status: String =
         sqlx::query_scalar("SELECT status FROM agent_tasks WHERE id = ? LIMIT 1")
@@ -754,6 +768,14 @@ pub async fn apply_agent_patch_set(
     app: AppHandle,
     input: ApplyAgentPatchSetInput,
 ) -> Result<AgentPatchBatchResult, String> {
+    let connection = open_database(&app, input.data_directory.clone()).await?;
+    apply_agent_patch_set_in_pool(connection.as_ref(), input).await
+}
+
+async fn apply_agent_patch_set_in_pool(
+    connection: &SqlitePool,
+    input: ApplyAgentPatchSetInput,
+) -> Result<AgentPatchBatchResult, String> {
     if input.batch_id.trim().is_empty()
         || input.documents.is_empty()
         || input.patches.is_empty()
@@ -772,7 +794,6 @@ pub async fn apply_agent_patch_set(
         before_projection: ProjectedDocument,
     }
 
-    let connection = open_database(&app, input.data_directory).await?;
     let mut transaction = connection.begin().await.map_err(database_error)?;
     let task = sqlx::query("SELECT status FROM agent_tasks WHERE id = ? LIMIT 1")
         .bind(&input.task_id)
@@ -1012,7 +1033,14 @@ pub async fn reject_agent_patch_set(
     app: AppHandle,
     input: RejectAgentPatchSetInput,
 ) -> Result<(), String> {
-    let connection = open_database(&app, input.data_directory).await?;
+    let connection = open_database(&app, input.data_directory.clone()).await?;
+    reject_agent_patch_set_in_pool(connection.as_ref(), input).await
+}
+
+async fn reject_agent_patch_set_in_pool(
+    connection: &SqlitePool,
+    input: RejectAgentPatchSetInput,
+) -> Result<(), String> {
     let mut transaction = connection.begin().await.map_err(database_error)?;
     for patch_id in input.patch_ids {
         sqlx::query("UPDATE agent_patches SET status = 'rejected', updated_at = ? WHERE id = ? AND task_id = ?")
@@ -1037,20 +1065,18 @@ pub async fn reject_agent_patch_set(
     transaction.commit().await.map_err(database_error)
 }
 
-pub(crate) async fn apply_background_patch_decision(
-    app: &AppHandle,
-    data_directory: Option<String>,
+pub(crate) async fn apply_background_patch_decision_in_pool(
+    connection: &SqlitePool,
     task_id: &str,
     approved: bool,
 ) -> Result<(), String> {
-    let connection = open_database(app, data_directory.clone()).await?;
     let rows = sqlx::query(
         "SELECT id, operation, document_id, block_id, target_block_ids_json, expected_version, \
          before_text, after_text, document_title, parent_document_id FROM agent_patches \
          WHERE task_id = ? AND status = 'proposed' ORDER BY created_at ASC",
     )
     .bind(task_id)
-    .fetch_all(connection.as_ref())
+    .fetch_all(connection)
     .await
     .map_err(database_error)?;
     if rows.is_empty() {
@@ -1063,10 +1089,10 @@ pub(crate) async fn apply_background_patch_decision(
         .try_into()
         .unwrap_or(i64::MAX);
     if !approved {
-        return reject_agent_patch_set(
-            app.clone(),
+        return reject_agent_patch_set_in_pool(
+            connection,
             RejectAgentPatchSetInput {
-                data_directory,
+                data_directory: None,
                 task_id: task_id.to_string(),
                 patch_ids: rows
                     .iter()
@@ -1084,10 +1110,10 @@ pub(crate) async fn apply_background_patch_decision(
             let document_id: String = row.try_get("document_id").map_err(database_error)?;
             let patch_id: String = row.try_get("id").map_err(database_error)?;
             let after: String = row.try_get("after_text").map_err(database_error)?;
-            return apply_agent_document_creation(
-                app.clone(),
+            return apply_agent_document_creation_in_pool(
+                connection,
                 ApplyAgentDocumentCreationInput {
-                    data_directory,
+                    data_directory: None,
                     task_id: task_id.to_string(),
                     patch_id,
                     document_id,
@@ -1111,10 +1137,10 @@ pub(crate) async fn apply_background_patch_decision(
             let child_document_id: String = row.try_get("block_id").map_err(database_error)?;
             let child_after: String = row.try_get("after_text").map_err(database_error)?;
             let has_child = !child_document_id.trim().is_empty() && !child_after.trim().is_empty();
-            return apply_agent_group_creation(
-                app.clone(),
+            return apply_agent_group_creation_in_pool(
+                connection,
                 ApplyAgentGroupCreationInput {
-                    data_directory,
+                    data_directory: None,
                     task_id: task_id.to_string(),
                     patch_id: row.try_get("id").map_err(database_error)?,
                     group_document_id,
@@ -1159,7 +1185,7 @@ pub(crate) async fn apply_background_patch_decision(
             "SELECT content_json, revision FROM documents WHERE id = ? AND is_deleted = 0 LIMIT 1",
         )
         .bind(&document_id)
-        .fetch_optional(connection.as_ref())
+        .fetch_optional(connection)
         .await
         .map_err(database_error)?
         .ok_or_else(|| format!("目标文档 {document_id} 不存在。"))?;
@@ -1188,10 +1214,10 @@ pub(crate) async fn apply_background_patch_decision(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    apply_agent_patch_set(
-        app.clone(),
+    apply_agent_patch_set_in_pool(
+        connection,
         ApplyAgentPatchSetInput {
-            data_directory,
+            data_directory: None,
             task_id: task_id.to_string(),
             batch_id: background_id("agent-batch", now),
             documents,

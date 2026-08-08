@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
@@ -20,30 +20,45 @@ static DATABASE_POOLS: OnceLock<Mutex<HashMap<PathBuf, Arc<SqlitePool>>>> = Once
 static READ_ONLY_DATABASE_POOLS: OnceLock<Mutex<HashMap<PathBuf, Arc<SqlitePool>>>> =
     OnceLock::new();
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatabasePreparation {
-    database_path: String,
-    backup_path: Option<String>,
-    legacy_baseline_version: Option<i64>,
+    pub(crate) database_path: String,
+    pub(crate) backup_path: Option<String>,
+    pub(crate) legacy_baseline_version: Option<i64>,
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn prepare_database(
     app: AppHandle,
-    timer_state: State<'_, crate::workflow_timers::DurableTimerSchedulerState>,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
+    timer_projection_state: State<'_, crate::workflow_timers::DurableTimerProjectionState>,
+    workflow_projection_state: State<'_, crate::workflow_runtime::WorkflowScannerProjectionState>,
+    outbox_projection_state: State<'_, crate::outbox_dispatcher::OutboxDispatcherProjectionState>,
+    connector_projection_state: State<'_, crate::dingtalk::DingTalkProjectionState>,
+    worker_projection_state: State<'_, crate::agent_worker_supervisor::AgentWorkerProjectionState>,
     data_directory: Option<String>,
 ) -> Result<DatabasePreparation, String> {
     let data_directory = data_directory.filter(|value| !value.trim().is_empty());
     let directory =
         configured_data_directory(&app, data_directory.clone()).map_err(database_error)?;
-    let preparation = prepare_database_path(&directory, &DATABASE_MIGRATOR)
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    let preparation = crate::core_server::prepare_database(&endpoint, &directory)
         .await
         .map_err(|error| {
-            tauri_plugin_log::log::error!("数据库准备失败：{error}");
+            tauri_plugin_log::log::error!("Headless Core 数据库准备失败：{error}");
             error
         })?;
-    crate::workflow_timers::ensure_scheduler(&app, timer_state.inner(), data_directory).await?;
+    crate::workflow_timers::ensure_snapshot_projection(&app, timer_projection_state.inner())
+        .await?;
+    crate::workflow_runtime::ensure_snapshot_projection(&app, workflow_projection_state.inner())
+        .await?;
+    crate::outbox_dispatcher::ensure_snapshot_projection(&app, outbox_projection_state.inner())
+        .await?;
+    crate::dingtalk::ensure_snapshot_projection(&app, connector_projection_state.inner()).await?;
+    crate::agent_worker_supervisor::ensure_worker_projection(&app, worker_projection_state.inner())
+        .await?;
     Ok(preparation)
 }
 
@@ -101,16 +116,6 @@ pub async fn open_database(
         .map_err(database_error)?
         .join(DATABASE_FILENAME);
     get_pool_for_path(&path, false).await
-}
-
-pub async fn open_read_only_database(
-    app: &AppHandle,
-    data_directory: Option<String>,
-) -> Result<Arc<SqlitePool>, String> {
-    let path = configured_data_directory(app, data_directory)
-        .map_err(database_error)?
-        .join(DATABASE_FILENAME);
-    get_read_only_pool_for_path(&path).await
 }
 
 pub async fn get_pool_for_path(
@@ -373,12 +378,25 @@ fn restore_database_backup(database_path: &Path, backup_path: &Path) -> Result<(
         .map_err(database_error)?
         .as_nanos();
     let restore_path = database_path.with_file_name(format!("editor-restore-{timestamp}.db"));
-    fs::copy(backup_path, &restore_path).map_err(database_error)?;
-    fs::OpenOptions::new()
-        .write(true)
-        .open(&restore_path)
-        .and_then(|file| file.sync_all())
-        .map_err(database_error)?;
+    retry_file_operation(|| fs::copy(backup_path, &restore_path).map(|_| ())).map_err(|error| {
+        database_error(format!(
+            "复制升级前备份到恢复暂存文件失败（{} -> {}）：{error}",
+            backup_path.display(),
+            restore_path.display()
+        ))
+    })?;
+    retry_file_operation(|| {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&restore_path)
+            .and_then(|file| file.sync_all())
+    })
+    .map_err(|error| {
+        database_error(format!(
+            "同步恢复暂存文件失败（{}）：{error}",
+            restore_path.display()
+        ))
+    })?;
 
     for sidecar in [
         database_path.with_extension("db-wal"),
@@ -409,13 +427,13 @@ fn remove_file_if_present(path: &Path) -> Result<(), String> {
 
 fn retry_file_operation(mut operation: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {
     let mut last_error = None;
-    for attempt in 0_u64..40 {
+    for attempt in 0_u64..80 {
         match operation() {
             Ok(()) => return Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Err(error),
             Err(error) => last_error = Some(error),
         }
-        let delay_ms = 10_u64.saturating_mul(attempt + 1).min(100);
+        let delay_ms = 10_u64.saturating_mul(attempt + 1).min(250);
         std::thread::sleep(Duration::from_millis(delay_ms));
     }
     Err(last_error.expect("file operation must record an error"))
@@ -822,23 +840,8 @@ mod tests {
                 .file_name()
                 .to_string_lossy()
                 .starts_with("editor-pre-migration-")));
-        let mut cleanup_error = None;
-        for _ in 0..10 {
-            match fs::remove_dir_all(&root) {
-                Ok(()) => {
-                    cleanup_error = None;
-                    break;
-                }
-                Err(error) if error.raw_os_error() == Some(32) => {
-                    cleanup_error = Some(error);
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                Err(error) => panic!("cleanup: {error}"),
-            }
-        }
-        if let Some(error) = cleanup_error {
-            panic!("cleanup after Windows file-lock retries: {error}");
-        }
+        retry_file_operation(|| fs::remove_dir_all(&root))
+            .expect("cleanup after transient Windows file locks");
     }
 
     #[tokio::test]

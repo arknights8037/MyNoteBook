@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sqlx::{Row, SqlitePool};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     env,
     path::PathBuf,
     sync::{
@@ -30,7 +30,7 @@ const MESSAGE_EVENT: &str = "agent-runtime://worker-message";
 const RUN_EVENT: &str = "agent-runtime://event";
 const AUTHORIZATION_EVENT: &str = "agent-runtime://authorization-request";
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AgentWorkerStatus {
     Stopped,
@@ -41,7 +41,7 @@ pub(crate) enum AgentWorkerStatus {
     Unavailable,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentWorkerSnapshot {
     status: AgentWorkerStatus,
@@ -83,6 +83,334 @@ pub(crate) struct AgentWorkerSupervisorState {
     data_migration_paused: AtomicBool,
     snapshot: RwLock<AgentWorkerSnapshot>,
     terminal_messages: RwLock<HashMap<String, BufferedTerminal>>,
+}
+
+pub(crate) struct AgentWorkerProjectionState {
+    task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+impl Default for AgentWorkerProjectionState {
+    fn default() -> Self {
+        Self {
+            task: Mutex::new(None),
+        }
+    }
+}
+
+pub(crate) async fn ensure_worker_projection(
+    app: &AppHandle,
+    state: &AgentWorkerProjectionState,
+) -> Result<(), String> {
+    let mut task = state.task.lock().await;
+    if task.as_ref().is_some_and(|task| !task.is_finished()) {
+        return Ok(());
+    }
+    if let Some(existing) = task.take() {
+        existing.abort();
+    }
+    let app = app.clone();
+    *task = Some(tokio::spawn(async move {
+        let mut sequence = 0_u64;
+        let mut ticker = tokio::time::interval(Duration::from_millis(100));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            let core_state = app.state::<crate::core_supervisor::HeadlessCoreSupervisorState>();
+            let Ok(endpoint) =
+                crate::core_supervisor::active_endpoint(&app, core_state.inner()).await
+            else {
+                continue;
+            };
+            let Ok(projection) =
+                crate::core_server::get_worker_projection(&endpoint, sequence).await
+            else {
+                continue;
+            };
+            for event in projection.events {
+                sequence = sequence.max(event.sequence);
+                let _ = app.emit(&event.event_name, event.payload);
+            }
+            sequence = sequence.max(projection.latest_sequence);
+        }
+    }));
+    Ok(())
+}
+
+#[derive(Clone)]
+enum WorkerHostServices {
+    Desktop(AppHandle),
+    Core(Arc<CoreWorkerServices>),
+}
+
+#[derive(Clone)]
+struct WorkerHost {
+    state: Arc<AgentWorkerSupervisorState>,
+    services: WorkerHostServices,
+}
+
+struct CoreWorkerServices {
+    app_local_data_directory: PathBuf,
+    resource_directory: PathBuf,
+    events: RwLock<VecDeque<CoreWorkerEvent>>,
+    next_event_sequence: AtomicU64,
+    secrets: crate::secret_store::AiSecretState,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CoreWorkerEvent {
+    sequence: u64,
+    event_name: String,
+    payload: Value,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CoreWorkerProjection {
+    snapshot: AgentWorkerSnapshot,
+    events: Vec<CoreWorkerEvent>,
+    latest_sequence: u64,
+}
+
+pub(crate) struct CoreAgentWorkerSupervisorState {
+    host: WorkerHost,
+}
+
+impl CoreAgentWorkerSupervisorState {
+    pub(crate) fn new(app_local_data_directory: PathBuf, resource_directory: PathBuf) -> Self {
+        let state = Arc::new(AgentWorkerSupervisorState::default());
+        Self {
+            host: WorkerHost::core(state, app_local_data_directory, resource_directory),
+        }
+    }
+
+    pub(crate) async fn projection(&self, after_sequence: u64) -> CoreWorkerProjection {
+        let events = match &self.host.services {
+            WorkerHostServices::Core(services) => services
+                .events
+                .read()
+                .await
+                .iter()
+                .filter(|event| event.sequence > after_sequence)
+                .cloned()
+                .collect::<Vec<_>>(),
+            WorkerHostServices::Desktop(_) => Vec::new(),
+        };
+        let latest_sequence = events
+            .last()
+            .map(|event| event.sequence)
+            .unwrap_or(after_sequence);
+        CoreWorkerProjection {
+            snapshot: self.host.state.snapshot.read().await.clone(),
+            events,
+            latest_sequence,
+        }
+    }
+
+    pub(crate) async fn active_run_ids(&self) -> Vec<String> {
+        self.host.state.snapshot.read().await.active_run_ids.clone()
+    }
+
+    pub(crate) async fn start_background_orchestration(
+        &self,
+        data_directory: String,
+        submission: Value,
+        recovery_context: Value,
+    ) -> Result<(), String> {
+        self.start_orchestration(data_directory, submission, Some(recovery_context))
+            .await
+    }
+
+    pub(crate) async fn start_worker(
+        &self,
+        data_directory: String,
+    ) -> Result<AgentWorkerSnapshot, String> {
+        let _guard = lock_agent_start(self.host.state.as_ref()).await?;
+        ensure_supervisor_for_host(self.host.clone(), Some(data_directory)).await?;
+        Ok(self.host.state.snapshot.read().await.clone())
+    }
+
+    pub(crate) async fn start_run(
+        &self,
+        data_directory: String,
+        request: Value,
+        recovery_context: Option<Value>,
+    ) -> Result<(), String> {
+        let _guard = lock_agent_start(self.host.state.as_ref()).await?;
+        let sender = ensure_supervisor_for_host(self.host.clone(), Some(data_directory)).await?;
+        request_supervisor(&sender, |response| SupervisorCommand::StartRun {
+            request,
+            recovery_context,
+            response,
+        })
+        .await
+    }
+
+    pub(crate) async fn start_orchestration(
+        &self,
+        data_directory: String,
+        submission: Value,
+        recovery_context: Option<Value>,
+    ) -> Result<(), String> {
+        let _guard = lock_agent_start(self.host.state.as_ref()).await?;
+        let sender =
+            ensure_supervisor_for_host(self.host.clone(), Some(data_directory.clone())).await?;
+        let submission =
+            enrich_sidecar_submission_with_mcp_for_directory(data_directory, submission).await?;
+        request_supervisor(&sender, |response| SupervisorCommand::StartOrchestration {
+            submission,
+            recovery_context,
+            response,
+        })
+        .await
+    }
+
+    pub(crate) async fn cancel_run(&self, run_id: String) -> Result<(), String> {
+        let sender = supervisor_sender(self.host.state.as_ref()).await?;
+        request_supervisor(&sender, |response| SupervisorCommand::CancelRun {
+            run_id,
+            response,
+        })
+        .await
+    }
+
+    pub(crate) async fn steer_run(&self, run_id: String, input: Value) -> Result<(), String> {
+        let sender = supervisor_sender(self.host.state.as_ref()).await?;
+        request_supervisor(&sender, |response| SupervisorCommand::SteerRun {
+            run_id,
+            input,
+            response,
+        })
+        .await
+    }
+
+    pub(crate) async fn terminal(&self, run_id: &str) -> Result<Option<Value>, String> {
+        validate_run_id(run_id)?;
+        Ok(self
+            .host
+            .state
+            .terminal_messages
+            .read()
+            .await
+            .get(run_id)
+            .map(|terminal| {
+                json!({
+                    "message": terminal.message.clone(),
+                    "recoveryContext": terminal.recovery_context.clone(),
+                })
+            }))
+    }
+
+    pub(crate) async fn acknowledge_terminal(&self, run_id: &str) -> Result<(), String> {
+        validate_run_id(run_id)?;
+        if self
+            .host
+            .state
+            .terminal_messages
+            .write()
+            .await
+            .remove(run_id)
+            .is_none()
+        {
+            return Err(format!("run_id {run_id} 没有待确认终态。"));
+        }
+        refresh_terminal_snapshot(&self.host).await;
+        Ok(())
+    }
+
+    pub(crate) async fn quiesce(&self) -> Result<AgentWorkerMigrationSnapshot, String> {
+        let snapshot = snapshot_for_data_migration(self.host.state.as_ref()).await;
+        quiesce_idle_worker_for_data_migration(self.host.state.as_ref()).await?;
+        Ok(snapshot)
+    }
+
+    pub(crate) async fn resume(
+        &self,
+        snapshot: &AgentWorkerMigrationSnapshot,
+        data_directory: String,
+    ) -> Result<(), String> {
+        *self.host.state.runtime_data_directory.lock().await = Some(data_directory.clone());
+        if snapshot.was_running {
+            ensure_supervisor_for_host(self.host.clone(), Some(data_directory)).await?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn shutdown(&self, reason: &str) -> Result<(), String> {
+        let sender = self.host.state.control.lock().await.as_ref().cloned();
+        if let Some(sender) = sender {
+            request_supervisor(&sender, |response| SupervisorCommand::Shutdown {
+                reason: reason.to_string(),
+                response,
+            })
+            .await?;
+        }
+        Ok(())
+    }
+}
+
+impl WorkerHost {
+    fn desktop(app: AppHandle, state: Arc<AgentWorkerSupervisorState>) -> Self {
+        Self {
+            state,
+            services: WorkerHostServices::Desktop(app),
+        }
+    }
+
+    fn core(
+        state: Arc<AgentWorkerSupervisorState>,
+        app_local_data_directory: PathBuf,
+        resource_directory: PathBuf,
+    ) -> Self {
+        Self {
+            state,
+            services: WorkerHostServices::Core(Arc::new(CoreWorkerServices {
+                app_local_data_directory,
+                resource_directory,
+                events: RwLock::new(VecDeque::with_capacity(512)),
+                next_event_sequence: AtomicU64::new(1),
+                secrets: crate::secret_store::AiSecretState::default(),
+            })),
+        }
+    }
+
+    async fn emit(&self, event_name: &str, payload: Value) -> Result<(), String> {
+        match &self.services {
+            WorkerHostServices::Desktop(app) => app
+                .emit(event_name, payload)
+                .map_err(|error| format!("无法投影 Agent Worker 事件：{error}")),
+            WorkerHostServices::Core(services) => {
+                let sequence = services.next_event_sequence.fetch_add(1, Ordering::SeqCst);
+                let mut events = services.events.write().await;
+                if events.len() == 512 {
+                    events.pop_front();
+                }
+                events.push_back(CoreWorkerEvent {
+                    sequence,
+                    event_name: event_name.to_string(),
+                    payload,
+                });
+                Ok(())
+            }
+        }
+    }
+
+    async fn get_secret(&self, key: &str) -> Result<String, String> {
+        match &self.services {
+            WorkerHostServices::Desktop(app) => {
+                let state = app.state::<crate::secret_store::AiSecretState>();
+                crate::secret_store::get_secret_value(app, &state, key).await
+            }
+            WorkerHostServices::Core(services) => {
+                crate::secret_store::get_secret_value_from_directory(
+                    &services.app_local_data_directory,
+                    &services.secrets,
+                    key,
+                )
+                .await
+            }
+        }
+    }
 }
 
 pub(crate) struct AgentWorkerMigrationSnapshot {
@@ -186,128 +514,98 @@ pub(crate) struct AgentRuntimeTerminalInput {
 #[tauri::command]
 pub(crate) async fn start_agent_worker(
     app: AppHandle,
-    state: State<'_, AgentWorkerSupervisorState>,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     input: StartAgentWorkerInput,
 ) -> Result<AgentWorkerSnapshot, String> {
-    let _start_guard = lock_agent_start(&state).await?;
-    ensure_supervisor(&app, &state, input.data_directory).await?;
-    Ok(state.snapshot.read().await.clone())
+    let directory = database::configured_data_directory(&app, input.data_directory)
+        .map_err(database::database_error)?;
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::start_core_worker(&endpoint, &directory).await
 }
 
 #[tauri::command]
 pub(crate) async fn get_agent_worker_snapshot(
-    state: State<'_, AgentWorkerSupervisorState>,
+    app: AppHandle,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
 ) -> Result<AgentWorkerSnapshot, String> {
-    Ok(state.snapshot.read().await.clone())
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    Ok(crate::core_server::get_worker_projection(&endpoint, 0)
+        .await?
+        .snapshot)
 }
 
 pub(crate) async fn active_run_ids(app: &AppHandle) -> Vec<String> {
-    app.state::<AgentWorkerSupervisorState>()
-        .snapshot
-        .read()
+    let core_state = app.state::<crate::core_supervisor::HeadlessCoreSupervisorState>();
+    let Ok(endpoint) = crate::core_supervisor::active_endpoint(app, core_state.inner()).await
+    else {
+        return Vec::new();
+    };
+    crate::core_server::get_worker_projection(&endpoint, 0)
         .await
-        .active_run_ids
-        .clone()
+        .map(|projection| projection.snapshot.active_run_ids)
+        .unwrap_or_default()
 }
 
 #[tauri::command]
 pub(crate) async fn get_agent_runtime_terminal(
-    state: State<'_, AgentWorkerSupervisorState>,
+    app: AppHandle,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     input: AgentRuntimeTerminalInput,
 ) -> Result<Option<Value>, String> {
-    validate_run_id(&input.run_id)?;
-    Ok(state
-        .terminal_messages
-        .read()
-        .await
-        .get(&input.run_id)
-        .map(|terminal| {
-            json!({
-                "message": terminal.message.clone(),
-                "recoveryContext": terminal.recovery_context.clone(),
-            })
-        }))
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::get_core_worker_terminal(&endpoint, input.run_id).await
 }
 
 #[tauri::command]
 pub(crate) async fn acknowledge_agent_runtime_terminal(
     app: AppHandle,
-    state: State<'_, AgentWorkerSupervisorState>,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     input: AgentRuntimeTerminalInput,
 ) -> Result<(), String> {
-    validate_run_id(&input.run_id)?;
-    if state
-        .terminal_messages
-        .write()
-        .await
-        .remove(&input.run_id)
-        .is_none()
-    {
-        return Err(format!("run_id {} 没有待确认终态。", input.run_id));
-    }
-    refresh_terminal_snapshot(&app).await;
-    Ok(())
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::acknowledge_core_worker_terminal(&endpoint, input.run_id).await
 }
 
 #[tauri::command]
 pub(crate) async fn start_agent_runtime_run(
     app: AppHandle,
-    state: State<'_, AgentWorkerSupervisorState>,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     input: StartAgentRuntimeRunInput,
 ) -> Result<(), String> {
-    let _start_guard = lock_agent_start(&state).await?;
-    let sender = ensure_supervisor(&app, &state, input.data_directory.clone()).await?;
-    request_supervisor(&sender, |response| SupervisorCommand::StartRun {
-        request: input.request,
-        recovery_context: input.recovery_context,
-        response,
-    })
+    let directory = database::configured_data_directory(&app, input.data_directory)
+        .map_err(database::database_error)?;
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::start_core_worker_run(
+        &endpoint,
+        &directory,
+        input.request,
+        input.recovery_context,
+    )
     .await
 }
 
 #[tauri::command]
 pub(crate) async fn start_agent_sidecar_orchestration(
     app: AppHandle,
-    state: State<'_, AgentWorkerSupervisorState>,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     input: StartAgentSidecarOrchestrationInput,
 ) -> Result<(), String> {
-    let _start_guard = lock_agent_start(&state).await?;
-    let sender = ensure_supervisor(&app, &state, input.data_directory.clone()).await?;
-    let submission =
-        enrich_sidecar_submission_with_mcp(&app, input.data_directory.clone(), input.submission)
-            .await?;
-    request_supervisor(&sender, |response| SupervisorCommand::StartOrchestration {
-        submission,
-        recovery_context: input.recovery_context,
-        response,
-    })
+    let directory = database::configured_data_directory(&app, input.data_directory)
+        .map_err(database::database_error)?;
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::start_core_worker_orchestration(
+        &endpoint,
+        &directory,
+        input.submission,
+        input.recovery_context,
+    )
     .await
 }
 
-pub(crate) async fn start_background_orchestration(
-    app: &AppHandle,
-    data_directory: Option<String>,
-    submission: Value,
-    recovery_context: Value,
-) -> Result<(), String> {
-    let state = app.state::<AgentWorkerSupervisorState>();
-    let _start_guard = lock_agent_start(&state).await?;
-    let sender = ensure_supervisor(app, &state, data_directory.clone()).await?;
-    let submission = enrich_sidecar_submission_with_mcp(app, data_directory, submission).await?;
-    request_supervisor(&sender, |response| SupervisorCommand::StartOrchestration {
-        submission,
-        recovery_context: Some(recovery_context),
-        response,
-    })
-    .await
-}
-
-async fn enrich_sidecar_submission_with_mcp(
-    app: &AppHandle,
-    data_directory: Option<String>,
+async fn enrich_sidecar_submission_with_mcp_for_directory(
+    directory: String,
     mut submission: Value,
 ) -> Result<Value, String> {
-    let directory = effective_data_directory(app, data_directory)?;
     let tools = crate::mcp::list_mcp_tools(crate::mcp::ListMcpToolsInput {
         data_directory: directory,
         server_id: None,
@@ -369,43 +667,38 @@ fn safe_sidecar_tool_name(value: &str) -> String {
 
 #[tauri::command]
 pub(crate) async fn cancel_agent_runtime_run(
-    state: State<'_, AgentWorkerSupervisorState>,
+    app: AppHandle,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     input: CancelAgentRuntimeRunInput,
 ) -> Result<(), String> {
-    let sender = supervisor_sender(&state).await?;
-    request_supervisor(&sender, |response| SupervisorCommand::CancelRun {
-        run_id: input.run_id,
-        response,
-    })
-    .await
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::control_core_worker_run(&endpoint, "cancel", input.run_id, None).await
 }
 
 #[tauri::command]
 pub(crate) async fn steer_agent_runtime_run(
-    state: State<'_, AgentWorkerSupervisorState>,
+    app: AppHandle,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     input: SteerAgentRuntimeRunInput,
 ) -> Result<(), String> {
-    let sender = supervisor_sender(&state).await?;
-    request_supervisor(&sender, |response| SupervisorCommand::SteerRun {
-        run_id: input.run_id,
-        input: input.input,
-        response,
-    })
-    .await
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::control_core_worker_run(&endpoint, "steer", input.run_id, Some(input.input))
+        .await
 }
 
 #[tauri::command]
 pub(crate) async fn shutdown_agent_worker(
-    state: State<'_, AgentWorkerSupervisorState>,
+    app: AppHandle,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     input: ShutdownAgentWorkerInput,
 ) -> Result<(), String> {
-    let sender = supervisor_sender(&state).await?;
-    request_supervisor(&sender, |response| SupervisorCommand::Shutdown {
-        reason: input
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::shutdown_core_worker(
+        &endpoint,
+        input
             .reason
-            .unwrap_or_else(|| "Tauri Core requested shutdown.".to_string()),
-        response,
-    })
+            .unwrap_or_else(|| "Desktop requested Worker shutdown.".to_string()),
+    )
     .await
 }
 
@@ -474,7 +767,7 @@ pub(crate) async fn quiesce_idle_worker_for_data_migration(
 
 pub(crate) async fn resume_after_data_migration(
     app: &AppHandle,
-    state: &AgentWorkerSupervisorState,
+    state: &Arc<AgentWorkerSupervisorState>,
     snapshot: AgentWorkerMigrationSnapshot,
     data_directory: Option<String>,
 ) -> Result<(), String> {
@@ -485,24 +778,58 @@ pub(crate) async fn resume_after_data_migration(
     Ok(())
 }
 
+fn create_skill_draft_for_host(
+    host: &WorkerHost,
+    data_directory: Option<String>,
+    name: String,
+    description: String,
+    instructions: String,
+) -> Result<Value, String> {
+    match &host.services {
+        WorkerHostServices::Desktop(app) => crate::skills::create_skill_draft(
+            app.clone(),
+            data_directory,
+            name,
+            description,
+            instructions,
+        ),
+        WorkerHostServices::Core(_) => crate::skills::create_skill_draft_from_directory(
+            &PathBuf::from(effective_data_directory(host, data_directory)?),
+            name,
+            description,
+            instructions,
+        ),
+    }
+}
+
 async fn ensure_supervisor(
     app: &AppHandle,
-    state: &AgentWorkerSupervisorState,
+    state: &Arc<AgentWorkerSupervisorState>,
     data_directory: Option<String>,
 ) -> Result<mpsc::Sender<SupervisorCommand>, String> {
-    let mut control = state.control.lock().await;
+    ensure_supervisor_for_host(
+        WorkerHost::desktop(app.clone(), Arc::clone(state)),
+        data_directory,
+    )
+    .await
+}
+
+async fn ensure_supervisor_for_host(
+    host: WorkerHost,
+    data_directory: Option<String>,
+) -> Result<mpsc::Sender<SupervisorCommand>, String> {
+    let mut control = host.state.control.lock().await;
     if let Some(sender) = control.as_ref() {
         return Ok(sender.clone());
     }
-    let program = resolve_worker_program(app)?;
+    let program = resolve_worker_program(&host)?;
     let (sender, receiver) = mpsc::channel(64);
     *control = Some(sender.clone());
-    *state.runtime_data_directory.lock().await = data_directory.clone();
-    let app = app.clone();
+    *host.state.runtime_data_directory.lock().await = data_directory.clone();
+    let runtime = host.clone();
     tauri::async_runtime::spawn(async move {
-        run_supervisor(app.clone(), program, data_directory, receiver).await;
-        let state = app.state::<AgentWorkerSupervisorState>();
-        *state.control.lock().await = None;
+        run_supervisor(runtime.clone(), program, data_directory, receiver).await;
+        *runtime.state.control.lock().await = None;
     });
     Ok(sender)
 }
@@ -534,7 +861,7 @@ async fn request_supervisor(
 }
 
 async fn run_supervisor(
-    app: AppHandle,
+    host: WorkerHost,
     launch: WorkerLaunch,
     data_directory: Option<String>,
     mut receiver: mpsc::Receiver<SupervisorCommand>,
@@ -544,7 +871,7 @@ async fn run_supervisor(
     let mut should_restart = true;
 
     while should_restart {
-        update_snapshot(&app, |snapshot| {
+        update_snapshot(&host, |snapshot| {
             snapshot.status = if restart_count == 0 {
                 AgentWorkerStatus::Starting
             } else {
@@ -567,7 +894,7 @@ async fn run_supervisor(
         let mut child = match spawn_result {
             Ok(child) => child,
             Err(error) => {
-                update_snapshot(&app, |snapshot| {
+                update_snapshot(&host, |snapshot| {
                     snapshot.status = AgentWorkerStatus::Unavailable;
                     snapshot.last_error = Some(format!(
                         "无法启动 Agent Worker {}：{error}",
@@ -583,7 +910,7 @@ async fn run_supervisor(
             Some(stdin) => stdin,
             None => {
                 let _ = child.start_kill();
-                update_snapshot(&app, |snapshot| {
+                update_snapshot(&host, |snapshot| {
                     snapshot.status = AgentWorkerStatus::Crashed;
                     snapshot.last_error = Some("Agent Worker stdin 不可用。".to_string());
                 })
@@ -595,7 +922,7 @@ async fn run_supervisor(
             Some(stdout) => stdout,
             None => {
                 let _ = child.start_kill();
-                update_snapshot(&app, |snapshot| {
+                update_snapshot(&host, |snapshot| {
                     snapshot.status = AgentWorkerStatus::Crashed;
                     snapshot.last_error = Some("Agent Worker stdout 不可用。".to_string());
                 })
@@ -615,8 +942,8 @@ async fn run_supervisor(
             });
         }
 
-        let supervisor_instance_id = app
-            .state::<AgentWorkerSupervisorState>()
+        let supervisor_instance_id = host
+            .state
             .snapshot
             .read()
             .await
@@ -634,7 +961,7 @@ async fn run_supervisor(
         .await
         {
             let _ = child.start_kill();
-            update_snapshot(&app, |snapshot| {
+            update_snapshot(&host, |snapshot| {
                 snapshot.status = AgentWorkerStatus::Crashed;
                 snapshot.last_error = Some(error);
             })
@@ -654,7 +981,7 @@ async fn run_supervisor(
         let mut intentional_shutdown = false;
         let mut exit_description = "stdout closed".to_string();
 
-        update_snapshot(&app, |snapshot| {
+        update_snapshot(&host, |snapshot| {
             snapshot.status = AgentWorkerStatus::Starting;
             snapshot.pid = pid;
             snapshot.last_error = None;
@@ -667,7 +994,7 @@ async fn run_supervisor(
                     match command {
                         Some(command) => {
                             let command_io = SupervisorCommandIo {
-                                app: &app,
+                                host: &host,
                                 stdin: &stdin,
                             };
                             let outcome = handle_command(
@@ -679,7 +1006,7 @@ async fn run_supervisor(
                                 &mut run_recovery_contexts,
                                 &mut pending_authorizations,
                             ).await;
-                            update_snapshot(&app, |snapshot| {
+                            update_snapshot(&host, |snapshot| {
                                 snapshot.active_run_ids = sorted_run_ids(&active_run_ids);
                                 snapshot.active_runs = sorted_active_runs(&run_requests);
                                 snapshot.pending_authorizations =
@@ -705,7 +1032,7 @@ async fn run_supervisor(
                 line = lines.next_line() => {
                     match line {
                         Ok(Some(line)) => match handle_worker_line(
-                            &app,
+                            &host,
                             &line,
                             &mut WorkerLineContext {
                                 stdin: Arc::clone(&stdin),
@@ -773,7 +1100,7 @@ async fn run_supervisor(
                     }
                 });
                 let _ = buffer_terminal_message(
-                    &app,
+                    &host,
                     run_id,
                     &terminal,
                     run_requests.get(run_id),
@@ -781,8 +1108,8 @@ async fn run_supervisor(
                 )
                 .await;
             }
-            refresh_terminal_snapshot(&app).await;
-            if let Ok(connection) = database::open_database(&app, data_directory.clone()).await {
+            refresh_terminal_snapshot(&host).await;
+            if let Ok(connection) = open_host_database(&host, data_directory.clone()).await {
                 for run_id in &active_run_ids {
                     let Some(recovery) = run_recovery_contexts.get(run_id) else {
                         continue;
@@ -816,7 +1143,7 @@ async fn run_supervisor(
             pending_authorizations.clear();
             restart_count += 1;
             should_restart = restart_count <= MAX_RESTARTS;
-            update_snapshot(&app, |snapshot| {
+            update_snapshot(&host, |snapshot| {
                 snapshot.status = if should_restart {
                     AgentWorkerStatus::Restarting
                 } else {
@@ -835,7 +1162,7 @@ async fn run_supervisor(
                 sleep(Duration::from_millis(500 * 2u64.pow(restart_count - 1))).await;
             }
         } else {
-            update_snapshot(&app, |snapshot| {
+            update_snapshot(&host, |snapshot| {
                 snapshot.status = AgentWorkerStatus::Stopped;
                 snapshot.worker_instance_id = None;
                 snapshot.pid = None;
@@ -860,7 +1187,7 @@ struct PendingAuthorization {
 }
 
 struct SupervisorCommandIo<'a> {
-    app: &'a AppHandle,
+    host: &'a WorkerHost,
     stdin: &'a Arc<Mutex<ChildStdin>>,
 }
 
@@ -873,7 +1200,7 @@ async fn handle_command(
     run_recovery_contexts: &mut HashMap<String, Value>,
     pending_authorizations: &mut HashMap<String, PendingAuthorization>,
 ) -> CommandOutcome {
-    let app = io.app;
+    let host = io.host;
     let stdin = io.stdin;
     let mut shutdown = false;
     let mut reason = String::new();
@@ -909,7 +1236,7 @@ async fn handle_command(
                                 run_recovery_contexts.insert(run_id.clone(), recovery_context);
                             }
                             active_run_ids.insert(run_id);
-                            update_snapshot(app, |snapshot| {
+                            update_snapshot(host, |snapshot| {
                                 snapshot.active_run_ids = sorted_run_ids(active_run_ids);
                                 snapshot.active_runs = sorted_active_runs(run_requests);
                             })
@@ -954,7 +1281,7 @@ async fn handle_command(
                                 run_recovery_contexts.insert(run_id.clone(), recovery_context);
                             }
                             active_run_ids.insert(run_id);
-                            update_snapshot(app, |snapshot| {
+                            update_snapshot(host, |snapshot| {
                                 snapshot.active_run_ids = sorted_run_ids(active_run_ids);
                                 snapshot.active_runs = sorted_active_runs(run_requests);
                             })
@@ -1066,7 +1393,7 @@ struct WorkerLineContext<'a> {
 }
 
 async fn handle_worker_line(
-    app: &AppHandle,
+    host: &WorkerHost,
     line: &str,
     context: &mut WorkerLineContext<'_>,
 ) -> Result<bool, String> {
@@ -1097,7 +1424,7 @@ async fn handle_worker_line(
                 .ok_or_else(|| "Agent Worker identity 缺少实例 ID。".to_string())?
                 .to_string();
             *context.worker_instance_id = Some(id.clone());
-            update_snapshot(app, |snapshot| {
+            update_snapshot(host, |snapshot| {
                 snapshot.status = AgentWorkerStatus::Running;
                 snapshot.worker_instance_id = Some(id);
                 snapshot.last_heartbeat_at = Some(now_millis());
@@ -1114,7 +1441,7 @@ async fn handle_worker_line(
             if context.worker_instance_id.as_deref() != Some(id) {
                 return Err("heartbeat 来自未知 Worker 实例。".to_string());
             }
-            update_snapshot(app, |snapshot| {
+            update_snapshot(host, |snapshot| {
                 snapshot.last_heartbeat_at = Some(now_millis());
                 snapshot.active_run_ids = sorted_run_ids(context.active_run_ids);
                 snapshot.active_runs = sorted_active_runs(context.run_requests);
@@ -1141,11 +1468,10 @@ async fn handle_worker_line(
             if task_run_id != run_id {
                 return Err("orchestration.prepared 的 task/run 身份不一致。".to_string());
             }
-            persist_sidecar_prepared_run(app, context.data_directory.clone(), &task, &request)
+            persist_sidecar_prepared_run(host, context.data_directory.clone(), &task, &request)
                 .await?;
             if let Some(recovery) = context.run_recovery_contexts.get(&run_id) {
-                let connection =
-                    database::open_database(app, context.data_directory.clone()).await?;
+                let connection = open_host_database(host, context.data_directory.clone()).await?;
                 crate::agent_request_watcher::bind_background_request_task(
                     connection.as_ref(),
                     recovery,
@@ -1154,7 +1480,7 @@ async fn handle_worker_line(
                 .await?;
             }
             context.run_requests.insert(run_id, request);
-            update_snapshot(app, |snapshot| {
+            update_snapshot(host, |snapshot| {
                 snapshot.active_run_ids = sorted_run_ids(context.active_run_ids);
                 snapshot.active_runs = sorted_active_runs(context.run_requests);
             })
@@ -1178,7 +1504,8 @@ async fn handle_worker_line(
             {
                 return Err("orchestration.completed 的 task/run 身份不一致。".to_string());
             }
-            persist_sidecar_finalization(app, context.data_directory.clone(), finalization).await?;
+            persist_sidecar_finalization(host, context.data_directory.clone(), finalization)
+                .await?;
             Ok(false)
         }
         "run.event" => {
@@ -1189,7 +1516,7 @@ async fn handle_worker_line(
             if let Some(run_id) = event.get("runId").and_then(Value::as_str) {
                 if let Some(recovery) = context.run_recovery_contexts.get(run_id) {
                     let connection =
-                        database::open_database(app, context.data_directory.clone()).await?;
+                        open_host_database(host, context.data_directory.clone()).await?;
                     crate::agent_request_watcher::renew_background_lease(
                         connection.as_ref(),
                         recovery,
@@ -1197,9 +1524,8 @@ async fn handle_worker_line(
                     .await?;
                 }
             }
-            app.emit(RUN_EVENT, event)
-                .map_err(|error| format!("无法转发 Runtime event：{error}"))?;
-            update_snapshot(app, |snapshot| {
+            host.emit(RUN_EVENT, event).await?;
+            update_snapshot(host, |snapshot| {
                 snapshot.active_run_ids = sorted_run_ids(context.active_run_ids);
                 snapshot.active_runs = sorted_active_runs(context.run_requests);
                 snapshot.pending_authorizations =
@@ -1219,7 +1545,7 @@ async fn handle_worker_line(
                 let recovery_context = context.run_recovery_contexts.get(run_id).cloned();
                 if let Some(recovery) = recovery_context.as_ref() {
                     let connection =
-                        database::open_database(app, context.data_directory.clone()).await?;
+                        open_host_database(host, context.data_directory.clone()).await?;
                     let task_id = run_request
                         .as_ref()
                         .and_then(|request| request.get("workItemId"))
@@ -1257,7 +1583,7 @@ async fn handle_worker_line(
                     }
                 }
                 buffer_terminal_message(
-                    app,
+                    host,
                     run_id,
                     &message,
                     run_request.as_ref(),
@@ -1271,16 +1597,15 @@ async fn handle_worker_line(
                     pending.request.get("runId").and_then(Value::as_str) != Some(run_id)
                 });
             }
-            app.emit(MESSAGE_EVENT, message)
-                .map_err(|error| format!("无法转发 Worker 消息：{error}"))?;
-            update_snapshot(app, |snapshot| {
+            host.emit(MESSAGE_EVENT, message).await?;
+            update_snapshot(host, |snapshot| {
                 snapshot.active_run_ids = sorted_run_ids(context.active_run_ids);
                 snapshot.active_runs = sorted_active_runs(context.run_requests);
                 snapshot.pending_authorizations =
                     sorted_pending_authorizations(context.pending_authorizations);
             })
             .await;
-            refresh_terminal_snapshot(app).await;
+            refresh_terminal_snapshot(host).await;
             Ok(false)
         }
         "authorization.request" => {
@@ -1303,9 +1628,8 @@ async fn handle_worker_line(
                         .ok_or_else(|| "authorization.request 缺少 request。".to_string())?,
                 },
             );
-            app.emit(AUTHORIZATION_EVENT, message)
-                .map_err(|error| format!("无法转发授权请求：{error}"))?;
-            update_snapshot(app, |snapshot| {
+            host.emit(AUTHORIZATION_EVENT, message).await?;
+            update_snapshot(host, |snapshot| {
                 snapshot.pending_authorizations =
                     sorted_pending_authorizations(context.pending_authorizations);
             })
@@ -1321,8 +1645,7 @@ async fn handle_worker_line(
                 .and_then(Value::as_str)
                 .ok_or_else(|| "tool.invoke 缺少 requestId。".to_string())?
                 .to_string();
-            app.emit(MESSAGE_EVENT, message.clone())
-                .map_err(|error| format!("无法记录工具 RPC：{error}"))?;
+            host.emit(MESSAGE_EVENT, message.clone()).await?;
             let run_id = request
                 .get("runId")
                 .and_then(Value::as_str)
@@ -1330,11 +1653,11 @@ async fn handle_worker_line(
             let request = request.clone();
             let run_request = context.run_requests.get(run_id).cloned();
             let data_directory = context.data_directory.clone();
-            let app = app.clone();
+            let host = host.clone();
             let stdin = Arc::clone(&context.stdin);
             tauri::async_runtime::spawn(async move {
                 let result =
-                    dispatch_worker_tool(&app, data_directory, &request, run_request.as_ref())
+                    dispatch_worker_tool(&host, data_directory, &request, run_request.as_ref())
                         .await;
                 let reply = match result {
                     Ok(value) => json!({
@@ -1372,7 +1695,7 @@ async fn handle_worker_line(
             let call = message
                 .get("call")
                 .ok_or_else(|| "tool.record 缺少 call。".to_string())?;
-            record_worker_tool_call(app, context.data_directory.clone(), call).await?;
+            record_worker_tool_call(host, context.data_directory.clone(), call).await?;
             write_shared_message(
                 &context.stdin,
                 &json!({
@@ -1414,9 +1737,9 @@ async fn handle_worker_line(
                 .ok_or_else(|| "Provider 请求无法解析冻结的模型策略。".to_string())?
                 .to_string();
             let stdin = Arc::clone(&context.stdin);
-            let app = app.clone();
+            let host = host.clone();
             tauri::async_runtime::spawn(async move {
-                proxy_worker_provider_request(&app, &stdin, request, &provider).await;
+                proxy_worker_provider_request(&host, &stdin, request, &provider).await;
             });
             Ok(false)
         }
@@ -1433,8 +1756,7 @@ async fn handle_worker_line(
             Ok(false)
         }
         "run.cancelled" | "run.steered" | "shutdown" => {
-            app.emit(MESSAGE_EVENT, message)
-                .map_err(|error| format!("无法转发 Worker 消息：{error}"))?;
+            host.emit(MESSAGE_EVENT, message).await?;
             Ok(false)
         }
         other => Err(format!("Agent Worker 消息类型 {other} 不受支持。")),
@@ -1442,7 +1764,7 @@ async fn handle_worker_line(
 }
 
 async fn dispatch_worker_tool(
-    app: &AppHandle,
+    host: &WorkerHost,
     data_directory: Option<String>,
     request: &Value,
     run_request: Option<&Value>,
@@ -1478,7 +1800,7 @@ async fn dispatch_worker_tool(
             .cloned()
             .ok_or_else(|| "MCP 工具参数必须是对象。".to_string())?;
         return crate::mcp::call_mcp_tool(crate::mcp::CallMcpToolInput {
-            data_directory: effective_data_directory(app, data_directory)?,
+            data_directory: effective_data_directory(host, data_directory)?,
             call_id,
             server_id: server_id.to_string(),
             tool_name: source_tool_name.to_string(),
@@ -1489,9 +1811,8 @@ async fn dispatch_worker_tool(
 
     match tool_name {
         "read_personal_organizer" | "upsert_personal_todo" | "upsert_personal_calendar_event" => {
-            let connection = crate::database::open_database(app, data_directory).await?;
-            crate::signal_runtime::execute_personal_organizer_tool(
-                app,
+            let connection = open_host_database(host, data_directory).await?;
+            crate::signal_runtime::execute_personal_organizer_tool_in_core(
                 connection.as_ref(),
                 tool_name,
                 &arguments,
@@ -1505,7 +1826,7 @@ async fn dispatch_worker_tool(
                 .cloned()
                 .ok_or_else(|| "安全正则替换参数必须是对象。".to_string())?;
             execute_native_tool(
-                app,
+                host,
                 data_directory,
                 call_id,
                 "replace_blocks_by_regex",
@@ -1516,7 +1837,7 @@ async fn dispatch_worker_tool(
         "get_current_document" => {
             let document_id = current_document_id(run_request)?;
             execute_native_tool(
-                app,
+                host,
                 data_directory,
                 call_id,
                 "read_document",
@@ -1531,7 +1852,7 @@ async fn dispatch_worker_tool(
                 return Ok(json!([]));
             }
             execute_native_tool(
-                app,
+                host,
                 data_directory,
                 call_id,
                 "read_document",
@@ -1547,7 +1868,7 @@ async fn dispatch_worker_tool(
         "get_document_outline" => {
             let document_id = current_document_id(run_request)?;
             let document = execute_native_tool(
-                app,
+                host,
                 data_directory,
                 call_id,
                 "read_document",
@@ -1576,7 +1897,7 @@ async fn dispatch_worker_tool(
         "find_blocks_by_regex" => {
             let document_id = current_document_id(run_request)?;
             let document = execute_native_tool(
-                app,
+                host,
                 data_directory.clone(),
                 None,
                 "read_document",
@@ -1601,7 +1922,7 @@ async fn dispatch_worker_tool(
             let mut enriched = arguments.as_object().cloned().unwrap_or_default();
             enriched.insert("blocks".to_string(), Value::Array(blocks));
             execute_native_tool(
-                app,
+                host,
                 data_directory,
                 call_id,
                 "find_blocks_by_regex",
@@ -1621,10 +1942,11 @@ async fn dispatch_worker_tool(
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
-            crate::skills::read_skill_file(
-                app.clone(),
-                crate::skills::SkillFileInput {
-                    data_directory,
+            let directory = PathBuf::from(effective_data_directory(host, data_directory)?);
+            crate::skills::read_skill_file_from_directory(
+                &directory,
+                &crate::skills::SkillFileInput {
+                    data_directory: None,
                     skill_id,
                     relative_path,
                     require_enabled: Some(true),
@@ -1639,29 +1961,29 @@ async fn dispatch_worker_tool(
         | "inspect_environment_paths"
         | "discover_local_tools"
         | "get_system_info" => {
-            execute_native_tool(app, data_directory, call_id, tool_name, arguments).await
+            execute_native_tool(host, data_directory, call_id, tool_name, arguments).await
         }
         "list_mind_maps" => {
-            let connection = database::open_database(app, data_directory).await?;
+            let connection = open_host_database(host, data_directory).await?;
             list_mind_maps_in_pool(connection.as_ref()).await
         }
         "read_mind_map" => {
-            let connection = database::open_database(app, data_directory).await?;
+            let connection = open_host_database(host, data_directory).await?;
             read_mind_map_in_pool(connection.as_ref(), &arguments).await
         }
         "create_automation_draft" => {
-            let connection = database::open_database(app, data_directory).await?;
+            let connection = open_host_database(host, data_directory).await?;
             create_automation_draft_in_pool(connection.as_ref(), &arguments, run_request).await
         }
-        "create_skill_draft" => crate::skills::create_skill_draft(
-            app.clone(),
+        "create_skill_draft" => create_skill_draft_for_host(
+            host,
             data_directory,
             required_argument_string(&arguments, "name")?,
             required_argument_string(&arguments, "description")?,
             required_argument_string(&arguments, "instructions")?,
         ),
         "create_mcp_server_draft" => crate::mcp::create_mcp_server_draft(
-            &effective_data_directory(app, data_directory)?,
+            &effective_data_directory(host, data_directory)?,
             &required_argument_string(&arguments, "name")?,
             &required_argument_string(&arguments, "transport")?,
             optional_argument_string(&arguments, "command")?,
@@ -1674,7 +1996,7 @@ async fn dispatch_worker_tool(
 }
 
 async fn proxy_worker_provider_request(
-    app: &AppHandle,
+    host: &WorkerHost,
     stdin: &Arc<Mutex<ChildStdin>>,
     request: Value,
     provider: &str,
@@ -1706,8 +2028,7 @@ async fn proxy_worker_provider_request(
                     .ok_or_else(|| "Provider 请求 header 必须是字符串。".to_string())
             })
             .collect::<Result<HashMap<_, _>, String>>()?;
-        let state = app.state::<crate::secret_store::AiSecretState>();
-        let credential = crate::secret_store::get_secret_value(app, &state, provider).await?;
+        let credential = host.get_secret(provider).await?;
         inject_provider_credential(&mut headers, provider, credential);
         let mut response =
             crate::ai_proxy::start_ai_request(crate::ai_proxy::ProxyAiRequestInput {
@@ -2149,31 +2470,29 @@ fn valid_daily_time(value: &str) -> bool {
 }
 
 async fn execute_native_tool(
-    app: &AppHandle,
+    host: &WorkerHost,
     data_directory: Option<String>,
     call_id: Option<String>,
     name: &str,
     arguments: Value,
 ) -> Result<Value, String> {
-    let output = crate::agent_tools::execute_rig_tool(
-        app.clone(),
-        crate::agent_tools::ExecuteRigToolInput {
-            data_directory,
-            call_id,
-            name: name.to_string(),
-            arguments_json: serde_json::to_string(&arguments).map_err(worker_error)?,
-        },
+    let directory = PathBuf::from(effective_data_directory(host, data_directory)?);
+    let output = crate::agent_tools::execute_rig_tool_for_database(
+        directory.join(database::DATABASE_FILENAME),
+        call_id,
+        name,
+        serde_json::to_string(&arguments).map_err(worker_error)?,
     )
     .await?;
     serde_json::from_str(&output).map_err(worker_error)
 }
 
 async fn record_worker_tool_call(
-    app: &AppHandle,
+    host: &WorkerHost,
     data_directory: Option<String>,
     call: &Value,
 ) -> Result<(), String> {
-    let connection = database::open_database(app, data_directory).await?;
+    let connection = open_host_database(host, data_directory).await?;
     let text = |name: &str| {
         call.get(name)
             .and_then(Value::as_str)
@@ -2250,12 +2569,39 @@ fn context_block_ids(run_request: Option<&Value>, document_id: &str) -> Vec<Stri
 }
 
 fn effective_data_directory(
-    app: &AppHandle,
+    host: &WorkerHost,
     data_directory: Option<String>,
 ) -> Result<String, String> {
-    database::configured_data_directory(app, data_directory)
-        .map(|path| path.to_string_lossy().into_owned())
-        .map_err(worker_error)
+    match &host.services {
+        WorkerHostServices::Desktop(app) => {
+            database::configured_data_directory(app, data_directory)
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(worker_error)
+        }
+        WorkerHostServices::Core(_) => data_directory
+            .or_else(|| {
+                host.state
+                    .runtime_data_directory
+                    .try_lock()
+                    .ok()
+                    .and_then(|value| value.clone())
+            })
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "Headless Core Worker 缺少数据目录。".to_string()),
+    }
+}
+
+async fn open_host_database(
+    host: &WorkerHost,
+    data_directory: Option<String>,
+) -> Result<Arc<SqlitePool>, String> {
+    match &host.services {
+        WorkerHostServices::Desktop(app) => database::open_database(app, data_directory).await,
+        WorkerHostServices::Core(_) => {
+            let directory = PathBuf::from(effective_data_directory(host, data_directory)?);
+            database::get_pool_for_path(&directory.join(database::DATABASE_FILENAME), false).await
+        }
+    }
 }
 
 async fn write_message(stdin: &mut ChildStdin, message: &Value) -> Result<(), String> {
@@ -2272,23 +2618,27 @@ async fn write_shared_message(
     write_message(&mut *stdin.lock().await, message).await
 }
 
-async fn update_snapshot(app: &AppHandle, update: impl FnOnce(&mut AgentWorkerSnapshot)) {
-    let state = app.state::<AgentWorkerSupervisorState>();
+async fn update_snapshot(host: &WorkerHost, update: impl FnOnce(&mut AgentWorkerSnapshot)) {
     let snapshot = {
-        let mut snapshot = state.snapshot.write().await;
+        let mut snapshot = host.state.snapshot.write().await;
         update(&mut snapshot);
         snapshot.clone()
     };
-    let _ = app.emit(STATUS_EVENT, snapshot);
+    let _ = host
+        .emit(
+            STATUS_EVENT,
+            serde_json::to_value(snapshot).unwrap_or(Value::Null),
+        )
+        .await;
 }
 
 async fn persist_sidecar_prepared_run(
-    app: &AppHandle,
+    host: &WorkerHost,
     data_directory: Option<String>,
     task: &Value,
     request: &Value,
 ) -> Result<(), String> {
-    let connection = database::open_database(app, data_directory).await?;
+    let connection = open_host_database(host, data_directory).await?;
     persist_sidecar_prepared_run_in_pool(connection.as_ref(), task, request).await
 }
 
@@ -2424,11 +2774,11 @@ async fn persist_sidecar_prepared_run_in_pool(
 /// to a WebView. Document application remains in agent_repository's existing
 /// revision-checked transaction commands.
 async fn persist_sidecar_finalization(
-    app: &AppHandle,
+    host: &WorkerHost,
     data_directory: Option<String>,
     finalization: &Value,
 ) -> Result<(), String> {
-    let connection = database::open_database(app, data_directory).await?;
+    let connection = open_host_database(host, data_directory).await?;
     let task_id = required_finalization_string(finalization, "taskId")?;
     let run_id = required_finalization_string(finalization, "runId")?;
     let outcome = required_finalization_string(finalization, "outcome")?;
@@ -2632,7 +2982,7 @@ fn required_finalization_string(value: &Value, name: &str) -> Result<String, Str
 }
 
 async fn buffer_terminal_message(
-    app: &AppHandle,
+    host: &WorkerHost,
     run_id: &str,
     message: &Value,
     run_request: Option<&Value>,
@@ -2640,8 +2990,7 @@ async fn buffer_terminal_message(
 ) -> Result<(), String> {
     validate_run_id(run_id)?;
     let projection = terminal_projection(run_id, message, run_request, recovery_context.is_some());
-    let state = app.state::<AgentWorkerSupervisorState>();
-    let mut terminals = state.terminal_messages.write().await;
+    let mut terminals = host.state.terminal_messages.write().await;
     if terminals.contains_key(run_id) {
         return Err(format!("run_id {run_id} 已经存在唯一终态。"));
     }
@@ -2656,13 +3005,12 @@ async fn buffer_terminal_message(
     Ok(())
 }
 
-async fn refresh_terminal_snapshot(app: &AppHandle) {
+async fn refresh_terminal_snapshot(host: &WorkerHost) {
     let projections = {
-        let state = app.state::<AgentWorkerSupervisorState>();
-        let terminals = state.terminal_messages.read().await;
+        let terminals = host.state.terminal_messages.read().await;
         sorted_terminal_projections(&terminals)
     };
-    update_snapshot(app, |snapshot| snapshot.pending_terminals = projections).await;
+    update_snapshot(host, |snapshot| snapshot.pending_terminals = projections).await;
 }
 
 fn terminal_projection(
@@ -2771,7 +3119,7 @@ struct WorkerLaunch {
     args: Vec<String>,
 }
 
-fn resolve_worker_program(app: &AppHandle) -> Result<WorkerLaunch, String> {
+fn resolve_worker_program(host: &WorkerHost) -> Result<WorkerLaunch, String> {
     if let Some(path) = env::var_os("MYNOTEBOOK_AGENT_WORKER_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
@@ -2807,11 +3155,11 @@ fn resolve_worker_program(app: &AppHandle) -> Result<WorkerLaunch, String> {
     } else {
         "agent-runtime-worker"
     };
-    let path = app
-        .path()
-        .resource_dir()
-        .map_err(worker_error)?
-        .join(filename);
+    let resource_directory = match &host.services {
+        WorkerHostServices::Desktop(app) => app.path().resource_dir().map_err(worker_error)?,
+        WorkerHostServices::Core(services) => services.resource_directory.clone(),
+    };
+    let path = resource_directory.join(filename);
     if path.is_file() {
         Ok(WorkerLaunch {
             program: path,
@@ -2889,6 +3237,148 @@ fn database_error(error: sqlx::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fake_worker_script(name: &str, exit_after_hello: bool) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "my-notebook-{name}-{}-{}.ps1",
+            std::process::id(),
+            now_millis()
+        ));
+        let exit = if exit_after_hello {
+            "break"
+        } else {
+            "continue"
+        };
+        std::fs::write(
+            &path,
+            format!(
+                r#"while (($line = [Console]::In.ReadLine()) -ne $null) {{
+  $message = $line | ConvertFrom-Json
+  if ($message.type -eq 'runtime.hello') {{
+    [Console]::Out.WriteLine('{{"version":1,"type":"runtime.hello","identity":{{"runtime":"ai-sdk","protocolVersion":1,"workerInstanceId":"fake-worker"}}}}')
+    [Console]::Out.Flush()
+    {exit}
+  }}
+  if ($message.type -eq 'shutdown') {{
+    [Console]::Out.WriteLine('{{"version":1,"type":"shutdown"}}')
+    [Console]::Out.Flush()
+    break
+  }}
+}}"#
+            ),
+        )
+        .expect("write fake Worker script");
+        path
+    }
+
+    fn test_core_worker_host(label: &str) -> WorkerHost {
+        let root = std::env::temp_dir().join(format!(
+            "my-notebook-core-worker-{label}-{}-{}",
+            std::process::id(),
+            now_millis()
+        ));
+        WorkerHost::core(
+            Arc::new(AgentWorkerSupervisorState::default()),
+            root.join("local-data"),
+            root.join("resources"),
+        )
+    }
+
+    #[tokio::test]
+    async fn headless_host_supervises_worker_and_projects_events_without_tauri() {
+        let script = fake_worker_script("core-host", false);
+        let host = test_core_worker_host("lifecycle");
+        let (sender, receiver) = mpsc::channel(8);
+        let task_host = host.clone();
+        let task = tokio::spawn(async move {
+            run_supervisor(
+                task_host,
+                WorkerLaunch {
+                    program: PathBuf::from("powershell.exe"),
+                    args: vec![
+                        "-NoProfile".to_string(),
+                        "-NonInteractive".to_string(),
+                        "-File".to_string(),
+                        script.to_string_lossy().into_owned(),
+                    ],
+                },
+                None,
+                receiver,
+            )
+            .await;
+            let _ = std::fs::remove_file(script);
+        });
+        timeout(Duration::from_secs(20), async {
+            loop {
+                if host.state.snapshot.read().await.status == AgentWorkerStatus::Running {
+                    break;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("Core Worker should become ready");
+        let projection = match &host.services {
+            WorkerHostServices::Core(services) => services.events.read().await.clone(),
+            WorkerHostServices::Desktop(_) => unreachable!(),
+        };
+        assert!(projection
+            .iter()
+            .any(|event| event.event_name == STATUS_EVENT));
+        request_supervisor(&sender, |response| SupervisorCommand::Shutdown {
+            reason: "test completed".to_string(),
+            response,
+        })
+        .await
+        .expect("shutdown fake Worker");
+        timeout(Duration::from_secs(20), task)
+            .await
+            .expect("supervisor should stop")
+            .expect("supervisor task should join");
+        assert_eq!(
+            host.state.snapshot.read().await.status,
+            AgentWorkerStatus::Stopped
+        );
+    }
+
+    #[tokio::test]
+    async fn headless_host_detects_worker_crash_and_enters_restart_cycle() {
+        let script = fake_worker_script("core-crash", true);
+        let host = test_core_worker_host("crash");
+        let (_sender, receiver) = mpsc::channel(8);
+        let task_host = host.clone();
+        let task = tokio::spawn(async move {
+            run_supervisor(
+                task_host,
+                WorkerLaunch {
+                    program: PathBuf::from("powershell.exe"),
+                    args: vec![
+                        "-NoProfile".to_string(),
+                        "-NonInteractive".to_string(),
+                        "-File".to_string(),
+                        script.to_string_lossy().into_owned(),
+                    ],
+                },
+                None,
+                receiver,
+            )
+            .await;
+            let _ = std::fs::remove_file(script);
+        });
+        timeout(Duration::from_secs(20), async {
+            loop {
+                let snapshot = host.state.snapshot.read().await.clone();
+                if snapshot.restart_count >= 1 && snapshot.status == AgentWorkerStatus::Restarting {
+                    break;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("Core should detect crash and schedule restart");
+        task.abort();
+        let _ = task.await;
+    }
 
     #[test]
     fn validates_run_identity_and_terminal_events() {

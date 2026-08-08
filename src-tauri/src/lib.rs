@@ -84,6 +84,8 @@ mod ai_models;
 mod ai_proxy;
 mod automation_runtime;
 mod cognitive_sessions;
+pub mod core_server;
+mod core_supervisor;
 mod database;
 mod database_mutations;
 mod database_queries;
@@ -95,6 +97,7 @@ mod governance;
 mod local_environment;
 mod mcp;
 pub mod mcp_server_exposure;
+mod outbox_dispatcher;
 mod reliability;
 mod rss;
 mod secret_store;
@@ -150,6 +153,16 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = app_handle.state::<core_supervisor::HeadlessCoreSupervisorState>();
+                if let Err(error) =
+                    core_supervisor::ensure_headless_core_inner(&app_handle, state.inner()).await
+                {
+                    tauri_plugin_log::log::error!("Headless Core 启动或发现失败：{error}");
+                }
+            });
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -161,13 +174,22 @@ pub fn run() {
             }
         })
         .manage(secret_store::AiSecretState::default())
+        .manage(core_supervisor::HeadlessCoreSupervisorState::default())
         .manage(dingtalk::DingTalkRuntimeState::default())
-        .manage(agent_worker_supervisor::AgentWorkerSupervisorState::default())
+        .manage(dingtalk::DingTalkProjectionState::default())
+        .manage(std::sync::Arc::new(
+            agent_worker_supervisor::AgentWorkerSupervisorState::default(),
+        ))
+        .manage(agent_worker_supervisor::AgentWorkerProjectionState::default())
         .manage(agent_request_watcher::AgentRequestWatcherState::default())
-        .manage(workflow_timers::DurableTimerSchedulerState::default())
+        .manage(workflow_timers::DurableTimerProjectionState::default())
+        .manage(workflow_runtime::WorkflowScannerProjectionState::default())
+        .manage(outbox_dispatcher::OutboxDispatcherProjectionState::default())
         .invoke_handler(tauri::generate_handler![
             storage::get_system_fonts,
             local_environment::get_local_environment_snapshot,
+            core_supervisor::ensure_headless_core,
+            core_supervisor::get_headless_core_snapshot,
             storage::get_default_data_directory,
             database::prepare_database,
             database_mutations::execute_database_mutation,
@@ -225,6 +247,7 @@ pub fn run() {
             dingtalk::start_dingtalk_connector,
             dingtalk::stop_dingtalk_connector,
             dingtalk::resume_dingtalk_connectors,
+            dingtalk::get_dingtalk_connector_snapshot,
             rss::fetch_rss_feed,
             rss::fetch_rss_article,
             ai_models::fetch_ai_models,
@@ -246,6 +269,8 @@ pub fn run() {
             agent_request_watcher::settle_agent_request,
             signal_runtime::publish_signal_refresh_event,
             workflow_timers::get_workflow_timer_snapshot,
+            workflow_runtime::get_workflow_scanner_snapshot,
+            outbox_dispatcher::get_outbox_dispatcher_snapshot,
             work::commit_result_verification,
             work::decide_change_set,
             work::record_authorization,

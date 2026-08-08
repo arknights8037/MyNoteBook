@@ -3,9 +3,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
-use std::{collections::HashMap, time::Duration};
-use tauri::{AppHandle, Emitter, State};
-use tokio::{sync::Mutex, task::JoinHandle};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::{
+    sync::{Mutex, RwLock},
+    task::JoinHandle,
+};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use url::Url;
 
@@ -23,6 +31,231 @@ const MAX_MESSAGE_CHARS: usize = 200_000;
 #[derive(Default)]
 pub struct DingTalkRuntimeState {
     tasks: Mutex<HashMap<String, JoinHandle<()>>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CoreConnectorStatus {
+    Stopped,
+    Running,
+    Paused,
+    Degraded,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CoreConnectorSnapshot {
+    status: CoreConnectorStatus,
+    active_connector_count: usize,
+    received_message_count: u64,
+    last_event_at: Option<i64>,
+    last_error: Option<String>,
+}
+
+impl Default for CoreConnectorSnapshot {
+    fn default() -> Self {
+        Self {
+            status: CoreConnectorStatus::Stopped,
+            active_connector_count: 0,
+            received_message_count: 0,
+            last_event_at: None,
+            last_error: None,
+        }
+    }
+}
+
+pub(crate) struct CoreDingTalkConnectorState {
+    runtime: DingTalkRuntimeState,
+    secrets: AiSecretState,
+    app_local_data_directory: PathBuf,
+    database_path: Mutex<Option<PathBuf>>,
+    snapshot: Arc<RwLock<CoreConnectorSnapshot>>,
+}
+
+pub(crate) struct DingTalkProjectionState {
+    task: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Default for DingTalkProjectionState {
+    fn default() -> Self {
+        Self {
+            task: Mutex::new(None),
+        }
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn get_dingtalk_connector_snapshot(
+    app: AppHandle,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
+) -> Result<CoreConnectorSnapshot, String> {
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::get_connector_snapshot(&endpoint).await
+}
+
+pub(crate) async fn ensure_snapshot_projection(
+    app: &AppHandle,
+    state: &DingTalkProjectionState,
+) -> Result<(), String> {
+    let mut task = state.task.lock().await;
+    if task.as_ref().is_some_and(|task| !task.is_finished()) {
+        return Ok(());
+    }
+    if let Some(existing) = task.take() {
+        existing.abort();
+    }
+    let app = app.clone();
+    *task = Some(tokio::spawn(async move {
+        let mut last_received_count = 0_u64;
+        let mut ticker = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            ticker.tick().await;
+            let core_state = app.state::<crate::core_supervisor::HeadlessCoreSupervisorState>();
+            let Ok(endpoint) =
+                crate::core_supervisor::active_endpoint(&app, core_state.inner()).await
+            else {
+                continue;
+            };
+            let Ok(snapshot) = crate::core_server::get_connector_snapshot(&endpoint).await else {
+                continue;
+            };
+            if snapshot.received_message_count > last_received_count {
+                let _ = app.emit(
+                    "dingtalk-message-received",
+                    json!({
+                        "receivedMessageCount": snapshot.received_message_count,
+                        "lastEventAt": snapshot.last_event_at,
+                    }),
+                );
+            }
+            last_received_count = snapshot.received_message_count;
+        }
+    }));
+    Ok(())
+}
+
+pub(crate) struct CoreConnectorMigrationSnapshot {
+    pub(crate) was_running: bool,
+}
+
+impl CoreDingTalkConnectorState {
+    pub(crate) fn new(app_local_data_directory: PathBuf) -> Self {
+        Self {
+            runtime: DingTalkRuntimeState::default(),
+            secrets: AiSecretState::default(),
+            app_local_data_directory,
+            database_path: Mutex::new(None),
+            snapshot: Arc::new(RwLock::new(CoreConnectorSnapshot::default())),
+        }
+    }
+
+    pub(crate) async fn ensure_for_directory(&self, directory: &Path) -> Result<(), String> {
+        let database_path = directory.join(database::DATABASE_FILENAME);
+        let same_database = self.database_path.lock().await.as_ref() == Some(&database_path);
+        if same_database && !self.runtime.tasks.lock().await.is_empty() {
+            return Ok(());
+        }
+        if !same_database {
+            quiesce_for_data_migration(&self.runtime).await;
+        }
+        *self.database_path.lock().await = Some(database_path.clone());
+        let pool = database::get_pool_for_path(&database_path, false).await?;
+        let rows = sqlx::query(
+            "SELECT id, client_id FROM im_connectors WHERE enabled = 1 ORDER BY created_at ASC",
+        )
+        .fetch_all(pool.as_ref())
+        .await
+        .map_err(database::database_error)?;
+        let mut started = 0_usize;
+        let mut errors = Vec::new();
+        for row in rows {
+            let connector_id: String = row.get("id");
+            let client_id: String = row.get("client_id");
+            let client_secret = secret_store::get_secret_value_from_directory(
+                &self.app_local_data_directory,
+                &self.secrets,
+                &secret_key(&connector_id),
+            )
+            .await?;
+            if client_secret.trim().is_empty() {
+                let error = "缺少 Client Secret，请重新编辑连接";
+                update_runtime_status(
+                    pool.as_ref(),
+                    &connector_id,
+                    "auth_error",
+                    Some(error),
+                    false,
+                )
+                .await?;
+                errors.push(format!("{connector_id}: {error}"));
+                continue;
+            }
+            spawn_connector_with_pool(
+                &self.runtime,
+                Arc::clone(&pool),
+                DingTalkStartInput {
+                    connector_id,
+                    client_id,
+                    data_directory: Some(directory.to_string_lossy().into_owned()),
+                },
+                client_secret,
+                ConnectorEventSink::Core(Arc::clone(&self.snapshot)),
+            )
+            .await?;
+            started += 1;
+        }
+        let mut snapshot = self.snapshot.write().await;
+        snapshot.status = if errors.is_empty() {
+            CoreConnectorStatus::Running
+        } else {
+            CoreConnectorStatus::Degraded
+        };
+        snapshot.active_connector_count = started;
+        snapshot.last_error = (!errors.is_empty()).then(|| errors.join("；"));
+        Ok(())
+    }
+
+    pub(crate) async fn snapshot(&self) -> CoreConnectorSnapshot {
+        self.snapshot.read().await.clone()
+    }
+
+    pub(crate) async fn reconcile_for_directory(&self, directory: &Path) -> Result<usize, String> {
+        quiesce_for_data_migration(&self.runtime).await;
+        *self.database_path.lock().await = None;
+        self.ensure_for_directory(directory).await?;
+        Ok(self.snapshot.read().await.active_connector_count)
+    }
+
+    pub(crate) async fn quiesce(&self) -> CoreConnectorMigrationSnapshot {
+        let was_running = matches!(
+            self.snapshot.read().await.status,
+            CoreConnectorStatus::Running | CoreConnectorStatus::Degraded
+        );
+        quiesce_for_data_migration(&self.runtime).await;
+        let mut snapshot = self.snapshot.write().await;
+        snapshot.status = CoreConnectorStatus::Paused;
+        snapshot.active_connector_count = 0;
+        CoreConnectorMigrationSnapshot { was_running }
+    }
+
+    pub(crate) async fn quiesce_if_directory(&self, directory: &Path) {
+        let database_path = directory.join(database::DATABASE_FILENAME);
+        if self.database_path.lock().await.as_ref() == Some(&database_path) {
+            self.quiesce().await;
+        }
+    }
+
+    pub(crate) async fn shutdown(&self) {
+        quiesce_for_data_migration(&self.runtime).await;
+        let mut snapshot = self.snapshot.write().await;
+        snapshot.status = CoreConnectorStatus::Stopped;
+        snapshot.active_connector_count = 0;
+    }
+}
+
+#[derive(Clone)]
+enum ConnectorEventSink {
+    Core(Arc<RwLock<CoreConnectorSnapshot>>),
 }
 
 pub(crate) async fn quiesce_for_data_migration(runtime: &DingTalkRuntimeState) {
@@ -161,80 +394,56 @@ pub async fn delete_dingtalk_connector_secret(
 #[tauri::command]
 pub async fn start_dingtalk_connector(
     app: AppHandle,
-    secrets: State<'_, AiSecretState>,
-    runtime: State<'_, DingTalkRuntimeState>,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     input: DingTalkStartInput,
 ) -> Result<(), String> {
-    let client_secret =
-        secret_store::get_secret_value(&app, &secrets, &secret_key(&input.connector_id)).await?;
-    validate_credentials(&input.client_id, &client_secret)?;
-    spawn_connector(&runtime, app, input, client_secret).await
+    if input.connector_id.trim().is_empty() || input.client_id.trim().is_empty() {
+        return Err("钉钉连接器 ID 和 Client ID 不能为空".to_string());
+    }
+    let directory = database::configured_data_directory(&app, input.data_directory)
+        .map_err(database::database_error)?;
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::reconcile_connectors(&endpoint, &directory)
+        .await
+        .map(|_| ())
 }
 
 #[tauri::command]
 pub async fn stop_dingtalk_connector(
     app: AppHandle,
-    runtime: State<'_, DingTalkRuntimeState>,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     connector_id: String,
     data_directory: Option<String>,
 ) -> Result<(), String> {
-    if let Some(handle) = runtime.tasks.lock().await.remove(&connector_id) {
-        handle.abort();
+    if connector_id.trim().is_empty() {
+        return Err("钉钉连接器 ID 不能为空".to_string());
     }
-    if let Ok(pool) = database::open_database(&app, data_directory).await {
-        update_runtime_status(&pool, &connector_id, "stopped", None, false).await?;
-    }
-    Ok(())
+    let directory = database::configured_data_directory(&app, data_directory)
+        .map_err(database::database_error)?;
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::reconcile_connectors(&endpoint, &directory)
+        .await
+        .map(|_| ())
 }
 
 #[tauri::command]
 pub async fn resume_dingtalk_connectors(
     app: AppHandle,
-    secrets: State<'_, AiSecretState>,
-    runtime: State<'_, DingTalkRuntimeState>,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     data_directory: Option<String>,
 ) -> Result<usize, String> {
-    let pool = database::open_database(&app, data_directory.clone()).await?;
-    let rows = sqlx::query(
-        "SELECT id, client_id FROM im_connectors WHERE enabled = 1 ORDER BY created_at ASC",
-    )
-    .fetch_all(pool.as_ref())
-    .await
-    .map_err(database::database_error)?;
-
-    let mut started = 0;
-    for row in rows {
-        let connector_id: String = row.get("id");
-        let client_id: String = row.get("client_id");
-        let client_secret =
-            secret_store::get_secret_value(&app, &secrets, &secret_key(&connector_id)).await?;
-        if client_secret.trim().is_empty() {
-            update_runtime_status(
-                &pool,
-                &connector_id,
-                "auth_error",
-                Some("缺少 Client Secret，请重新编辑连接"),
-                false,
-            )
-            .await?;
-            continue;
-        }
-        let input = DingTalkStartInput {
-            connector_id,
-            client_id,
-            data_directory: data_directory.clone(),
-        };
-        spawn_connector(&runtime, app.clone(), input, client_secret).await?;
-        started += 1;
-    }
-    Ok(started)
+    let directory = database::configured_data_directory(&app, data_directory)
+        .map_err(database::database_error)?;
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::reconcile_connectors(&endpoint, &directory).await
 }
 
-async fn spawn_connector(
+async fn spawn_connector_with_pool(
     runtime: &DingTalkRuntimeState,
-    app: AppHandle,
+    pool: Arc<SqlitePool>,
     input: DingTalkStartInput,
     client_secret: String,
+    event_sink: ConnectorEventSink,
 ) -> Result<(), String> {
     let mut tasks = runtime.tasks.lock().await;
     if let Some(existing) = tasks.get(&input.connector_id) {
@@ -245,21 +454,23 @@ async fn spawn_connector(
     tasks.remove(&input.connector_id);
     let connector_id = input.connector_id.clone();
     let handle = tokio::spawn(async move {
-        run_connector(app, input, client_secret).await;
+        run_connector(pool, input, client_secret, event_sink).await;
     });
     tasks.insert(connector_id, handle);
     Ok(())
 }
 
-async fn run_connector(app: AppHandle, input: DingTalkStartInput, client_secret: String) {
-    let Ok(pool) = database::open_database(&app, input.data_directory.clone()).await else {
-        return;
-    };
+async fn run_connector(
+    pool: Arc<SqlitePool>,
+    input: DingTalkStartInput,
+    client_secret: String,
+    event_sink: ConnectorEventSink,
+) {
     let mut delay_seconds = 2_u64;
     let _ = update_runtime_status(&pool, &input.connector_id, "connecting", None, false).await;
 
     loop {
-        match run_connection_once(&app, &pool, &input, &client_secret).await {
+        match run_connection_once(&event_sink, pool.as_ref(), &input, &client_secret).await {
             Ok(()) => {
                 delay_seconds = 2;
             }
@@ -289,7 +500,7 @@ async fn run_connector(app: AppHandle, input: DingTalkStartInput, client_secret:
 }
 
 async fn run_connection_once(
-    app: &AppHandle,
+    event_sink: &ConnectorEventSink,
     pool: &SqlitePool,
     input: &DingTalkStartInput,
     client_secret: &str,
@@ -344,14 +555,15 @@ async fn run_connection_once(
                                 .await
                                 .map_err(|error| (error, false))?;
                         if inserted {
-                            let _ = app.emit(
-                                "dingtalk-message-received",
+                            publish_connector_event(
+                                event_sink,
                                 DingTalkMessageEvent {
                                     connector_id: input.connector_id.clone(),
                                     message_id: message.remote_message_id,
                                     received_at,
                                 },
-                            );
+                            )
+                            .await;
                         }
                     }
                     writer
@@ -372,6 +584,16 @@ async fn run_connection_once(
         }
     }
     Err(("钉钉 Stream 连接意外结束".to_string(), false))
+}
+
+async fn publish_connector_event(event_sink: &ConnectorEventSink, event: DingTalkMessageEvent) {
+    match event_sink {
+        ConnectorEventSink::Core(snapshot) => {
+            let mut snapshot = snapshot.write().await;
+            snapshot.received_message_count = snapshot.received_message_count.saturating_add(1);
+            snapshot.last_event_at = Some(event.received_at);
+        }
+    }
 }
 
 async fn register_connection(

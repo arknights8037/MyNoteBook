@@ -5,7 +5,12 @@ use aes_gcm::{
 use base64::{engine::general_purpose, Engine as _};
 use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fs, path::PathBuf, sync::Mutex};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 use tauri::{AppHandle, Manager, State};
 
 const KEYRING_SERVICE: &str = "com.local.mynotebook";
@@ -51,15 +56,39 @@ async fn get_secret_value_with_legacy(
     key: &str,
     claim_legacy_ai_secret: bool,
 ) -> Result<String, String> {
+    let secret_path = secret_path(app)?;
+    get_secret_value_from_path(&secret_path, state, key, claim_legacy_ai_secret).await
+}
+
+pub(crate) async fn get_secret_value_from_directory(
+    app_local_data_directory: &Path,
+    state: &AiSecretState,
+    key: &str,
+) -> Result<String, String> {
+    get_secret_value_from_path(
+        &app_local_data_directory.join(SECRET_FILENAME),
+        state,
+        key,
+        false,
+    )
+    .await
+}
+
+async fn get_secret_value_from_path(
+    secret_path: &Path,
+    state: &AiSecretState,
+    key: &str,
+    claim_legacy_ai_secret: bool,
+) -> Result<String, String> {
     if let Some(api_keys) = state.cached_api_keys.lock().map_err(secret_error)?.as_mut() {
         return Ok(resolve_secret_value(api_keys, key, claim_legacy_ai_secret));
     }
 
-    let secret_path = secret_path(app)?;
     if !secret_path.is_file() {
         return Ok(String::new());
     }
     let data_key = get_or_create_data_key(state).await?;
+    let secret_path = secret_path.to_path_buf();
     let plaintext =
         tauri::async_runtime::spawn_blocking(move || decrypt_secret(&secret_path, &data_key))
             .await

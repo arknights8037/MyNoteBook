@@ -109,17 +109,16 @@ pub(crate) async fn publish_signal_refresh_event(
     Ok(json!({ "eventId": event_id, "status": "accepted" }))
 }
 
-pub(crate) async fn tick(
-    app: &AppHandle,
+pub(crate) async fn tick_in_core(
+    worker: &crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState,
     connection: &SqlitePool,
-    data_directory: Option<String>,
+    data_directory: &str,
     profile: Option<&Value>,
 ) -> Result<(), String> {
-    enqueue_events(connection).await?;
     if let Some(profile) = profile {
-        dispatch_next_run(app, connection, data_directory, profile).await?;
+        dispatch_next_run_in_core(worker, connection, data_directory, profile).await?;
     }
-    emit_snapshot(app, connection).await
+    Ok(())
 }
 
 pub(crate) async fn recover_orphaned_runs(
@@ -382,13 +381,23 @@ pub(crate) async fn settle_run(
     Ok(true)
 }
 
-pub(crate) async fn execute_personal_organizer_tool(
-    app: &AppHandle,
+pub(crate) async fn execute_personal_organizer_tool_in_core(
     connection: &SqlitePool,
     tool_name: &str,
     arguments: &Value,
     run_request: Option<&Value>,
 ) -> Result<Value, String> {
+    execute_personal_organizer_tool_inner(connection, tool_name, arguments, run_request)
+        .await
+        .map(|(result, _)| result)
+}
+
+async fn execute_personal_organizer_tool_inner(
+    connection: &SqlitePool,
+    tool_name: &str,
+    arguments: &Value,
+    run_request: Option<&Value>,
+) -> Result<(Value, String), String> {
     let request = run_request.ok_or_else(|| "个人工作工具缺少运行上下文。".to_string())?;
     if request.get("intent").and_then(Value::as_str) != Some("signal") {
         return Err("个人工作工具只允许由信号 Agent 调用。".to_string());
@@ -415,18 +424,13 @@ pub(crate) async fn execute_personal_organizer_tool(
         }
         _ => Err(format!("未知个人工作工具 {tool_name}。")),
     }?;
-    app.emit(
-        SIGNAL_CHANGED_EVENT,
-        json!({ "eventId": event_id, "toolName": tool_name, "occurredAt": now_millis() }),
-    )
-    .map_err(|error| format!("无法发送信号 Agent 更新事件：{error}"))?;
-    Ok(result)
+    Ok((result, event_id.to_string()))
 }
 
-async fn dispatch_next_run(
-    app: &AppHandle,
+async fn dispatch_next_run_in_core(
+    worker: &crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState,
     connection: &SqlitePool,
-    data_directory: Option<String>,
+    data_directory: &str,
     profile: &Value,
 ) -> Result<(), String> {
     if sqlx::query_scalar::<_, i64>(
@@ -444,13 +448,9 @@ async fn dispatch_next_run(
     };
     match build_submission(connection, &claimed, profile).await {
         Ok((submission, recovery)) => {
-            if let Err(error) = crate::agent_worker_supervisor::start_background_orchestration(
-                app,
-                data_directory,
-                submission,
-                recovery,
-            )
-            .await
+            if let Err(error) = worker
+                .start_background_orchestration(data_directory.to_string(), submission, recovery)
+                .await
             {
                 schedule_failure(connection, &claimed.id, None, &error, true).await?;
             }
@@ -460,7 +460,7 @@ async fn dispatch_next_run(
     Ok(())
 }
 
-async fn enqueue_events(connection: &SqlitePool) -> Result<usize, String> {
+pub(crate) async fn enqueue_events(connection: &SqlitePool) -> Result<usize, String> {
     let result = sqlx::query(
         "INSERT OR IGNORE INTO signal_agent_runs \
          (id, event_id, status, frozen_input_json, queued_at) \
