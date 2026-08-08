@@ -177,7 +177,10 @@ pub fn run() {
         .manage(core_supervisor::HeadlessCoreSupervisorState::default())
         .manage(dingtalk::DingTalkRuntimeState::default())
         .manage(dingtalk::DingTalkProjectionState::default())
-        .manage(agent_worker_supervisor::AgentWorkerSupervisorState::default())
+        .manage(std::sync::Arc::new(
+            agent_worker_supervisor::AgentWorkerSupervisorState::default(),
+        ))
+        .manage(agent_worker_supervisor::AgentWorkerProjectionState::default())
         .manage(agent_request_watcher::AgentRequestWatcherState::default())
         .manage(workflow_timers::DurableTimerProjectionState::default())
         .manage(workflow_runtime::WorkflowScannerProjectionState::default())

@@ -143,14 +143,23 @@ pub fn import_skill_directory(
 
 #[tauri::command]
 pub fn create_skill(app: AppHandle, input: CreateSkillInput) -> Result<InstalledSkill, String> {
-    let name = input.name.trim();
-    let description = input.description.trim();
+    let root = skills_root(&app, input.data_directory)?;
+    create_skill_in_root(&root, &input.name, &input.description, input.enabled)
+}
+
+fn create_skill_in_root(
+    root: &Path,
+    name: &str,
+    description: &str,
+    enabled: Option<bool>,
+) -> Result<InstalledSkill, String> {
+    let name = name.trim();
+    let description = description.trim();
     if name.is_empty() || description.is_empty() {
         return Err("技能名称和描述不能为空。".to_string());
     }
-    let root = skills_root(&app, input.data_directory)?;
-    fs::create_dir_all(&root).map_err(|error| format!("无法创建技能目录：{error}"))?;
-    let destination = available_destination(&root, &sanitize_skill_id(name));
+    fs::create_dir_all(root).map_err(|error| format!("无法创建技能目录：{error}"))?;
+    let destination = available_destination(root, &sanitize_skill_id(name));
     fs::create_dir_all(&destination).map_err(|error| format!("无法创建技能：{error}"))?;
     let content = format!(
         "---\nname: {}\ndescription: {}\n---\n\n# {}\n\n在此描述触发条件、工作流程和边界。\n\n## 可选目录\n\n- `scripts/`：可复用脚本\n- `references/`：按需读取的参考资料\n- `assets/`：模板与静态资源\n",
@@ -160,14 +169,14 @@ pub fn create_skill(app: AppHandle, input: CreateSkillInput) -> Result<Installed
     );
     fs::write(destination.join(SKILL_FILE_NAME), content)
         .map_err(|error| format!("无法写入 SKILL.md：{error}"))?;
-    let mut disabled = read_disabled_skills(&root);
-    if input.enabled == Some(false) {
+    let mut disabled = read_disabled_skills(root);
+    if enabled == Some(false) {
         let skill_id = destination
             .file_name()
             .and_then(|value| value.to_str())
             .ok_or_else(|| "无法确定新建技能 ID。".to_string())?;
         disabled.insert(skill_id.to_string());
-        write_disabled_skills(&root, &disabled)?;
+        write_disabled_skills(root, &disabled)?;
     }
     inspect_skill(&destination, &disabled)
 }
@@ -179,35 +188,45 @@ pub(crate) fn create_skill_draft(
     description: String,
     instructions: String,
 ) -> Result<Value, String> {
+    let root = skills_root(&app, data_directory)?;
+    create_skill_draft_in_root(&root, name, description, instructions)
+}
+
+pub(crate) fn create_skill_draft_from_directory(
+    data_directory: &Path,
+    name: String,
+    description: String,
+    instructions: String,
+) -> Result<Value, String> {
+    create_skill_draft_in_root(
+        &data_directory.join("skills"),
+        name,
+        description,
+        instructions,
+    )
+}
+
+fn create_skill_draft_in_root(
+    root: &Path,
+    name: String,
+    description: String,
+    instructions: String,
+) -> Result<Value, String> {
     let instructions = normalize_draft_instructions(&instructions, &name)?;
-    let skill = create_skill(
-        app.clone(),
-        CreateSkillInput {
-            data_directory: data_directory.clone(),
-            name,
-            description,
-            enabled: Some(false),
-        },
-    )?;
-    let generated = read_skill_file(
-        app.clone(),
-        SkillFileInput {
-            data_directory: data_directory.clone(),
+    let skill = create_skill_in_root(root, &name, &description, Some(false))?;
+    let generated = read_skill_file_from_root(
+        root,
+        &SkillFileInput {
+            data_directory: None,
             skill_id: skill.id.clone(),
             relative_path: SKILL_FILE_NAME.to_string(),
             require_enabled: Some(false),
         },
     )?;
     let frontmatter = extract_draft_frontmatter(&generated)?;
-    write_skill_file(
-        app,
-        WriteSkillFileInput {
-            data_directory,
-            skill_id: skill.id.clone(),
-            relative_path: SKILL_FILE_NAME.to_string(),
-            content: format!("{frontmatter}\n\n{instructions}\n"),
-        },
-    )?;
+    let path = resolve_skill_file(root, &skill.id, SKILL_FILE_NAME)?;
+    fs::write(path, format!("{frontmatter}\n\n{instructions}\n"))
+        .map_err(|error| format!("保存技能文件失败：{error}"))?;
     Ok(json!({
         "created": true,
         "id": skill.id,
@@ -234,20 +253,31 @@ pub fn set_skill_enabled(app: AppHandle, input: SkillStateInput) -> Result<(), S
 
 #[tauri::command]
 pub fn read_skill_file(app: AppHandle, input: SkillFileInput) -> Result<String, String> {
-    let root = skills_root(&app, input.data_directory)?;
+    let root = skills_root(&app, input.data_directory.clone())?;
+    read_skill_file_from_root(&root, &input)
+}
+
+pub(crate) fn read_skill_file_from_directory(
+    data_directory: &Path,
+    input: &SkillFileInput,
+) -> Result<String, String> {
+    read_skill_file_from_root(&data_directory.join("skills"), input)
+}
+
+fn read_skill_file_from_root(root: &Path, input: &SkillFileInput) -> Result<String, String> {
     if input.require_enabled.unwrap_or(false) {
-        if read_disabled_skills(&root).contains(&input.skill_id) {
+        if read_disabled_skills(root).contains(&input.skill_id) {
             return Err("该技能未启用。".to_string());
         }
         let skill = inspect_skill(
-            &resolve_skill_directory(&root, &input.skill_id)?,
+            &resolve_skill_directory(root, &input.skill_id)?,
             &BTreeSet::new(),
         )?;
         if !skill.valid {
             return Err("该技能的 SKILL.md 无效。".to_string());
         }
     }
-    let path = resolve_skill_file(&root, &input.skill_id, &input.relative_path)?;
+    let path = resolve_skill_file(root, &input.skill_id, &input.relative_path)?;
     let metadata = fs::metadata(&path).map_err(|error| format!("无法读取技能文件：{error}"))?;
     if !metadata.is_file() || metadata.len() > MAX_TEXT_FILE_BYTES || !is_text_file(&path) {
         return Err("该文件不是可读取的文本文件，或大小超过 1 MB。".to_string());

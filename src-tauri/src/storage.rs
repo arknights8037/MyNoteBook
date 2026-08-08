@@ -7,6 +7,7 @@ use std::{
     ffi::OsString,
     fs,
     path::{Component, Path, PathBuf},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, State};
@@ -63,7 +64,7 @@ pub async fn migrate_data_directory(
     app: AppHandle,
     core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     watcher_state: State<'_, crate::agent_request_watcher::AgentRequestWatcherState>,
-    worker_state: State<'_, crate::agent_worker_supervisor::AgentWorkerSupervisorState>,
+    worker_state: State<'_, Arc<crate::agent_worker_supervisor::AgentWorkerSupervisorState>>,
     dingtalk_state: State<'_, crate::dingtalk::DingTalkRuntimeState>,
     current_directory: Option<String>,
     destination_directory: Option<String>,

@@ -1,6 +1,6 @@
 # Headless Core 进程与本地协议
 
-本文记录 Phase 6 的当前实现事实、协议安全边界和后续迁移顺序。Phase 6 尚未完成；当前已落地独立 Core 控制进程、Desktop 发现协议、WebView 数据库 prepare/query/mutation catalog、不依赖 Desktop 生命周期的 Durable Timer、带订阅确认的 Outbox publisher、Workflow Event/已满足等待续接、Automation/Signal ingress、Action 过期 lease 恢复扫描，以及钉钉 Stream Connector。Desktop 后台运行面板通过受控命令和事件订阅这些 Core runtime 的脱敏状态，不接触 endpoint 凭证。Workflow Run 执行调度、Action handler 和其他 Rust 数据库所有权仍在后续迁移中。
+本文记录 Phase 6 的当前实现事实、协议安全边界和后续迁移顺序。Phase 6 尚未完成；当前已落地独立 Core 控制进程、Desktop 发现协议、WebView 数据库 prepare/query/mutation catalog、不依赖 Desktop 生命周期的 Durable Timer、带订阅确认的 Outbox publisher、Workflow Event/已满足等待续接、Automation/Signal ingress、Action 过期 lease 恢复扫描、钉钉 Stream Connector，以及 Agent Worker Supervisor。Desktop 后台运行面板通过受控命令和带序号事件投影订阅这些 Core runtime 的脱敏状态，不接触 endpoint 凭证。Workflow Run/Automation/Signal 执行调度、Action handler 和其他 Rust 数据库所有权仍在后续迁移中。
 
 ## 当前进程拓扑
 
@@ -12,7 +12,7 @@ MyNoteBook Desktop (Tauri/WebView)
   -> 127.0.0.1 随机端口上的 Headless Core 控制面
 
 Agent Runtime Worker
-  <- 当前仍由 Desktop Rust Supervisor 通过 NDJSON stdio 管理
+  <- 由 Headless Core Rust Supervisor 通过 NDJSON stdio 管理
 ```
 
 Headless Core 使用与 Desktop 相同的可执行文件，通过专用进程参数进入无 Tauri、无 WebView 的 Tokio/Axum 入口。Desktop 只负责发现或拉起 Core，不保留会在 drop 时终止 Core 的 child handle；关闭窗口或退出 Desktop 不会主动发送 Core shutdown。
@@ -50,6 +50,15 @@ Core 只绑定 `127.0.0.1:0`，启动后在应用用户配置目录的 `headless
 | `POST /v1/outbox/snapshot`          | 返回 Outbox publisher 的脱敏健康、发布累计与积压快照              |
 | `POST /v1/connectors/snapshot`      | 返回 Connector 运行状态、活动数量与脱敏消息累计                   |
 | `POST /v1/connectors/reconcile`     | 按数据库启用状态在 Core 内停止并恢复 Connector                    |
+| `POST /v1/worker/projection`        | 按序号读取 Worker 快照与脱敏事件，支持 Desktop 重连补投影          |
+| `POST /v1/worker/start`             | 在 Core 内启动或确认 Worker Supervisor                             |
+| `POST /v1/worker/run`               | 向 Core Worker 提交已组装 Run 请求                                 |
+| `POST /v1/worker/orchestration`     | 在 Core 内组装 MCP 工具后提交编排请求                              |
+| `POST /v1/worker/cancel`            | 取消活动 Run                                                       |
+| `POST /v1/worker/steer`             | 向活动 Run 提交 steer 输入                                         |
+| `POST /v1/worker/shutdown`          | 显式停止 Worker；不停止 Headless Core                              |
+| `POST /v1/worker/terminal`          | 读取 Core 持久化前的待确认终态缓冲                                 |
+| `POST /v1/worker/terminal/acknowledge` | 确认 Desktop 已消费终态缓冲                                     |
 | `POST /v1/runtime/quiesce`          | 中止并等待全部 Core 后台任务，用于数据目录迁移                    |
 | `POST /v1/runtime/resume`           | 在迁移成功的目标目录或失败回滚的原目录恢复原有 Core 后台任务      |
 
@@ -61,7 +70,7 @@ major 不一致必须拒绝连接；Core minor 低于 Desktop 所需 minor 时�
 
 1. 将数据库路径解析、migration、读写 pool 和 mutation/query catalog 移入 Core RPC。（已迁移 WebView catalog；其他 Rust 领域模块仍待迁移）
 2. 将 Durable Timer、Outbox、Workflow、Automation、Signal 和 Connector watcher 移入 Core。（Durable Timer、Outbox、Workflow 等待续接、Automation/Signal ingress、Action lease 恢复与钉钉 Connector 已迁移）
-3. 将 Agent Worker Supervisor 移入 Core；Desktop 仅订阅脱敏事件并提交交互命令。
+3. 将 Agent Worker Supervisor 移入 Core；Desktop 仅订阅脱敏事件并提交交互命令。（已迁移）
 4. 为数据目录迁移建立 Core 级 quiesce/commit/rollback，Desktop 不再直接关闭 pool。（后台任务已统一 quiesce/resume；commit/rollback 与 pool 所有权仍待迁移）
 5. 完成 Desktop/Core/Worker 各自崩溃、重启、版本不兼容、旧 endpoint、活动 Run 和安装升级验收。
 
@@ -73,5 +82,6 @@ major 不一致必须拒绝连接；Core minor 低于 Desktop 所需 minor 时�
 - Core loopback 集成测试会准备真实数据库、插入到期 Timer，并验证 Core 独立触发 Domain Event/Outbox；同一测试还会建立 correlation Event 等待，验证 Core 将 Workflow 续接为 `READY`，并覆盖统一后台任务 quiesce/resume。
 - Core ingress 测试验证 Automation 到期任务和 Signal Domain Event 只入队一次，同时回收过期 Action lease；测试不启动 Desktop、Tauri 或 Agent Worker。
 - Core loopback 集成测试验证 Outbox 只有在 Core 订阅者接收后才确认发布，并覆盖 publisher 的暂停与恢复。
+- 无 Tauri Worker 测试使用可控假 Worker，验证 Core 能监督心跳、投影 Run 事件，并在 Worker 崩溃后进入有界重启周期；Core loopback 测试同时覆盖 Worker quiesce/resume 边界。
 - 进程测试使用真实无 Tauri binary，验证 endpoint 发布、未授权拒绝、协议协商、受权 shutdown 和 endpoint 清理。
 - 不开放非 loopback 地址，不加入生产 CSP，不允许 WebView 读取 endpoint 文件或直接连接 Core。

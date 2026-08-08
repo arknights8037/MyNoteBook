@@ -24,7 +24,7 @@ use tokio::{
 };
 
 pub const CORE_PROTOCOL_MAJOR: u16 = 1;
-pub const CORE_PROTOCOL_MINOR: u16 = 6;
+pub const CORE_PROTOCOL_MINOR: u16 = 7;
 pub const CORE_ENDPOINT_FILENAME: &str = "endpoint-v1.json";
 const CORE_LOCK_FILENAME: &str = "instance-v1.lock";
 const HEADLESS_CORE_FLAG: &str = "--mynotebook-headless-core";
@@ -82,6 +82,7 @@ struct CoreServerState {
     workflow_scanner: crate::workflow_runtime::CoreWorkflowScannerState,
     outbox: crate::outbox_dispatcher::CoreOutboxDispatcherState,
     connectors: crate::dingtalk::CoreDingTalkConnectorState,
+    worker: crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState,
 }
 
 #[derive(Clone, Debug)]
@@ -119,6 +120,8 @@ pub(crate) struct CoreRuntimeQuiesceResponse {
     pub(crate) workflow_scanner_was_running: bool,
     pub(crate) outbox_was_running: bool,
     pub(crate) connectors_were_running: bool,
+    pub(crate) worker_was_running: bool,
+    pub(crate) worker_data_directory: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -129,6 +132,40 @@ struct CoreRuntimeResumeRequest {
     workflow_scanner_should_run: bool,
     outbox_should_run: bool,
     connectors_should_run: bool,
+    worker_should_run: bool,
+    worker_data_directory: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkerProjectionRequest {
+    after_sequence: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkerStartRequest {
+    directory: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkerRunRequest {
+    directory: String,
+    payload: Value,
+    recovery_context: Option<Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkerControlRequest {
+    run_id: String,
+    input: Option<Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct WorkerShutdownRequest {
+    reason: String,
 }
 
 pub fn is_headless_core_process() -> bool {
@@ -368,6 +405,129 @@ pub(crate) async fn reconcile_connectors(
     .await
 }
 
+pub(crate) async fn get_worker_projection(
+    endpoint: &CoreEndpointDescriptor,
+    after_sequence: u64,
+) -> Result<crate::agent_worker_supervisor::CoreWorkerProjection, String> {
+    post_authenticated(
+        endpoint,
+        "/v1/worker/projection",
+        &WorkerProjectionRequest { after_sequence },
+    )
+    .await
+}
+
+pub(crate) async fn start_core_worker(
+    endpoint: &CoreEndpointDescriptor,
+    directory: &Path,
+) -> Result<crate::agent_worker_supervisor::AgentWorkerSnapshot, String> {
+    post_authenticated(
+        endpoint,
+        "/v1/worker/start",
+        &WorkerStartRequest {
+            directory: directory.to_string_lossy().into_owned(),
+        },
+    )
+    .await
+}
+
+pub(crate) async fn start_core_worker_run(
+    endpoint: &CoreEndpointDescriptor,
+    directory: &Path,
+    payload: Value,
+    recovery_context: Option<Value>,
+) -> Result<(), String> {
+    post_authenticated::<_, bool>(
+        endpoint,
+        "/v1/worker/run",
+        &WorkerRunRequest {
+            directory: directory.to_string_lossy().into_owned(),
+            payload,
+            recovery_context,
+        },
+    )
+    .await
+    .map(|_| ())
+}
+
+pub(crate) async fn start_core_worker_orchestration(
+    endpoint: &CoreEndpointDescriptor,
+    directory: &Path,
+    payload: Value,
+    recovery_context: Option<Value>,
+) -> Result<(), String> {
+    post_authenticated::<_, bool>(
+        endpoint,
+        "/v1/worker/orchestration",
+        &WorkerRunRequest {
+            directory: directory.to_string_lossy().into_owned(),
+            payload,
+            recovery_context,
+        },
+    )
+    .await
+    .map(|_| ())
+}
+
+pub(crate) async fn control_core_worker_run(
+    endpoint: &CoreEndpointDescriptor,
+    operation: &str,
+    run_id: String,
+    input: Option<Value>,
+) -> Result<(), String> {
+    post_authenticated::<_, bool>(
+        endpoint,
+        &format!("/v1/worker/{operation}"),
+        &WorkerControlRequest { run_id, input },
+    )
+    .await
+    .map(|_| ())
+}
+
+pub(crate) async fn get_core_worker_terminal(
+    endpoint: &CoreEndpointDescriptor,
+    run_id: String,
+) -> Result<Option<Value>, String> {
+    post_authenticated(
+        endpoint,
+        "/v1/worker/terminal",
+        &WorkerControlRequest {
+            run_id,
+            input: None,
+        },
+    )
+    .await
+}
+
+pub(crate) async fn acknowledge_core_worker_terminal(
+    endpoint: &CoreEndpointDescriptor,
+    run_id: String,
+) -> Result<(), String> {
+    post_authenticated::<_, bool>(
+        endpoint,
+        "/v1/worker/terminal/acknowledge",
+        &WorkerControlRequest {
+            run_id,
+            input: None,
+        },
+    )
+    .await
+    .map(|_| ())
+}
+
+pub(crate) async fn shutdown_core_worker(
+    endpoint: &CoreEndpointDescriptor,
+    reason: String,
+) -> Result<(), String> {
+    post_authenticated::<_, bool>(
+        endpoint,
+        "/v1/worker/shutdown",
+        &WorkerShutdownRequest { reason },
+    )
+    .await
+    .map(|_| ())
+}
+
 pub(crate) async fn quiesce_background_runtime(
     endpoint: &CoreEndpointDescriptor,
 ) -> Result<CoreRuntimeQuiesceResponse, String> {
@@ -388,6 +548,8 @@ pub(crate) async fn resume_background_runtime(
             workflow_scanner_should_run: snapshot.workflow_scanner_was_running,
             outbox_should_run: snapshot.outbox_was_running,
             connectors_should_run: snapshot.connectors_were_running,
+            worker_should_run: snapshot.worker_was_running,
+            worker_data_directory: snapshot.worker_data_directory.clone(),
         },
     )
     .await
@@ -456,7 +618,6 @@ async fn run_headless_core_with_context(
     endpoint_directory: &Path,
     process_context: CoreProcessContext,
 ) -> Result<(), String> {
-    let _ = &process_context.resource_directory;
     fs::create_dir_all(endpoint_directory)
         .map_err(|error| format!("创建 Headless Core 目录失败：{error}"))?;
     if let Ok(endpoint) = read_endpoint(endpoint_directory) {
@@ -494,7 +655,11 @@ async fn run_headless_core_with_context(
         workflow_scanner: crate::workflow_runtime::CoreWorkflowScannerState::new(event_bus.clone()),
         outbox: crate::outbox_dispatcher::CoreOutboxDispatcherState::new(event_bus),
         connectors: crate::dingtalk::CoreDingTalkConnectorState::new(
+            process_context.app_local_data_directory.clone(),
+        ),
+        worker: crate::agent_worker_supervisor::CoreAgentWorkerSupervisorState::new(
             process_context.app_local_data_directory,
+            process_context.resource_directory,
         ),
     });
     let router = Router::new()
@@ -514,6 +679,18 @@ async fn run_headless_core_with_context(
         .route("/v1/outbox/snapshot", post(outbox_snapshot))
         .route("/v1/connectors/snapshot", post(connector_snapshot))
         .route("/v1/connectors/reconcile", post(connector_reconcile))
+        .route("/v1/worker/projection", post(worker_projection))
+        .route("/v1/worker/start", post(worker_start))
+        .route("/v1/worker/run", post(worker_start_run))
+        .route("/v1/worker/orchestration", post(worker_start_orchestration))
+        .route("/v1/worker/cancel", post(worker_cancel))
+        .route("/v1/worker/steer", post(worker_steer))
+        .route("/v1/worker/shutdown", post(worker_shutdown))
+        .route("/v1/worker/terminal", post(worker_terminal))
+        .route(
+            "/v1/worker/terminal/acknowledge",
+            post(worker_acknowledge_terminal),
+        )
         .route("/v1/runtime/quiesce", post(runtime_quiesce))
         .route("/v1/runtime/resume", post(runtime_resume))
         .with_state(Arc::clone(&state));
@@ -523,6 +700,7 @@ async fn run_headless_core_with_context(
         })
         .await
         .map_err(|error| format!("Headless Core server 异常退出：{error}"));
+    let _ = state.worker.shutdown("Headless Core shutting down.").await;
     state.connectors.shutdown().await;
     state.outbox.shutdown().await;
     state.workflow_scanner.shutdown().await;
@@ -747,11 +925,144 @@ async fn connector_reconcile(
         .map_err(internal_api_error)
 }
 
+async fn worker_projection(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<WorkerProjectionRequest>,
+) -> Result<Json<crate::agent_worker_supervisor::CoreWorkerProjection>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    Ok(Json(state.worker.projection(request.after_sequence).await))
+}
+
+async fn worker_start(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<WorkerStartRequest>,
+) -> Result<Json<crate::agent_worker_supervisor::AgentWorkerSnapshot>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    let directory = normalize_database_directory(&request.directory)?;
+    state
+        .worker
+        .start_worker(directory.to_string_lossy().into_owned())
+        .await
+        .map(Json)
+        .map_err(internal_api_error)
+}
+
+async fn worker_start_run(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<WorkerRunRequest>,
+) -> Result<Json<bool>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    let directory = normalize_database_directory(&request.directory)?;
+    state
+        .worker
+        .start_run(
+            directory.to_string_lossy().into_owned(),
+            request.payload,
+            request.recovery_context,
+        )
+        .await
+        .map(|_| Json(true))
+        .map_err(internal_api_error)
+}
+
+async fn worker_start_orchestration(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<WorkerRunRequest>,
+) -> Result<Json<bool>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    let directory = normalize_database_directory(&request.directory)?;
+    state
+        .worker
+        .start_orchestration(
+            directory.to_string_lossy().into_owned(),
+            request.payload,
+            request.recovery_context,
+        )
+        .await
+        .map(|_| Json(true))
+        .map_err(internal_api_error)
+}
+
+async fn worker_cancel(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<WorkerControlRequest>,
+) -> Result<Json<bool>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    state
+        .worker
+        .cancel_run(request.run_id)
+        .await
+        .map(|_| Json(true))
+        .map_err(internal_api_error)
+}
+
+async fn worker_steer(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<WorkerControlRequest>,
+) -> Result<Json<bool>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    state
+        .worker
+        .steer_run(request.run_id, request.input.unwrap_or(Value::Null))
+        .await
+        .map(|_| Json(true))
+        .map_err(internal_api_error)
+}
+
+async fn worker_shutdown(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<WorkerShutdownRequest>,
+) -> Result<Json<bool>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    state
+        .worker
+        .shutdown(&request.reason)
+        .await
+        .map(|_| Json(true))
+        .map_err(internal_api_error)
+}
+
+async fn worker_terminal(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<WorkerControlRequest>,
+) -> Result<Json<Option<Value>>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    state
+        .worker
+        .terminal(&request.run_id)
+        .await
+        .map(Json)
+        .map_err(internal_api_error)
+}
+
+async fn worker_acknowledge_terminal(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<WorkerControlRequest>,
+) -> Result<Json<bool>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    state
+        .worker
+        .acknowledge_terminal(&request.run_id)
+        .await
+        .map(|_| Json(true))
+        .map_err(internal_api_error)
+}
+
 async fn runtime_quiesce(
     State(state): State<Arc<CoreServerState>>,
     headers: HeaderMap,
 ) -> Result<Json<CoreRuntimeQuiesceResponse>, (StatusCode, String)> {
     authorize_api(&headers, &state.endpoint.credential)?;
+    let worker = state.worker.quiesce().await.map_err(internal_api_error)?;
     let connectors = state.connectors.quiesce().await;
     let outbox = state.outbox.quiesce().await;
     let timer = state.timers.quiesce().await;
@@ -761,6 +1072,8 @@ async fn runtime_quiesce(
         workflow_scanner_was_running: workflow.was_running,
         outbox_was_running: outbox.was_running,
         connectors_were_running: connectors.was_running,
+        worker_was_running: worker.was_running,
+        worker_data_directory: worker.data_directory,
     }))
 }
 
@@ -771,15 +1084,31 @@ async fn runtime_resume(
 ) -> Result<Json<bool>, (StatusCode, String)> {
     authorize_api(&headers, &state.endpoint.credential)?;
     let directory = normalize_database_directory(&request.directory)?;
+    let mut worker_started = false;
+    if request.worker_should_run {
+        state
+            .worker
+            .resume(
+                &crate::agent_worker_supervisor::AgentWorkerMigrationSnapshot {
+                    was_running: true,
+                    data_directory: request.worker_data_directory.clone(),
+                },
+                directory.to_string_lossy().into_owned(),
+            )
+            .await
+            .map_err(internal_api_error)?;
+        worker_started = true;
+    }
     let mut timer_started = false;
     let mut workflow_started = false;
     let mut outbox_started = false;
     if request.timer_should_run {
-        state
-            .timers
-            .ensure_for_directory(&directory)
-            .await
-            .map_err(internal_api_error)?;
+        if let Err(error) = state.timers.ensure_for_directory(&directory).await {
+            if worker_started {
+                let _ = state.worker.shutdown("Core runtime resume rollback.").await;
+            }
+            return Err(internal_api_error(error));
+        }
         timer_started = true;
     }
     if request.workflow_scanner_should_run {
@@ -790,6 +1119,9 @@ async fn runtime_resume(
         {
             if timer_started {
                 state.timers.quiesce().await;
+            }
+            if worker_started {
+                let _ = state.worker.shutdown("Core runtime resume rollback.").await;
             }
             return Err(internal_api_error(error));
         }
@@ -802,6 +1134,9 @@ async fn runtime_resume(
             }
             if timer_started {
                 state.timers.quiesce().await;
+            }
+            if worker_started {
+                let _ = state.worker.shutdown("Core runtime resume rollback.").await;
             }
             return Err(internal_api_error(error));
         }
@@ -817,6 +1152,9 @@ async fn runtime_resume(
             }
             if timer_started {
                 state.timers.quiesce().await;
+            }
+            if worker_started {
+                let _ = state.worker.shutdown("Core runtime resume rollback.").await;
             }
             return Err(internal_api_error(error));
         }
@@ -1279,6 +1617,14 @@ mod tests {
         .expect("serialize Core Connector snapshot");
         assert_eq!(connector_snapshot["status"], "running");
         assert_eq!(connector_snapshot["activeConnectorCount"], 0);
+        let worker_projection = serde_json::to_value(
+            get_worker_projection(&endpoint, 0)
+                .await
+                .expect("read Core Worker projection"),
+        )
+        .expect("serialize Core Worker projection");
+        assert_eq!(worker_projection["snapshot"]["status"], "stopped");
+        assert_eq!(worker_projection["events"], serde_json::json!([]));
         let runtime_migration = quiesce_background_runtime(&endpoint)
             .await
             .expect("quiesce Core background runtime");
@@ -1286,6 +1632,7 @@ mod tests {
         assert!(runtime_migration.workflow_scanner_was_running);
         assert!(runtime_migration.outbox_was_running);
         assert!(runtime_migration.connectors_were_running);
+        assert!(!runtime_migration.worker_was_running);
         let paused_snapshot = serde_json::to_value(
             get_workflow_timer_snapshot(&endpoint)
                 .await

@@ -381,13 +381,23 @@ pub(crate) async fn settle_run(
     Ok(true)
 }
 
-pub(crate) async fn execute_personal_organizer_tool(
-    app: &AppHandle,
+pub(crate) async fn execute_personal_organizer_tool_in_core(
     connection: &SqlitePool,
     tool_name: &str,
     arguments: &Value,
     run_request: Option<&Value>,
 ) -> Result<Value, String> {
+    execute_personal_organizer_tool_inner(connection, tool_name, arguments, run_request)
+        .await
+        .map(|(result, _)| result)
+}
+
+async fn execute_personal_organizer_tool_inner(
+    connection: &SqlitePool,
+    tool_name: &str,
+    arguments: &Value,
+    run_request: Option<&Value>,
+) -> Result<(Value, String), String> {
     let request = run_request.ok_or_else(|| "个人工作工具缺少运行上下文。".to_string())?;
     if request.get("intent").and_then(Value::as_str) != Some("signal") {
         return Err("个人工作工具只允许由信号 Agent 调用。".to_string());
@@ -414,12 +424,7 @@ pub(crate) async fn execute_personal_organizer_tool(
         }
         _ => Err(format!("未知个人工作工具 {tool_name}。")),
     }?;
-    app.emit(
-        SIGNAL_CHANGED_EVENT,
-        json!({ "eventId": event_id, "toolName": tool_name, "occurredAt": now_millis() }),
-    )
-    .map_err(|error| format!("无法发送信号 Agent 更新事件：{error}"))?;
-    Ok(result)
+    Ok((result, event_id.to_string()))
 }
 
 async fn dispatch_next_run(

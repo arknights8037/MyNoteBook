@@ -816,6 +816,21 @@ pub(crate) async fn execute_rig_tool(
     let database_path = configured_data_directory(&app, input.data_directory)
         .map_err(|error| error.to_string())?
         .join(DATABASE_FILENAME);
+    execute_rig_tool_for_database(
+        database_path,
+        input.call_id,
+        &input.name,
+        input.arguments_json,
+    )
+    .await
+}
+
+pub(crate) async fn execute_rig_tool_for_database(
+    database_path: PathBuf,
+    call_id: Option<String>,
+    name: &str,
+    arguments_json: String,
+) -> Result<String, String> {
     let toolset = ToolSet::builder()
         .static_tool(SearchDocumentsTool {
             database_path: database_path.clone(),
@@ -831,8 +846,8 @@ pub(crate) async fn execute_rig_tool(
         .static_tool(DiscoverLocalToolsTool)
         .static_tool(GetSystemInfoTool)
         .build();
-    let execution = toolset.call(&input.name, input.arguments_json);
-    if let Some(call_id) = input.call_id {
+    let execution = toolset.call(name, arguments_json);
+    if let Some(call_id) = call_id {
         let cancellation = ToolCancellationGuard::register(call_id)?;
         tokio::select! {
             result = execution => result.map_err(|error| error.to_string()),
