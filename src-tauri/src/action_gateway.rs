@@ -43,6 +43,24 @@ pub(crate) struct ClaimedExternalAction {
 }
 
 #[allow(dead_code)]
+pub(crate) struct ExternalActionSettlement<'a> {
+    pub(crate) success: bool,
+    pub(crate) provider_reference: Option<&'a str>,
+    pub(crate) output: Option<&'a Value>,
+    pub(crate) error: Option<&'a str>,
+    pub(crate) retryable: bool,
+    pub(crate) now: i64,
+}
+
+struct ActionResultEvent<'a> {
+    outcome: &'a str,
+    provider_reference: Option<&'a str>,
+    output: &'a Value,
+    error: Option<&'a str>,
+    occurred_at: i64,
+}
+
+#[allow(dead_code)]
 pub(crate) async fn propose_external_action(
     connection: &SqlitePool,
     action: NewExternalAction<'_>,
@@ -506,13 +524,16 @@ pub(crate) async fn claim_approved_action(
 pub(crate) async fn settle_claimed_action(
     connection: &SqlitePool,
     claim: &ClaimedExternalAction,
-    success: bool,
-    provider_reference: Option<&str>,
-    output: Option<&Value>,
-    error: Option<&str>,
-    retryable: bool,
-    now: i64,
+    settlement: ExternalActionSettlement<'_>,
 ) -> Result<bool, String> {
+    let ExternalActionSettlement {
+        success,
+        provider_reference,
+        output,
+        error,
+        retryable,
+        now,
+    } = settlement;
     let mut transaction = connection.begin().await.map_err(database::database_error)?;
     if success {
         let output = output.cloned().unwrap_or_else(|| json!({}));
@@ -585,11 +606,13 @@ pub(crate) async fn settle_claimed_action(
             &mut transaction,
             &current,
             claim,
-            "completed",
-            provider_reference,
-            &output,
-            None,
-            now,
+            ActionResultEvent {
+                outcome: "completed",
+                provider_reference,
+                output: &output,
+                error: None,
+                occurred_at: now,
+            },
         )
         .await?;
     } else {
@@ -825,12 +848,15 @@ async fn record_action_result_event(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     current: &sqlx::sqlite::SqliteRow,
     claim: &ClaimedExternalAction,
-    outcome: &str,
-    provider_reference: Option<&str>,
-    output: &Value,
-    error: Option<&str>,
-    now: i64,
+    event: ActionResultEvent<'_>,
 ) -> Result<(), String> {
+    let ActionResultEvent {
+        outcome,
+        provider_reference,
+        output,
+        error,
+        occurred_at,
+    } = event;
     let correlation_id: String = current
         .try_get("correlation_id")
         .map_err(database::database_error)?;
@@ -846,7 +872,7 @@ async fn record_action_result_event(
         "providerReference": provider_reference,
         "output": output,
         "error": error,
-        "completedAt": now
+        "completedAt": occurred_at
     });
     record_with_outbox(
         transaction,
@@ -864,7 +890,7 @@ async fn record_action_result_event(
             security_scope: None,
             correlation_id: &correlation_id,
             causation_id: Some(&requested_event_id),
-            occurred_at: now,
+            occurred_at,
         },
     )
     .await
@@ -1014,24 +1040,28 @@ mod tests {
         assert!(!settle_claimed_action(
             pool.as_ref(),
             &stale,
-            true,
-            Some("provider-stale"),
-            Some(&json!({})),
-            None,
-            false,
-            50,
+            ExternalActionSettlement {
+                success: true,
+                provider_reference: Some("provider-stale"),
+                output: Some(&json!({})),
+                error: None,
+                retryable: false,
+                now: 50,
+            },
         )
         .await
         .expect("reject stale fence"));
         assert!(settle_claimed_action(
             pool.as_ref(),
             &claim,
-            true,
-            Some("provider-1"),
-            Some(&json!({ "delivered": true })),
-            None,
-            false,
-            60,
+            ExternalActionSettlement {
+                success: true,
+                provider_reference: Some("provider-1"),
+                output: Some(&json!({ "delivered": true })),
+                error: None,
+                retryable: false,
+                now: 60,
+            },
         )
         .await
         .expect("settle action"));
@@ -1133,12 +1163,14 @@ mod tests {
         assert!(!settle_claimed_action(
             pool.as_ref(),
             &old_claim,
-            true,
-            None,
-            Some(&json!({})),
-            None,
-            false,
-            1_042,
+            ExternalActionSettlement {
+                success: true,
+                provider_reference: None,
+                output: Some(&json!({})),
+                error: None,
+                retryable: false,
+                now: 1_042,
+            },
         )
         .await
         .expect("old claim is fenced"));
