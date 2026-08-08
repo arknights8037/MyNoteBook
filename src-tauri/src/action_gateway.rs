@@ -101,16 +101,20 @@ pub(crate) async fn propose_external_action(
             .map_err(database::database_error)?;
         return Ok(result);
     }
-    let owns_work_item = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM workflow_instances WHERE id = ? AND work_item_id = ?",
+    let workflow = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT state, current_wait_condition_id FROM workflow_instances WHERE id = ? AND work_item_id = ?",
     )
     .bind(action.workflow_id)
     .bind(action.work_item_id)
-    .fetch_one(&mut *transaction)
+    .fetch_optional(&mut *transaction)
     .await
-    .map_err(database::database_error)?;
-    if owns_work_item != 1 {
-        return Err("外部动作的 Workflow 与 Work Item 不匹配。".to_string());
+    .map_err(database::database_error)?
+    .ok_or_else(|| "外部动作的 Workflow 与 Work Item 不匹配。".to_string())?;
+    if !matches!(workflow.0.as_str(), "READY" | "RUNNING" | "RETRY_SCHEDULED") {
+        return Err("Workflow 当前状态不允许提出外部动作。".to_string());
+    }
+    if workflow.1.is_some() {
+        return Err("Workflow 已存在未完成的等待条件。".to_string());
     }
     let approval_id = format!("external-action-approval-{}", action.action_id);
     let wait_condition_id = format!("workflow-wait-external-action-{}", action.action_id);
@@ -178,9 +182,10 @@ pub(crate) async fn propose_external_action(
     .execute(&mut *transaction)
     .await
     .map_err(database::database_error)?;
-    sqlx::query(
+    let workflow_updated = sqlx::query(
         "UPDATE workflow_instances SET state = 'WAITING_APPROVAL', current_wait_condition_id = ?, \
-         updated_at = ? WHERE id = ? AND state NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')",
+         updated_at = ? WHERE id = ? AND current_wait_condition_id IS NULL \
+         AND state IN ('READY', 'RUNNING', 'RETRY_SCHEDULED')",
     )
     .bind(&wait_condition_id)
     .bind(now)
@@ -188,6 +193,9 @@ pub(crate) async fn propose_external_action(
     .execute(&mut *transaction)
     .await
     .map_err(database::database_error)?;
+    if workflow_updated.rows_affected() != 1 {
+        return Err("Workflow 在提出外部动作时已进入其他等待状态。".to_string());
+    }
     sqlx::query("UPDATE workflow_work_items SET status = 'waiting', updated_at = ? WHERE id = ?")
         .bind(now)
         .bind(action.work_item_id)
@@ -339,24 +347,17 @@ pub(crate) async fn decide_external_action(
             },
         )
         .await?;
-        sqlx::query(
-            "UPDATE workflow_instances SET state = 'READY', current_wait_condition_id = NULL, \
-             causation_id = ?, updated_at = ? WHERE id = ? AND state = 'WAITING_APPROVAL'",
+        let resumed = crate::workflow_runtime::resume_workflow_in_transaction(
+            &mut transaction,
+            &workflow_id,
+            &wait_condition_id,
+            &event_id,
+            now,
         )
-        .bind(&event_id)
-        .bind(now)
-        .bind(&workflow_id)
-        .execute(&mut *transaction)
-        .await
-        .map_err(database::database_error)?;
-        sqlx::query(
-            "UPDATE workflow_work_items SET status = 'queued', updated_at = ? WHERE id = ?",
-        )
-        .bind(now)
-        .bind(&work_item_id)
-        .execute(&mut *transaction)
-        .await
-        .map_err(database::database_error)?;
+        .await?;
+        if resumed != 1 {
+            return Err("Workflow 审批等待已被其他操作处理。".to_string());
+        }
     } else {
         sqlx::query(
             "UPDATE workflow_instances SET state = 'CANCELLED', current_wait_condition_id = NULL, \
@@ -434,7 +435,7 @@ pub(crate) async fn claim_approved_action(
     .execute(&mut *transaction)
     .await
     .map_err(database::database_error)?;
-    sqlx::query(
+    let workflow_updated = sqlx::query(
         "UPDATE workflow_instances SET state = 'RUNNING', error = NULL, updated_at = ? \
          WHERE id = ? AND state IN ('READY', 'RETRY_SCHEDULED')",
     )
@@ -446,6 +447,9 @@ pub(crate) async fn claim_approved_action(
     .execute(&mut *transaction)
     .await
     .map_err(database::database_error)?;
+    if workflow_updated.rows_affected() != 1 {
+        return Err("外部动作对应的 Workflow 已不再允许执行。".to_string());
+    }
     sqlx::query("UPDATE workflow_work_items SET status = 'active', updated_at = ? WHERE id = ?")
         .bind(now)
         .bind(
@@ -509,33 +513,15 @@ pub(crate) async fn settle_claimed_action(
     retryable: bool,
     now: i64,
 ) -> Result<bool, String> {
-    let current = sqlx::query(
-        "SELECT workflow_id, work_item_id, correlation_id, causation_id, status, \
-                fencing_token, lease_owner FROM external_action_requests WHERE id = ? LIMIT 1",
-    )
-    .bind(&claim.action_id)
-    .fetch_optional(connection)
-    .await
-    .map_err(database::database_error)?
-    .ok_or_else(|| "外部动作不存在。".to_string())?;
-    if current.try_get::<String, _>("status").ok().as_deref() != Some("executing")
-        || current.try_get::<i64, _>("fencing_token").unwrap_or(-1) != claim.fencing_token
-        || current
-            .try_get::<Option<String>, _>("lease_owner")
-            .unwrap_or(None)
-            .as_deref()
-            != Some(claim.lease_owner.as_str())
-    {
-        return Ok(false);
-    }
     let mut transaction = connection.begin().await.map_err(database::database_error)?;
     if success {
         let output = output.cloned().unwrap_or_else(|| json!({}));
-        sqlx::query(
+        let current = sqlx::query(
             "UPDATE external_action_requests SET status = 'completed', provider_reference = ?, \
              output_json = ?, error = NULL, lease_owner = NULL, lease_expires_at = NULL, \
              completed_at = ?, updated_at = ? WHERE id = ? AND status = 'executing' \
-             AND fencing_token = ? AND lease_owner = ?",
+             AND fencing_token = ? AND lease_owner = ? \
+             RETURNING workflow_id, work_item_id, correlation_id, causation_id",
         )
         .bind(provider_reference)
         .bind(output.to_string())
@@ -544,10 +530,17 @@ pub(crate) async fn settle_claimed_action(
         .bind(&claim.action_id)
         .bind(claim.fencing_token)
         .bind(&claim.lease_owner)
-        .execute(&mut *transaction)
+        .fetch_optional(&mut *transaction)
         .await
         .map_err(database::database_error)?;
-        sqlx::query(
+        let Some(current) = current else {
+            transaction
+                .rollback()
+                .await
+                .map_err(database::database_error)?;
+            return Ok(false);
+        };
+        let attempt = sqlx::query(
             "UPDATE external_action_attempts SET status = 'completed', provider_reference = ?, \
              output_json = ?, completed_at = ? WHERE action_id = ? AND fencing_token = ? AND status = 'executing'",
         )
@@ -559,6 +552,9 @@ pub(crate) async fn settle_claimed_action(
         .execute(&mut *transaction)
         .await
         .map_err(database::database_error)?;
+        if attempt.rows_affected() != 1 {
+            return Err("外部动作尝试记录与 fencing token 不一致。".to_string());
+        }
         let workflow_id: String = current
             .try_get("workflow_id")
             .map_err(database::database_error)?;
@@ -598,7 +594,43 @@ pub(crate) async fn settle_claimed_action(
         .await?;
     } else {
         let error = truncate(error.unwrap_or("外部动作执行失败。"));
-        sqlx::query(
+        let will_retry = retryable && !ACTION_GATEWAY_RETRY_POLICY.exhausted(claim.attempt_count);
+        let current = if will_retry {
+            sqlx::query(
+                "UPDATE external_action_requests SET status = 'approved', next_attempt_at = ?, \
+                 lease_owner = NULL, lease_expires_at = NULL, error = ?, updated_at = ? \
+                 WHERE id = ? AND status = 'executing' AND fencing_token = ? AND lease_owner = ? \
+                 RETURNING workflow_id, work_item_id, correlation_id, causation_id",
+            )
+            .bind(now.saturating_add(ACTION_GATEWAY_RETRY_POLICY.delay_ms(claim.attempt_count)))
+            .bind(&error)
+            .bind(now)
+            .bind(&claim.action_id)
+            .bind(claim.fencing_token)
+            .bind(&claim.lease_owner)
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(database::database_error)?
+        } else {
+            let status = if retryable { "dead_lettered" } else { "failed" };
+            sqlx::query(
+                "UPDATE external_action_requests SET status = ?, lease_owner = NULL, lease_expires_at = NULL, \
+                 next_attempt_at = NULL, error = ?, completed_at = ?, dead_lettered_at = ?, updated_at = ? \
+                 WHERE id = ? AND status = 'executing' AND fencing_token = ? AND lease_owner = ? \
+                 RETURNING workflow_id, work_item_id, correlation_id, causation_id",
+            )
+            .bind(status).bind(&error).bind(now).bind(if retryable { Some(now) } else { None })
+            .bind(now).bind(&claim.action_id).bind(claim.fencing_token).bind(&claim.lease_owner)
+            .fetch_optional(&mut *transaction).await.map_err(database::database_error)?
+        };
+        let Some(current) = current else {
+            transaction
+                .rollback()
+                .await
+                .map_err(database::database_error)?;
+            return Ok(false);
+        };
+        let attempt = sqlx::query(
             "UPDATE external_action_attempts SET status = 'failed', error = ?, completed_at = ? \
              WHERE action_id = ? AND fencing_token = ? AND status = 'executing'",
         )
@@ -609,21 +641,10 @@ pub(crate) async fn settle_claimed_action(
         .execute(&mut *transaction)
         .await
         .map_err(database::database_error)?;
-        if retryable && !ACTION_GATEWAY_RETRY_POLICY.exhausted(claim.attempt_count) {
-            sqlx::query(
-                "UPDATE external_action_requests SET status = 'approved', next_attempt_at = ?, \
-                 lease_owner = NULL, lease_expires_at = NULL, error = ?, updated_at = ? \
-                 WHERE id = ? AND status = 'executing' AND fencing_token = ? AND lease_owner = ?",
-            )
-            .bind(now.saturating_add(ACTION_GATEWAY_RETRY_POLICY.delay_ms(claim.attempt_count)))
-            .bind(&error)
-            .bind(now)
-            .bind(&claim.action_id)
-            .bind(claim.fencing_token)
-            .bind(&claim.lease_owner)
-            .execute(&mut *transaction)
-            .await
-            .map_err(database::database_error)?;
+        if attempt.rows_affected() != 1 {
+            return Err("外部动作尝试记录与 fencing token 不一致。".to_string());
+        }
+        if will_retry {
             sqlx::query(
                 "UPDATE workflow_instances SET state = 'RETRY_SCHEDULED', error = ?, updated_at = ? \
                  WHERE id = ? AND state = 'RUNNING'",
@@ -651,23 +672,6 @@ pub(crate) async fn settle_claimed_action(
             .await
             .map_err(database::database_error)?;
         } else {
-            let status = if retryable { "dead_lettered" } else { "failed" };
-            sqlx::query(
-                "UPDATE external_action_requests SET status = ?, lease_owner = NULL, lease_expires_at = NULL, \
-                 next_attempt_at = NULL, error = ?, completed_at = ?, dead_lettered_at = ?, updated_at = ? \
-                 WHERE id = ? AND status = 'executing' AND fencing_token = ? AND lease_owner = ?",
-            )
-            .bind(status)
-            .bind(&error)
-            .bind(now)
-            .bind(if retryable { Some(now) } else { None })
-            .bind(now)
-            .bind(&claim.action_id)
-            .bind(claim.fencing_token)
-            .bind(&claim.lease_owner)
-            .execute(&mut *transaction)
-            .await
-            .map_err(database::database_error)?;
             let workflow_id: String = current
                 .try_get("workflow_id")
                 .map_err(database::database_error)?;
@@ -726,6 +730,7 @@ pub(crate) async fn recover_expired_actions(
         } else {
             "approved"
         };
+        let mut transaction = connection.begin().await.map_err(database::database_error)?;
         let result = sqlx::query(
             "UPDATE external_action_requests SET status = ?, next_attempt_at = ?, lease_owner = NULL, \
              lease_expires_at = NULL, error = 'Action Gateway 启动恢复时回收过期 lease。', \
@@ -740,7 +745,7 @@ pub(crate) async fn recover_expired_actions(
         .bind(&action_id)
         .bind(fence)
         .bind(now)
-        .execute(connection)
+        .execute(&mut *transaction)
         .await
         .map_err(database::database_error)?;
         if result.rows_affected() == 1 {
@@ -752,7 +757,7 @@ pub(crate) async fn recover_expired_actions(
             .bind(now)
             .bind(&action_id)
             .bind(fence)
-            .execute(connection)
+            .execute(&mut *transaction)
             .await
             .map_err(database::database_error)?;
             let workflow_id: String = row
@@ -770,7 +775,7 @@ pub(crate) async fn recover_expired_actions(
                 .bind(now)
                 .bind(now)
                 .bind(&workflow_id)
-                .execute(connection)
+                .execute(&mut *transaction)
                 .await
                 .map_err(database::database_error)?;
                 sqlx::query(
@@ -780,7 +785,7 @@ pub(crate) async fn recover_expired_actions(
                 .bind(now)
                 .bind(now)
                 .bind(&work_item_id)
-                .execute(connection)
+                .execute(&mut *transaction)
                 .await
                 .map_err(database::database_error)?;
             } else {
@@ -790,7 +795,7 @@ pub(crate) async fn recover_expired_actions(
                 )
                 .bind(now)
                 .bind(&workflow_id)
-                .execute(connection)
+                .execute(&mut *transaction)
                 .await
                 .map_err(database::database_error)?;
                 sqlx::query(
@@ -798,11 +803,20 @@ pub(crate) async fn recover_expired_actions(
                 )
                 .bind(now)
                 .bind(&work_item_id)
-                .execute(connection)
+                .execute(&mut *transaction)
                 .await
                 .map_err(database::database_error)?;
             }
+            transaction
+                .commit()
+                .await
+                .map_err(database::database_error)?;
             recovered += 1;
+        } else {
+            transaction
+                .rollback()
+                .await
+                .map_err(database::database_error)?;
         }
     }
     Ok(recovered)
@@ -904,32 +918,47 @@ mod tests {
     }
 
     async fn workflow_fixture(pool: &SqlitePool) -> workflow_runtime::WorkflowBinding {
-        sqlx::query(
-            "INSERT INTO automation_tasks \
-             (id, name, instruction, trigger_type, trigger_config_json, enabled, created_at, updated_at, source_type, source_config_json) \
-             VALUES ('action-auto', 'Action', 'test', 'manual', '{}', 1, 1, 1, 'document', '{}')",
+        let payload = json!({ "kind": "action-test" });
+        let mut transaction = pool.begin().await.expect("begin fixture");
+        record_with_outbox(
+            &mut transaction,
+            NewDomainEvent {
+                event_id: "action-event",
+                outbox_id: "action-event-outbox",
+                event_type: "workflow.source.accepted",
+                aggregate_type: "test",
+                aggregate_id: "action-run",
+                payload: &payload,
+                actor_id: "test",
+                source: "test",
+                workspace_id: Some("default"),
+                deduplication_key: "action-event",
+                security_scope: None,
+                correlation_id: "action-run",
+                causation_id: None,
+                occurred_at: 10,
+            },
         )
-        .execute(pool)
         .await
-        .expect("insert automation");
-        sqlx::query(
-            "INSERT INTO automation_runs \
-             (id, automation_id, trigger_source, status, input_json, queued_at, correlation_id) \
-             VALUES ('action-run', 'action-auto', 'manual', 'running', '{}', 1, 'action-run')",
-        )
-        .execute(pool)
-        .await
-        .expect("insert automation run");
-        workflow_runtime::ensure_automation_workflow(
-            pool,
-            "action-run",
-            "action-auto",
-            "manual",
-            "document",
+        .expect("source event");
+        let binding = workflow_runtime::create_workflow_in_transaction(
+            &mut transaction,
+            workflow_runtime::NewWorkflow {
+                work_item_id: "work-item-action-run",
+                workflow_id: "workflow-action-run",
+                event_id: "action-event",
+                source_type: "manual",
+                classification: "agent_required",
+                payload: &payload,
+                correlation_id: "action-run",
+                causation_id: None,
+            },
             10,
         )
         .await
-        .expect("workflow")
+        .expect("workflow");
+        transaction.commit().await.expect("commit fixture");
+        binding
     }
 
     fn action<'a>(binding: &'a workflow_runtime::WorkflowBinding) -> NewExternalAction<'a> {
@@ -1029,6 +1058,41 @@ mod tests {
         .await
         .expect("requested event");
         assert_eq!(requested_events, 1);
+        cleanup(&path, pool).await;
+    }
+
+    #[tokio::test]
+    async fn workflow_rejects_a_second_pending_external_action_wait() {
+        let (path, pool) = test_pool("single-wait").await;
+        let binding = workflow_fixture(pool.as_ref()).await;
+        propose_external_action(pool.as_ref(), action(&binding), 20)
+            .await
+            .expect("first action");
+        let null = Value::Null;
+        let second = NewExternalAction {
+            action_id: "external-action-2",
+            workflow_id: &binding.workflow_id,
+            work_item_id: &binding.work_item_id,
+            run_id: Some("runtime-run-1"),
+            action_type: "connector.dispatch",
+            target: &null,
+            input: &null,
+            idempotency_key: "connector-dispatch-2",
+            correlation_id: &binding.correlation_id,
+            causation_id: Some(&binding.event_id),
+        };
+        let error = propose_external_action(pool.as_ref(), second, 21)
+            .await
+            .expect_err("second wait must be rejected");
+        assert!(error.contains("状态不允许") || error.contains("等待条件"));
+        let waits: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM workflow_wait_conditions WHERE workflow_id = ? AND status = 'pending'",
+        )
+        .bind(&binding.workflow_id)
+        .fetch_one(pool.as_ref())
+        .await
+        .expect("pending waits");
+        assert_eq!(waits, 1);
         cleanup(&path, pool).await;
     }
 

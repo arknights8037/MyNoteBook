@@ -1,10 +1,7 @@
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
 
-use crate::{
-    database,
-    domain_events::{record_with_outbox, NewDomainEvent},
-};
+use crate::database;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkflowBinding {
@@ -23,192 +20,36 @@ pub(crate) struct SuspendRequest<'a> {
     pub(crate) due_at: Option<i64>,
 }
 
-pub(crate) async fn ensure_automation_workflow(
-    connection: &SqlitePool,
-    automation_run_id: &str,
-    automation_id: &str,
-    trigger_source: &str,
-    source_type: &str,
-    now: i64,
-) -> Result<WorkflowBinding, String> {
-    if let Some(binding) = load_automation_binding(connection, automation_run_id).await? {
-        return Ok(binding);
-    }
-    let source = if source_type == "rss" {
-        "rss"
-    } else if trigger_source == "schedule" {
-        "timer"
-    } else {
-        "manual"
-    };
-    let event_id = format!("workflow-source-automation-{automation_run_id}");
-    let outbox_id = format!("workflow-source-automation-{automation_run_id}-outbox");
-    let work_item_id = format!("work-item-automation-{automation_run_id}");
-    let workflow_id = format!("workflow-automation-{automation_run_id}");
-    let correlation_id = automation_run_id.to_string();
-    let payload = json!({
-        "automationRunId": automation_run_id,
-        "automationId": automation_id,
-        "triggerSource": trigger_source,
-        "sourceType": source_type
-    });
-    let mut transaction = connection.begin().await.map_err(database::database_error)?;
-    let event_exists =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM domain_events WHERE id = ?")
-            .bind(&event_id)
-            .fetch_one(&mut *transaction)
-            .await
-            .map_err(database::database_error)?
-            == 1;
-    if !event_exists {
-        record_with_outbox(
-            &mut transaction,
-            NewDomainEvent {
-                event_id: &event_id,
-                outbox_id: &outbox_id,
-                event_type: "workflow.source.accepted",
-                aggregate_type: "automation_run",
-                aggregate_id: automation_run_id,
-                payload: &payload,
-                actor_id: if source == "manual" {
-                    "local_user"
-                } else {
-                    "rust-workflow-scheduler"
-                },
-                source: "rust_workflow",
-                workspace_id: Some("default"),
-                deduplication_key: &format!("automation-run:{automation_run_id}"),
-                security_scope: Some(&json!({ "knowledge": "read", "rss": source == "rss" })),
-                correlation_id: &correlation_id,
-                causation_id: None,
-                occurred_at: now,
-            },
-        )
-        .await?;
-    }
-    insert_work_item_and_workflow(
-        &mut transaction,
-        &work_item_id,
-        &workflow_id,
-        &event_id,
-        source,
-        &payload,
-        &correlation_id,
-        None,
-        now,
-    )
-    .await?;
-    sqlx::query(
-        "UPDATE automation_runs SET workflow_work_item_id = ?, workflow_id = ? WHERE id = ?",
-    )
-    .bind(&work_item_id)
-    .bind(&workflow_id)
-    .bind(automation_run_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(database::database_error)?;
-    transaction
-        .commit()
-        .await
-        .map_err(database::database_error)?;
-    Ok(WorkflowBinding {
-        work_item_id,
-        workflow_id,
-        event_id,
-        correlation_id,
-    })
+pub(crate) struct NewWorkflow<'a> {
+    pub(crate) work_item_id: &'a str,
+    pub(crate) workflow_id: &'a str,
+    pub(crate) event_id: &'a str,
+    pub(crate) source_type: &'a str,
+    pub(crate) classification: &'a str,
+    pub(crate) payload: &'a Value,
+    pub(crate) correlation_id: &'a str,
+    pub(crate) causation_id: Option<&'a str>,
 }
 
-pub(crate) async fn ensure_signal_workflow(
-    connection: &SqlitePool,
-    signal_run_id: &str,
-    event_id: &str,
-    payload: &Value,
-    now: i64,
-) -> Result<WorkflowBinding, String> {
-    if let Some(binding) = load_signal_binding(connection, signal_run_id).await? {
-        return Ok(binding);
-    }
-    let event =
-        sqlx::query("SELECT correlation_id, causation_id FROM domain_events WHERE id = ? LIMIT 1")
-            .bind(event_id)
-            .fetch_optional(connection)
-            .await
-            .map_err(database::database_error)?
-            .ok_or_else(|| "信号 Workflow 的来源事件不存在。".to_string())?;
-    let correlation_id: String = event
-        .try_get("correlation_id")
-        .map_err(database::database_error)?;
-    let causation_id = event
-        .try_get::<Option<String>, _>("causation_id")
-        .unwrap_or(None);
-    let source = if payload.get("scope").and_then(Value::as_str) == Some("rss") {
-        "rss"
-    } else if payload.get("triggerSource").and_then(Value::as_str) == Some("manual") {
-        "manual"
-    } else {
-        "related_update"
-    };
-    let work_item_id = format!("work-item-signal-{event_id}");
-    let workflow_id = format!("workflow-signal-{event_id}");
-    let mut transaction = connection.begin().await.map_err(database::database_error)?;
-    insert_work_item_and_workflow(
-        &mut transaction,
-        &work_item_id,
-        &workflow_id,
-        event_id,
-        source,
-        payload,
-        &correlation_id,
-        causation_id.as_deref(),
-        now,
-    )
-    .await?;
-    sqlx::query(
-        "UPDATE signal_agent_runs SET workflow_work_item_id = ?, workflow_id = ? WHERE id = ?",
-    )
-    .bind(&work_item_id)
-    .bind(&workflow_id)
-    .bind(signal_run_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(database::database_error)?;
-    transaction
-        .commit()
-        .await
-        .map_err(database::database_error)?;
-    Ok(WorkflowBinding {
-        work_item_id,
-        workflow_id,
-        event_id: event_id.to_string(),
-        correlation_id,
-    })
-}
-
-async fn insert_work_item_and_workflow(
+pub(crate) async fn create_workflow_in_transaction(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    work_item_id: &str,
-    workflow_id: &str,
-    event_id: &str,
-    source: &str,
-    payload: &Value,
-    correlation_id: &str,
-    causation_id: Option<&str>,
+    workflow: NewWorkflow<'_>,
     now: i64,
-) -> Result<(), String> {
+) -> Result<WorkflowBinding, String> {
     sqlx::query(
         "INSERT OR IGNORE INTO workflow_work_items \
          (id, event_id, source_type, classification, status, payload_json, correlation_id, \
           causation_id, deduplication_key, created_at, updated_at) \
-         VALUES (?, ?, ?, 'agent_required', 'queued', ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)",
     )
-    .bind(work_item_id)
-    .bind(event_id)
-    .bind(source)
-    .bind(payload.to_string())
-    .bind(correlation_id)
-    .bind(causation_id)
-    .bind(format!("work-item:{event_id}"))
+    .bind(workflow.work_item_id)
+    .bind(workflow.event_id)
+    .bind(workflow.source_type)
+    .bind(workflow.classification)
+    .bind(workflow.payload.to_string())
+    .bind(workflow.correlation_id)
+    .bind(workflow.causation_id)
+    .bind(format!("work-item:{}", workflow.event_id))
     .bind(now)
     .bind(now)
     .execute(&mut **transaction)
@@ -219,18 +60,24 @@ async fn insert_work_item_and_workflow(
          (id, work_item_id, workflow_type, state, correlation_id, causation_id, created_at, updated_at) \
          VALUES (?, ?, 'agent', 'READY', ?, ?, ?, ?)",
     )
-    .bind(workflow_id)
-    .bind(work_item_id)
-    .bind(correlation_id)
-    .bind(causation_id)
+    .bind(workflow.workflow_id)
+    .bind(workflow.work_item_id)
+    .bind(workflow.correlation_id)
+    .bind(workflow.causation_id)
     .bind(now)
     .bind(now)
     .execute(&mut **transaction)
     .await
     .map_err(database::database_error)?;
-    Ok(())
+    Ok(WorkflowBinding {
+        work_item_id: workflow.work_item_id.to_string(),
+        workflow_id: workflow.workflow_id.to_string(),
+        event_id: workflow.event_id.to_string(),
+        correlation_id: workflow.correlation_id.to_string(),
+    })
 }
 
+#[allow(dead_code)]
 pub(crate) async fn start_run(
     connection: &SqlitePool,
     binding: &WorkflowBinding,
@@ -239,6 +86,17 @@ pub(crate) async fn start_run(
     now: i64,
 ) -> Result<(), String> {
     let mut transaction = connection.begin().await.map_err(database::database_error)?;
+    start_run_in_transaction(&mut transaction, binding, run_id, attempt_number, now).await?;
+    transaction.commit().await.map_err(database::database_error)
+}
+
+pub(crate) async fn start_run_in_transaction(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    binding: &WorkflowBinding,
+    run_id: &str,
+    attempt_number: i64,
+    now: i64,
+) -> Result<(), String> {
     sqlx::query(
         "INSERT INTO workflow_run_attempts \
          (id, workflow_id, run_id, attempt_number, status, causation_event_id, started_at) \
@@ -250,7 +108,7 @@ pub(crate) async fn start_run(
     .bind(attempt_number)
     .bind(&binding.event_id)
     .bind(now)
-    .execute(&mut *transaction)
+    .execute(&mut **transaction)
     .await
     .map_err(database::database_error)?;
     let updated = sqlx::query(
@@ -261,7 +119,7 @@ pub(crate) async fn start_run(
     .bind(run_id)
     .bind(now)
     .bind(&binding.workflow_id)
-    .execute(&mut *transaction)
+    .execute(&mut **transaction)
     .await
     .map_err(database::database_error)?;
     if updated.rows_affected() != 1 {
@@ -270,12 +128,13 @@ pub(crate) async fn start_run(
     sqlx::query("UPDATE workflow_work_items SET status = 'active', updated_at = ? WHERE id = ?")
         .bind(now)
         .bind(&binding.work_item_id)
-        .execute(&mut *transaction)
+        .execute(&mut **transaction)
         .await
         .map_err(database::database_error)?;
-    transaction.commit().await.map_err(database::database_error)
+    Ok(())
 }
 
+#[allow(dead_code)]
 pub(crate) async fn mark_retry_scheduled(
     connection: &SqlitePool,
     workflow_id: &str,
@@ -283,29 +142,46 @@ pub(crate) async fn mark_retry_scheduled(
     error: &str,
     now: i64,
 ) -> Result<(), String> {
-    finish_attempt(connection, workflow_id, run_id, "failed", Some(error), now).await?;
-    sqlx::query(
+    let mut transaction = connection.begin().await.map_err(database::database_error)?;
+    mark_retry_scheduled_in_transaction(&mut transaction, workflow_id, run_id, error, now).await?;
+    transaction.commit().await.map_err(database::database_error)
+}
+
+pub(crate) async fn mark_retry_scheduled_in_transaction(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    workflow_id: &str,
+    run_id: Option<&str>,
+    error: &str,
+    now: i64,
+) -> Result<(), String> {
+    finish_attempt_in_transaction(transaction, workflow_id, run_id, "failed", Some(error), now)
+        .await?;
+    let updated = sqlx::query(
         "UPDATE workflow_instances SET state = 'RETRY_SCHEDULED', current_run_id = NULL, \
          error = ?, updated_at = ?, completed_at = NULL WHERE id = ? AND state = 'RUNNING'",
     )
     .bind(truncate(error))
     .bind(now)
     .bind(workflow_id)
-    .execute(connection)
+    .execute(&mut **transaction)
     .await
     .map_err(database::database_error)?;
+    if updated.rows_affected() != 1 {
+        return Err("Workflow 已不再允许进入重试状态。".to_string());
+    }
     sqlx::query(
         "UPDATE workflow_work_items SET status = 'queued', updated_at = ? \
          WHERE id = (SELECT work_item_id FROM workflow_instances WHERE id = ?)",
     )
     .bind(now)
     .bind(workflow_id)
-    .execute(connection)
+    .execute(&mut **transaction)
     .await
     .map_err(database::database_error)?;
     Ok(())
 }
 
+#[allow(dead_code)]
 pub(crate) async fn mark_completed(
     connection: &SqlitePool,
     workflow_id: &str,
@@ -313,8 +189,20 @@ pub(crate) async fn mark_completed(
     output: &Value,
     now: i64,
 ) -> Result<(), String> {
-    finish_attempt(
-        connection,
+    let mut transaction = connection.begin().await.map_err(database::database_error)?;
+    mark_completed_in_transaction(&mut transaction, workflow_id, run_id, output, now).await?;
+    transaction.commit().await.map_err(database::database_error)
+}
+
+pub(crate) async fn mark_completed_in_transaction(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    workflow_id: &str,
+    run_id: &str,
+    output: &Value,
+    now: i64,
+) -> Result<(), String> {
+    finish_attempt_in_transaction(
+        transaction,
         workflow_id,
         Some(run_id),
         "completed",
@@ -322,8 +210,7 @@ pub(crate) async fn mark_completed(
         now,
     )
     .await?;
-    let mut transaction = connection.begin().await.map_err(database::database_error)?;
-    sqlx::query(
+    let updated = sqlx::query(
         "UPDATE workflow_instances SET state = 'COMPLETED', current_run_id = NULL, \
          output_json = ?, error = NULL, updated_at = ?, completed_at = ? \
          WHERE id = ? AND state = 'RUNNING'",
@@ -332,9 +219,12 @@ pub(crate) async fn mark_completed(
     .bind(now)
     .bind(now)
     .bind(workflow_id)
-    .execute(&mut *transaction)
+    .execute(&mut **transaction)
     .await
     .map_err(database::database_error)?;
+    if updated.rows_affected() != 1 {
+        return Err("Workflow 已不再允许完成当前 Run。".to_string());
+    }
     sqlx::query(
         "UPDATE workflow_work_items SET status = 'completed', updated_at = ?, completed_at = ? \
          WHERE id = (SELECT work_item_id FROM workflow_instances WHERE id = ?)",
@@ -342,12 +232,13 @@ pub(crate) async fn mark_completed(
     .bind(now)
     .bind(now)
     .bind(workflow_id)
-    .execute(&mut *transaction)
+    .execute(&mut **transaction)
     .await
     .map_err(database::database_error)?;
-    transaction.commit().await.map_err(database::database_error)
+    Ok(())
 }
 
+#[allow(dead_code)]
 pub(crate) async fn mark_waiting_approval(
     connection: &SqlitePool,
     workflow_id: &str,
@@ -355,8 +246,21 @@ pub(crate) async fn mark_waiting_approval(
     payload: &Value,
     now: i64,
 ) -> Result<(), String> {
-    finish_attempt(
-        connection,
+    let mut transaction = connection.begin().await.map_err(database::database_error)?;
+    mark_waiting_approval_in_transaction(&mut transaction, workflow_id, run_id, payload, now)
+        .await?;
+    transaction.commit().await.map_err(database::database_error)
+}
+
+pub(crate) async fn mark_waiting_approval_in_transaction(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    workflow_id: &str,
+    run_id: &str,
+    payload: &Value,
+    now: i64,
+) -> Result<(), String> {
+    finish_attempt_in_transaction(
+        transaction,
         workflow_id,
         Some(run_id),
         "completed",
@@ -365,14 +269,13 @@ pub(crate) async fn mark_waiting_approval(
     )
     .await?;
     let wait_id = format!("workflow-wait-approval-{workflow_id}-{run_id}");
-    let mut transaction = connection.begin().await.map_err(database::database_error)?;
     let correlation_id: String =
         sqlx::query_scalar("SELECT correlation_id FROM workflow_instances WHERE id = ?")
             .bind(workflow_id)
-            .fetch_one(&mut *transaction)
+            .fetch_one(&mut **transaction)
             .await
             .map_err(database::database_error)?;
-    sqlx::query(
+    let updated = sqlx::query(
         "INSERT OR IGNORE INTO workflow_wait_conditions \
          (id, workflow_id, deduplication_key, condition_kind, status, correlation_id, \
           causation_id, payload_json, created_at, updated_at) \
@@ -386,10 +289,13 @@ pub(crate) async fn mark_waiting_approval(
     .bind(payload.to_string())
     .bind(now)
     .bind(now)
-    .execute(&mut *transaction)
+    .execute(&mut **transaction)
     .await
     .map_err(database::database_error)?;
-    sqlx::query(
+    if updated.rows_affected() != 1 {
+        return Err("Workflow 已不再允许等待审批。".to_string());
+    }
+    let workflow_updated = sqlx::query(
         "UPDATE workflow_instances SET state = 'WAITING_APPROVAL', current_run_id = NULL, \
          current_wait_condition_id = ?, output_json = ?, updated_at = ? WHERE id = ? AND state = 'RUNNING'",
     )
@@ -397,19 +303,22 @@ pub(crate) async fn mark_waiting_approval(
     .bind(payload.to_string())
     .bind(now)
     .bind(workflow_id)
-    .execute(&mut *transaction)
+    .execute(&mut **transaction)
     .await
     .map_err(database::database_error)?;
+    if workflow_updated.rows_affected() != 1 {
+        return Err("Workflow 已不再允许等待审批。".to_string());
+    }
     sqlx::query(
         "UPDATE workflow_work_items SET status = 'waiting', updated_at = ? \
          WHERE id = (SELECT work_item_id FROM workflow_instances WHERE id = ?)",
     )
     .bind(now)
     .bind(workflow_id)
-    .execute(&mut *transaction)
+    .execute(&mut **transaction)
     .await
     .map_err(database::database_error)?;
-    transaction.commit().await.map_err(database::database_error)
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -433,8 +342,9 @@ pub(crate) async fn suspend_run(
     if request.condition_kind == "timer" && request.due_at.is_none() {
         return Err("Timer SuspendRequest 缺少 dueAt。".to_string());
     }
-    finish_attempt(
-        connection,
+    let mut transaction = connection.begin().await.map_err(database::database_error)?;
+    finish_attempt_in_transaction(
+        &mut transaction,
         &binding.workflow_id,
         Some(run_id),
         "completed",
@@ -446,7 +356,6 @@ pub(crate) async fn suspend_run(
         "workflow-wait-suspend-{}-{}",
         binding.workflow_id, request.deduplication_key
     );
-    let mut transaction = connection.begin().await.map_err(database::database_error)?;
     sqlx::query(
         "INSERT OR IGNORE INTO workflow_wait_conditions \
          (id, workflow_id, deduplication_key, condition_kind, status, correlation_id, \
@@ -651,7 +560,7 @@ pub(crate) async fn resume_satisfied_waits(
     Ok(resumed)
 }
 
-async fn resume_workflow_in_transaction(
+pub(crate) async fn resume_workflow_in_transaction(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     workflow_id: &str,
     wait_id: &str,
@@ -685,6 +594,7 @@ async fn resume_workflow_in_transaction(
     Ok(updated.rows_affected())
 }
 
+#[allow(dead_code)]
 pub(crate) async fn mark_failed(
     connection: &SqlitePool,
     workflow_id: &str,
@@ -692,9 +602,21 @@ pub(crate) async fn mark_failed(
     error: &str,
     now: i64,
 ) -> Result<(), String> {
-    finish_attempt(connection, workflow_id, run_id, "failed", Some(error), now).await?;
     let mut transaction = connection.begin().await.map_err(database::database_error)?;
-    sqlx::query(
+    mark_failed_in_transaction(&mut transaction, workflow_id, run_id, error, now).await?;
+    transaction.commit().await.map_err(database::database_error)
+}
+
+pub(crate) async fn mark_failed_in_transaction(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    workflow_id: &str,
+    run_id: Option<&str>,
+    error: &str,
+    now: i64,
+) -> Result<(), String> {
+    finish_attempt_in_transaction(transaction, workflow_id, run_id, "failed", Some(error), now)
+        .await?;
+    let updated = sqlx::query(
         "UPDATE workflow_instances SET state = 'FAILED', current_run_id = NULL, error = ?, \
          updated_at = ?, completed_at = ? WHERE id = ? AND state NOT IN ('COMPLETED', 'CANCELLED')",
     )
@@ -702,9 +624,12 @@ pub(crate) async fn mark_failed(
     .bind(now)
     .bind(now)
     .bind(workflow_id)
-    .execute(&mut *transaction)
+    .execute(&mut **transaction)
     .await
     .map_err(database::database_error)?;
+    if updated.rows_affected() != 1 {
+        return Err("Workflow 已不再允许进入失败终态。".to_string());
+    }
     sqlx::query(
         "UPDATE workflow_work_items SET status = 'failed', updated_at = ?, completed_at = ? \
          WHERE id = (SELECT work_item_id FROM workflow_instances WHERE id = ?)",
@@ -712,14 +637,14 @@ pub(crate) async fn mark_failed(
     .bind(now)
     .bind(now)
     .bind(workflow_id)
-    .execute(&mut *transaction)
+    .execute(&mut **transaction)
     .await
     .map_err(database::database_error)?;
-    transaction.commit().await.map_err(database::database_error)
+    Ok(())
 }
 
-async fn finish_attempt(
-    connection: &SqlitePool,
+async fn finish_attempt_in_transaction(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     workflow_id: &str,
     run_id: Option<&str>,
     status: &str,
@@ -738,65 +663,10 @@ async fn finish_attempt(
     .bind(now)
     .bind(workflow_id)
     .bind(run_id)
-    .execute(connection)
+    .execute(&mut **transaction)
     .await
     .map_err(database::database_error)?;
     Ok(())
-}
-
-async fn load_automation_binding(
-    connection: &SqlitePool,
-    automation_run_id: &str,
-) -> Result<Option<WorkflowBinding>, String> {
-    load_binding(
-        connection,
-        "SELECT run.workflow_work_item_id AS work_item_id, run.workflow_id, item.event_id, item.correlation_id \
-         FROM automation_runs run INNER JOIN workflow_work_items item ON item.id = run.workflow_work_item_id \
-         WHERE run.id = ? AND run.workflow_id IS NOT NULL",
-        automation_run_id,
-    )
-    .await
-}
-
-async fn load_signal_binding(
-    connection: &SqlitePool,
-    signal_run_id: &str,
-) -> Result<Option<WorkflowBinding>, String> {
-    load_binding(
-        connection,
-        "SELECT run.workflow_work_item_id AS work_item_id, run.workflow_id, item.event_id, item.correlation_id \
-         FROM signal_agent_runs run INNER JOIN workflow_work_items item ON item.id = run.workflow_work_item_id \
-         WHERE run.id = ? AND run.workflow_id IS NOT NULL",
-        signal_run_id,
-    )
-    .await
-}
-
-async fn load_binding(
-    connection: &SqlitePool,
-    query: &str,
-    id: &str,
-) -> Result<Option<WorkflowBinding>, String> {
-    let row = sqlx::query(query)
-        .bind(id)
-        .fetch_optional(connection)
-        .await
-        .map_err(database::database_error)?;
-    row.map(|row| {
-        Ok(WorkflowBinding {
-            work_item_id: row
-                .try_get("work_item_id")
-                .map_err(database::database_error)?,
-            workflow_id: row
-                .try_get("workflow_id")
-                .map_err(database::database_error)?,
-            event_id: row.try_get("event_id").map_err(database::database_error)?,
-            correlation_id: row
-                .try_get("correlation_id")
-                .map_err(database::database_error)?,
-        })
-    })
-    .transpose()
 }
 
 fn truncate(value: &str) -> String {
@@ -811,7 +681,10 @@ fn parse_json_column(row: &sqlx::sqlite::SqliteRow, column: &str) -> Result<Valu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reliability::now_millis;
+    use crate::{
+        domain_events::{record_with_outbox, NewDomainEvent},
+        reliability::now_millis,
+    };
 
     async fn test_pool(label: &str) -> (std::path::PathBuf, std::sync::Arc<SqlitePool>) {
         let path = std::env::temp_dir().join(format!(
@@ -837,76 +710,63 @@ mod tests {
         let _ = std::fs::remove_file(path.with_extension("db-shm"));
     }
 
-    async fn insert_automation_run(
-        pool: &SqlitePool,
-        automation_id: &str,
-        run_id: &str,
-        trigger_source: &str,
-        source_type: &str,
-    ) {
-        sqlx::query(
-            "INSERT INTO automation_tasks \
-             (id, name, instruction, trigger_type, trigger_config_json, document_id, enabled, \
-              created_at, updated_at, source_type, source_config_json) \
-             VALUES (?, ?, 'test', 'manual', '{}', NULL, 1, 1, 1, ?, '{}')",
+    async fn workflow_fixture(pool: &SqlitePool, source_type: &str, id: &str) -> WorkflowBinding {
+        let event_id = format!("event-{id}");
+        let outbox_id = format!("outbox-{id}");
+        let work_item_id = format!("work-item-{id}");
+        let workflow_id = format!("workflow-{id}");
+        let payload = json!({ "source": source_type });
+        let mut transaction = pool.begin().await.expect("begin workflow fixture");
+        record_with_outbox(
+            &mut transaction,
+            NewDomainEvent {
+                event_id: &event_id,
+                outbox_id: &outbox_id,
+                event_type: "workflow.source.accepted",
+                aggregate_type: "test",
+                aggregate_id: id,
+                payload: &payload,
+                actor_id: "test",
+                source: "test",
+                workspace_id: Some("default"),
+                deduplication_key: &event_id,
+                security_scope: None,
+                correlation_id: id,
+                causation_id: None,
+                occurred_at: 10,
+            },
         )
-        .bind(automation_id)
-        .bind(automation_id)
-        .bind(source_type)
-        .execute(pool)
         .await
-        .expect("insert automation");
-        sqlx::query(
-            "INSERT INTO automation_runs \
-             (id, automation_id, trigger_source, status, input_json, queued_at, correlation_id) \
-             VALUES (?, ?, ?, 'running', '{}', 1, ?)",
+        .expect("record source event");
+        let binding = create_workflow_in_transaction(
+            &mut transaction,
+            NewWorkflow {
+                work_item_id: &work_item_id,
+                workflow_id: &workflow_id,
+                event_id: &event_id,
+                source_type,
+                classification: "agent_required",
+                payload: &payload,
+                correlation_id: id,
+                causation_id: None,
+            },
+            10,
         )
-        .bind(run_id)
-        .bind(automation_id)
-        .bind(trigger_source)
-        .bind(run_id)
-        .execute(pool)
         .await
-        .expect("insert run");
+        .expect("create workflow");
+        transaction.commit().await.expect("commit fixture");
+        binding
     }
 
     #[tokio::test]
     async fn manual_timer_and_rss_sources_share_recoverable_workflow_identity() {
         let (path, pool) = test_pool("sources").await;
-        for (automation_id, run_id, trigger_source, source_type, expected_source) in [
-            ("auto-manual", "run-manual", "manual", "document", "manual"),
-            ("auto-timer", "run-timer", "schedule", "document", "timer"),
-            ("auto-rss", "run-rss", "schedule", "rss", "rss"),
+        for (run_id, expected_source) in [
+            ("run-manual", "manual"),
+            ("run-timer", "timer"),
+            ("run-rss", "rss"),
         ] {
-            insert_automation_run(
-                pool.as_ref(),
-                automation_id,
-                run_id,
-                trigger_source,
-                source_type,
-            )
-            .await;
-            let binding = ensure_automation_workflow(
-                pool.as_ref(),
-                run_id,
-                automation_id,
-                trigger_source,
-                source_type,
-                10,
-            )
-            .await
-            .expect("ensure workflow");
-            let duplicate = ensure_automation_workflow(
-                pool.as_ref(),
-                run_id,
-                automation_id,
-                trigger_source,
-                source_type,
-                20,
-            )
-            .await
-            .expect("deduplicate workflow");
-            assert_eq!(binding, duplicate);
+            let binding = workflow_fixture(pool.as_ref(), expected_source, run_id).await;
             let stored_source: String =
                 sqlx::query_scalar("SELECT source_type FROM workflow_work_items WHERE id = ?")
                     .bind(&binding.work_item_id)
@@ -930,24 +790,7 @@ mod tests {
     #[tokio::test]
     async fn retry_ends_the_old_run_and_starts_a_new_run_id() {
         let (path, pool) = test_pool("retry").await;
-        insert_automation_run(
-            pool.as_ref(),
-            "auto-retry",
-            "automation-run-retry",
-            "schedule",
-            "document",
-        )
-        .await;
-        let binding = ensure_automation_workflow(
-            pool.as_ref(),
-            "automation-run-retry",
-            "auto-retry",
-            "schedule",
-            "document",
-            10,
-        )
-        .await
-        .expect("ensure workflow");
+        let binding = workflow_fixture(pool.as_ref(), "timer", "automation-run-retry").await;
         start_run(pool.as_ref(), &binding, "runtime-run-1", 1, 20)
             .await
             .expect("start first run");
@@ -998,24 +841,7 @@ mod tests {
     #[tokio::test]
     async fn event_suspend_ends_the_run_and_correlated_event_makes_workflow_ready() {
         let (path, pool) = test_pool("event-resume").await;
-        insert_automation_run(
-            pool.as_ref(),
-            "auto-event",
-            "automation-run-event",
-            "manual",
-            "document",
-        )
-        .await;
-        let binding = ensure_automation_workflow(
-            pool.as_ref(),
-            "automation-run-event",
-            "auto-event",
-            "manual",
-            "document",
-            10,
-        )
-        .await
-        .expect("ensure workflow");
+        let binding = workflow_fixture(pool.as_ref(), "manual", "automation-run-event").await;
         start_run(pool.as_ref(), &binding, "runtime-event-1", 1, 20)
             .await
             .expect("start run");

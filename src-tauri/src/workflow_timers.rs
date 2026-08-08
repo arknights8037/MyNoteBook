@@ -713,28 +713,14 @@ async fn fire_claimed_timer(
     if condition.rows_affected() != 1 || fired.rows_affected() != 1 {
         return Err("Timer lease 或等待条件在触发时发生变化。".to_string());
     }
-    sqlx::query(
-        "UPDATE workflow_instances SET state = 'READY', current_wait_condition_id = NULL, \
-         causation_id = ?, updated_at = ? WHERE id = ? AND current_wait_condition_id = ? \
-         AND state = 'WAITING_TIMER'",
+    crate::workflow_runtime::resume_workflow_in_transaction(
+        &mut transaction,
+        &timer.workflow_id,
+        &timer.wait_condition_id,
+        &event_id,
+        fired_at,
     )
-    .bind(&event_id)
-    .bind(fired_at)
-    .bind(&timer.workflow_id)
-    .bind(&timer.wait_condition_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(database::database_error)?;
-    sqlx::query(
-        "UPDATE workflow_work_items SET status = 'queued', causation_id = ?, updated_at = ? \
-         WHERE id = (SELECT work_item_id FROM workflow_instances WHERE id = ? AND state = 'READY')",
-    )
-    .bind(&event_id)
-    .bind(fired_at)
-    .bind(&timer.workflow_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(database::database_error)?;
+    .await?;
     transaction
         .commit()
         .await
