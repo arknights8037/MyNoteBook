@@ -21,7 +21,7 @@ use subtle::ConstantTimeEq;
 use tokio::{net::TcpListener, sync::oneshot};
 
 pub const CORE_PROTOCOL_MAJOR: u16 = 1;
-pub const CORE_PROTOCOL_MINOR: u16 = 2;
+pub const CORE_PROTOCOL_MINOR: u16 = 3;
 pub const CORE_ENDPOINT_FILENAME: &str = "endpoint-v1.json";
 const CORE_LOCK_FILENAME: &str = "instance-v1.lock";
 const HEADLESS_CORE_FLAG: &str = "--mynotebook-headless-core";
@@ -74,6 +74,7 @@ struct CoreServerState {
     endpoint: CoreEndpointDescriptor,
     shutdown: Mutex<Option<oneshot::Sender<()>>>,
     timers: crate::workflow_timers::CoreDurableTimerState,
+    workflow_dispatcher: crate::workflow_runtime::CoreWorkflowDispatcherState,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -100,15 +101,17 @@ struct DatabaseMutationRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct TimerQuiesceResponse {
-    pub(crate) was_running: bool,
+pub(crate) struct CoreRuntimeQuiesceResponse {
+    pub(crate) timer_was_running: bool,
+    pub(crate) workflow_was_running: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct TimerResumeRequest {
+struct CoreRuntimeResumeRequest {
     directory: String,
-    should_run: bool,
+    timer_should_run: bool,
+    workflow_should_run: bool,
 }
 
 pub fn is_headless_core_process() -> bool {
@@ -295,23 +298,31 @@ pub(crate) async fn get_workflow_timer_snapshot(
     post_authenticated(endpoint, "/v1/timer/snapshot", &()).await
 }
 
-pub(crate) async fn quiesce_workflow_timer(
+#[allow(dead_code)] // Protocol observability endpoint; not yet projected into the Desktop UI.
+pub(crate) async fn get_workflow_dispatcher_snapshot(
     endpoint: &CoreEndpointDescriptor,
-) -> Result<TimerQuiesceResponse, String> {
-    post_authenticated(endpoint, "/v1/timer/quiesce", &()).await
+) -> Result<crate::workflow_runtime::WorkflowDispatcherSnapshot, String> {
+    post_authenticated(endpoint, "/v1/workflow/snapshot", &()).await
 }
 
-pub(crate) async fn resume_workflow_timer(
+pub(crate) async fn quiesce_background_runtime(
+    endpoint: &CoreEndpointDescriptor,
+) -> Result<CoreRuntimeQuiesceResponse, String> {
+    post_authenticated(endpoint, "/v1/runtime/quiesce", &()).await
+}
+
+pub(crate) async fn resume_background_runtime(
     endpoint: &CoreEndpointDescriptor,
     directory: &Path,
-    should_run: bool,
+    snapshot: &CoreRuntimeQuiesceResponse,
 ) -> Result<(), String> {
     post_authenticated::<_, bool>(
         endpoint,
-        "/v1/timer/resume",
-        &TimerResumeRequest {
+        "/v1/runtime/resume",
+        &CoreRuntimeResumeRequest {
             directory: directory.to_string_lossy().into_owned(),
-            should_run,
+            timer_should_run: snapshot.timer_was_running,
+            workflow_should_run: snapshot.workflow_was_running,
         },
     )
     .await
@@ -398,6 +409,7 @@ async fn run_headless_core(endpoint_directory: &Path) -> Result<(), String> {
         endpoint: endpoint.clone(),
         shutdown: Mutex::new(Some(shutdown_tx)),
         timers: crate::workflow_timers::CoreDurableTimerState::default(),
+        workflow_dispatcher: crate::workflow_runtime::CoreWorkflowDispatcherState::default(),
     });
     let router = Router::new()
         .route("/v1/health", get(health))
@@ -412,8 +424,9 @@ async fn run_headless_core(endpoint_directory: &Path) -> Result<(), String> {
         )
         .route("/v1/database/close-pool", post(database_close_pool))
         .route("/v1/timer/snapshot", post(timer_snapshot))
-        .route("/v1/timer/quiesce", post(timer_quiesce))
-        .route("/v1/timer/resume", post(timer_resume))
+        .route("/v1/workflow/snapshot", post(workflow_snapshot))
+        .route("/v1/runtime/quiesce", post(runtime_quiesce))
+        .route("/v1/runtime/resume", post(runtime_resume))
         .with_state(Arc::clone(&state));
     let result = axum::serve(listener, router)
         .with_graceful_shutdown(async {
@@ -421,6 +434,7 @@ async fn run_headless_core(endpoint_directory: &Path) -> Result<(), String> {
         })
         .await
         .map_err(|error| format!("Headless Core server 异常退出：{error}"));
+    state.workflow_dispatcher.shutdown().await;
     state.timers.shutdown().await;
     cleanup_endpoint(endpoint_directory, &endpoint);
     drop(lock);
@@ -495,6 +509,14 @@ async fn database_prepare(
         .ensure_for_directory(&directory)
         .await
         .map_err(internal_api_error)?;
+    if let Err(error) = state
+        .workflow_dispatcher
+        .ensure_for_directory(&directory)
+        .await
+    {
+        state.timers.quiesce().await;
+        return Err(internal_api_error(error));
+    }
     Ok(Json(preparation))
 }
 
@@ -564,6 +586,10 @@ async fn database_close_pool(
     authorize_api(&headers, &state.endpoint.credential)?;
     let directory = normalize_database_directory(&request.directory)?;
     state.timers.quiesce_if_directory(&directory).await;
+    state
+        .workflow_dispatcher
+        .quiesce_if_directory(&directory)
+        .await;
     crate::database::close_pool(&directory.join(crate::database::DATABASE_FILENAME))
         .await
         .map_err(internal_api_error)?;
@@ -578,30 +604,54 @@ async fn timer_snapshot(
     Ok(Json(state.timers.snapshot().await))
 }
 
-async fn timer_quiesce(
+async fn workflow_snapshot(
     State(state): State<Arc<CoreServerState>>,
     headers: HeaderMap,
-) -> Result<Json<TimerQuiesceResponse>, (StatusCode, String)> {
+) -> Result<Json<crate::workflow_runtime::WorkflowDispatcherSnapshot>, (StatusCode, String)> {
     authorize_api(&headers, &state.endpoint.credential)?;
-    let snapshot = state.timers.quiesce().await;
-    Ok(Json(TimerQuiesceResponse {
-        was_running: snapshot.was_running,
+    Ok(Json(state.workflow_dispatcher.snapshot().await))
+}
+
+async fn runtime_quiesce(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+) -> Result<Json<CoreRuntimeQuiesceResponse>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    let timer = state.timers.quiesce().await;
+    let workflow = state.workflow_dispatcher.quiesce().await;
+    Ok(Json(CoreRuntimeQuiesceResponse {
+        timer_was_running: timer.was_running,
+        workflow_was_running: workflow.was_running,
     }))
 }
 
-async fn timer_resume(
+async fn runtime_resume(
     State(state): State<Arc<CoreServerState>>,
     headers: HeaderMap,
-    Json(request): Json<TimerResumeRequest>,
+    Json(request): Json<CoreRuntimeResumeRequest>,
 ) -> Result<Json<bool>, (StatusCode, String)> {
     authorize_api(&headers, &state.endpoint.credential)?;
     let directory = normalize_database_directory(&request.directory)?;
-    if request.should_run {
+    let mut timer_started = false;
+    if request.timer_should_run {
         state
             .timers
             .ensure_for_directory(&directory)
             .await
             .map_err(internal_api_error)?;
+        timer_started = true;
+    }
+    if request.workflow_should_run {
+        if let Err(error) = state
+            .workflow_dispatcher
+            .ensure_for_directory(&directory)
+            .await
+        {
+            if timer_started {
+                state.timers.quiesce().await;
+            }
+            return Err(internal_api_error(error));
+        }
     }
     Ok(Json(true))
 }
@@ -887,10 +937,132 @@ mod tests {
             serde_json::to_value(timer_snapshot).expect("serialize timer snapshot");
         assert_eq!(timer_snapshot["status"], "running");
         assert!(timer_snapshot["lastSuccessAt"].as_i64().is_some());
-        let timer_migration = quiesce_workflow_timer(&endpoint)
+        let workflow_now = now_millis();
+        let source_payload = serde_json::json!({ "source": "core-test" });
+        let mut transaction = pool.begin().await.expect("begin workflow fixture");
+        crate::domain_events::record_with_outbox(
+            &mut transaction,
+            crate::domain_events::NewDomainEvent {
+                event_id: "core-workflow-source-event",
+                outbox_id: "core-workflow-source-outbox",
+                event_type: "workflow.source.accepted",
+                aggregate_type: "workflow",
+                aggregate_id: "core-event-workflow",
+                payload: &source_payload,
+                actor_id: "core-test",
+                source: "core_test",
+                workspace_id: None,
+                deduplication_key: "core-workflow-source-event",
+                security_scope: None,
+                correlation_id: "core-event-correlation",
+                causation_id: None,
+                occurred_at: workflow_now,
+            },
+        )
+        .await
+        .expect("record workflow source event");
+        let workflow = crate::workflow_runtime::create_workflow_in_transaction(
+            &mut transaction,
+            crate::workflow_runtime::NewWorkflow {
+                work_item_id: "core-event-work-item",
+                workflow_id: "core-event-workflow",
+                event_id: "core-workflow-source-event",
+                source_type: "manual",
+                classification: "core_test",
+                payload: &source_payload,
+                correlation_id: "core-event-correlation",
+                causation_id: None,
+            },
+            workflow_now,
+        )
+        .await
+        .expect("create Core workflow");
+        transaction.commit().await.expect("commit workflow fixture");
+        crate::workflow_runtime::start_run(
+            pool.as_ref(),
+            &workflow,
+            "core-event-run",
+            1,
+            workflow_now + 1,
+        )
+        .await
+        .expect("start Core workflow run");
+        crate::workflow_runtime::suspend_run(
+            pool.as_ref(),
+            &workflow,
+            "core-event-run",
+            crate::workflow_runtime::SuspendRequest {
+                condition_kind: "event",
+                deduplication_key: "wait-review",
+                payload: &serde_json::json!({ "eventType": "review.received" }),
+                due_at: None,
+            },
+            workflow_now + 2,
+        )
+        .await
+        .expect("suspend Core workflow for event");
+        let review_payload = serde_json::json!({ "decision": "approved" });
+        let mut transaction = pool.begin().await.expect("begin review event");
+        crate::domain_events::record_with_outbox(
+            &mut transaction,
+            crate::domain_events::NewDomainEvent {
+                event_id: "core-review-event",
+                outbox_id: "core-review-outbox",
+                event_type: "review.received",
+                aggregate_type: "workflow",
+                aggregate_id: "core-event-workflow",
+                payload: &review_payload,
+                actor_id: "core-test",
+                source: "core_test",
+                workspace_id: None,
+                deduplication_key: "core-review-event",
+                security_scope: None,
+                correlation_id: "core-event-correlation",
+                causation_id: Some("core-workflow-source-event"),
+                occurred_at: workflow_now + 3,
+            },
+        )
+        .await
+        .expect("record correlated review event");
+        transaction.commit().await.expect("commit review event");
+        let mut workflow_resumed = false;
+        for _ in 0..60 {
+            let workflow_rows = execute_database_query(
+                &endpoint,
+                &database_directory,
+                "SELECT state FROM workflow_instances WHERE id = 'core-event-workflow'".to_string(),
+                Vec::new(),
+            )
             .await
-            .expect("quiesce Core timer");
-        assert!(timer_migration.was_running);
+            .expect("query Core workflow state");
+            if workflow_rows[0].get("state").and_then(Value::as_str) == Some("READY") {
+                workflow_resumed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(
+            workflow_resumed,
+            "Headless Core dispatcher should resume a correlated event wait"
+        );
+        let workflow_snapshot = serde_json::to_value(
+            get_workflow_dispatcher_snapshot(&endpoint)
+                .await
+                .expect("read Core workflow dispatcher snapshot"),
+        )
+        .expect("serialize workflow dispatcher snapshot");
+        assert_eq!(workflow_snapshot["status"], "running");
+        assert!(
+            workflow_snapshot["resumedEventWaitCount"]
+                .as_u64()
+                .unwrap_or(0)
+                >= 1
+        );
+        let runtime_migration = quiesce_background_runtime(&endpoint)
+            .await
+            .expect("quiesce Core background runtime");
+        assert!(runtime_migration.timer_was_running);
+        assert!(runtime_migration.workflow_was_running);
         let paused_snapshot = serde_json::to_value(
             get_workflow_timer_snapshot(&endpoint)
                 .await
@@ -898,9 +1070,16 @@ mod tests {
         )
         .expect("serialize paused timer snapshot");
         assert_eq!(paused_snapshot["status"], "paused");
-        resume_workflow_timer(&endpoint, &database_directory, true)
+        let paused_workflow_snapshot = serde_json::to_value(
+            get_workflow_dispatcher_snapshot(&endpoint)
+                .await
+                .expect("read paused workflow dispatcher snapshot"),
+        )
+        .expect("serialize paused workflow dispatcher snapshot");
+        assert_eq!(paused_workflow_snapshot["status"], "paused");
+        resume_background_runtime(&endpoint, &database_directory, &runtime_migration)
             .await
-            .expect("resume Core timer");
+            .expect("resume Core background runtime");
         let resumed_snapshot = serde_json::to_value(
             get_workflow_timer_snapshot(&endpoint)
                 .await
@@ -908,6 +1087,13 @@ mod tests {
         )
         .expect("serialize resumed timer snapshot");
         assert_eq!(resumed_snapshot["status"], "running");
+        let resumed_workflow_snapshot = serde_json::to_value(
+            get_workflow_dispatcher_snapshot(&endpoint)
+                .await
+                .expect("read resumed workflow dispatcher snapshot"),
+        )
+        .expect("serialize resumed workflow dispatcher snapshot");
+        assert_eq!(resumed_workflow_snapshot["status"], "running");
         let mutation = execute_database_mutation(
             &endpoint,
             &database_directory,

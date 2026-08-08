@@ -1,6 +1,6 @@
 # 事件驱动 Workflow 与 Action Gateway
 
-> 状态（更新于 2026-08-08）：P5 的统一 Work Item/Workflow、可恢复等待和 Rust Action Gateway 已进入主干。当前没有启用邮件发送、IM 回复或发布等真实外部动作处理器。
+> 状态（更新于 2026-08-08）：P5 的统一 Work Item/Workflow、可恢复等待和 Rust Action Gateway 已进入主干。P6 已把 Durable Timer、correlation Event 匹配和已满足等待续接扫描迁入 Headless Core；具体 Workflow Run 调度仍在 Desktop Runtime。当前没有启用邮件发送、IM 回复或发布等真实外部动作处理器。
 
 ## 1. 所有权与事实源
 
@@ -60,4 +60,4 @@ pending_approval -> approved -> executing -> completed
 - 本地待办/日历仍是 signal intent 的专用幂等本地动作，不冒充外部动作。
 - 知识正文修改继续走 `mutationApproval` 和 Rust canonical transaction。
 - 外部动作继续走 `externalActionApproval`、Action Gateway 和 Outbox；没有审批不能领取。
-- 显式退出整个 Tauri 进程仍会停止处理；重新启动后由 Rust 恢复过期 lease、等待状态和可重试队列。
+- 显式退出整个 Tauri 进程后，Headless Core 仍会处理 Timer 和等待续接；具体 Workflow Run、Automation/Signal、A2A、Connector 与 Worker 调度仍会停止，并在 Desktop 重启后按持久状态恢复。

@@ -1,7 +1,199 @@
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use tokio::{
+    sync::{Mutex, RwLock},
+    task::JoinHandle,
+    time::{Duration, MissedTickBehavior},
+};
 
 use crate::database;
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WorkflowDispatcherStatus {
+    Stopped,
+    Running,
+    Paused,
+    Degraded,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkflowDispatcherSnapshot {
+    status: WorkflowDispatcherStatus,
+    last_tick_at: Option<i64>,
+    last_success_at: Option<i64>,
+    last_error: Option<String>,
+    resumed_event_wait_count: u64,
+    resumed_satisfied_wait_count: u64,
+}
+
+impl Default for WorkflowDispatcherSnapshot {
+    fn default() -> Self {
+        Self {
+            status: WorkflowDispatcherStatus::Stopped,
+            last_tick_at: None,
+            last_success_at: None,
+            last_error: None,
+            resumed_event_wait_count: 0,
+            resumed_satisfied_wait_count: 0,
+        }
+    }
+}
+
+pub(crate) struct CoreWorkflowDispatcherState {
+    task: Mutex<Option<JoinHandle<()>>>,
+    database_path: Mutex<Option<PathBuf>>,
+    snapshot: Arc<RwLock<WorkflowDispatcherSnapshot>>,
+}
+
+impl Default for CoreWorkflowDispatcherState {
+    fn default() -> Self {
+        Self {
+            task: Mutex::new(None),
+            database_path: Mutex::new(None),
+            snapshot: Arc::new(RwLock::new(WorkflowDispatcherSnapshot::default())),
+        }
+    }
+}
+
+pub(crate) struct CoreWorkflowDispatcherMigrationSnapshot {
+    pub(crate) was_running: bool,
+}
+
+impl CoreWorkflowDispatcherState {
+    pub(crate) async fn ensure_for_directory(&self, directory: &Path) -> Result<(), String> {
+        let database_path = directory.join(database::DATABASE_FILENAME);
+        let mut task = self.task.lock().await;
+        let same_database = self.database_path.lock().await.as_ref() == Some(&database_path);
+        if same_database && task.as_ref().is_some_and(|task| !task.is_finished()) {
+            return Ok(());
+        }
+        if let Some(existing) = task.take() {
+            existing.abort();
+            let _ = existing.await;
+        }
+        *self.database_path.lock().await = Some(database_path.clone());
+        update_dispatcher_snapshot(&self.snapshot, |snapshot| {
+            snapshot.status = WorkflowDispatcherStatus::Running;
+            snapshot.last_error = None;
+        })
+        .await;
+        let snapshot = Arc::clone(&self.snapshot);
+        *task = Some(tokio::spawn(async move {
+            run_workflow_dispatcher(database_path, snapshot).await;
+        }));
+        Ok(())
+    }
+
+    pub(crate) async fn snapshot(&self) -> WorkflowDispatcherSnapshot {
+        self.snapshot.read().await.clone()
+    }
+
+    pub(crate) async fn quiesce(&self) -> CoreWorkflowDispatcherMigrationSnapshot {
+        let existing = self.task.lock().await.take();
+        let was_running = existing.as_ref().is_some_and(|task| !task.is_finished());
+        if let Some(existing) = existing {
+            existing.abort();
+            let _ = existing.await;
+        }
+        self.snapshot.write().await.status = WorkflowDispatcherStatus::Paused;
+        CoreWorkflowDispatcherMigrationSnapshot { was_running }
+    }
+
+    pub(crate) async fn quiesce_if_directory(&self, directory: &Path) {
+        let database_path = directory.join(database::DATABASE_FILENAME);
+        let matches_directory = self.database_path.lock().await.as_ref() == Some(&database_path);
+        if matches_directory {
+            self.quiesce().await;
+        }
+    }
+
+    pub(crate) async fn shutdown(&self) {
+        let existing = self.task.lock().await.take();
+        if let Some(existing) = existing {
+            existing.abort();
+            let _ = existing.await;
+        }
+        self.snapshot.write().await.status = WorkflowDispatcherStatus::Stopped;
+    }
+}
+
+async fn run_workflow_dispatcher(
+    database_path: PathBuf,
+    snapshot: Arc<RwLock<WorkflowDispatcherSnapshot>>,
+) {
+    let mut ticker = tokio::time::interval(Duration::from_secs(1));
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    loop {
+        ticker.tick().await;
+        let now = crate::reliability::now_millis();
+        update_dispatcher_snapshot(&snapshot, |snapshot| {
+            snapshot.status = WorkflowDispatcherStatus::Running;
+            snapshot.last_tick_at = Some(now);
+        })
+        .await;
+        let connection = match database::get_pool_for_path(&database_path, false).await {
+            Ok(connection) => connection,
+            Err(error) => {
+                record_dispatcher_error(&snapshot, now, error).await;
+                continue;
+            }
+        };
+        let event_waits = consume_event_waits(connection.as_ref(), now).await;
+        let satisfied_waits = resume_satisfied_waits(connection.as_ref(), now).await;
+        match (event_waits, satisfied_waits) {
+            (Ok(event_count), Ok(satisfied_count)) => {
+                update_dispatcher_snapshot(&snapshot, |snapshot| {
+                    snapshot.status = WorkflowDispatcherStatus::Running;
+                    snapshot.last_success_at = Some(now);
+                    snapshot.last_error = None;
+                    snapshot.resumed_event_wait_count = snapshot
+                        .resumed_event_wait_count
+                        .saturating_add(event_count);
+                    snapshot.resumed_satisfied_wait_count = snapshot
+                        .resumed_satisfied_wait_count
+                        .saturating_add(satisfied_count);
+                })
+                .await;
+            }
+            (event_result, satisfied_result) => {
+                let error = [event_result.err(), satisfied_result.err()]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join("；");
+                record_dispatcher_error(&snapshot, now, error).await;
+            }
+        }
+    }
+}
+
+async fn update_dispatcher_snapshot(
+    snapshot: &RwLock<WorkflowDispatcherSnapshot>,
+    update: impl FnOnce(&mut WorkflowDispatcherSnapshot),
+) {
+    let mut snapshot = snapshot.write().await;
+    update(&mut snapshot);
+}
+
+async fn record_dispatcher_error(
+    snapshot: &RwLock<WorkflowDispatcherSnapshot>,
+    now: i64,
+    error: String,
+) {
+    update_dispatcher_snapshot(snapshot, |snapshot| {
+        snapshot.status = WorkflowDispatcherStatus::Degraded;
+        snapshot.last_tick_at = Some(now);
+        snapshot.last_error = Some(error.chars().take(2_000).collect());
+    })
+    .await;
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkflowBinding {
