@@ -35,6 +35,7 @@ pub async fn prepare_database(
     timer_projection_state: State<'_, crate::workflow_timers::DurableTimerProjectionState>,
     workflow_projection_state: State<'_, crate::workflow_runtime::WorkflowScannerProjectionState>,
     outbox_projection_state: State<'_, crate::outbox_dispatcher::OutboxDispatcherProjectionState>,
+    connector_projection_state: State<'_, crate::dingtalk::DingTalkProjectionState>,
     data_directory: Option<String>,
 ) -> Result<DatabasePreparation, String> {
     let data_directory = data_directory.filter(|value| !value.trim().is_empty());
@@ -53,6 +54,7 @@ pub async fn prepare_database(
         .await?;
     crate::outbox_dispatcher::ensure_snapshot_projection(&app, outbox_projection_state.inner())
         .await?;
+    crate::dingtalk::ensure_snapshot_projection(&app, connector_projection_state.inner()).await?;
     Ok(preparation)
 }
 

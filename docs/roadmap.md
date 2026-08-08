@@ -379,8 +379,9 @@ P4.5 的 envelope 脚手架已经收敛为上述生产 Workflow 与 Action Gatew
 - 协议 `1.3` 已把 correlation Event 等待匹配与已满足等待续接扫描迁入 Core，并把数据目录迁移收敛为统一 Core background runtime quiesce/resume；Desktop A2A watcher 不再并发扫描 Workflow 等待。
 - 协议 `1.4` 已把 Automation 到期入队、Signal Event 入队与 Action 过期 lease 恢复迁入 Core；Desktop watcher 只领取已持久化队列并调用尚未迁移的 Worker，不再拥有这些 ingress/recovery scanner。
 - 协议 `1.5` 已把 Outbox claim/lease/retry/Dead Letter 与本地领域事件发布迁入 Core；只有存在活动 Core 订阅者时才确认 `published`，Desktop 只接收脱敏健康快照。
+- 协议 `1.6` 已把钉钉 Stream Connector 的恢复、连接任务和数据库写入迁入 Core；Desktop 的启动、停止与恢复命令只执行受权 reconcile，并按脱敏消息计数刷新界面。
 - Desktop 后台运行面板已订阅 Core Workflow scanner 的脱敏健康与累计处理快照，可直接观察等待续接、Automation/Signal 入队和 Action lease 恢复，不读取 Core endpoint 凭证或数据库内部 lease。
-- 当前已完成控制进程、WebView 数据库 catalog、Durable Timer、Outbox publisher、Workflow 等待续接与持久化 ingress/recovery scanner 迁移；Workflow Run/Automation/Signal 执行调度、Connector、Action handler 和 Worker Supervisor 尚未迁入 Core，因此本阶段尚未达到退出条件，也不宣称已经实现进程级 SQLite 唯一所有权。
+- 当前已完成控制进程、WebView 数据库 catalog、Durable Timer、Outbox publisher、Workflow 等待续接、持久化 ingress/recovery scanner 与钉钉 Connector 迁移；Workflow Run/Automation/Signal 执行调度、Action handler 和 Worker Supervisor 尚未迁入 Core，因此本阶段尚未达到退出条件，也不宣称已经实现进程级 SQLite 唯一所有权。
 
 实现事实、威胁边界与迁移顺序见 [Headless Core 进程与本地协议](headless-core.md)。
 

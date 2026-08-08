@@ -24,11 +24,13 @@ use tokio::{
 };
 
 pub const CORE_PROTOCOL_MAJOR: u16 = 1;
-pub const CORE_PROTOCOL_MINOR: u16 = 5;
+pub const CORE_PROTOCOL_MINOR: u16 = 6;
 pub const CORE_ENDPOINT_FILENAME: &str = "endpoint-v1.json";
 const CORE_LOCK_FILENAME: &str = "instance-v1.lock";
 const HEADLESS_CORE_FLAG: &str = "--mynotebook-headless-core";
 const ENDPOINT_DIRECTORY_FLAG: &str = "--endpoint-directory";
+const APP_LOCAL_DATA_DIRECTORY_FLAG: &str = "--app-local-data-directory";
+const RESOURCE_DIRECTORY_FLAG: &str = "--resource-directory";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -79,6 +81,13 @@ struct CoreServerState {
     timers: crate::workflow_timers::CoreDurableTimerState,
     workflow_scanner: crate::workflow_runtime::CoreWorkflowScannerState,
     outbox: crate::outbox_dispatcher::CoreOutboxDispatcherState,
+    connectors: crate::dingtalk::CoreDingTalkConnectorState,
+}
+
+#[derive(Clone, Debug)]
+struct CoreProcessContext {
+    app_local_data_directory: PathBuf,
+    resource_directory: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -109,6 +118,7 @@ pub(crate) struct CoreRuntimeQuiesceResponse {
     pub(crate) timer_was_running: bool,
     pub(crate) workflow_scanner_was_running: bool,
     pub(crate) outbox_was_running: bool,
+    pub(crate) connectors_were_running: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -118,6 +128,7 @@ struct CoreRuntimeResumeRequest {
     timer_should_run: bool,
     workflow_scanner_should_run: bool,
     outbox_should_run: bool,
+    connectors_should_run: bool,
 }
 
 pub fn is_headless_core_process() -> bool {
@@ -129,14 +140,35 @@ pub async fn run_from_process_args() -> Result<(), String> {
     let endpoint_directory = flag_value(&arguments, ENDPOINT_DIRECTORY_FLAG)
         .map(PathBuf::from)
         .ok_or_else(|| "Headless Core 缺少 endpoint directory。".to_string())?;
-    run_headless_core(&endpoint_directory).await
+    let app_local_data_directory = flag_value(&arguments, APP_LOCAL_DATA_DIRECTORY_FLAG)
+        .map(PathBuf::from)
+        .ok_or_else(|| "Headless Core 缺少 app local data directory。".to_string())?;
+    let resource_directory = flag_value(&arguments, RESOURCE_DIRECTORY_FLAG)
+        .map(PathBuf::from)
+        .ok_or_else(|| "Headless Core 缺少 resource directory。".to_string())?;
+    run_headless_core_with_context(
+        &endpoint_directory,
+        CoreProcessContext {
+            app_local_data_directory,
+            resource_directory,
+        },
+    )
+    .await
 }
 
-pub(crate) fn headless_core_arguments(endpoint_directory: &Path) -> Vec<String> {
+pub(crate) fn headless_core_arguments(
+    endpoint_directory: &Path,
+    app_local_data_directory: &Path,
+    resource_directory: &Path,
+) -> Vec<String> {
     vec![
         HEADLESS_CORE_FLAG.to_string(),
         ENDPOINT_DIRECTORY_FLAG.to_string(),
         endpoint_directory.to_string_lossy().into_owned(),
+        APP_LOCAL_DATA_DIRECTORY_FLAG.to_string(),
+        app_local_data_directory.to_string_lossy().into_owned(),
+        RESOURCE_DIRECTORY_FLAG.to_string(),
+        resource_directory.to_string_lossy().into_owned(),
     ]
 }
 
@@ -316,6 +348,26 @@ pub(crate) async fn get_outbox_dispatcher_snapshot(
     post_authenticated(endpoint, "/v1/outbox/snapshot", &()).await
 }
 
+pub(crate) async fn get_connector_snapshot(
+    endpoint: &CoreEndpointDescriptor,
+) -> Result<crate::dingtalk::CoreConnectorSnapshot, String> {
+    post_authenticated(endpoint, "/v1/connectors/snapshot", &()).await
+}
+
+pub(crate) async fn reconcile_connectors(
+    endpoint: &CoreEndpointDescriptor,
+    directory: &Path,
+) -> Result<usize, String> {
+    post_authenticated(
+        endpoint,
+        "/v1/connectors/reconcile",
+        &DatabasePrepareRequest {
+            directory: directory.to_string_lossy().into_owned(),
+        },
+    )
+    .await
+}
+
 pub(crate) async fn quiesce_background_runtime(
     endpoint: &CoreEndpointDescriptor,
 ) -> Result<CoreRuntimeQuiesceResponse, String> {
@@ -335,6 +387,7 @@ pub(crate) async fn resume_background_runtime(
             timer_should_run: snapshot.timer_was_running,
             workflow_scanner_should_run: snapshot.workflow_scanner_was_running,
             outbox_should_run: snapshot.outbox_was_running,
+            connectors_should_run: snapshot.connectors_were_running,
         },
     )
     .await
@@ -387,7 +440,23 @@ where
         .map_err(|error| format!("解析 Headless Core {path} 响应失败：{error}"))
 }
 
+#[cfg(test)]
 async fn run_headless_core(endpoint_directory: &Path) -> Result<(), String> {
+    run_headless_core_with_context(
+        endpoint_directory,
+        CoreProcessContext {
+            app_local_data_directory: endpoint_directory.join("local-data"),
+            resource_directory: endpoint_directory.join("resources"),
+        },
+    )
+    .await
+}
+
+async fn run_headless_core_with_context(
+    endpoint_directory: &Path,
+    process_context: CoreProcessContext,
+) -> Result<(), String> {
+    let _ = &process_context.resource_directory;
     fs::create_dir_all(endpoint_directory)
         .map_err(|error| format!("创建 Headless Core 目录失败：{error}"))?;
     if let Ok(endpoint) = read_endpoint(endpoint_directory) {
@@ -424,6 +493,9 @@ async fn run_headless_core(endpoint_directory: &Path) -> Result<(), String> {
         timers: crate::workflow_timers::CoreDurableTimerState::default(),
         workflow_scanner: crate::workflow_runtime::CoreWorkflowScannerState::new(event_bus.clone()),
         outbox: crate::outbox_dispatcher::CoreOutboxDispatcherState::new(event_bus),
+        connectors: crate::dingtalk::CoreDingTalkConnectorState::new(
+            process_context.app_local_data_directory,
+        ),
     });
     let router = Router::new()
         .route("/v1/health", get(health))
@@ -440,6 +512,8 @@ async fn run_headless_core(endpoint_directory: &Path) -> Result<(), String> {
         .route("/v1/timer/snapshot", post(timer_snapshot))
         .route("/v1/workflow/snapshot", post(workflow_snapshot))
         .route("/v1/outbox/snapshot", post(outbox_snapshot))
+        .route("/v1/connectors/snapshot", post(connector_snapshot))
+        .route("/v1/connectors/reconcile", post(connector_reconcile))
         .route("/v1/runtime/quiesce", post(runtime_quiesce))
         .route("/v1/runtime/resume", post(runtime_resume))
         .with_state(Arc::clone(&state));
@@ -449,6 +523,7 @@ async fn run_headless_core(endpoint_directory: &Path) -> Result<(), String> {
         })
         .await
         .map_err(|error| format!("Headless Core server 异常退出：{error}"));
+    state.connectors.shutdown().await;
     state.outbox.shutdown().await;
     state.workflow_scanner.shutdown().await;
     state.timers.shutdown().await;
@@ -538,6 +613,12 @@ async fn database_prepare(
         state.timers.quiesce().await;
         return Err(internal_api_error(error));
     }
+    if let Err(error) = state.connectors.ensure_for_directory(&directory).await {
+        state.outbox.quiesce().await;
+        state.workflow_scanner.quiesce().await;
+        state.timers.quiesce().await;
+        return Err(internal_api_error(error));
+    }
     Ok(Json(preparation))
 }
 
@@ -606,6 +687,7 @@ async fn database_close_pool(
 ) -> Result<Json<bool>, (StatusCode, String)> {
     authorize_api(&headers, &state.endpoint.credential)?;
     let directory = normalize_database_directory(&request.directory)?;
+    state.connectors.quiesce_if_directory(&directory).await;
     state.outbox.quiesce_if_directory(&directory).await;
     state.timers.quiesce_if_directory(&directory).await;
     state
@@ -642,11 +724,35 @@ async fn outbox_snapshot(
     Ok(Json(state.outbox.snapshot().await))
 }
 
+async fn connector_snapshot(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+) -> Result<Json<crate::dingtalk::CoreConnectorSnapshot>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    Ok(Json(state.connectors.snapshot().await))
+}
+
+async fn connector_reconcile(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<DatabasePrepareRequest>,
+) -> Result<Json<usize>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    let directory = normalize_database_directory(&request.directory)?;
+    state
+        .connectors
+        .reconcile_for_directory(&directory)
+        .await
+        .map(Json)
+        .map_err(internal_api_error)
+}
+
 async fn runtime_quiesce(
     State(state): State<Arc<CoreServerState>>,
     headers: HeaderMap,
 ) -> Result<Json<CoreRuntimeQuiesceResponse>, (StatusCode, String)> {
     authorize_api(&headers, &state.endpoint.credential)?;
+    let connectors = state.connectors.quiesce().await;
     let outbox = state.outbox.quiesce().await;
     let timer = state.timers.quiesce().await;
     let workflow = state.workflow_scanner.quiesce().await;
@@ -654,6 +760,7 @@ async fn runtime_quiesce(
         timer_was_running: timer.was_running,
         workflow_scanner_was_running: workflow.was_running,
         outbox_was_running: outbox.was_running,
+        connectors_were_running: connectors.was_running,
     }))
 }
 
@@ -666,6 +773,7 @@ async fn runtime_resume(
     let directory = normalize_database_directory(&request.directory)?;
     let mut timer_started = false;
     let mut workflow_started = false;
+    let mut outbox_started = false;
     if request.timer_should_run {
         state
             .timers
@@ -689,6 +797,21 @@ async fn runtime_resume(
     }
     if request.outbox_should_run {
         if let Err(error) = state.outbox.ensure_for_directory(&directory).await {
+            if workflow_started {
+                state.workflow_scanner.quiesce().await;
+            }
+            if timer_started {
+                state.timers.quiesce().await;
+            }
+            return Err(internal_api_error(error));
+        }
+        outbox_started = true;
+    }
+    if request.connectors_should_run {
+        if let Err(error) = state.connectors.ensure_for_directory(&directory).await {
+            if outbox_started {
+                state.outbox.quiesce().await;
+            }
             if workflow_started {
                 state.workflow_scanner.quiesce().await;
             }
@@ -875,15 +998,26 @@ mod tests {
 
     #[test]
     fn process_arguments_require_an_explicit_endpoint_directory() {
-        let arguments = vec![
-            "my-notebook".to_string(),
-            HEADLESS_CORE_FLAG.to_string(),
-            ENDPOINT_DIRECTORY_FLAG.to_string(),
-            "C:/example/core".to_string(),
-        ];
+        let endpoint_directory = Path::new("C:/example/core");
+        let app_local_data_directory = Path::new("C:/example/local-data");
+        let resource_directory = Path::new("C:/example/resources");
+        let mut arguments = vec!["my-notebook".to_string()];
+        arguments.extend(headless_core_arguments(
+            endpoint_directory,
+            app_local_data_directory,
+            resource_directory,
+        ));
         assert_eq!(
             flag_value(&arguments, ENDPOINT_DIRECTORY_FLAG).as_deref(),
             Some("C:/example/core")
+        );
+        assert_eq!(
+            flag_value(&arguments, APP_LOCAL_DATA_DIRECTORY_FLAG).as_deref(),
+            Some("C:/example/local-data")
+        );
+        assert_eq!(
+            flag_value(&arguments, RESOURCE_DIRECTORY_FLAG).as_deref(),
+            Some("C:/example/resources")
         );
     }
 
@@ -1137,12 +1271,21 @@ mod tests {
         .expect("serialize Core Outbox snapshot");
         assert_eq!(outbox_snapshot["status"], "running");
         assert!(outbox_snapshot["publishedCount"].as_u64().unwrap_or(0) >= 2);
+        let connector_snapshot = serde_json::to_value(
+            get_connector_snapshot(&endpoint)
+                .await
+                .expect("read Core Connector snapshot"),
+        )
+        .expect("serialize Core Connector snapshot");
+        assert_eq!(connector_snapshot["status"], "running");
+        assert_eq!(connector_snapshot["activeConnectorCount"], 0);
         let runtime_migration = quiesce_background_runtime(&endpoint)
             .await
             .expect("quiesce Core background runtime");
         assert!(runtime_migration.timer_was_running);
         assert!(runtime_migration.workflow_scanner_was_running);
         assert!(runtime_migration.outbox_was_running);
+        assert!(runtime_migration.connectors_were_running);
         let paused_snapshot = serde_json::to_value(
             get_workflow_timer_snapshot(&endpoint)
                 .await
@@ -1164,6 +1307,13 @@ mod tests {
         )
         .expect("serialize paused Core Outbox snapshot");
         assert_eq!(paused_outbox_snapshot["status"], "paused");
+        let paused_connector_snapshot = serde_json::to_value(
+            get_connector_snapshot(&endpoint)
+                .await
+                .expect("read paused Core Connector snapshot"),
+        )
+        .expect("serialize paused Core Connector snapshot");
+        assert_eq!(paused_connector_snapshot["status"], "paused");
         resume_background_runtime(&endpoint, &database_directory, &runtime_migration)
             .await
             .expect("resume Core background runtime");
@@ -1188,6 +1338,13 @@ mod tests {
         )
         .expect("serialize resumed Core Outbox snapshot");
         assert_eq!(resumed_outbox_snapshot["status"], "running");
+        let resumed_connector_snapshot = serde_json::to_value(
+            get_connector_snapshot(&endpoint)
+                .await
+                .expect("read resumed Core Connector snapshot"),
+        )
+        .expect("serialize resumed Core Connector snapshot");
+        assert_eq!(resumed_connector_snapshot["status"], "running");
         let mutation = execute_database_mutation(
             &endpoint,
             &database_directory,

@@ -86,7 +86,7 @@ pub(crate) async fn ensure_headless_core_inner(
         },
     )
     .await?;
-    spawn_core_process(&directory)?;
+    spawn_core_process(app, &directory)?;
     let mut last_error = "Headless Core 未发布 endpoint。".to_string();
     for _ in 0..100 {
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -139,12 +139,24 @@ fn endpoint_directory(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|error| format!("解析 Headless Core 配置目录失败：{error}"))
 }
 
-fn spawn_core_process(endpoint_directory: &std::path::Path) -> Result<(), String> {
+fn spawn_core_process(app: &AppHandle, endpoint_directory: &std::path::Path) -> Result<(), String> {
     let executable =
         std::env::current_exe().map_err(|error| format!("定位 Desktop 可执行文件失败：{error}"))?;
+    let app_local_data_directory = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("解析应用本地数据目录失败：{error}"))?;
+    let resource_directory = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("解析应用资源目录失败：{error}"))?;
     let mut command = std::process::Command::new(executable);
     command
-        .args(core_server::headless_core_arguments(endpoint_directory))
+        .args(core_server::headless_core_arguments(
+            endpoint_directory,
+            &app_local_data_directory,
+            &resource_directory,
+        ))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

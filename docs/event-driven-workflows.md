@@ -1,6 +1,6 @@
 # 事件驱动 Workflow 与 Action Gateway
 
-> 状态（更新于 2026-08-08）：P5 的统一 Work Item/Workflow、可恢复等待和 Rust Action Gateway 已进入主干。P6 已把 Durable Timer、correlation Event 匹配、已满足等待续接、Automation/Signal ingress 和 Action lease 恢复扫描迁入 Headless Core；具体 Workflow Run 调度仍在 Desktop Runtime。当前没有启用邮件发送、IM 回复或发布等真实外部动作处理器。
+> 状态（更新于 2026-08-08）：P5 的统一 Work Item/Workflow、可恢复等待和 Rust Action Gateway 已进入主干。P6 已把 Durable Timer、Outbox、correlation Event 匹配、已满足等待续接、Automation/Signal ingress、Action lease 恢复扫描和钉钉 Connector 迁入 Headless Core；具体 Workflow Run 调度仍在 Desktop Runtime。当前没有启用邮件发送、IM 回复或发布等真实外部动作处理器。
 
 ## 1. 所有权与事实源
 

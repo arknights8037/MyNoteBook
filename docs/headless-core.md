@@ -1,6 +1,6 @@
 # Headless Core 进程与本地协议
 
-本文记录 Phase 6 的当前实现事实、协议安全边界和后续迁移顺序。Phase 6 尚未完成；当前已落地独立 Core 控制进程、Desktop 发现协议、WebView 数据库 prepare/query/mutation catalog、不依赖 Desktop 生命周期的 Durable Timer、带订阅确认的 Outbox publisher、Workflow Event/已满足等待续接，以及 Automation/Signal ingress 与 Action 过期 lease 恢复扫描。Desktop 后台运行面板通过受控命令和事件订阅这些 Core scanner 的脱敏状态，不接触 endpoint 凭证。Workflow Run 执行调度、Connector、Action handler 和其他 Rust 数据库所有权仍在后续迁移中。
+本文记录 Phase 6 的当前实现事实、协议安全边界和后续迁移顺序。Phase 6 尚未完成；当前已落地独立 Core 控制进程、Desktop 发现协议、WebView 数据库 prepare/query/mutation catalog、不依赖 Desktop 生命周期的 Durable Timer、带订阅确认的 Outbox publisher、Workflow Event/已满足等待续接、Automation/Signal ingress、Action 过期 lease 恢复扫描，以及钉钉 Stream Connector。Desktop 后台运行面板通过受控命令和事件订阅这些 Core runtime 的脱敏状态，不接触 endpoint 凭证。Workflow Run 执行调度、Action handler 和其他 Rust 数据库所有权仍在后续迁移中。
 
 ## 当前进程拓扑
 
@@ -48,6 +48,8 @@ Core 只绑定 `127.0.0.1:0`，启动后在应用用户配置目录的 `headless
 | `POST /v1/timer/snapshot`           | 返回 Core 持有的 Timer 健康与积压快照                             |
 | `POST /v1/workflow/snapshot`        | 返回 Workflow/Automation/Signal/Action scanner 健康与累计处理快照 |
 | `POST /v1/outbox/snapshot`          | 返回 Outbox publisher 的脱敏健康、发布累计与积压快照              |
+| `POST /v1/connectors/snapshot`      | 返回 Connector 运行状态、活动数量与脱敏消息累计                   |
+| `POST /v1/connectors/reconcile`     | 按数据库启用状态在 Core 内停止并恢复 Connector                    |
 | `POST /v1/runtime/quiesce`          | 中止并等待全部 Core 后台任务，用于数据目录迁移                    |
 | `POST /v1/runtime/resume`           | 在迁移成功的目标目录或失败回滚的原目录恢复原有 Core 后台任务      |
 
@@ -58,7 +60,7 @@ major 不一致必须拒绝连接；Core minor 低于 Desktop 所需 minor 时�
 当前控制面不等于 Phase 6 完成。后续必须按以下顺序迁移，期间不得同时宣称两个进程拥有同一事实：
 
 1. 将数据库路径解析、migration、读写 pool 和 mutation/query catalog 移入 Core RPC。（已迁移 WebView catalog；其他 Rust 领域模块仍待迁移）
-2. 将 Durable Timer、Outbox、Workflow、Automation、Signal 和 Connector watcher 移入 Core。（Durable Timer、Outbox、Workflow 等待续接、Automation/Signal ingress 与 Action lease 恢复已迁移）
+2. 将 Durable Timer、Outbox、Workflow、Automation、Signal 和 Connector watcher 移入 Core。（Durable Timer、Outbox、Workflow 等待续接、Automation/Signal ingress、Action lease 恢复与钉钉 Connector 已迁移）
 3. 将 Agent Worker Supervisor 移入 Core；Desktop 仅订阅脱敏事件并提交交互命令。
 4. 为数据目录迁移建立 Core 级 quiesce/commit/rollback，Desktop 不再直接关闭 pool。（后台任务已统一 quiesce/resume；commit/rollback 与 pool 所有权仍待迁移）
 5. 完成 Desktop/Core/Worker 各自崩溃、重启、版本不兼容、旧 endpoint、活动 Run 和安装升级验收。

@@ -176,6 +176,7 @@ pub fn run() {
         .manage(secret_store::AiSecretState::default())
         .manage(core_supervisor::HeadlessCoreSupervisorState::default())
         .manage(dingtalk::DingTalkRuntimeState::default())
+        .manage(dingtalk::DingTalkProjectionState::default())
         .manage(agent_worker_supervisor::AgentWorkerSupervisorState::default())
         .manage(agent_request_watcher::AgentRequestWatcherState::default())
         .manage(workflow_timers::DurableTimerProjectionState::default())
@@ -243,6 +244,7 @@ pub fn run() {
             dingtalk::start_dingtalk_connector,
             dingtalk::stop_dingtalk_connector,
             dingtalk::resume_dingtalk_connectors,
+            dingtalk::get_dingtalk_connector_snapshot,
             rss::fetch_rss_feed,
             rss::fetch_rss_article,
             ai_models::fetch_ai_models,
