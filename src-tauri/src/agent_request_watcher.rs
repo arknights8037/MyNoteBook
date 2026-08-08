@@ -304,9 +304,6 @@ async fn watch_agent_requests(app: AppHandle, data_directory: Option<String>) {
                 )
                 .await
                 .is_ok()
-                && crate::action_gateway::recover_expired_actions(connection.as_ref(), now_millis())
-                    .await
-                    .is_ok()
             {
                 startup_recovered = true;
             }

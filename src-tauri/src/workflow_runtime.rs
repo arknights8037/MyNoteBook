@@ -15,7 +15,7 @@ use crate::database;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum WorkflowDispatcherStatus {
+pub(crate) enum WorkflowScannerStatus {
     Stopped,
     Running,
     Paused,
@@ -24,49 +24,55 @@ pub(crate) enum WorkflowDispatcherStatus {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct WorkflowDispatcherSnapshot {
-    status: WorkflowDispatcherStatus,
+pub(crate) struct WorkflowScannerSnapshot {
+    status: WorkflowScannerStatus,
     last_tick_at: Option<i64>,
     last_success_at: Option<i64>,
     last_error: Option<String>,
     resumed_event_wait_count: u64,
     resumed_satisfied_wait_count: u64,
+    automation_enqueued_count: u64,
+    signal_enqueued_count: u64,
+    action_recovered_count: u64,
 }
 
-impl Default for WorkflowDispatcherSnapshot {
+impl Default for WorkflowScannerSnapshot {
     fn default() -> Self {
         Self {
-            status: WorkflowDispatcherStatus::Stopped,
+            status: WorkflowScannerStatus::Stopped,
             last_tick_at: None,
             last_success_at: None,
             last_error: None,
             resumed_event_wait_count: 0,
             resumed_satisfied_wait_count: 0,
+            automation_enqueued_count: 0,
+            signal_enqueued_count: 0,
+            action_recovered_count: 0,
         }
     }
 }
 
-pub(crate) struct CoreWorkflowDispatcherState {
+pub(crate) struct CoreWorkflowScannerState {
     task: Mutex<Option<JoinHandle<()>>>,
     database_path: Mutex<Option<PathBuf>>,
-    snapshot: Arc<RwLock<WorkflowDispatcherSnapshot>>,
+    snapshot: Arc<RwLock<WorkflowScannerSnapshot>>,
 }
 
-impl Default for CoreWorkflowDispatcherState {
+impl Default for CoreWorkflowScannerState {
     fn default() -> Self {
         Self {
             task: Mutex::new(None),
             database_path: Mutex::new(None),
-            snapshot: Arc::new(RwLock::new(WorkflowDispatcherSnapshot::default())),
+            snapshot: Arc::new(RwLock::new(WorkflowScannerSnapshot::default())),
         }
     }
 }
 
-pub(crate) struct CoreWorkflowDispatcherMigrationSnapshot {
+pub(crate) struct CoreWorkflowScannerMigrationSnapshot {
     pub(crate) was_running: bool,
 }
 
-impl CoreWorkflowDispatcherState {
+impl CoreWorkflowScannerState {
     pub(crate) async fn ensure_for_directory(&self, directory: &Path) -> Result<(), String> {
         let database_path = directory.join(database::DATABASE_FILENAME);
         let mut task = self.task.lock().await;
@@ -79,31 +85,31 @@ impl CoreWorkflowDispatcherState {
             let _ = existing.await;
         }
         *self.database_path.lock().await = Some(database_path.clone());
-        update_dispatcher_snapshot(&self.snapshot, |snapshot| {
-            snapshot.status = WorkflowDispatcherStatus::Running;
+        update_scanner_snapshot(&self.snapshot, |snapshot| {
+            snapshot.status = WorkflowScannerStatus::Running;
             snapshot.last_error = None;
         })
         .await;
         let snapshot = Arc::clone(&self.snapshot);
         *task = Some(tokio::spawn(async move {
-            run_workflow_dispatcher(database_path, snapshot).await;
+            run_workflow_scanner(database_path, snapshot).await;
         }));
         Ok(())
     }
 
-    pub(crate) async fn snapshot(&self) -> WorkflowDispatcherSnapshot {
+    pub(crate) async fn snapshot(&self) -> WorkflowScannerSnapshot {
         self.snapshot.read().await.clone()
     }
 
-    pub(crate) async fn quiesce(&self) -> CoreWorkflowDispatcherMigrationSnapshot {
+    pub(crate) async fn quiesce(&self) -> CoreWorkflowScannerMigrationSnapshot {
         let existing = self.task.lock().await.take();
         let was_running = existing.as_ref().is_some_and(|task| !task.is_finished());
         if let Some(existing) = existing {
             existing.abort();
             let _ = existing.await;
         }
-        self.snapshot.write().await.status = WorkflowDispatcherStatus::Paused;
-        CoreWorkflowDispatcherMigrationSnapshot { was_running }
+        self.snapshot.write().await.status = WorkflowScannerStatus::Paused;
+        CoreWorkflowScannerMigrationSnapshot { was_running }
     }
 
     pub(crate) async fn quiesce_if_directory(&self, directory: &Path) {
@@ -120,75 +126,102 @@ impl CoreWorkflowDispatcherState {
             existing.abort();
             let _ = existing.await;
         }
-        self.snapshot.write().await.status = WorkflowDispatcherStatus::Stopped;
+        self.snapshot.write().await.status = WorkflowScannerStatus::Stopped;
     }
 }
 
-async fn run_workflow_dispatcher(
+async fn run_workflow_scanner(
     database_path: PathBuf,
-    snapshot: Arc<RwLock<WorkflowDispatcherSnapshot>>,
+    snapshot: Arc<RwLock<WorkflowScannerSnapshot>>,
 ) {
     let mut ticker = tokio::time::interval(Duration::from_secs(1));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     loop {
         ticker.tick().await;
         let now = crate::reliability::now_millis();
-        update_dispatcher_snapshot(&snapshot, |snapshot| {
-            snapshot.status = WorkflowDispatcherStatus::Running;
+        update_scanner_snapshot(&snapshot, |snapshot| {
+            snapshot.status = WorkflowScannerStatus::Running;
             snapshot.last_tick_at = Some(now);
         })
         .await;
         let connection = match database::get_pool_for_path(&database_path, false).await {
             Ok(connection) => connection,
             Err(error) => {
-                record_dispatcher_error(&snapshot, now, error).await;
+                record_scanner_error(&snapshot, now, error).await;
                 continue;
             }
         };
         let event_waits = consume_event_waits(connection.as_ref(), now).await;
         let satisfied_waits = resume_satisfied_waits(connection.as_ref(), now).await;
-        match (event_waits, satisfied_waits) {
-            (Ok(event_count), Ok(satisfied_count)) => {
-                update_dispatcher_snapshot(&snapshot, |snapshot| {
-                    snapshot.status = WorkflowDispatcherStatus::Running;
-                    snapshot.last_success_at = Some(now);
-                    snapshot.last_error = None;
-                    snapshot.resumed_event_wait_count = snapshot
-                        .resumed_event_wait_count
-                        .saturating_add(event_count);
-                    snapshot.resumed_satisfied_wait_count = snapshot
-                        .resumed_satisfied_wait_count
-                        .saturating_add(satisfied_count);
-                })
-                .await;
+        let automation_runs =
+            crate::automation_runtime::enqueue_due_runs(connection.as_ref()).await;
+        let signal_runs = crate::signal_runtime::enqueue_events(connection.as_ref()).await;
+        let recovered_actions =
+            crate::action_gateway::recover_expired_actions(connection.as_ref(), now).await;
+        let mut errors = Vec::new();
+        let event_count = result_or_record(event_waits, "Workflow Event 等待扫描", &mut errors);
+        let satisfied_count =
+            result_or_record(satisfied_waits, "Workflow 已满足等待扫描", &mut errors);
+        let automation_count =
+            result_or_record(automation_runs, "Automation 到期入队扫描", &mut errors) as u64;
+        let signal_count =
+            result_or_record(signal_runs, "Signal Event 入队扫描", &mut errors) as u64;
+        let action_count =
+            result_or_record(recovered_actions, "Action 过期 lease 恢复", &mut errors);
+        update_scanner_snapshot(&snapshot, |snapshot| {
+            snapshot.status = if errors.is_empty() {
+                WorkflowScannerStatus::Running
+            } else {
+                WorkflowScannerStatus::Degraded
+            };
+            if errors.is_empty() {
+                snapshot.last_success_at = Some(now);
             }
-            (event_result, satisfied_result) => {
-                let error = [event_result.err(), satisfied_result.err()]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                    .join("；");
-                record_dispatcher_error(&snapshot, now, error).await;
-            }
+            snapshot.last_error = (!errors.is_empty())
+                .then(|| errors.join("；").chars().take(2_000).collect::<String>());
+            snapshot.resumed_event_wait_count = snapshot
+                .resumed_event_wait_count
+                .saturating_add(event_count);
+            snapshot.resumed_satisfied_wait_count = snapshot
+                .resumed_satisfied_wait_count
+                .saturating_add(satisfied_count);
+            snapshot.automation_enqueued_count = snapshot
+                .automation_enqueued_count
+                .saturating_add(automation_count);
+            snapshot.signal_enqueued_count =
+                snapshot.signal_enqueued_count.saturating_add(signal_count);
+            snapshot.action_recovered_count =
+                snapshot.action_recovered_count.saturating_add(action_count);
+        })
+        .await;
+    }
+}
+
+fn result_or_record<T: Default>(
+    result: Result<T, String>,
+    operation: &str,
+    errors: &mut Vec<String>,
+) -> T {
+    match result {
+        Ok(value) => value,
+        Err(error) => {
+            errors.push(format!("{operation}失败：{error}"));
+            T::default()
         }
     }
 }
 
-async fn update_dispatcher_snapshot(
-    snapshot: &RwLock<WorkflowDispatcherSnapshot>,
-    update: impl FnOnce(&mut WorkflowDispatcherSnapshot),
+async fn update_scanner_snapshot(
+    snapshot: &RwLock<WorkflowScannerSnapshot>,
+    update: impl FnOnce(&mut WorkflowScannerSnapshot),
 ) {
     let mut snapshot = snapshot.write().await;
     update(&mut snapshot);
 }
 
-async fn record_dispatcher_error(
-    snapshot: &RwLock<WorkflowDispatcherSnapshot>,
-    now: i64,
-    error: String,
-) {
-    update_dispatcher_snapshot(snapshot, |snapshot| {
-        snapshot.status = WorkflowDispatcherStatus::Degraded;
+async fn record_scanner_error(snapshot: &RwLock<WorkflowScannerSnapshot>, now: i64, error: String) {
+    update_scanner_snapshot(snapshot, |snapshot| {
+        snapshot.status = WorkflowScannerStatus::Degraded;
         snapshot.last_tick_at = Some(now);
         snapshot.last_error = Some(error.chars().take(2_000).collect());
     })
@@ -1095,5 +1128,131 @@ mod tests {
             .await
             .expect("start continuation run");
         cleanup(&path, pool).await;
+    }
+
+    #[tokio::test]
+    async fn core_ingress_scanner_enqueues_sources_and_recovers_expired_actions() {
+        let directory = std::env::temp_dir().join(format!(
+            "my-notebook-core-ingress-{}-{}",
+            std::process::id(),
+            now_millis()
+        ));
+        database::prepare_database_path(&directory, &database::DATABASE_MIGRATOR)
+            .await
+            .expect("prepare Core ingress database");
+        let database_path = directory.join(database::DATABASE_FILENAME);
+        let pool = database::get_pool_for_path(&database_path, false)
+            .await
+            .expect("open Core ingress database");
+        sqlx::query(
+            "INSERT INTO automation_tasks \
+             (id, name, instruction, trigger_type, trigger_config_json, enabled, next_run_at, \
+              created_at, updated_at, source_type, source_config_json) VALUES \
+             ('core-auto', 'Core Automation', '整理内容', 'interval', \
+              '{\"intervalMinutes\":5}', 1, 1, 1, 1, 'document', '{}')",
+        )
+        .execute(pool.as_ref())
+        .await
+        .expect("insert due automation");
+        let signal_payload = json!({ "since": 1, "triggerSource": "sync", "scope": "all" });
+        let mut transaction = pool.begin().await.expect("begin signal event");
+        record_with_outbox(
+            &mut transaction,
+            NewDomainEvent {
+                event_id: "core-signal-event",
+                outbox_id: "core-signal-outbox",
+                event_type: "workspace.signals.refreshed",
+                aggregate_type: "workspace_signals",
+                aggregate_id: "default",
+                payload: &signal_payload,
+                actor_id: "test",
+                source: "test",
+                workspace_id: Some("default"),
+                deduplication_key: "core-signal-event",
+                security_scope: None,
+                correlation_id: "core-signal-event",
+                causation_id: None,
+                occurred_at: 1,
+            },
+        )
+        .await
+        .expect("record signal event");
+        transaction.commit().await.expect("commit signal event");
+
+        let action_workflow = workflow_fixture(pool.as_ref(), "manual", "core-action").await;
+        start_run(pool.as_ref(), &action_workflow, "core-action-run", 1, 20)
+            .await
+            .expect("start action workflow");
+        let null = Value::Null;
+        crate::action_gateway::propose_external_action(
+            pool.as_ref(),
+            crate::action_gateway::NewExternalAction {
+                action_id: "core-expired-action",
+                workflow_id: &action_workflow.workflow_id,
+                work_item_id: &action_workflow.work_item_id,
+                run_id: Some("core-action-run"),
+                action_type: "connector.dispatch",
+                target: &null,
+                input: &null,
+                idempotency_key: "core-expired-action",
+                correlation_id: &action_workflow.correlation_id,
+                causation_id: Some(&action_workflow.event_id),
+            },
+            21,
+        )
+        .await
+        .expect("propose action");
+        crate::action_gateway::decide_external_action(
+            pool.as_ref(),
+            "core-expired-action",
+            true,
+            "test",
+            &json!({}),
+            22,
+        )
+        .await
+        .expect("approve action");
+        crate::action_gateway::claim_approved_action(pool.as_ref(), "expired-worker", 30, 1_000)
+            .await
+            .expect("claim action")
+            .expect("approved action exists");
+
+        let state = CoreWorkflowScannerState::default();
+        state
+            .ensure_for_directory(&directory)
+            .await
+            .expect("start Core ingress scanner");
+        let mut completed = false;
+        for _ in 0..40 {
+            let counts: (i64, i64, String) = sqlx::query_as(
+                "SELECT \
+                   (SELECT COUNT(*) FROM automation_runs WHERE automation_id = 'core-auto'), \
+                   (SELECT COUNT(*) FROM signal_agent_runs WHERE event_id = 'core-signal-event'), \
+                   (SELECT status FROM external_action_requests WHERE id = 'core-expired-action')",
+            )
+            .fetch_one(pool.as_ref())
+            .await
+            .expect("read Core ingress results");
+            if counts == (1, 1, "approved".to_string()) {
+                completed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(
+            completed,
+            "Core ingress scanner should advance all durable sources"
+        );
+        let snapshot = state.snapshot().await;
+        assert_eq!(snapshot.status, WorkflowScannerStatus::Running);
+        assert_eq!(snapshot.automation_enqueued_count, 1);
+        assert_eq!(snapshot.signal_enqueued_count, 1);
+        assert_eq!(snapshot.action_recovered_count, 1);
+        state.shutdown().await;
+        drop(pool);
+        database::close_pool(&database_path)
+            .await
+            .expect("close Core ingress database");
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

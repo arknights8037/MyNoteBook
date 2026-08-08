@@ -43,7 +43,6 @@ pub(crate) async fn tick(
     data_directory: Option<String>,
     profile: Option<&Value>,
 ) -> Result<(), String> {
-    enqueue_due_runs(connection).await?;
     if let Some(profile) = profile {
         dispatch_next_run(app, connection, data_directory, profile).await?;
     }
@@ -349,7 +348,7 @@ async fn dispatch_next_run(
     Ok(())
 }
 
-async fn enqueue_due_runs(connection: &SqlitePool) -> Result<usize, String> {
+pub(crate) async fn enqueue_due_runs(connection: &SqlitePool) -> Result<usize, String> {
     let now = now_millis();
     let rows = sqlx::query(
         "SELECT id, name, instruction, trigger_type, trigger_config_json, document_id, source_type, next_run_at \

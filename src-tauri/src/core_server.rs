@@ -21,7 +21,7 @@ use subtle::ConstantTimeEq;
 use tokio::{net::TcpListener, sync::oneshot};
 
 pub const CORE_PROTOCOL_MAJOR: u16 = 1;
-pub const CORE_PROTOCOL_MINOR: u16 = 3;
+pub const CORE_PROTOCOL_MINOR: u16 = 4;
 pub const CORE_ENDPOINT_FILENAME: &str = "endpoint-v1.json";
 const CORE_LOCK_FILENAME: &str = "instance-v1.lock";
 const HEADLESS_CORE_FLAG: &str = "--mynotebook-headless-core";
@@ -74,7 +74,7 @@ struct CoreServerState {
     endpoint: CoreEndpointDescriptor,
     shutdown: Mutex<Option<oneshot::Sender<()>>>,
     timers: crate::workflow_timers::CoreDurableTimerState,
-    workflow_dispatcher: crate::workflow_runtime::CoreWorkflowDispatcherState,
+    workflow_scanner: crate::workflow_runtime::CoreWorkflowScannerState,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -103,7 +103,7 @@ struct DatabaseMutationRequest {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CoreRuntimeQuiesceResponse {
     pub(crate) timer_was_running: bool,
-    pub(crate) workflow_was_running: bool,
+    pub(crate) workflow_scanner_was_running: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -111,7 +111,7 @@ pub(crate) struct CoreRuntimeQuiesceResponse {
 struct CoreRuntimeResumeRequest {
     directory: String,
     timer_should_run: bool,
-    workflow_should_run: bool,
+    workflow_scanner_should_run: bool,
 }
 
 pub fn is_headless_core_process() -> bool {
@@ -299,9 +299,9 @@ pub(crate) async fn get_workflow_timer_snapshot(
 }
 
 #[allow(dead_code)] // Protocol observability endpoint; not yet projected into the Desktop UI.
-pub(crate) async fn get_workflow_dispatcher_snapshot(
+pub(crate) async fn get_workflow_scanner_snapshot(
     endpoint: &CoreEndpointDescriptor,
-) -> Result<crate::workflow_runtime::WorkflowDispatcherSnapshot, String> {
+) -> Result<crate::workflow_runtime::WorkflowScannerSnapshot, String> {
     post_authenticated(endpoint, "/v1/workflow/snapshot", &()).await
 }
 
@@ -322,7 +322,7 @@ pub(crate) async fn resume_background_runtime(
         &CoreRuntimeResumeRequest {
             directory: directory.to_string_lossy().into_owned(),
             timer_should_run: snapshot.timer_was_running,
-            workflow_should_run: snapshot.workflow_was_running,
+            workflow_scanner_should_run: snapshot.workflow_scanner_was_running,
         },
     )
     .await
@@ -409,7 +409,7 @@ async fn run_headless_core(endpoint_directory: &Path) -> Result<(), String> {
         endpoint: endpoint.clone(),
         shutdown: Mutex::new(Some(shutdown_tx)),
         timers: crate::workflow_timers::CoreDurableTimerState::default(),
-        workflow_dispatcher: crate::workflow_runtime::CoreWorkflowDispatcherState::default(),
+        workflow_scanner: crate::workflow_runtime::CoreWorkflowScannerState::default(),
     });
     let router = Router::new()
         .route("/v1/health", get(health))
@@ -434,7 +434,7 @@ async fn run_headless_core(endpoint_directory: &Path) -> Result<(), String> {
         })
         .await
         .map_err(|error| format!("Headless Core server 异常退出：{error}"));
-    state.workflow_dispatcher.shutdown().await;
+    state.workflow_scanner.shutdown().await;
     state.timers.shutdown().await;
     cleanup_endpoint(endpoint_directory, &endpoint);
     drop(lock);
@@ -510,7 +510,7 @@ async fn database_prepare(
         .await
         .map_err(internal_api_error)?;
     if let Err(error) = state
-        .workflow_dispatcher
+        .workflow_scanner
         .ensure_for_directory(&directory)
         .await
     {
@@ -587,7 +587,7 @@ async fn database_close_pool(
     let directory = normalize_database_directory(&request.directory)?;
     state.timers.quiesce_if_directory(&directory).await;
     state
-        .workflow_dispatcher
+        .workflow_scanner
         .quiesce_if_directory(&directory)
         .await;
     crate::database::close_pool(&directory.join(crate::database::DATABASE_FILENAME))
@@ -607,9 +607,9 @@ async fn timer_snapshot(
 async fn workflow_snapshot(
     State(state): State<Arc<CoreServerState>>,
     headers: HeaderMap,
-) -> Result<Json<crate::workflow_runtime::WorkflowDispatcherSnapshot>, (StatusCode, String)> {
+) -> Result<Json<crate::workflow_runtime::WorkflowScannerSnapshot>, (StatusCode, String)> {
     authorize_api(&headers, &state.endpoint.credential)?;
-    Ok(Json(state.workflow_dispatcher.snapshot().await))
+    Ok(Json(state.workflow_scanner.snapshot().await))
 }
 
 async fn runtime_quiesce(
@@ -618,10 +618,10 @@ async fn runtime_quiesce(
 ) -> Result<Json<CoreRuntimeQuiesceResponse>, (StatusCode, String)> {
     authorize_api(&headers, &state.endpoint.credential)?;
     let timer = state.timers.quiesce().await;
-    let workflow = state.workflow_dispatcher.quiesce().await;
+    let workflow = state.workflow_scanner.quiesce().await;
     Ok(Json(CoreRuntimeQuiesceResponse {
         timer_was_running: timer.was_running,
-        workflow_was_running: workflow.was_running,
+        workflow_scanner_was_running: workflow.was_running,
     }))
 }
 
@@ -641,9 +641,9 @@ async fn runtime_resume(
             .map_err(internal_api_error)?;
         timer_started = true;
     }
-    if request.workflow_should_run {
+    if request.workflow_scanner_should_run {
         if let Err(error) = state
-            .workflow_dispatcher
+            .workflow_scanner
             .ensure_for_directory(&directory)
             .await
         {
@@ -1043,14 +1043,14 @@ mod tests {
         }
         assert!(
             workflow_resumed,
-            "Headless Core dispatcher should resume a correlated event wait"
+            "Headless Core scanner should resume a correlated event wait"
         );
         let workflow_snapshot = serde_json::to_value(
-            get_workflow_dispatcher_snapshot(&endpoint)
+            get_workflow_scanner_snapshot(&endpoint)
                 .await
-                .expect("read Core workflow dispatcher snapshot"),
+                .expect("read Core workflow scanner snapshot"),
         )
-        .expect("serialize workflow dispatcher snapshot");
+        .expect("serialize workflow scanner snapshot");
         assert_eq!(workflow_snapshot["status"], "running");
         assert!(
             workflow_snapshot["resumedEventWaitCount"]
@@ -1062,7 +1062,7 @@ mod tests {
             .await
             .expect("quiesce Core background runtime");
         assert!(runtime_migration.timer_was_running);
-        assert!(runtime_migration.workflow_was_running);
+        assert!(runtime_migration.workflow_scanner_was_running);
         let paused_snapshot = serde_json::to_value(
             get_workflow_timer_snapshot(&endpoint)
                 .await
@@ -1071,11 +1071,11 @@ mod tests {
         .expect("serialize paused timer snapshot");
         assert_eq!(paused_snapshot["status"], "paused");
         let paused_workflow_snapshot = serde_json::to_value(
-            get_workflow_dispatcher_snapshot(&endpoint)
+            get_workflow_scanner_snapshot(&endpoint)
                 .await
-                .expect("read paused workflow dispatcher snapshot"),
+                .expect("read paused workflow scanner snapshot"),
         )
-        .expect("serialize paused workflow dispatcher snapshot");
+        .expect("serialize paused workflow scanner snapshot");
         assert_eq!(paused_workflow_snapshot["status"], "paused");
         resume_background_runtime(&endpoint, &database_directory, &runtime_migration)
             .await
@@ -1088,11 +1088,11 @@ mod tests {
         .expect("serialize resumed timer snapshot");
         assert_eq!(resumed_snapshot["status"], "running");
         let resumed_workflow_snapshot = serde_json::to_value(
-            get_workflow_dispatcher_snapshot(&endpoint)
+            get_workflow_scanner_snapshot(&endpoint)
                 .await
-                .expect("read resumed workflow dispatcher snapshot"),
+                .expect("read resumed workflow scanner snapshot"),
         )
-        .expect("serialize resumed workflow dispatcher snapshot");
+        .expect("serialize resumed workflow scanner snapshot");
         assert_eq!(resumed_workflow_snapshot["status"], "running");
         let mutation = execute_database_mutation(
             &endpoint,

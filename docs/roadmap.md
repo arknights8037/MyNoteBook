@@ -377,7 +377,8 @@ P4.5 的 envelope 脚手架已经收敛为上述生产 Workflow 与 Action Gatew
 - 数据库 prepare、WebView 只读 query、封闭 mutation catalog 与 read-pool close 已经通过协议 `1.1` 进入 Core；数据目录迁移会先关闭 Core 和 Desktop 两侧相关 pool。其他 Rust 领域模块暂时仍直接使用 Desktop pool。
 - 协议 `1.2` 已把 Durable Timer 的调度循环、lease/retry/Dead Letter、触发事务和健康快照迁入 Core。Desktop 只代理快照并投影 `workflow-timer://status`；数据目录迁移通过 Core 的 quiesce/resume 路由切换计时器所有权。
 - 协议 `1.3` 已把 correlation Event 等待匹配与已满足等待续接扫描迁入 Core，并把数据目录迁移收敛为统一 Core background runtime quiesce/resume；Desktop A2A watcher 不再并发扫描 Workflow 等待。
-- 当前已完成控制进程、WebView 数据库 catalog、Durable Timer 与 Workflow 等待续接扫描迁移；Outbox publisher、Workflow Run 调度、Automation/Signal、Connector、Action 和 Worker Supervisor 尚未迁入 Core，因此本阶段尚未达到退出条件，也不宣称已经实现进程级 SQLite 唯一所有权。
+- 协议 `1.4` 已把 Automation 到期入队、Signal Event 入队与 Action 过期 lease 恢复迁入 Core；Desktop watcher 只领取已持久化队列并调用尚未迁移的 Worker，不再拥有这些 ingress/recovery scanner。
+- 当前已完成控制进程、WebView 数据库 catalog、Durable Timer、Workflow 等待续接与持久化 ingress/recovery scanner 迁移；Outbox publisher、Workflow Run/Automation/Signal 执行调度、Connector、Action handler 和 Worker Supervisor 尚未迁入 Core，因此本阶段尚未达到退出条件，也不宣称已经实现进程级 SQLite 唯一所有权。
 
 实现事实、威胁边界与迁移顺序见 [Headless Core 进程与本地协议](headless-core.md)。
 

@@ -706,7 +706,6 @@ pub(crate) async fn settle_claimed_action(
     Ok(true)
 }
 
-#[allow(dead_code)]
 pub(crate) async fn recover_expired_actions(
     connection: &SqlitePool,
     now: i64,
