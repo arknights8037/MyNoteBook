@@ -34,6 +34,7 @@ pub async fn prepare_database(
     core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     timer_projection_state: State<'_, crate::workflow_timers::DurableTimerProjectionState>,
     workflow_projection_state: State<'_, crate::workflow_runtime::WorkflowScannerProjectionState>,
+    outbox_projection_state: State<'_, crate::outbox_dispatcher::OutboxDispatcherProjectionState>,
     data_directory: Option<String>,
 ) -> Result<DatabasePreparation, String> {
     let data_directory = data_directory.filter(|value| !value.trim().is_empty());
@@ -49,6 +50,8 @@ pub async fn prepare_database(
     crate::workflow_timers::ensure_snapshot_projection(&app, timer_projection_state.inner())
         .await?;
     crate::workflow_runtime::ensure_snapshot_projection(&app, workflow_projection_state.inner())
+        .await?;
+    crate::outbox_dispatcher::ensure_snapshot_projection(&app, outbox_projection_state.inner())
         .await?;
     Ok(preparation)
 }

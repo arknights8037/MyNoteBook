@@ -18,10 +18,13 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
-use tokio::{net::TcpListener, sync::oneshot};
+use tokio::{
+    net::TcpListener,
+    sync::{broadcast, oneshot},
+};
 
 pub const CORE_PROTOCOL_MAJOR: u16 = 1;
-pub const CORE_PROTOCOL_MINOR: u16 = 4;
+pub const CORE_PROTOCOL_MINOR: u16 = 5;
 pub const CORE_ENDPOINT_FILENAME: &str = "endpoint-v1.json";
 const CORE_LOCK_FILENAME: &str = "instance-v1.lock";
 const HEADLESS_CORE_FLAG: &str = "--mynotebook-headless-core";
@@ -75,6 +78,7 @@ struct CoreServerState {
     shutdown: Mutex<Option<oneshot::Sender<()>>>,
     timers: crate::workflow_timers::CoreDurableTimerState,
     workflow_scanner: crate::workflow_runtime::CoreWorkflowScannerState,
+    outbox: crate::outbox_dispatcher::CoreOutboxDispatcherState,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -104,6 +108,7 @@ struct DatabaseMutationRequest {
 pub(crate) struct CoreRuntimeQuiesceResponse {
     pub(crate) timer_was_running: bool,
     pub(crate) workflow_scanner_was_running: bool,
+    pub(crate) outbox_was_running: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -112,6 +117,7 @@ struct CoreRuntimeResumeRequest {
     directory: String,
     timer_should_run: bool,
     workflow_scanner_should_run: bool,
+    outbox_should_run: bool,
 }
 
 pub fn is_headless_core_process() -> bool {
@@ -304,6 +310,12 @@ pub(crate) async fn get_workflow_scanner_snapshot(
     post_authenticated(endpoint, "/v1/workflow/snapshot", &()).await
 }
 
+pub(crate) async fn get_outbox_dispatcher_snapshot(
+    endpoint: &CoreEndpointDescriptor,
+) -> Result<crate::outbox_dispatcher::OutboxDispatcherSnapshot, String> {
+    post_authenticated(endpoint, "/v1/outbox/snapshot", &()).await
+}
+
 pub(crate) async fn quiesce_background_runtime(
     endpoint: &CoreEndpointDescriptor,
 ) -> Result<CoreRuntimeQuiesceResponse, String> {
@@ -322,6 +334,7 @@ pub(crate) async fn resume_background_runtime(
             directory: directory.to_string_lossy().into_owned(),
             timer_should_run: snapshot.timer_was_running,
             workflow_scanner_should_run: snapshot.workflow_scanner_was_running,
+            outbox_should_run: snapshot.outbox_was_running,
         },
     )
     .await
@@ -404,11 +417,13 @@ async fn run_headless_core(endpoint_directory: &Path) -> Result<(), String> {
     };
     write_endpoint(endpoint_directory, &endpoint)?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let (event_bus, _) = broadcast::channel(256);
     let state = Arc::new(CoreServerState {
         endpoint: endpoint.clone(),
         shutdown: Mutex::new(Some(shutdown_tx)),
         timers: crate::workflow_timers::CoreDurableTimerState::default(),
-        workflow_scanner: crate::workflow_runtime::CoreWorkflowScannerState::default(),
+        workflow_scanner: crate::workflow_runtime::CoreWorkflowScannerState::new(event_bus.clone()),
+        outbox: crate::outbox_dispatcher::CoreOutboxDispatcherState::new(event_bus),
     });
     let router = Router::new()
         .route("/v1/health", get(health))
@@ -424,6 +439,7 @@ async fn run_headless_core(endpoint_directory: &Path) -> Result<(), String> {
         .route("/v1/database/close-pool", post(database_close_pool))
         .route("/v1/timer/snapshot", post(timer_snapshot))
         .route("/v1/workflow/snapshot", post(workflow_snapshot))
+        .route("/v1/outbox/snapshot", post(outbox_snapshot))
         .route("/v1/runtime/quiesce", post(runtime_quiesce))
         .route("/v1/runtime/resume", post(runtime_resume))
         .with_state(Arc::clone(&state));
@@ -433,6 +449,7 @@ async fn run_headless_core(endpoint_directory: &Path) -> Result<(), String> {
         })
         .await
         .map_err(|error| format!("Headless Core server 异常退出：{error}"));
+    state.outbox.shutdown().await;
     state.workflow_scanner.shutdown().await;
     state.timers.shutdown().await;
     cleanup_endpoint(endpoint_directory, &endpoint);
@@ -516,6 +533,11 @@ async fn database_prepare(
         state.timers.quiesce().await;
         return Err(internal_api_error(error));
     }
+    if let Err(error) = state.outbox.ensure_for_directory(&directory).await {
+        state.workflow_scanner.quiesce().await;
+        state.timers.quiesce().await;
+        return Err(internal_api_error(error));
+    }
     Ok(Json(preparation))
 }
 
@@ -584,6 +606,7 @@ async fn database_close_pool(
 ) -> Result<Json<bool>, (StatusCode, String)> {
     authorize_api(&headers, &state.endpoint.credential)?;
     let directory = normalize_database_directory(&request.directory)?;
+    state.outbox.quiesce_if_directory(&directory).await;
     state.timers.quiesce_if_directory(&directory).await;
     state
         .workflow_scanner
@@ -611,16 +634,26 @@ async fn workflow_snapshot(
     Ok(Json(state.workflow_scanner.snapshot().await))
 }
 
+async fn outbox_snapshot(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+) -> Result<Json<crate::outbox_dispatcher::OutboxDispatcherSnapshot>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    Ok(Json(state.outbox.snapshot().await))
+}
+
 async fn runtime_quiesce(
     State(state): State<Arc<CoreServerState>>,
     headers: HeaderMap,
 ) -> Result<Json<CoreRuntimeQuiesceResponse>, (StatusCode, String)> {
     authorize_api(&headers, &state.endpoint.credential)?;
+    let outbox = state.outbox.quiesce().await;
     let timer = state.timers.quiesce().await;
     let workflow = state.workflow_scanner.quiesce().await;
     Ok(Json(CoreRuntimeQuiesceResponse {
         timer_was_running: timer.was_running,
         workflow_scanner_was_running: workflow.was_running,
+        outbox_was_running: outbox.was_running,
     }))
 }
 
@@ -632,6 +665,7 @@ async fn runtime_resume(
     authorize_api(&headers, &state.endpoint.credential)?;
     let directory = normalize_database_directory(&request.directory)?;
     let mut timer_started = false;
+    let mut workflow_started = false;
     if request.timer_should_run {
         state
             .timers
@@ -646,6 +680,18 @@ async fn runtime_resume(
             .ensure_for_directory(&directory)
             .await
         {
+            if timer_started {
+                state.timers.quiesce().await;
+            }
+            return Err(internal_api_error(error));
+        }
+        workflow_started = true;
+    }
+    if request.outbox_should_run {
+        if let Err(error) = state.outbox.ensure_for_directory(&directory).await {
+            if workflow_started {
+                state.workflow_scanner.quiesce().await;
+            }
             if timer_started {
                 state.timers.quiesce().await;
             }
@@ -1057,11 +1103,46 @@ mod tests {
                 .unwrap_or(0)
                 >= 1
         );
+        let mut outbox_published = false;
+        for _ in 0..60 {
+            let outbox_rows = execute_database_query(
+                &endpoint,
+                &database_directory,
+                "SELECT COUNT(*) AS count FROM outbox_messages WHERE status = 'published'"
+                    .to_string(),
+                Vec::new(),
+            )
+            .await
+            .expect("query Core Outbox delivery status");
+            if outbox_rows[0]
+                .get("count")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                >= 2
+            {
+                outbox_published = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(
+            outbox_published,
+            "Headless Core should publish durable Outbox messages"
+        );
+        let outbox_snapshot = serde_json::to_value(
+            get_outbox_dispatcher_snapshot(&endpoint)
+                .await
+                .expect("read Core Outbox snapshot"),
+        )
+        .expect("serialize Core Outbox snapshot");
+        assert_eq!(outbox_snapshot["status"], "running");
+        assert!(outbox_snapshot["publishedCount"].as_u64().unwrap_or(0) >= 2);
         let runtime_migration = quiesce_background_runtime(&endpoint)
             .await
             .expect("quiesce Core background runtime");
         assert!(runtime_migration.timer_was_running);
         assert!(runtime_migration.workflow_scanner_was_running);
+        assert!(runtime_migration.outbox_was_running);
         let paused_snapshot = serde_json::to_value(
             get_workflow_timer_snapshot(&endpoint)
                 .await
@@ -1076,6 +1157,13 @@ mod tests {
         )
         .expect("serialize paused workflow scanner snapshot");
         assert_eq!(paused_workflow_snapshot["status"], "paused");
+        let paused_outbox_snapshot = serde_json::to_value(
+            get_outbox_dispatcher_snapshot(&endpoint)
+                .await
+                .expect("read paused Core Outbox snapshot"),
+        )
+        .expect("serialize paused Core Outbox snapshot");
+        assert_eq!(paused_outbox_snapshot["status"], "paused");
         resume_background_runtime(&endpoint, &database_directory, &runtime_migration)
             .await
             .expect("resume Core background runtime");
@@ -1093,6 +1181,13 @@ mod tests {
         )
         .expect("serialize resumed workflow scanner snapshot");
         assert_eq!(resumed_workflow_snapshot["status"], "running");
+        let resumed_outbox_snapshot = serde_json::to_value(
+            get_outbox_dispatcher_snapshot(&endpoint)
+                .await
+                .expect("read resumed Core Outbox snapshot"),
+        )
+        .expect("serialize resumed Core Outbox snapshot");
+        assert_eq!(resumed_outbox_snapshot["status"], "running");
         let mutation = execute_database_mutation(
             &endpoint,
             &database_directory,

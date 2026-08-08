@@ -7,7 +7,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{
-    sync::{Mutex, RwLock},
+    sync::{broadcast, Mutex, RwLock},
     task::JoinHandle,
     time::{Duration, MissedTickBehavior},
 };
@@ -134,14 +134,25 @@ pub(crate) struct CoreWorkflowScannerState {
     task: Mutex<Option<JoinHandle<()>>>,
     database_path: Mutex<Option<PathBuf>>,
     snapshot: Arc<RwLock<WorkflowScannerSnapshot>>,
+    event_bus: broadcast::Sender<crate::outbox_dispatcher::PublishedOutboxEvent>,
 }
 
 impl Default for CoreWorkflowScannerState {
     fn default() -> Self {
+        let (event_bus, _) = broadcast::channel(256);
+        Self::new(event_bus)
+    }
+}
+
+impl CoreWorkflowScannerState {
+    pub(crate) fn new(
+        event_bus: broadcast::Sender<crate::outbox_dispatcher::PublishedOutboxEvent>,
+    ) -> Self {
         Self {
             task: Mutex::new(None),
             database_path: Mutex::new(None),
             snapshot: Arc::new(RwLock::new(WorkflowScannerSnapshot::default())),
+            event_bus,
         }
     }
 }
@@ -169,8 +180,9 @@ impl CoreWorkflowScannerState {
         })
         .await;
         let snapshot = Arc::clone(&self.snapshot);
+        let events = self.event_bus.subscribe();
         *task = Some(tokio::spawn(async move {
-            run_workflow_scanner(database_path, snapshot).await;
+            run_workflow_scanner(database_path, snapshot, events).await;
         }));
         Ok(())
     }
@@ -211,11 +223,18 @@ impl CoreWorkflowScannerState {
 async fn run_workflow_scanner(
     database_path: PathBuf,
     snapshot: Arc<RwLock<WorkflowScannerSnapshot>>,
+    mut events: broadcast::Receiver<crate::outbox_dispatcher::PublishedOutboxEvent>,
 ) {
     let mut ticker = tokio::time::interval(Duration::from_secs(1));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     loop {
-        ticker.tick().await;
+        let event = tokio::select! {
+            _ = ticker.tick() => None,
+            event = events.recv() => event.ok(),
+        };
+        if let Some(event) = event {
+            drop((event.event_id, event.topic, event.payload));
+        }
         let now = crate::reliability::now_millis();
         update_scanner_snapshot(&snapshot, |snapshot| {
             snapshot.status = WorkflowScannerStatus::Running;

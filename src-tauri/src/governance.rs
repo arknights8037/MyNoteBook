@@ -47,16 +47,15 @@ pub struct ExternalSubmissionResult {
     replayed: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)] // Internal contract for the future Rust Outbox dispatcher.
-pub struct ClaimedOutboxMessage {
-    id: String,
-    event_id: String,
-    topic: String,
-    payload: Value,
-    attempt_count: i64,
-    lease_until: i64,
+pub(crate) struct ClaimedOutboxMessage {
+    pub(crate) id: String,
+    pub(crate) event_id: String,
+    pub(crate) topic: String,
+    pub(crate) payload: Value,
+    pub(crate) attempt_count: i64,
+    pub(crate) lease_until: i64,
 }
 
 #[tauri::command]
@@ -302,8 +301,7 @@ async fn submit_external_work_in_pool(
     Ok(response)
 }
 
-#[allow(dead_code)] // Deliberately not exposed as a WebView command.
-async fn claim_outbox_from_pool(
+pub(crate) async fn claim_outbox_from_pool(
     pool: &sqlx::SqlitePool,
     worker_id: &str,
     now: i64,
@@ -382,8 +380,7 @@ async fn claim_outbox_from_pool(
     Ok(messages)
 }
 
-#[allow(dead_code)] // Deliberately not exposed as a WebView command.
-async fn settle_outbox_in_pool(
+pub(crate) async fn settle_outbox_in_pool(
     pool: &sqlx::SqlitePool,
     id: &str,
     worker_id: &str,

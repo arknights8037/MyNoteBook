@@ -6,7 +6,7 @@
 
 MyNoteBook 的产品类别是本地优先的 AI 桌面工作中枢。它通过收集、理解、组织、委派、表达和沉淀的持续循环，为知识工作保留可继续的上下文。当前技术实现由 Vue 3 + Tiptap 前端、Tauri/Rust 桌面壳和 SQLite 本地存储组成，是单机桌面应用，不是 React 应用，也不是由多个服务组成的分布式系统。
 
-生产 Agent Runtime 使用真实 AI SDK Node sidecar、Rust Supervisor/dispatcher、Tauri Runtime Adapter 和自包含 SEA `externalBin`。`useAgentRun` 仅冻结交互输入、订阅事件、授权/取消与 UI projection；它不再为 sidecar 路径组装 Task、Context Bundle、ExecutionPolicy、Tool Manifest 或 `AgentRunRequestV1`。关闭主窗口会隐藏到托盘，Rust watcher/sidecar 与 Durable Timer 在无窗口时继续运行。Phase 6 已增加独立 Headless Core 控制进程和带随机凭证的 loopback 协议；WebView 数据库 catalog、Durable Timer、Workflow 等待续接、Automation/Signal ingress 与 Action lease 恢复已迁入该进程，但其他 Rust 领域数据库访问、Run 执行调度、Connector 与 Worker Supervisor 尚未迁移，显式退出 Desktop 仍会停止这些剩余业务 Runtime。Rust 是 SQLite 唯一写入者，WebView 不持有 SQLite handle 或 SQL capability。
+生产 Agent Runtime 使用真实 AI SDK Node sidecar、Rust Supervisor/dispatcher、Tauri Runtime Adapter 和自包含 SEA `externalBin`。`useAgentRun` 仅冻结交互输入、订阅事件、授权/取消与 UI projection；它不再为 sidecar 路径组装 Task、Context Bundle、ExecutionPolicy、Tool Manifest 或 `AgentRunRequestV1`。关闭主窗口会隐藏到托盘，Rust watcher/sidecar 与 Durable Timer 在无窗口时继续运行。Phase 6 已增加独立 Headless Core 控制进程和带随机凭证的 loopback 协议；WebView 数据库 catalog、Durable Timer、Outbox publisher、Workflow 等待续接、Automation/Signal ingress 与 Action lease 恢复已迁入该进程，但其他 Rust 领域数据库访问、Run 执行调度、Connector 与 Worker Supervisor 尚未迁移，显式退出 Desktop 仍会停止这些剩余业务 Runtime。Rust 是 SQLite 唯一写入者，WebView 不持有 SQLite handle 或 SQL capability。
 
 产品愿景不能改变当前事实边界：尚未实现的信息来源、后台能力和外部应用接入必须明确标记为未来方向；Agent、View 和模型输出不能被宣传或实现为绕过用户判断的第二事实源。
 

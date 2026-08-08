@@ -97,6 +97,7 @@ mod governance;
 mod local_environment;
 mod mcp;
 pub mod mcp_server_exposure;
+mod outbox_dispatcher;
 mod reliability;
 mod rss;
 mod secret_store;
@@ -179,6 +180,7 @@ pub fn run() {
         .manage(agent_request_watcher::AgentRequestWatcherState::default())
         .manage(workflow_timers::DurableTimerProjectionState::default())
         .manage(workflow_runtime::WorkflowScannerProjectionState::default())
+        .manage(outbox_dispatcher::OutboxDispatcherProjectionState::default())
         .invoke_handler(tauri::generate_handler![
             storage::get_system_fonts,
             local_environment::get_local_environment_snapshot,
@@ -263,6 +265,7 @@ pub fn run() {
             signal_runtime::publish_signal_refresh_event,
             workflow_timers::get_workflow_timer_snapshot,
             workflow_runtime::get_workflow_scanner_snapshot,
+            outbox_dispatcher::get_outbox_dispatcher_snapshot,
             work::commit_result_verification,
             work::decide_change_set,
             work::record_authorization,
