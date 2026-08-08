@@ -32,7 +32,7 @@ pub struct DatabasePreparation {
 pub async fn prepare_database(
     app: AppHandle,
     core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
-    timer_state: State<'_, crate::workflow_timers::DurableTimerSchedulerState>,
+    timer_projection_state: State<'_, crate::workflow_timers::DurableTimerProjectionState>,
     data_directory: Option<String>,
 ) -> Result<DatabasePreparation, String> {
     let data_directory = data_directory.filter(|value| !value.trim().is_empty());
@@ -45,7 +45,8 @@ pub async fn prepare_database(
             tauri_plugin_log::log::error!("Headless Core 数据库准备失败：{error}");
             error
         })?;
-    crate::workflow_timers::ensure_scheduler(&app, timer_state.inner(), data_directory).await?;
+    crate::workflow_timers::ensure_snapshot_projection(&app, timer_projection_state.inner())
+        .await?;
     Ok(preparation)
 }
 

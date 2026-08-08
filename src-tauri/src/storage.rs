@@ -63,7 +63,6 @@ pub async fn migrate_data_directory(
     app: AppHandle,
     core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     watcher_state: State<'_, crate::agent_request_watcher::AgentRequestWatcherState>,
-    timer_state: State<'_, crate::workflow_timers::DurableTimerSchedulerState>,
     worker_state: State<'_, crate::agent_worker_supervisor::AgentWorkerSupervisorState>,
     dingtalk_state: State<'_, crate::dingtalk::DingTalkRuntimeState>,
     current_directory: Option<String>,
@@ -110,15 +109,14 @@ pub async fn migrate_data_directory(
     let target_runtime_directory = destination_directory_setting
         .as_ref()
         .map(|_| destination_directory_path(&destination_directory));
+    let core_endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    let timer_snapshot = crate::core_server::quiesce_workflow_timer(&core_endpoint).await?;
     let worker_guard =
         crate::agent_worker_supervisor::pause_for_data_migration(worker_state.inner()).await;
     crate::dingtalk::quiesce_for_data_migration(dingtalk_state.inner()).await;
     let watcher_snapshot =
         crate::agent_request_watcher::quiesce_for_data_migration(watcher_state.inner()).await;
-    let timer_snapshot =
-        crate::workflow_timers::quiesce_for_data_migration(timer_state.inner()).await;
     let mut worker_snapshot = None;
-    let core_endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
     let migration_result = async {
         let active_runs = crate::agent_worker_supervisor::active_run_ids(&app).await;
         if !active_runs.is_empty() {
@@ -160,11 +158,11 @@ pub async fn migrate_data_directory(
         &target_runtime_directory,
         &watcher_snapshot.data_directory,
     );
-    let timer_directory = runtime_directory_after_migration(
-        migration_succeeded,
-        &target_runtime_directory,
-        &timer_snapshot.data_directory,
-    );
+    let timer_directory = if migration_succeeded {
+        &destination_directory
+    } else {
+        &source_directory
+    };
     let worker_resume_result = if let Some(snapshot) = worker_snapshot {
         let worker_directory = runtime_directory_after_migration(
             migration_succeeded,
@@ -188,26 +186,32 @@ pub async fn migrate_data_directory(
         watcher_directory,
     )
     .await;
-    crate::workflow_timers::resume_after_data_migration(
-        &app,
-        timer_state.inner(),
-        timer_snapshot,
+    let timer_resume_result = crate::core_server::resume_workflow_timer(
+        &core_endpoint,
         timer_directory,
+        timer_snapshot.was_running,
     )
     .await;
+    let runtime_resume_result = match (worker_resume_result, timer_resume_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(worker_error), Err(timer_error)) => Err(format!(
+            "恢复 Agent Worker 失败：{worker_error}；恢复 Durable Timer 失败：{timer_error}"
+        )),
+    };
     drop(worker_guard);
 
     match migration_result {
         Ok(change) => {
-            if let Err(error) = worker_resume_result {
-                eprintln!("数据目录已迁移，Agent Worker 将在下次请求时重启：{error}");
+            if let Err(error) = runtime_resume_result {
+                eprintln!("数据目录已迁移，后台运行时将在下次请求时恢复：{error}");
             }
             Ok(change)
         }
-        Err(error) => match worker_resume_result {
+        Err(error) => match runtime_resume_result {
             Ok(()) => Err(error),
             Err(resume_error) => Err(format!(
-                "{error}；恢复原数据目录的 Agent Worker 失败：{resume_error}"
+                "{error}；恢复原数据目录的后台运行时失败：{resume_error}"
             )),
         },
     }

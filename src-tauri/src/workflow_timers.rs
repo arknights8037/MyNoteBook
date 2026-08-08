@@ -1,7 +1,13 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{
     sync::{Mutex, RwLock},
@@ -19,30 +25,39 @@ const TIMER_LEASE_MS: i64 = 30_000;
 const TIMER_BATCH_SIZE: i64 = 25;
 const TIMER_STATUS_EVENT: &str = "workflow-timer://status";
 
-pub(crate) struct DurableTimerSchedulerState {
+pub(crate) struct DurableTimerProjectionState {
     task: Mutex<Option<JoinHandle<()>>>,
-    data_directory: Mutex<Option<String>>,
-    migration_paused: AtomicBool,
-    snapshot: RwLock<DurableTimerSnapshot>,
 }
 
-impl Default for DurableTimerSchedulerState {
+impl Default for DurableTimerProjectionState {
     fn default() -> Self {
         Self {
             task: Mutex::new(None),
-            data_directory: Mutex::new(None),
-            migration_paused: AtomicBool::new(false),
-            snapshot: RwLock::new(DurableTimerSnapshot::default()),
         }
     }
 }
 
-pub(crate) struct DurableTimerMigrationSnapshot {
-    pub(crate) was_running: bool,
-    pub(crate) data_directory: Option<String>,
+pub(crate) struct CoreDurableTimerState {
+    task: Mutex<Option<JoinHandle<()>>>,
+    database_path: Mutex<Option<PathBuf>>,
+    snapshot: Arc<RwLock<DurableTimerSnapshot>>,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+impl Default for CoreDurableTimerState {
+    fn default() -> Self {
+        Self {
+            task: Mutex::new(None),
+            database_path: Mutex::new(None),
+            snapshot: Arc::new(RwLock::new(DurableTimerSnapshot::default())),
+        }
+    }
+}
+
+pub(crate) struct CoreDurableTimerMigrationSnapshot {
+    pub(crate) was_running: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DurableTimerStatus {
     Stopped,
@@ -51,7 +66,7 @@ pub(crate) enum DurableTimerStatus {
     Degraded,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DurableTimerSnapshot {
     status: DurableTimerStatus,
@@ -95,9 +110,11 @@ struct DurableTimerMetrics {
 
 #[tauri::command]
 pub(crate) async fn get_workflow_timer_snapshot(
-    state: State<'_, DurableTimerSchedulerState>,
+    app: AppHandle,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
 ) -> Result<DurableTimerSnapshot, String> {
-    Ok(state.snapshot.read().await.clone())
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::get_workflow_timer_snapshot(&endpoint).await
 }
 
 #[derive(Deserialize)]
@@ -184,95 +201,136 @@ pub(crate) async fn cancel_workflow_timer(
     cancel_workflow_timer_in_pool(connection.as_ref(), &input.wait_condition_id, now_millis()).await
 }
 
-pub(crate) async fn ensure_scheduler(
+pub(crate) async fn ensure_snapshot_projection(
     app: &AppHandle,
-    state: &DurableTimerSchedulerState,
-    data_directory: Option<String>,
+    state: &DurableTimerProjectionState,
 ) -> Result<(), String> {
     let mut task = state.task.lock().await;
-    if state.migration_paused.load(Ordering::SeqCst) {
-        return Err("数据目录迁移期间不能启动 Durable Timer scheduler。".to_string());
-    }
-    let same_directory = *state.data_directory.lock().await == data_directory;
-    if same_directory && task.as_ref().is_some_and(|task| !task.is_finished()) {
+    if task.as_ref().is_some_and(|task| !task.is_finished()) {
         return Ok(());
     }
     if let Some(existing) = task.take() {
         existing.abort();
     }
-    *state.data_directory.lock().await = data_directory.clone();
-    update_timer_snapshot(app, |snapshot| {
-        snapshot.status = DurableTimerStatus::Running;
-        snapshot.last_error = None;
-    })
-    .await;
     let app = app.clone();
     *task = Some(tokio::spawn(async move {
-        run_scheduler(app, data_directory).await;
+        run_snapshot_projection(app).await;
     }));
     Ok(())
 }
 
-pub(crate) async fn quiesce_for_data_migration(
-    state: &DurableTimerSchedulerState,
-) -> DurableTimerMigrationSnapshot {
-    state.migration_paused.store(true, Ordering::SeqCst);
-    let existing = state.task.lock().await.take();
-    let was_running = existing.as_ref().is_some_and(|task| !task.is_finished());
-    if let Some(existing) = existing {
-        existing.abort();
-        let _ = existing.await;
-    }
-    state.snapshot.write().await.status = DurableTimerStatus::Paused;
-    DurableTimerMigrationSnapshot {
-        was_running,
-        data_directory: state.data_directory.lock().await.clone(),
+async fn run_snapshot_projection(app: AppHandle) {
+    let mut ticker = tokio::time::interval(Duration::from_secs(1));
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    loop {
+        ticker.tick().await;
+        let core_state = app.state::<crate::core_supervisor::HeadlessCoreSupervisorState>();
+        let snapshot = match crate::core_supervisor::active_endpoint(&app, core_state.inner()).await
+        {
+            Ok(endpoint) => crate::core_server::get_workflow_timer_snapshot(&endpoint).await,
+            Err(error) => Err(error),
+        };
+        match snapshot {
+            Ok(snapshot) => {
+                let _ = app.emit(TIMER_STATUS_EVENT, snapshot);
+            }
+            Err(error) => {
+                let _ = app.emit(TIMER_STATUS_EVENT, DurableTimerSnapshot::degraded(error));
+            }
+        }
     }
 }
 
-pub(crate) async fn resume_after_data_migration(
-    app: &AppHandle,
-    state: &DurableTimerSchedulerState,
-    snapshot: DurableTimerMigrationSnapshot,
-    data_directory: Option<String>,
-) {
-    let mut task = state.task.lock().await;
-    *state.data_directory.lock().await = data_directory.clone();
-    if snapshot.was_running {
-        update_timer_snapshot(app, |timer_snapshot| {
-            timer_snapshot.status = DurableTimerStatus::Running;
-            timer_snapshot.last_error = None;
+impl DurableTimerSnapshot {
+    fn degraded(error: String) -> Self {
+        Self {
+            status: DurableTimerStatus::Degraded,
+            last_tick_at: Some(now_millis()),
+            last_error: Some(truncate_error(&error)),
+            ..Self::default()
+        }
+    }
+}
+
+impl CoreDurableTimerState {
+    pub(crate) async fn ensure_for_directory(&self, directory: &Path) -> Result<(), String> {
+        let database_path = directory.join(database::DATABASE_FILENAME);
+        let mut task = self.task.lock().await;
+        let same_database = self.database_path.lock().await.as_ref() == Some(&database_path);
+        if same_database && task.as_ref().is_some_and(|task| !task.is_finished()) {
+            return Ok(());
+        }
+        if let Some(existing) = task.take() {
+            existing.abort();
+            let _ = existing.await;
+        }
+        *self.database_path.lock().await = Some(database_path.clone());
+        update_core_snapshot(&self.snapshot, |snapshot| {
+            snapshot.status = DurableTimerStatus::Running;
+            snapshot.last_error = None;
         })
         .await;
-        let app = app.clone();
+        let snapshot = Arc::clone(&self.snapshot);
         *task = Some(tokio::spawn(async move {
-            run_scheduler(app, data_directory).await;
+            run_scheduler(database_path, snapshot).await;
         }));
+        Ok(())
     }
-    state.migration_paused.store(false, Ordering::SeqCst);
+
+    pub(crate) async fn snapshot(&self) -> DurableTimerSnapshot {
+        self.snapshot.read().await.clone()
+    }
+
+    pub(crate) async fn quiesce(&self) -> CoreDurableTimerMigrationSnapshot {
+        let existing = self.task.lock().await.take();
+        let was_running = existing.as_ref().is_some_and(|task| !task.is_finished());
+        if let Some(existing) = existing {
+            existing.abort();
+            let _ = existing.await;
+        }
+        self.snapshot.write().await.status = DurableTimerStatus::Paused;
+        CoreDurableTimerMigrationSnapshot { was_running }
+    }
+
+    pub(crate) async fn quiesce_if_directory(&self, directory: &Path) {
+        let database_path = directory.join(database::DATABASE_FILENAME);
+        let matches_directory = self.database_path.lock().await.as_ref() == Some(&database_path);
+        if matches_directory {
+            self.quiesce().await;
+        }
+    }
+
+    pub(crate) async fn shutdown(&self) {
+        let existing = self.task.lock().await.take();
+        if let Some(existing) = existing {
+            existing.abort();
+            let _ = existing.await;
+        }
+        self.snapshot.write().await.status = DurableTimerStatus::Stopped;
+    }
 }
 
-async fn run_scheduler(app: AppHandle, data_directory: Option<String>) {
+async fn run_scheduler(database_path: PathBuf, snapshot: Arc<RwLock<DurableTimerSnapshot>>) {
     let worker_id = new_id("timer-worker");
     let mut ticker = tokio::time::interval(Duration::from_secs(1));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     loop {
         ticker.tick().await;
         let now = now_millis();
-        update_timer_snapshot(&app, |snapshot| {
+        update_core_snapshot(&snapshot, |snapshot| {
             snapshot.status = DurableTimerStatus::Running;
             snapshot.last_tick_at = Some(now);
         })
         .await;
-        let connection = match database::open_database(&app, data_directory.clone()).await {
+        let connection = match database::get_pool_for_path(&database_path, false).await {
             Ok(connection) => connection,
             Err(error) => {
-                record_timer_error(&app, now, error).await;
+                record_timer_error(&snapshot, now, error).await;
                 continue;
             }
         };
         if let Err(error) = dead_letter_exhausted_timers(connection.as_ref(), now).await {
-            record_timer_error(&app, now, error).await;
+            record_timer_error(&snapshot, now, error).await;
             continue;
         }
         let timers = match claim_due_timers(
@@ -286,7 +344,7 @@ async fn run_scheduler(app: AppHandle, data_directory: Option<String>) {
         {
             Ok(timers) => timers,
             Err(error) => {
-                record_timer_error(&app, now, error).await;
+                record_timer_error(&snapshot, now, error).await;
                 continue;
             }
         };
@@ -316,11 +374,11 @@ async fn run_scheduler(app: AppHandle, data_directory: Option<String>) {
         let metrics = match load_timer_metrics(connection.as_ref(), now).await {
             Ok(metrics) => metrics,
             Err(error) => {
-                record_timer_error(&app, now, error).await;
+                record_timer_error(&snapshot, now, error).await;
                 continue;
             }
         };
-        update_timer_snapshot(&app, |snapshot| {
+        update_core_snapshot(&snapshot, |snapshot| {
             snapshot.status = if last_error.is_some() {
                 DurableTimerStatus::Degraded
             } else {
@@ -380,18 +438,16 @@ async fn load_timer_metrics(
     })
 }
 
-async fn update_timer_snapshot(app: &AppHandle, update: impl FnOnce(&mut DurableTimerSnapshot)) {
-    let state = app.state::<DurableTimerSchedulerState>();
-    let next = {
-        let mut snapshot = state.snapshot.write().await;
-        update(&mut snapshot);
-        snapshot.clone()
-    };
-    let _ = app.emit(TIMER_STATUS_EVENT, next);
+async fn update_core_snapshot(
+    snapshot: &RwLock<DurableTimerSnapshot>,
+    update: impl FnOnce(&mut DurableTimerSnapshot),
+) {
+    let mut snapshot = snapshot.write().await;
+    update(&mut snapshot);
 }
 
-async fn record_timer_error(app: &AppHandle, now: i64, error: String) {
-    update_timer_snapshot(app, |snapshot| {
+async fn record_timer_error(state: &RwLock<DurableTimerSnapshot>, now: i64, error: String) {
+    update_core_snapshot(state, |snapshot| {
         snapshot.status = DurableTimerStatus::Degraded;
         snapshot.last_tick_at = Some(now);
         snapshot.last_error = Some(truncate_error(&error));
@@ -1278,17 +1334,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn data_migration_quiesce_aborts_scheduler_and_preserves_its_directory() {
-        struct DropSignal(std::sync::Arc<AtomicBool>);
+    async fn core_data_migration_quiesce_aborts_scheduler() {
+        struct DropSignal(std::sync::Arc<std::sync::atomic::AtomicBool>);
         impl Drop for DropSignal {
             fn drop(&mut self) {
-                self.0.store(true, Ordering::SeqCst);
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
             }
         }
 
-        let state = DurableTimerSchedulerState::default();
-        *state.data_directory.lock().await = Some("C:/source".to_string());
-        let stopped = std::sync::Arc::new(AtomicBool::new(false));
+        let state = CoreDurableTimerState::default();
+        *state.database_path.lock().await = Some(PathBuf::from("C:/source/editor.db"));
+        let stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let signal = std::sync::Arc::clone(&stopped);
         let task = tokio::spawn(async move {
             let _signal = DropSignal(signal);
@@ -1297,11 +1353,9 @@ mod tests {
         tokio::task::yield_now().await;
         *state.task.lock().await = Some(task);
 
-        let snapshot = quiesce_for_data_migration(&state).await;
+        let snapshot = state.quiesce().await;
         assert!(snapshot.was_running);
-        assert_eq!(snapshot.data_directory.as_deref(), Some("C:/source"));
-        assert!(stopped.load(Ordering::SeqCst));
-        assert!(state.migration_paused.load(Ordering::SeqCst));
+        assert!(stopped.load(std::sync::atomic::Ordering::SeqCst));
         assert!(state.task.lock().await.is_none());
     }
 }

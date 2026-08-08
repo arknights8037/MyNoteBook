@@ -95,7 +95,7 @@ Migration `0011` 为 Generated View 增加 generation/override/provenance 字段
 
 Rust 为每个数据目录复用小型读写池，并为 WebView 查询维护独立只读池；WebView 不持有连接。WAL 模式提高并发读写的可靠性，只读池由 SQLite 连接级保护拒绝写语句。
 
-移动数据目录前，Rust 会持有 Agent start gate，暂停并等待 A2A watcher、Durable Timer 和钉钉 connector，拒绝仍有活动 Run 的迁移，完整关闭空闲 sidecar，再关闭对应读写池和只读池。迁移先在目标目录内统一暂存 `editor.db`、WAL/SHM、`assets/`、`skills/`、`mcp-servers.json`、`mcp-server-exposure.json`，以及 `work_artifacts.uri` 引用且位于旧数据目录内的本地文件；暂存数据库通过完整性、外键和附件文件校验后才会启用。目标目录已有的受管内容会整体移入 `.my-notebook-backup-<timestamp>/`，任一步启用失败都会恢复该备份，避免数据库与附件处于不同版本。成功后 watcher、timer 与 Worker 绑定目标目录；失败时恢复原目录，connector 由随后一次数据库准备重新启动。
+移动数据目录前，Rust 会持有 Agent start gate，暂停并等待 A2A watcher 和钉钉 connector，并通过受凭证保护的 Headless Core 协议 quiesce Durable Timer；仍有活动 Run 时拒绝迁移，空闲 sidecar 会完整关闭，Core 与 Desktop 的对应读写池和只读池随后关闭。迁移先在目标目录内统一暂存 `editor.db`、WAL/SHM、`assets/`、`skills/`、`mcp-servers.json`、`mcp-server-exposure.json`，以及 `work_artifacts.uri` 引用且位于旧数据目录内的本地文件；暂存数据库通过完整性、外键和附件文件校验后才会启用。目标目录已有的受管内容会整体移入 `.my-notebook-backup-<timestamp>/`，任一步启用失败都会恢复该备份，避免数据库与附件处于不同版本。成功后 watcher、Core Timer 与 Worker 绑定目标目录；失败时 Core Timer 和其他 Runtime 恢复原目录，connector 由随后一次数据库准备重新启动。
 
 迁移会把历史遗留的绝对 `assets.relative_path` 规范化为安全的 `assets/...` 相对路径，并只重写 `work_artifacts.uri` 中位于旧数据目录内的普通本地路径或 `file:` URI。HTTP、MCP 等外部 URI、`documents.source_url` 以及 MCP 命令的 `cwd/command/args` 不会被改写。API Key 密文位于独立的系统本地数据目录，也不随知识库数据位置迁移。
 

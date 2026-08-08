@@ -375,7 +375,8 @@ P4.5 的 envelope 脚手架已经收敛为上述生产 Workflow 与 Action Gatew
 - 已建立独立无 Tauri Headless Core 进程入口。Desktop 可发现或拉起 Core，但不会因窗口关闭或 Desktop 退出主动终止 Core。
 - v1 控制面只监听随机 `127.0.0.1` 端口，使用每实例 CSPRNG 凭证、磁盘 endpoint 身份、健康检查和 major/minor 协商；凭证不进入 WebView snapshot。
 - 数据库 prepare、WebView 只读 query、封闭 mutation catalog 与 read-pool close 已经通过协议 `1.1` 进入 Core；数据目录迁移会先关闭 Core 和 Desktop 两侧相关 pool。其他 Rust 领域模块暂时仍直接使用 Desktop pool。
-- 当前只完成控制进程与协议地基，数据库、Event、Workflow、Connector、Action 和 Worker Supervisor 尚未迁入 Core，因此本阶段尚未达到退出条件，也不宣称已经实现进程级 SQLite 唯一所有权。
+- 协议 `1.2` 已把 Durable Timer 的调度循环、lease/retry/Dead Letter、触发事务和健康快照迁入 Core。Desktop 只代理快照并投影 `workflow-timer://status`；数据目录迁移通过 Core 的 quiesce/resume 路由切换计时器所有权。
+- 当前已完成控制进程、WebView 数据库 catalog 与 Durable Timer 迁移；Event/Outbox dispatcher、Workflow dispatcher、Connector、Action 和 Worker Supervisor 尚未迁入 Core，因此本阶段尚未达到退出条件，也不宣称已经实现进程级 SQLite 唯一所有权。
 
 实现事实、威胁边界与迁移顺序见 [Headless Core 进程与本地协议](headless-core.md)。
 

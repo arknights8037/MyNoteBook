@@ -177,7 +177,7 @@ pub fn run() {
         .manage(dingtalk::DingTalkRuntimeState::default())
         .manage(agent_worker_supervisor::AgentWorkerSupervisorState::default())
         .manage(agent_request_watcher::AgentRequestWatcherState::default())
-        .manage(workflow_timers::DurableTimerSchedulerState::default())
+        .manage(workflow_timers::DurableTimerProjectionState::default())
         .invoke_handler(tauri::generate_handler![
             storage::get_system_fonts,
             local_environment::get_local_environment_snapshot,
