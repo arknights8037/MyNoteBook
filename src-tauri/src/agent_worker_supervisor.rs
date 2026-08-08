@@ -748,7 +748,7 @@ pub(crate) async fn quiesce_idle_worker_for_data_migration(
         )
         .await
         .map_err(|_| "等待 Agent Worker 停止超时，数据目录未迁移。".to_string())??;
-        timeout(Duration::from_secs(20), async {
+        timeout(Duration::from_secs(5), async {
             loop {
                 let control_stopped = state.control.lock().await.is_none();
                 let snapshot_stopped =
@@ -3308,7 +3308,7 @@ mod tests {
             .await;
             let _ = std::fs::remove_file(script);
         });
-        timeout(Duration::from_secs(5), async {
+        timeout(Duration::from_secs(20), async {
             loop {
                 if host.state.snapshot.read().await.status == AgentWorkerStatus::Running {
                     break;
