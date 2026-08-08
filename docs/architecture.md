@@ -85,8 +85,8 @@ Knowledge Object 可锚定 document/block/revision。Context Compiler 已读取�
 - `core_server.rs`：无 Tauri Headless Core 进程入口、loopback endpoint、随机实例身份、健康检查、协议协商和显式维护关闭。
 - `core_supervisor.rs`：Desktop 对 Headless Core 的发现/拉起与脱敏状态投影；不在 Desktop 退出时关闭 Core。
 - `database.rs`：数据库路径、连接池、迁移、旧库基线和可靠性设置。
-- `database_mutations.rs`：WebView repository 写入使用的封闭 mutation catalog、参数校验与固定 SQL。
-- `database_queries.rs`：WebView 参数化读取的只读 SQLx pool、行序列化与连接关闭边界。
+- `database_mutations.rs`：WebView repository 写入使用的封闭 mutation catalog、参数校验与固定 SQL；Tauri command 通过 Headless Core 协议执行 catalog。
+- `database_queries.rs`：WebView 参数化读取的只读 SQL、行序列化与连接关闭边界；Tauri command 通过 Headless Core 的只读 SQLx pool 执行。
 - `document_core.rs`：可信文档校验、投影生成、持久化和修复。
 - `agent_repository.rs`：Agent task、Context Bundle、Patch、事务与审计持久化。
 - `agent_tools.rs`：数据库工具、只读命令和 Rust 线性时间正则执行。

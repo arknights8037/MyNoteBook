@@ -61,6 +61,7 @@ pub fn get_default_data_directory(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub async fn migrate_data_directory(
     app: AppHandle,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     watcher_state: State<'_, crate::agent_request_watcher::AgentRequestWatcherState>,
     timer_state: State<'_, crate::workflow_timers::DurableTimerSchedulerState>,
     worker_state: State<'_, crate::agent_worker_supervisor::AgentWorkerSupervisorState>,
@@ -117,6 +118,7 @@ pub async fn migrate_data_directory(
     let timer_snapshot =
         crate::workflow_timers::quiesce_for_data_migration(timer_state.inner()).await;
     let mut worker_snapshot = None;
+    let core_endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
     let migration_result = async {
         let active_runs = crate::agent_worker_supervisor::active_run_ids(&app).await;
         if !active_runs.is_empty() {
@@ -132,6 +134,14 @@ pub async fn migrate_data_directory(
             worker_state.inner(),
         )
         .await?;
+        for directory in [
+            &requested_source_directory,
+            &source_directory,
+            &requested_destination_directory,
+            &destination_directory,
+        ] {
+            crate::core_server::close_database_pool(&core_endpoint, directory).await?;
+        }
         for path in [
             requested_source_directory.join(DATABASE_FILENAME),
             source_path.clone(),

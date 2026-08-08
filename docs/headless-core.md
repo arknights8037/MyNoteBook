@@ -1,6 +1,6 @@
 # Headless Core 进程与本地协议
 
-本文记录 Phase 6 的当前实现事实、协议安全边界和后续迁移顺序。Phase 6 尚未完成；当前只落地独立 Core 控制进程与 Desktop 发现协议，数据库、Workflow、Connector 和 Action 的所有权仍在后续迁移中。
+本文记录 Phase 6 的当前实现事实、协议安全边界和后续迁移顺序。Phase 6 尚未完成；当前已落地独立 Core 控制进程、Desktop 发现协议，以及 WebView 数据库 prepare/query/mutation catalog，Workflow、Connector、Action 和其他 Rust 数据库所有权仍在后续迁移中。
 
 ## 当前进程拓扑
 
@@ -41,19 +41,19 @@ Core 只绑定 `127.0.0.1:0`，启动后在应用用户配置目录的 `headless
 | `POST /v1/handshake` | 校验 major，协商双方支持的 minor              |
 | `POST /v1/shutdown`  | 受凭证保护的显式维护关闭；Desktop 退出不调用  |
 
-major 不一致必须拒绝连接；minor 取双方最小值。endpoint 中的实例身份必须与在线响应一致，不能只信任 PID 或磁盘文件。
+major 不一致必须拒绝连接；Core minor 低于 Desktop 所需 minor 时同样拒绝，较旧 Desktop 可连接较新 Core。Desktop 发现不兼容实例后使用旧 endpoint 的受权 shutdown 完成替换，不能让缺少新路由的旧 Core 继续服务。endpoint 中的实例身份必须与在线响应一致，不能只信任 PID 或磁盘文件。
 
 ## 所有权迁移顺序
 
 当前控制面不等于 Phase 6 完成。后续必须按以下顺序迁移，期间不得同时宣称两个进程拥有同一事实：
 
-1. 将数据库路径解析、migration、读写 pool 和 mutation/query catalog 移入 Core RPC。
+1. 将数据库路径解析、migration、读写 pool 和 mutation/query catalog 移入 Core RPC。（已迁移 WebView catalog；其他 Rust 领域模块仍待迁移）
 2. 将 Durable Timer、Outbox、Workflow、Automation、Signal 和 Connector watcher 移入 Core。
 3. 将 Agent Worker Supervisor 移入 Core；Desktop 仅订阅脱敏事件并提交交互命令。
 4. 为数据目录迁移建立 Core 级 quiesce/commit/rollback，Desktop 不再直接关闭 pool。
 5. 完成 Desktop/Core/Worker 各自崩溃、重启、版本不兼容、旧 endpoint、活动 Run 和安装升级验收。
 
-在第 1–4 步完成前，SQLite 的进程级唯一所有权仍属于现有 Desktop Rust 进程，Headless Core 只拥有自己的控制面状态。
+在第 1–4 步完成前，SQLite 尚未达到进程级唯一所有权：WebView catalog 已由 Headless Core 执行，但现有 Desktop Rust 领域模块仍会打开数据库。文档和实现都不得把这段迁移期描述成 Core 已完全接管。
 
 ## 验收边界
 

@@ -1,47 +1,48 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 use sqlx::{
     query::Query,
     sqlite::{SqliteArguments, SqliteRow},
     Column, Row, Sqlite, SqlitePool, TypeInfo, ValueRef,
 };
-use tauri::AppHandle;
+use tauri::{AppHandle, State};
 
-use crate::database::{
-    close_read_only_pool, configured_data_directory, database_error, open_read_only_database,
-    DATABASE_FILENAME,
-};
+use crate::database::{configured_data_directory, database_error};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecuteDatabaseQueryInput {
-    data_directory: Option<String>,
-    query: String,
+    pub(crate) data_directory: Option<String>,
+    pub(crate) query: String,
     #[serde(default)]
-    values: Vec<Value>,
+    pub(crate) values: Vec<Value>,
 }
 
 #[tauri::command]
 pub async fn execute_database_query(
     app: AppHandle,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     input: ExecuteDatabaseQueryInput,
 ) -> Result<Vec<Map<String, Value>>, String> {
-    let pool = open_read_only_database(&app, input.data_directory).await?;
-    execute_database_query_in_pool(pool.as_ref(), &input.query, input.values).await
+    let directory =
+        configured_data_directory(&app, input.data_directory).map_err(database_error)?;
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::execute_database_query(&endpoint, &directory, input.query, input.values)
+        .await
 }
 
 #[tauri::command]
 pub async fn close_database_read_pool(
     app: AppHandle,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     data_directory: Option<String>,
 ) -> Result<bool, String> {
-    let path = configured_data_directory(&app, data_directory)
-        .map_err(database_error)?
-        .join(DATABASE_FILENAME);
-    Ok(close_read_only_pool(&path).await)
+    let directory = configured_data_directory(&app, data_directory).map_err(database_error)?;
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    crate::core_server::close_database_read_pool(&endpoint, &directory).await
 }
 
-async fn execute_database_query_in_pool(
+pub(crate) async fn execute_database_query_in_pool(
     pool: &SqlitePool,
     statement: &str,
     values: Vec<Value>,

@@ -14,13 +14,14 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tokio::{net::TcpListener, sync::oneshot};
 
 pub const CORE_PROTOCOL_MAJOR: u16 = 1;
-pub const CORE_PROTOCOL_MINOR: u16 = 0;
+pub const CORE_PROTOCOL_MINOR: u16 = 1;
 pub const CORE_ENDPOINT_FILENAME: &str = "endpoint-v1.json";
 const CORE_LOCK_FILENAME: &str = "instance-v1.lock";
 const HEADLESS_CORE_FLAG: &str = "--mynotebook-headless-core";
@@ -72,6 +73,28 @@ struct HandshakeResponse {
 struct CoreServerState {
     endpoint: CoreEndpointDescriptor,
     shutdown: Mutex<Option<oneshot::Sender<()>>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DatabasePrepareRequest {
+    directory: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DatabaseQueryRequest {
+    directory: String,
+    query: String,
+    values: Vec<Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DatabaseMutationRequest {
+    directory: String,
+    mutation: crate::database_mutations::DatabaseMutation,
+    values: Vec<Value>,
 }
 
 pub fn is_headless_core_process() -> bool {
@@ -173,6 +196,131 @@ pub(crate) async fn negotiate_endpoint(
     Ok(handshake.core)
 }
 
+pub(crate) async fn prepare_database(
+    endpoint: &CoreEndpointDescriptor,
+    directory: &Path,
+) -> Result<crate::database::DatabasePreparation, String> {
+    post_authenticated(
+        endpoint,
+        "/v1/database/prepare",
+        &DatabasePrepareRequest {
+            directory: directory.to_string_lossy().into_owned(),
+        },
+    )
+    .await
+}
+
+pub(crate) async fn execute_database_query(
+    endpoint: &CoreEndpointDescriptor,
+    directory: &Path,
+    query: String,
+    values: Vec<Value>,
+) -> Result<Vec<Map<String, Value>>, String> {
+    post_authenticated(
+        endpoint,
+        "/v1/database/query",
+        &DatabaseQueryRequest {
+            directory: directory.to_string_lossy().into_owned(),
+            query,
+            values,
+        },
+    )
+    .await
+}
+
+pub(crate) async fn execute_database_mutation(
+    endpoint: &CoreEndpointDescriptor,
+    directory: &Path,
+    mutation: crate::database_mutations::DatabaseMutation,
+    values: Vec<Value>,
+) -> Result<crate::database_mutations::ExecuteDatabaseMutationResult, String> {
+    post_authenticated(
+        endpoint,
+        "/v1/database/mutation",
+        &DatabaseMutationRequest {
+            directory: directory.to_string_lossy().into_owned(),
+            mutation,
+            values,
+        },
+    )
+    .await
+}
+
+pub(crate) async fn close_database_read_pool(
+    endpoint: &CoreEndpointDescriptor,
+    directory: &Path,
+) -> Result<bool, String> {
+    post_authenticated(
+        endpoint,
+        "/v1/database/close-read-pool",
+        &DatabasePrepareRequest {
+            directory: directory.to_string_lossy().into_owned(),
+        },
+    )
+    .await
+}
+
+pub(crate) async fn close_database_pool(
+    endpoint: &CoreEndpointDescriptor,
+    directory: &Path,
+) -> Result<(), String> {
+    post_authenticated::<_, bool>(
+        endpoint,
+        "/v1/database/close-pool",
+        &DatabasePrepareRequest {
+            directory: directory.to_string_lossy().into_owned(),
+        },
+    )
+    .await
+    .map(|_| ())
+}
+
+pub(crate) async fn shutdown_endpoint(endpoint: &CoreEndpointDescriptor) -> Result<(), String> {
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .map_err(|error| format!("创建 Headless Core client 失败：{error}"))?
+        .post(format!("http://{}/v1/shutdown", endpoint.address))
+        .bearer_auth(&endpoint.credential)
+        .send()
+        .await
+        .map_err(|error| format!("关闭不兼容 Headless Core 失败：{error}"))?;
+    if response.status() != reqwest::StatusCode::ACCEPTED {
+        return Err(format!("Headless Core 拒绝维护关闭：{}", response.status()));
+    }
+    Ok(())
+}
+
+async fn post_authenticated<Request, Response>(
+    endpoint: &CoreEndpointDescriptor,
+    path: &str,
+    request: &Request,
+) -> Result<Response, String>
+where
+    Request: Serialize + ?Sized,
+    Response: DeserializeOwned,
+{
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5 * 60))
+        .build()
+        .map_err(|error| format!("创建 Headless Core client 失败：{error}"))?
+        .post(format!("http://{}{}", endpoint.address, path))
+        .bearer_auth(&endpoint.credential)
+        .json(request)
+        .send()
+        .await
+        .map_err(|error| format!("调用 Headless Core 失败：{error}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let message = response.text().await.unwrap_or_default();
+        return Err(format!("Headless Core {path} 返回 {status}：{message}"));
+    }
+    response
+        .json::<Response>()
+        .await
+        .map_err(|error| format!("解析 Headless Core {path} 响应失败：{error}"))
+}
+
 async fn run_headless_core(endpoint_directory: &Path) -> Result<(), String> {
     fs::create_dir_all(endpoint_directory)
         .map_err(|error| format!("创建 Headless Core 目录失败：{error}"))?;
@@ -211,6 +359,14 @@ async fn run_headless_core(endpoint_directory: &Path) -> Result<(), String> {
         .route("/v1/health", get(health))
         .route("/v1/handshake", post(handshake))
         .route("/v1/shutdown", post(shutdown))
+        .route("/v1/database/prepare", post(database_prepare))
+        .route("/v1/database/query", post(database_query))
+        .route("/v1/database/mutation", post(database_mutation))
+        .route(
+            "/v1/database/close-read-pool",
+            post(database_close_read_pool),
+        )
+        .route("/v1/database/close-pool", post(database_close_pool))
         .with_state(state);
     let result = axum::serve(listener, router)
         .with_graceful_shutdown(async {
@@ -238,10 +394,11 @@ async fn handshake(
     Json(request): Json<HandshakeRequest>,
 ) -> Result<Json<HandshakeResponse>, StatusCode> {
     authorize(&headers, &state.endpoint.credential)?;
-    let accepted = request.protocol_major == CORE_PROTOCOL_MAJOR;
+    let accepted = request.protocol_major == CORE_PROTOCOL_MAJOR
+        && request.protocol_minor <= CORE_PROTOCOL_MINOR;
     let reason = (!accepted).then(|| {
         format!(
-            "{} {} 使用协议 {}.{}，Core 仅支持 {}.{}",
+            "{} {} 要求协议 {}.{}，Core 当前为 {}.{}",
             request.client_name,
             request.app_version,
             request.protocol_major,
@@ -272,6 +429,112 @@ async fn shutdown(
         let _ = sender.send(());
     }
     Ok(StatusCode::ACCEPTED)
+}
+
+async fn database_prepare(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<DatabasePrepareRequest>,
+) -> Result<Json<crate::database::DatabasePreparation>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    let directory = normalize_database_directory(&request.directory)?;
+    crate::database::prepare_database_path(&directory, &crate::database::DATABASE_MIGRATOR)
+        .await
+        .map(Json)
+        .map_err(internal_api_error)
+}
+
+async fn database_query(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<DatabaseQueryRequest>,
+) -> Result<Json<Vec<Map<String, Value>>>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    let directory = normalize_database_directory(&request.directory)?;
+    let pool = crate::database::get_read_only_pool_for_path(
+        &directory.join(crate::database::DATABASE_FILENAME),
+    )
+    .await
+    .map_err(internal_api_error)?;
+    crate::database_queries::execute_database_query_in_pool(
+        pool.as_ref(),
+        &request.query,
+        request.values,
+    )
+    .await
+    .map(Json)
+    .map_err(internal_api_error)
+}
+
+async fn database_mutation(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<DatabaseMutationRequest>,
+) -> Result<Json<crate::database_mutations::ExecuteDatabaseMutationResult>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    let directory = normalize_database_directory(&request.directory)?;
+    let pool = crate::database::get_pool_for_path(
+        &directory.join(crate::database::DATABASE_FILENAME),
+        false,
+    )
+    .await
+    .map_err(internal_api_error)?;
+    crate::database_mutations::execute_database_mutation_in_pool(
+        pool.as_ref(),
+        request.mutation,
+        request.values,
+    )
+    .await
+    .map(Json)
+    .map_err(internal_api_error)
+}
+
+async fn database_close_read_pool(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<DatabasePrepareRequest>,
+) -> Result<Json<bool>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    let directory = normalize_database_directory(&request.directory)?;
+    Ok(Json(
+        crate::database::close_read_only_pool(&directory.join(crate::database::DATABASE_FILENAME))
+            .await,
+    ))
+}
+
+async fn database_close_pool(
+    State(state): State<Arc<CoreServerState>>,
+    headers: HeaderMap,
+    Json(request): Json<DatabasePrepareRequest>,
+) -> Result<Json<bool>, (StatusCode, String)> {
+    authorize_api(&headers, &state.endpoint.credential)?;
+    let directory = normalize_database_directory(&request.directory)?;
+    crate::database::close_pool(&directory.join(crate::database::DATABASE_FILENAME))
+        .await
+        .map_err(internal_api_error)?;
+    Ok(Json(true))
+}
+
+fn authorize_api(headers: &HeaderMap, credential: &str) -> Result<(), (StatusCode, String)> {
+    authorize(headers, credential).map_err(|status| (status, "unauthorized".to_string()))
+}
+
+fn normalize_database_directory(value: &str) -> Result<PathBuf, (StatusCode, String)> {
+    let directory = PathBuf::from(value);
+    if value.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "数据库目录不能为空。".to_string()));
+    }
+    if directory.is_absolute() {
+        Ok(directory)
+    } else {
+        std::env::current_dir()
+            .map(|current| current.join(directory))
+            .map_err(|error| internal_api_error(format!("解析数据库目录失败：{error}")))
+    }
+}
+
+fn internal_api_error(error: String) -> (StatusCode, String) {
+    (StatusCode::INTERNAL_SERVER_ERROR, error)
 }
 
 fn authorize(headers: &HeaderMap, credential: &str) -> Result<(), StatusCode> {
@@ -465,6 +728,35 @@ mod tests {
             .await
             .expect("negotiate compatible protocol");
         assert_eq!(health.role, "headless_core");
+        let database_directory = directory.join("data");
+        let preparation = prepare_database(&endpoint, &database_directory)
+            .await
+            .expect("prepare database through Core");
+        assert!(Path::new(&preparation.database_path).is_file());
+        let rows = execute_database_query(
+            &endpoint,
+            &database_directory,
+            "SELECT COUNT(*) AS count FROM _sqlx_migrations".to_string(),
+            Vec::new(),
+        )
+        .await
+        .expect("query database through Core");
+        assert!(rows[0].get("count").and_then(Value::as_i64).unwrap_or(0) > 0);
+        let mutation = execute_database_mutation(
+            &endpoint,
+            &database_directory,
+            crate::database_mutations::DatabaseMutation::MarkInterruptedAgentTasks,
+            vec![Value::from(now_millis())],
+        )
+        .await
+        .expect("execute catalog mutation through Core");
+        assert_eq!(mutation.rows_affected, 0);
+        assert!(close_database_read_pool(&endpoint, &database_directory)
+            .await
+            .expect("close Core read pool"));
+        close_database_pool(&endpoint, &database_directory)
+            .await
+            .expect("close all Core database pools");
         let incompatible = reqwest::Client::new()
             .post(format!("http://{}/v1/handshake", endpoint.address))
             .bearer_auth(&endpoint.credential)
@@ -481,6 +773,22 @@ mod tests {
             .await
             .expect("incompatible response");
         assert!(!incompatible.accepted);
+        let future_minor = reqwest::Client::new()
+            .post(format!("http://{}/v1/handshake", endpoint.address))
+            .bearer_auth(&endpoint.credential)
+            .json(&HandshakeRequest {
+                client_name: "future-minor-client".to_string(),
+                app_version: "0.1.0".to_string(),
+                protocol_major: CORE_PROTOCOL_MAJOR,
+                protocol_minor: CORE_PROTOCOL_MINOR + 1,
+            })
+            .send()
+            .await
+            .expect("future minor handshake")
+            .json::<HandshakeResponse>()
+            .await
+            .expect("future minor response");
+        assert!(!future_minor.accepted);
         reqwest::Client::new()
             .post(format!("http://{}/v1/shutdown", endpoint.address))
             .bearer_auth(&endpoint.credential)
@@ -489,6 +797,9 @@ mod tests {
             .expect("shutdown request");
         server.await.expect("server task").expect("server shutdown");
         assert!(!endpoint_path(&directory).exists());
+        crate::database::close_pool(&database_directory.join(crate::database::DATABASE_FILENAME))
+            .await
+            .expect("close Core database pools");
         let _ = fs::remove_dir_all(directory);
     }
 }

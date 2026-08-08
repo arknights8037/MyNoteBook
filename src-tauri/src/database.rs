@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
@@ -20,27 +20,29 @@ static DATABASE_POOLS: OnceLock<Mutex<HashMap<PathBuf, Arc<SqlitePool>>>> = Once
 static READ_ONLY_DATABASE_POOLS: OnceLock<Mutex<HashMap<PathBuf, Arc<SqlitePool>>>> =
     OnceLock::new();
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatabasePreparation {
-    database_path: String,
-    backup_path: Option<String>,
-    legacy_baseline_version: Option<i64>,
+    pub(crate) database_path: String,
+    pub(crate) backup_path: Option<String>,
+    pub(crate) legacy_baseline_version: Option<i64>,
 }
 
 #[tauri::command]
 pub async fn prepare_database(
     app: AppHandle,
+    core_state: State<'_, crate::core_supervisor::HeadlessCoreSupervisorState>,
     timer_state: State<'_, crate::workflow_timers::DurableTimerSchedulerState>,
     data_directory: Option<String>,
 ) -> Result<DatabasePreparation, String> {
     let data_directory = data_directory.filter(|value| !value.trim().is_empty());
     let directory =
         configured_data_directory(&app, data_directory.clone()).map_err(database_error)?;
-    let preparation = prepare_database_path(&directory, &DATABASE_MIGRATOR)
+    let endpoint = crate::core_supervisor::active_endpoint(&app, core_state.inner()).await?;
+    let preparation = crate::core_server::prepare_database(&endpoint, &directory)
         .await
         .map_err(|error| {
-            tauri_plugin_log::log::error!("数据库准备失败：{error}");
+            tauri_plugin_log::log::error!("Headless Core 数据库准备失败：{error}");
             error
         })?;
     crate::workflow_timers::ensure_scheduler(&app, timer_state.inner(), data_directory).await?;
@@ -101,16 +103,6 @@ pub async fn open_database(
         .map_err(database_error)?
         .join(DATABASE_FILENAME);
     get_pool_for_path(&path, false).await
-}
-
-pub async fn open_read_only_database(
-    app: &AppHandle,
-    data_directory: Option<String>,
-) -> Result<Arc<SqlitePool>, String> {
-    let path = configured_data_directory(app, data_directory)
-        .map_err(database_error)?
-        .join(DATABASE_FILENAME);
-    get_read_only_pool_for_path(&path).await
 }
 
 pub async fn get_pool_for_path(

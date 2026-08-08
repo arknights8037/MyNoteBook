@@ -67,6 +67,13 @@ pub(crate) async fn ensure_headless_core_inner(
         if let Ok(health) = core_server::negotiate_endpoint(&endpoint, "desktop").await {
             return publish_snapshot(app, state, running_snapshot(&health)).await;
         }
+        let _ = core_server::shutdown_endpoint(&endpoint).await;
+        for _ in 0..40 {
+            if core_server::probe_endpoint(&endpoint).await.is_err() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
     publish_snapshot(
         app,
@@ -104,6 +111,25 @@ pub(crate) async fn ensure_headless_core_inner(
     };
     let _ = publish_snapshot(app, state, snapshot).await;
     Err(last_error)
+}
+
+pub(crate) async fn active_endpoint(
+    app: &AppHandle,
+    state: &HeadlessCoreSupervisorState,
+) -> Result<CoreEndpointDescriptor, String> {
+    let directory = endpoint_directory(app)?;
+    if let Ok(endpoint) = core_server::read_endpoint(&directory) {
+        if core_server::negotiate_endpoint(&endpoint, "desktop")
+            .await
+            .is_ok()
+        {
+            return Ok(endpoint);
+        }
+    }
+    ensure_headless_core_inner(app, state).await?;
+    let endpoint = core_server::read_endpoint(&directory)?;
+    core_server::negotiate_endpoint(&endpoint, "desktop").await?;
+    Ok(endpoint)
 }
 
 fn endpoint_directory(app: &AppHandle) -> Result<PathBuf, String> {
