@@ -1,12 +1,13 @@
 # 自动化任务与审计
 
-> 状态（更新于 2026-07-30）：自动化定义、手动触发、间隔/每日调度和 Rust 后台 Agent 已接通；相关更新事件还能触发自主信号 Agent，处理邮件/RSS/会议并更新本地待办和日历。更多 IM 收纳、外部委派和真实外部动作仍不在本轮范围。
+> 状态（更新于 2026-08-08）：自动化定义、手动触发、间隔/每日调度和 Rust 后台 Agent 已接通统一 Work Item/Workflow；相关更新事件还能触发自主信号 Agent，处理邮件/RSS/会议并更新本地待办和日历。更多 IM 收纳、外部委派和真实外部动作仍未启用。
 
 ## 1. 当前执行链路
 
 ```text
 automation_tasks
   -> 手动“立即运行”或 Rust 检查 next_run_at
+  -> Domain Event -> 来源去重/分类 -> Work Item -> Workflow
   -> automation_runs(status = queued)
   -> Rust 原子领取 + lease + attempt
   -> 冻结文档/RSS 输入
@@ -15,7 +16,7 @@ automation_tasks
   -> task_runs 与审计投影
 ```
 
-WebView 只创建定义、请求手动运行和展示投影，不领取队列、不启动模型、不结算终态。Rust watcher 与 A2A 共用已经配置且不含密钥的后台 Runtime Profile，但自动化使用独立的 `automation_runs` lease、`run_id`、Agent Task 绑定、重试和 Dead Letter 字段。
+WebView 只创建定义、请求手动运行和展示投影，不领取队列、不启动模型、不结算终态。Rust watcher 与 A2A 共用已经配置且不含密钥的后台 Runtime Profile，但自动化使用独立的 `automation_runs` lease、Agent Task 绑定、重试和 Dead Letter 字段；统一 Workflow 另外保存稳定 work item、每次 attempt 的新 `run_id` 和 causation 链。
 
 ## 2. 调度与恢复
 
@@ -50,5 +51,5 @@ RSS 正文中的角色设定、链接要求或操作指令不能改变系统指�
 - 更多 IM 来源的自动收纳和会话级去重；
 - 自动化触发外部委派；
 - 邮件发送、IM 回复、发布等真实外部副作用；
-- 通用事件 Trigger 编辑器和完整 SuspendRequest/等待条件编排；
+- 通用事件 Trigger 的 UI 编辑器；
 - 显式退出 Tauri 进程后的系统服务运行。

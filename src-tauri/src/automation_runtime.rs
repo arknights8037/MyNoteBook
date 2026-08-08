@@ -33,6 +33,7 @@ struct ClaimedAutomationRun {
     source_cursor_at: Option<i64>,
     lease_owner: String,
     attempt_count: i64,
+    workflow: crate::workflow_runtime::WorkflowBinding,
 }
 
 pub(crate) async fn tick(
@@ -248,6 +249,34 @@ pub(crate) async fn settle_run(
         .commit()
         .await
         .map_err(database::database_error)?;
+    let workflow_id = if let Some(workflow_id) = recovery.get("workflowId").and_then(Value::as_str)
+    {
+        Some(workflow_id.to_string())
+    } else {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT workflow_id FROM automation_runs WHERE id = ?",
+        )
+        .bind(automation_run_id)
+        .fetch_optional(connection)
+        .await
+        .map_err(database::database_error)?
+        .flatten()
+    };
+    if let Some(workflow_id) = workflow_id.as_deref() {
+        if waiting_approval {
+            crate::workflow_runtime::mark_waiting_approval(
+                connection,
+                workflow_id,
+                run_id,
+                &report,
+                now,
+            )
+            .await?;
+        } else {
+            crate::workflow_runtime::mark_completed(connection, workflow_id, run_id, &report, now)
+                .await?;
+        }
+    }
     Ok(true)
 }
 
@@ -384,35 +413,47 @@ async fn claim_next_run(connection: &SqlitePool) -> Result<Option<ClaimedAutomat
             .map_err(database::database_error)?;
         return Ok(None);
     }
-    let claimed = ClaimedAutomationRun {
+    let automation_id: String = row
+        .try_get("automation_id")
+        .map_err(database::database_error)?;
+    let trigger_source: String = row
+        .try_get("trigger_source")
+        .map_err(database::database_error)?;
+    let source_type: String = row
+        .try_get("source_type")
+        .unwrap_or_else(|_| "document".to_string());
+    transaction
+        .commit()
+        .await
+        .map_err(database::database_error)?;
+    let workflow = crate::workflow_runtime::ensure_automation_workflow(
+        connection,
+        &id,
+        &automation_id,
+        &trigger_source,
+        &source_type,
+        now,
+    )
+    .await?;
+    Ok(Some(ClaimedAutomationRun {
         id,
-        automation_id: row
-            .try_get("automation_id")
-            .map_err(database::database_error)?,
+        automation_id,
         name: row.try_get("name").map_err(database::database_error)?,
         instruction: row
             .try_get("instruction")
             .map_err(database::database_error)?,
-        trigger_source: row
-            .try_get("trigger_source")
-            .map_err(database::database_error)?,
+        trigger_source,
         document_id: row
             .try_get::<Option<String>, _>("document_id")
             .unwrap_or(None),
-        source_type: row
-            .try_get("source_type")
-            .unwrap_or_else(|_| "document".to_string()),
+        source_type,
         source_cursor_at: row
             .try_get::<Option<i64>, _>("source_cursor_at")
             .unwrap_or(None),
         lease_owner,
         attempt_count: row.try_get::<i64, _>("attempt_count").unwrap_or(0) + 1,
-    };
-    transaction
-        .commit()
-        .await
-        .map_err(database::database_error)?;
-    Ok(Some(claimed))
+        workflow,
+    }))
 }
 
 async fn build_submission(
@@ -441,7 +482,6 @@ async fn build_submission(
     };
     let objective = build_objective(run, &source_context);
     let runtime_run_id = new_id("run");
-    let task_id = new_id("agent-task");
     let now = now_millis();
     sqlx::query(
         "UPDATE automation_runs SET run_id = ?, input_json = ?, source_cursor_at = ? WHERE id = ? AND status = 'running'",
@@ -458,12 +498,20 @@ async fn build_submission(
     .execute(connection)
     .await
     .map_err(database::database_error)?;
+    crate::workflow_runtime::start_run(
+        connection,
+        &run.workflow,
+        &runtime_run_id,
+        run.attempt_count,
+        now,
+    )
+    .await?;
     let submission = json!({
         "version": 1,
         "runId": runtime_run_id,
-        "workItemId": task_id,
-        "workflowId": run.id,
-        "sessionId": run.id,
+        "workItemId": run.workflow.work_item_id,
+        "workflowId": run.workflow.workflow_id,
+        "sessionId": run.workflow.workflow_id,
         "document": document,
         "workspace": {
             "projectId": format!("automation:{}", run.automation_id),
@@ -481,8 +529,8 @@ async fn build_submission(
         "configuredMaxTokens": profile.get("configuredMaxTokens").and_then(Value::as_i64).unwrap_or(2048),
         "externalTools": [],
         "explicitTargets": [],
-        "correlationId": run.id,
-        "causationId": Value::Null
+        "correlationId": run.workflow.correlation_id,
+        "causationId": run.workflow.event_id
     });
     let recovery = json!({
         "kind": "automation",
@@ -492,6 +540,9 @@ async fn build_submission(
         "leaseOwner": run.lease_owner,
         "attemptCount": run.attempt_count,
         "sourceCursorAt": source_cursor_at,
+        "workflowId": run.workflow.workflow_id,
+        "workItemId": run.workflow.work_item_id,
+        "sourceEventId": run.workflow.event_id,
         "startedAt": now
     });
     Ok((submission, recovery))
@@ -676,14 +727,15 @@ async fn schedule_failure(
     error: &str,
     retryable: bool,
 ) -> Result<(), String> {
-    let attempts = sqlx::query_scalar::<_, i64>(
-        "SELECT attempt_count FROM automation_runs WHERE id = ? LIMIT 1",
+    let run = sqlx::query_as::<_, (i64, Option<String>, Option<String>)>(
+        "SELECT attempt_count, workflow_id, run_id FROM automation_runs WHERE id = ? LIMIT 1",
     )
     .bind(automation_run_id)
     .fetch_optional(connection)
     .await
     .map_err(database::database_error)?
     .ok_or_else(|| "自动化运行不存在。".to_string())?;
+    let attempts = run.0;
     abandon_agent_task(connection, task_id, error).await?;
     if !retryable || AUTOMATION_RETRY_POLICY.exhausted(attempts) {
         return dead_letter_run(
@@ -711,6 +763,16 @@ async fn schedule_failure(
     .execute(connection)
     .await
     .map_err(database::database_error)?;
+    if let Some(workflow_id) = run.1.as_deref() {
+        crate::workflow_runtime::mark_retry_scheduled(
+            connection,
+            workflow_id,
+            run.2.as_deref(),
+            error,
+            now,
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -721,6 +783,13 @@ async fn dead_letter_run(
     failure_kind: &str,
 ) -> Result<(), String> {
     let now = now_millis();
+    let workflow = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT workflow_id, run_id FROM automation_runs WHERE id = ? LIMIT 1",
+    )
+    .bind(automation_run_id)
+    .fetch_optional(connection)
+    .await
+    .map_err(database::database_error)?;
     sqlx::query(
         "UPDATE automation_runs SET status = 'failed', error = ?, completed_at = ?, \
          lease_owner = NULL, lease_expires_at = NULL, next_attempt_at = NULL, \
@@ -734,6 +803,16 @@ async fn dead_letter_run(
     .execute(connection)
     .await
     .map_err(database::database_error)?;
+    if let Some((Some(workflow_id), run_id)) = workflow {
+        crate::workflow_runtime::mark_failed(
+            connection,
+            &workflow_id,
+            run_id.as_deref(),
+            error,
+            now,
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -856,6 +935,15 @@ fn new_id(prefix: &str) -> String {
 mod tests {
     use super::*;
 
+    fn test_workflow() -> crate::workflow_runtime::WorkflowBinding {
+        crate::workflow_runtime::WorkflowBinding {
+            work_item_id: "work-item-test".to_string(),
+            workflow_id: "workflow-test".to_string(),
+            event_id: "event-test".to_string(),
+            correlation_id: "correlation-test".to_string(),
+        }
+    }
+
     #[test]
     fn interval_schedule_catches_up_without_drift() {
         assert_eq!(
@@ -878,6 +966,7 @@ mod tests {
             source_cursor_at: None,
             lease_owner: "lease-rss".to_string(),
             attempt_count: 1,
+            workflow: test_workflow(),
         };
         let objective = build_objective(
             &run,
@@ -1072,6 +1161,7 @@ mod tests {
             source_cursor_at: Some(100),
             lease_owner: "lease-rss".to_string(),
             attempt_count: 1,
+            workflow: test_workflow(),
         };
         let (context, cursor) = read_rss_context(pool.as_ref(), &claimed)
             .await

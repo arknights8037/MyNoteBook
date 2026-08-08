@@ -171,6 +171,53 @@ export interface DomainEventEnvelopeV1 {
   securityScope: Record<string, unknown>
 }
 
+export type WorkflowSourceType = 'manual' | 'timer' | 'rss' | 'related_update'
+
+export type WorkflowState =
+  | 'READY'
+  | 'RUNNING'
+  | 'WAITING_EVENT'
+  | 'WAITING_TIMER'
+  | 'WAITING_HUMAN'
+  | 'WAITING_APPROVAL'
+  | 'RETRY_SCHEDULED'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
+
+export interface WorkflowWorkItemV1 {
+  version: 1
+  workItemId: string
+  eventId: string
+  sourceType: WorkflowSourceType
+  classification: string
+  correlationId: string
+  causationId: string | null
+  deduplicationKey: string
+  payload: unknown
+  createdAt: number
+}
+
+export interface WorkflowInstanceV1 {
+  version: 1
+  workflowId: string
+  workItemId: string
+  state: WorkflowState
+  currentRunId: string | null
+  currentWaitConditionId: string | null
+  correlationId: string
+  causationId: string | null
+  updatedAt: number
+}
+
+export interface SuspendRequestV1 {
+  version: 1
+  conditionKind: 'event' | 'timer' | 'human' | 'approval'
+  deduplicationKey: string
+  payload: Record<string, unknown>
+  dueAt: number | null
+}
+
 export type ExternalActionStatus =
   | 'pending_approval'
   | 'approved'
@@ -181,10 +228,7 @@ export type ExternalActionStatus =
   | 'rejected'
   | 'cancelled'
 
-/**
- * Contract scaffold for Phase 5. Defining this envelope does not enable an
- * external side effect; Rust Action Gateway ownership and approval are still required.
- */
+/** Rust Action Gateway projection. Creating this value never bypasses approval. */
 export interface ExternalActionRequestV1 {
   version: 1
   actionId: string

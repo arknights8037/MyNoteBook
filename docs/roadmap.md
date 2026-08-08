@@ -1,6 +1,6 @@
 # 后续开发路线图
 
-本文是 MyNoteBook 未完成工程工作的权威排序，已按 2026-07-30 代码与 migration `0001`–`0043` 复核。当前架构事实见 [系统架构](architecture.md)，生产 Agent 行为见 [Agent Runtime](agent-runtime.md)，PI 评审输入见 [PI 接入资料](pi-integration-high-value.md)。
+本文是 MyNoteBook 未完成工程工作的权威排序，已按 2026-08-08 代码与 migration `0001`–`0046` 复核。当前架构事实见 [系统架构](architecture.md)，生产 Agent 行为见 [Agent Runtime](agent-runtime.md)，事件编排事实见 [事件驱动 Workflow](event-driven-workflows.md)，PI 评审输入见 [PI 接入资料](pi-integration-high-value.md)。
 
 路线图按依赖、交付物和退出条件推进，不承诺未经验证的日历日期。以下标签必须严格区分：
 
@@ -306,6 +306,16 @@ Phase 3 进程监督稳定。
 
 ## 9. Phase 5：事件驱动 Workflow
 
+### 实施状态（已完成）
+
+- migration `0046` 已建立统一 `workflow_work_items`、`workflow_instances` 和 `workflow_run_attempts`。人工、计划 Timer、RSS 与相关更新事件先去重和分类，再进入 Work Item/Workflow；自动化与信号 Agent 的 Runtime request 使用真实 `work_item_id/workflow_id/correlation_id/causation_id`。
+- `SuspendRequestV1` 与 Rust 等待续接覆盖 Event、Timer、Human、Approval 和 retry。挂起会结束当前 Run；Timer 或 correlation 匹配事件满足等待后把 Workflow 推进到 `READY`，续接必须创建新的 `run_id`，不使用 `resumeRun`。
+- RSS 自动化继续在 Rust 中同步、canonical 去重和冻结增量内容；重复来源事件不会重复创建 Work Item。每次失败 attempt 有界重试，旧 Run 的迟到终态不能越过当前 run fencing。
+- Rust Action Gateway 已持有 `externalActionApproval`、动作级幂等键、持久 lease、单调 fencing token、attempt、重试、Dead Letter 和 Outbox 事件。未审批动作不可领取，迟到旧 worker 不能结算新 attempt；窗口或 Worker 重启不会丢失审批与等待状态。
+- 当前没有启用真实外部动作 handler，符合本阶段“不发送邮件、不扩大钉钉权限”的边界。后续邮件、IM、发布或外部日历只能作为 Rust allowlist dispatcher 接入 Action Gateway。
+
+完整事实与恢复语义见 [事件驱动 Workflow 与 Action Gateway](event-driven-workflows.md)。
+
 ### 目标
 
 把长期等待和确定性编排放在 Rust Workflow，而不是让一个 Agent Run 长时间阻塞。
@@ -346,7 +356,7 @@ Agent 遇到长期等待时返回终态 `SuspendRequest`，当前 Run 随即结�
 
 Phase 4 的 durable timer、lease、outbox 和托盘运行稳定。
 
-P4.5 已提供 `DomainEventEnvelopeV1` 与 `ExternalActionRequestV1/ResultV1` 契约脚手架，但没有启用任何真实外部动作。Phase 5 已接通两条纵切：手动/间隔/每日自动化的只读 Agent；以及 `workspace.signals.refreshed` 事件驱动的自主信号 Agent。后者可检索知识并通过专用工具幂等更新本地待办/日历，不是固定分类 flow。后续真实外部动作仍必须由 Rust Action Gateway 持有审批、幂等、fencing 和投递终态。
+P4.5 的 envelope 脚手架已经收敛为上述生产 Workflow 与 Action Gateway 边界。首页信号 Agent 可检索知识并通过专用工具幂等更新本地待办/日历，不是固定分类 flow；这些本地动作不绕过知识 Mutation 或真实外部动作审批。
 
 ### 退出条件
 

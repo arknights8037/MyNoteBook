@@ -74,6 +74,7 @@ unsafe fn apply_fixed_light_acrylic(hwnd: *mut core::ffi::c_void) {
     let _ = set_window_composition_attribute(hwnd, &mut data);
 }
 
+mod action_gateway;
 mod agent_cancellation;
 mod agent_repository;
 mod agent_request_watcher;
@@ -103,6 +104,7 @@ mod skills;
 mod storage;
 mod views;
 mod work;
+mod workflow_runtime;
 mod workflow_timers;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

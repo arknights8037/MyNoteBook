@@ -304,6 +304,9 @@ async fn watch_agent_requests(app: AppHandle, data_directory: Option<String>) {
                 )
                 .await
                 .is_ok()
+                && crate::action_gateway::recover_expired_actions(connection.as_ref(), now_millis())
+                    .await
+                    .is_ok()
             {
                 startup_recovered = true;
             }
@@ -312,6 +315,17 @@ async fn watch_agent_requests(app: AppHandle, data_directory: Option<String>) {
             .await
             .ok()
             .flatten();
+        let now = now_millis();
+        if let Err(error) =
+            crate::workflow_runtime::consume_event_waits(connection.as_ref(), now).await
+        {
+            tauri_plugin_log::log::warn!("Workflow 事件等待扫描失败：{error}");
+        }
+        if let Err(error) =
+            crate::workflow_runtime::resume_satisfied_waits(connection.as_ref(), now).await
+        {
+            tauri_plugin_log::log::warn!("Workflow 已满足等待续接失败：{error}");
+        }
         if let Err(error) = crate::automation_runtime::tick(
             &app,
             connection.as_ref(),

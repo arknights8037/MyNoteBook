@@ -38,6 +38,7 @@ struct ClaimedSignalRun {
     payload: Value,
     lease_owner: String,
     attempt_count: i64,
+    workflow: crate::workflow_runtime::WorkflowBinding,
 }
 
 #[tauri::command]
@@ -329,6 +330,23 @@ pub(crate) async fn settle_run(
         .commit()
         .await
         .map_err(database::database_error)?;
+    let workflow_id = if let Some(workflow_id) = recovery.get("workflowId").and_then(Value::as_str)
+    {
+        Some(workflow_id.to_string())
+    } else {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT workflow_id FROM signal_agent_runs WHERE id = ?",
+        )
+        .bind(signal_run_id)
+        .fetch_optional(connection)
+        .await
+        .map_err(database::database_error)?
+        .flatten()
+    };
+    if let Some(workflow_id) = workflow_id.as_deref() {
+        crate::workflow_runtime::mark_completed(connection, workflow_id, run_id, &output, now)
+            .await?;
+    }
     Ok(true)
 }
 
@@ -471,18 +489,23 @@ async fn claim_next_run(connection: &SqlitePool) -> Result<Option<ClaimedSignalR
     let payload_json: String = row
         .try_get("payload_json")
         .map_err(database::database_error)?;
-    let claimed = ClaimedSignalRun {
-        id,
-        event_id: row.try_get("event_id").map_err(database::database_error)?,
-        payload: serde_json::from_str(&payload_json).map_err(database::database_error)?,
-        lease_owner,
-        attempt_count: row.try_get::<i64, _>("attempt_count").unwrap_or(0) + 1,
-    };
+    let event_id: String = row.try_get("event_id").map_err(database::database_error)?;
+    let payload: Value = serde_json::from_str(&payload_json).map_err(database::database_error)?;
     transaction
         .commit()
         .await
         .map_err(database::database_error)?;
-    Ok(Some(claimed))
+    let workflow =
+        crate::workflow_runtime::ensure_signal_workflow(connection, &id, &event_id, &payload, now)
+            .await?;
+    Ok(Some(ClaimedSignalRun {
+        id,
+        event_id,
+        payload,
+        lease_owner,
+        attempt_count: row.try_get::<i64, _>("attempt_count").unwrap_or(0) + 1,
+        workflow,
+    }))
 }
 
 async fn build_submission(
@@ -514,7 +537,6 @@ async fn build_submission(
     };
     let (context, source_cursor_at) = read_signal_context(connection, &run.payload).await?;
     let runtime_run_id = new_id("run");
-    let task_id = new_id("agent-task");
     let trigger_source = run
         .payload
         .get("triggerSource")
@@ -530,6 +552,14 @@ async fn build_submission(
     .execute(connection)
     .await
     .map_err(database::database_error)?;
+    crate::workflow_runtime::start_run(
+        connection,
+        &run.workflow,
+        &runtime_run_id,
+        run.attempt_count,
+        now_millis(),
+    )
+    .await?;
     let scope = run
         .payload
         .get("scope")
@@ -539,9 +569,9 @@ async fn build_submission(
     let submission = json!({
         "version": 1,
         "runId": runtime_run_id,
-        "workItemId": task_id,
-        "workflowId": run.id,
-        "sessionId": run.id,
+        "workItemId": run.workflow.work_item_id,
+        "workflowId": run.workflow.workflow_id,
+        "sessionId": run.workflow.workflow_id,
         "document": document,
         "workspace": {
             "projectId": "signal-agent:default",
@@ -559,8 +589,8 @@ async fn build_submission(
         "configuredMaxTokens": profile.get("configuredMaxTokens").and_then(Value::as_i64).unwrap_or(4096),
         "externalTools": [],
         "explicitTargets": [],
-        "correlationId": run.event_id,
-        "causationId": Value::Null
+        "correlationId": run.workflow.correlation_id,
+        "causationId": run.workflow.event_id
     });
     let recovery = json!({
         "kind": "signal_agent",
@@ -570,6 +600,8 @@ async fn build_submission(
         "leaseOwner": run.lease_owner,
         "attemptCount": run.attempt_count,
         "sourceCursorAt": source_cursor_at,
+        "workflowId": run.workflow.workflow_id,
+        "workItemId": run.workflow.work_item_id,
         "triggerSource": trigger_source,
         "provider": profile.get("modelPolicy").and_then(|value| value.get("provider")).and_then(Value::as_str).unwrap_or(""),
         "model": profile.get("modelPolicy").and_then(|value| value.get("model")).and_then(Value::as_str).unwrap_or("")
@@ -1056,14 +1088,15 @@ async fn schedule_failure(
     error: &str,
     retryable: bool,
 ) -> Result<(), String> {
-    let attempts = sqlx::query_scalar::<_, i64>(
-        "SELECT attempt_count FROM signal_agent_runs WHERE id = ? LIMIT 1",
+    let run = sqlx::query_as::<_, (i64, Option<String>, Option<String>)>(
+        "SELECT attempt_count, workflow_id, run_id FROM signal_agent_runs WHERE id = ? LIMIT 1",
     )
     .bind(signal_run_id)
     .fetch_optional(connection)
     .await
     .map_err(database::database_error)?
     .ok_or_else(|| "信号 Agent 运行不存在。".to_string())?;
+    let attempts = run.0;
     abandon_agent_task(connection, task_id, error).await?;
     if !retryable || SIGNAL_AGENT_RETRY_POLICY.exhausted(attempts) {
         return dead_letter_run(
@@ -1091,6 +1124,16 @@ async fn schedule_failure(
     .execute(connection)
     .await
     .map_err(database::database_error)?;
+    if let Some(workflow_id) = run.1.as_deref() {
+        crate::workflow_runtime::mark_retry_scheduled(
+            connection,
+            workflow_id,
+            run.2.as_deref(),
+            error,
+            now,
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -1102,7 +1145,7 @@ async fn dead_letter_run(
 ) -> Result<(), String> {
     let now = now_millis();
     let event = sqlx::query(
-        "SELECT run.event_id, event.payload_json FROM signal_agent_runs run \
+        "SELECT run.event_id, run.workflow_id, run.run_id, event.payload_json FROM signal_agent_runs run \
          INNER JOIN domain_events event ON event.id = run.event_id WHERE run.id = ? LIMIT 1",
     )
     .bind(signal_run_id)
@@ -1123,6 +1166,17 @@ async fn dead_letter_run(
     .execute(&mut *transaction)
     .await
     .map_err(database::database_error)?;
+    let workflow = event.as_ref().and_then(|row| {
+        row.try_get::<Option<String>, _>("workflow_id")
+            .ok()
+            .flatten()
+            .map(|workflow_id| {
+                (
+                    workflow_id,
+                    row.try_get::<Option<String>, _>("run_id").unwrap_or(None),
+                )
+            })
+    });
     if let Some(event) = event {
         let event_id = event
             .try_get::<String, _>("event_id")
@@ -1167,6 +1221,16 @@ async fn dead_letter_run(
         .commit()
         .await
         .map_err(database::database_error)?;
+    if let Some((workflow_id, run_id)) = workflow {
+        crate::workflow_runtime::mark_failed(
+            connection,
+            &workflow_id,
+            run_id.as_deref(),
+            error,
+            now,
+        )
+        .await?;
+    }
     Ok(())
 }
 

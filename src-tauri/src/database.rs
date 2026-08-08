@@ -1375,7 +1375,15 @@ mod tests {
         .await
         .expect("insert existing data");
         sqlx::raw_sql(
-            "DROP TABLE signal_action_receipts; \
+            "DROP TABLE external_action_attempts; \
+             DROP TABLE external_action_approvals; \
+             DROP TABLE external_action_requests; \
+             DROP TABLE workflow_run_attempts; \
+             DROP TABLE workflow_instances; \
+             ALTER TABLE automation_runs DROP COLUMN workflow_id; \
+             ALTER TABLE automation_runs DROP COLUMN workflow_work_item_id; \
+             DROP TABLE workflow_work_items; \
+             DROP TABLE signal_action_receipts; \
              DROP TABLE signal_agent_runs; \
              DROP INDEX idx_domain_events_source_deduplication; \
              ALTER TABLE domain_events DROP COLUMN security_scope_json; \
@@ -1422,7 +1430,7 @@ mod tests {
               DROP TRIGGER cleanup_email_messages_after_sender_reblock; \
               DROP TRIGGER cleanup_email_messages_after_sender_block; \
               DROP TABLE email_blocked_senders; \
-              DELETE FROM _sqlx_migrations WHERE version IN (39, 40, 41, 42, 43, 44, 45);",
+              DELETE FROM _sqlx_migrations WHERE version IN (39, 40, 41, 42, 43, 44, 45, 46);",
         )
         .execute(pool.as_ref())
         .await
@@ -1448,7 +1456,7 @@ mod tests {
                 .fetch_one(upgraded.as_ref())
                 .await
                 .expect("existing document");
-        assert_eq!(version, 45);
+        assert_eq!(version, 46);
         assert_eq!(existing, 1);
         assert!(table_exists(upgraded.as_ref(), "workflow_wait_conditions")
             .await

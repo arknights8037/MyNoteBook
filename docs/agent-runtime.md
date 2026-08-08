@@ -267,7 +267,7 @@ Run lifecycle、Plan snapshot、运行级事件和 Step/tool timeline 会绑定�
 - 普通 Agent Run 没有 durable checkpoint/resume；应用重启后不能从中间 tool step 恢复。Learning Session 的跨 run 继续和待确认 Patch 的恢复不等同于恢复同一个 Run。
 - 默认 Runtime 的任务规划、模型循环、工具调度和标准 Patch 终态编译均由 Rust 托管 sidecar 承载；Vue 负责用户交互、事件投影和 Diff 审阅。A2A 自动调度、审批/修订 Workflow、Cognitive Session 终态和 Research candidate 业务投影均由 Rust/sidecar 完成，可在主窗口隐藏时继续。显式退出进程仍会停止任务，普通 Run 也没有 durable checkpoint/resume。
 - A2A 请求使用持久 lease、attempt 和 `run_id` fencing；Worker 活动事件续租，迟到的旧 Run 终态不能覆盖新尝试，显式可重试错误按指数退避最多尝试三次，耗尽后写入 Dead Letter。Research candidate/source/validation、Cognitive Session、AgentTask 和请求终态在同一事务提交。应用启动会保留 Supervisor 仍持有的 Run，并把无活动所有者的 `running` 请求作为新 run 重排；该机制采用可审计的 at-least-once 业务恢复，不恢复旧模型循环的中间 tool step，也不承诺未进入受控事务/Outbox 的外部副作用 exactly-once。
-- Durable Timer 使用持久等待条件和绝对 UTC 时间；休眠、墙钟跳变或进程重启后会补领到期项，同一去重键和原子触发事务防止重复 Domain Event/Outbox。当前只交付等待条件与触发事件原语；由事件创建新的 Run、继续长期 Workflow 属于 Phase 5，不伪装成已经支持的模型步骤 checkpoint。
+- Durable Timer 使用持久等待条件和绝对 UTC 时间；休眠、墙钟跳变或进程重启后会补领到期项，同一去重键和原子触发事务防止重复 Domain Event/Outbox。Timer 触发或 correlation 匹配事件满足等待后，Rust Workflow 回到 `READY` 并以新的 Run 继续；这仍不是模型 tool step checkpoint。
 - 当前已有独立 `run_id` 贯穿 Runtime 请求、`agent_tasks`、Context Bundle 和 Tool Call；`task_runs.id` 仍保留历史治理语义，完整轨迹重放和 durable checkpoint 尚未实现。
 - MCP Prompts、Roots、Sampling、OAuth、旧 SSE 和跨任务长连接尚未开放。
 - 真实 DeepSeek Provider、stdio/Streamable HTTP MCP、真实 CLI 外部进程和隔离数据恢复已通过 G0 smoke；Windows 干净安装包仍属于发布流程检查。
@@ -278,4 +278,4 @@ Run lifecycle、Plan snapshot、运行级事件和 Step/tool timeline 会绑定�
 
 Runtime 事件使用 `run/model/message/tool/authorization` 与 `started/progress/completed/failed/cancelled` 的组合，包含递增 sequence、correlation/causation、Provider 明确返回的 content/reasoning、脱敏工具输入输出、usage 和终态；不保存应用内部隐藏思维链。Provider Tool Call ID 只作为可空映射，内部 Tool Call ID 始终是审计主键。
 
-`resumeRun` 不属于 v1 承诺：在 durable checkpoint 尚未落地时，等待外部事件或用户审批应结束当前 Agent Run；Phase 4 已提供持久等待条件，Phase 5 才负责消费信号并以新的 `run_id` 和 `causation_id` 继续。Phase 2 决策已保留 AI SDK 作为唯一生产实现；PI 原型只保留为可替换 Worker adapter 的评估证据。
+`resumeRun` 不属于 v1 承诺：等待外部事件或用户审批会通过 `SuspendRequestV1` 结束当前 Agent Run；Rust Workflow 持久化等待条件，并在 Event/Timer/Human/Approval 满足后以新的 `run_id` 和 `causation_id` 继续。Phase 2 决策已保留 AI SDK 作为唯一生产实现；PI 原型只保留为可替换 Worker adapter 的评估证据。
