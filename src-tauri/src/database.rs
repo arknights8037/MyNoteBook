@@ -818,23 +818,8 @@ mod tests {
                 .file_name()
                 .to_string_lossy()
                 .starts_with("editor-pre-migration-")));
-        let mut cleanup_error = None;
-        for _ in 0..10 {
-            match fs::remove_dir_all(&root) {
-                Ok(()) => {
-                    cleanup_error = None;
-                    break;
-                }
-                Err(error) if error.raw_os_error() == Some(32) => {
-                    cleanup_error = Some(error);
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                Err(error) => panic!("cleanup: {error}"),
-            }
-        }
-        if let Some(error) = cleanup_error {
-            panic!("cleanup after Windows file-lock retries: {error}");
-        }
+        retry_file_operation(|| fs::remove_dir_all(&root))
+            .expect("cleanup after transient Windows file locks");
     }
 
     #[tokio::test]
